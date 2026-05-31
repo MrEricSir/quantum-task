@@ -1,0 +1,317 @@
+.tag-mgr-modal {
+  width: 400px;
+}
+
+/* Existing tags list */
+.tag-mgr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 20px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.tag-mgr-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.tag-mgr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  transition: background 0.1s;
+}
+
+.tag-mgr-row:hover {
+  background: var(--bg);
+}
+
+.tag-mgr-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tag-mgr-name {
+  flex: 1;
+  font-size: 14px;
+}
+
+.tag-mgr-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-weight: 500;
+}
+
+.tag-mgr-edit {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+  opacity: 0;
+}
+
+.tag-mgr-row:hover .tag-mgr-edit {
+  opacity: 1;
+}
+
+.tag-mgr-edit:hover {
+  color: #3b82f6;
+  background: #eff6ff;
+}
+
+.tag-mgr-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.tag-mgr-delete:hover {
+  color: #ef4444;
+  background: #fef2f2;
+}
+
+.tag-mgr-cancel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.tag-mgr-cancel:hover {
+  color: #ef4444;
+  background: #fef2f2;
+}
+
+.tag-mgr-save {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #10b981;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.tag-mgr-save:hover:not(:disabled) {
+  background: #ecfdf5;
+}
+
+.tag-mgr-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tag-mgr-row--editing {
+  flex-wrap: wrap;
+  gap: 6px;
+  background: var(--bg);
+  border-radius: 7px;
+}
+
+.tag-mgr-edit-colors {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+}
+
+.color-swatch--sm {
+  width: 16px;
+  height: 16px;
+}
+
+.tag-mgr-edit-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1.5px solid #3b82f6;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+
+.tag-mgr-edit-error {
+  font-size: 11px;
+  color: #ef4444;
+  width: 100%;
+}
+
+.tag-mgr-row--confirm {
+  flex-direction: column;
+  align-items: flex-start;
+  background: #fff8f8;
+  border: 1px solid #fecaca;
+  gap: 8px;
+}
+
+.tag-mgr-confirm-msg {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.tag-mgr-move-select {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+}
+
+.tag-mgr-move-select:focus {
+  border-color: #3b82f6;
+}
+
+.tag-mgr-confirm-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tag-mgr-confirm-delete {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.tag-mgr-confirm-delete:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.tag-mgr-confirm-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Add form */
+.tag-mgr-form {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-bottom: 4px;
+}
+
+.tag-mgr-form-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+
+.tag-mgr-color-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+  padding: 0;
+}
+
+.color-swatch:hover {
+  transform: scale(1.15);
+}
+
+.color-swatch--active {
+  border-color: var(--text);
+  transform: scale(1.15);
+}
+
+.tag-mgr-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.tag-mgr-input-row input {
+  flex: 1;
+  padding: 8px 11px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.tag-mgr-input-row input:focus {
+  border-color: #3b82f6;
+}
+
+.tag-mgr-input-row .btn-save {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 7px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.tag-mgr-input-row .btn-save:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.tag-mgr-input-row .btn-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-error {
+  display: block;
+  font-size: 12px;
+  color: #ef4444;
+  margin-top: 6px;
+}

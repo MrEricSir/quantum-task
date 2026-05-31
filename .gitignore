@@ -1,0 +1,42 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+backend/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# ── Database ──────────────────────────────────────────────────────────────────
+backend/todos.db
+backend/*.db-shm
+backend/*.db-wal
+
+# ── Test / dev artifacts ──────────────────────────────────────────────────────
+backend/.pytest_cache/
+backend/benchmark_report.md
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/public/bg.webm
+
+# ── Logs & runtime ────────────────────────────────────────────────────────────
+*.log
+backend.log
+frontend.log
+.dev.pids
+
+# ── Secrets & local config ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+backend/credentials.json
+.gcp-config
+.github-actions-sa-key.json
+.firebase-sa-key.json
+
+# ── Editor / OS ───────────────────────────────────────────────────────────────
+.DS_Store
+.claude/
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+GCAL_PLAN.md
+ROADMAP.md

@@ -1,0 +1,77 @@
+/* ── Backdrop ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 2, 10, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 500;
+  animation: overlay-in 0.15s ease;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Dialog box ── */
+/* Radix renders overlay and content as siblings in the portal,
+   so the content must position itself. */
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 501;
+  background: rgba(14, 8, 30, 0.78);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 14px;
+  padding: 28px;
+  width: 500px;
+  max-width: calc(100vw - 32px);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(139,92,246,0.12);
+  animation: modal-in 0.18s ease;
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.modal h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 22px;
+}
+
+/* ── Mobile: bottom sheet ── */
+@media (max-width: 640px) {
+  .modal {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    border-radius: 20px 20px 0 0;
+    padding: 20px 16px 36px;
+    animation: sheet-up 0.25s ease;
+  }
+
+  @keyframes modal-in {
+    /* overridden by sheet-up on mobile */
+    from { opacity: 1; transform: none; }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @keyframes sheet-up {
+    from { transform: translateY(40px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+}

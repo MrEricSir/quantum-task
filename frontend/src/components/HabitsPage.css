@@ -1,0 +1,281 @@
+.habits-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px 0;
+}
+
+/* ── Header ── */
+.habits-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.habits-page-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.habits-page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.habits-page-progress {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ── Tag filter ── */
+.habits-tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.habits-tag-pill {
+  padding: 4px 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text-muted);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.habits-tag-pill--active {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(139, 92, 246, 0.4);
+  color: var(--text);
+}
+
+.habits-tag-pill:hover:not(.habits-tag-pill--active) {
+  border-color: rgba(139, 92, 246, 0.3);
+  color: var(--text);
+}
+
+/* ── Add card ── */
+.habits-add-card {
+  background: var(--surface);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.habits-add-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.habits-add-input:focus {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.habits-add-input::placeholder {
+  color: var(--text-muted);
+}
+
+.habits-add-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.habits-add-tags-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.habit-tag-pill {
+  padding: 3px 10px;
+  border-radius: 10px;
+  border: 1.5px solid;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+
+.habits-add-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Empty state ── */
+.habits-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 48px 0;
+}
+
+/* ── Habit list ── */
+.habits-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Habit card ── */
+.habit-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  transition: border-color 0.15s;
+}
+
+.habit-card:hover {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.habit-card--done {
+  border-color: rgba(139, 92, 246, 0.35);
+  background: rgba(139, 92, 246, 0.05);
+}
+
+/* ── Check button ── */
+.habit-card-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  transition: border-color 0.15s, background 0.15s;
+  padding: 0;
+}
+
+.habit-card-check:hover {
+  border-color: #a78bfa;
+}
+
+.habit-card--done .habit-card-check {
+  background: #7c3aed;
+  border-color: #7c3aed;
+}
+
+/* ── Body (name + tags) ── */
+.habit-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.habit-card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.habit-card--done .habit-card-name {
+  color: var(--text-muted);
+}
+
+.habit-card-edit-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.5);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 2px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.habit-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.habit-card-tag {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 8px;
+  border: 1px solid;
+}
+
+/* ── Streak ── */
+.habit-card-streak {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f97316;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Action buttons ── */
+.habit-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.habit-card-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  transition: color 0.12s, background 0.12s;
+}
+
+.habit-card-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.habit-card-btn--delete:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .habit-card-streak {
+    display: none;
+  }
+}

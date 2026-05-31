@@ -1,0 +1,138 @@
+.briefing {
+  max-width: 1600px;
+  margin: 0 auto 20px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--color-today);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.briefing--error {
+  border-left-color: #f59e0b;
+  padding: 10px 14px;
+  gap: 10px;
+}
+
+/* ── Text sections ── */
+.briefing-sections {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+}
+
+.briefing-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.briefing-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 60px;
+}
+
+.briefing-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.briefing-thinking {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.briefing-error-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ── Loading spinners ── */
+.briefing-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--color-today);
+  border-radius: 50%;
+  animation: briefing-spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+.briefing-spin {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: briefing-spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes briefing-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Refresh button ── */
+.briefing-refresh {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 15px;
+  padding: 10px 12px;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+.briefing-refresh:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.briefing-refresh:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  .briefing {
+    margin-bottom: 12px;
+  }
+
+  .briefing-weather {
+    padding: 10px 12px;
+    min-width: 56px;
+  }
+
+  .briefing-sections {
+    padding: 8px 10px;
+  }
+
+  .briefing-text {
+    font-size: 12px;
+  }
+
+  .briefing-refresh {
+    padding: 10px 10px;
+    font-size: 18px;
+  }
+}

@@ -1,0 +1,98 @@
+.column {
+  flex: 1;
+  min-width: 220px;
+  background: var(--surface);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.column--over {
+  border-color: rgba(139, 92, 246, 0.6);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.column-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.column-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.column-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.column-body {
+  flex: 1;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.column-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  min-height: 80px;
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  /* Hide non-active columns; tab bar provides navigation */
+  .column--inactive {
+    display: none;
+  }
+
+  /* Column header is redundant with tabs */
+  .column-header {
+    display: none;
+  }
+
+  .column {
+    border: none;
+    background: transparent;
+  }
+
+  .column-body {
+    padding: 0;
+    gap: 8px;
+  }
+
+  .column-empty {
+    min-height: 120px;
+    font-size: 14px;
+  }
+}

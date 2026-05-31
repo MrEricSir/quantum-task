@@ -1,0 +1,126 @@
+.parse-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 24px 0;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.pq-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.pq-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: default;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  min-width: 0;
+}
+
+.pq-item--done .pq-main {
+  cursor: pointer;
+}
+
+.pq-item--done .pq-main:hover {
+  background: var(--bg);
+}
+
+.pq-item--error .pq-main {
+  cursor: pointer;
+}
+
+.pq-icon {
+  flex-shrink: 0;
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pq-item--done .pq-icon {
+  color: #10b981;
+  font-weight: 700;
+}
+
+.pq-item--error .pq-icon {
+  color: #f59e0b;
+  font-weight: 700;
+}
+
+.pq-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: pq-spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes pq-spin {
+  to { transform: rotate(360deg); }
+}
+
+.pq-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.pq-action-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #3b82f6;
+  padding-left: 4px;
+}
+
+.pq-error-msg {
+  padding: 6px 12px 8px 38px;
+  font-size: 12px;
+  color: #ef4444;
+  line-height: 1.5;
+  border-top: 1px solid var(--border);
+  flex-basis: 100%;
+}
+
+.pq-item {
+  flex-wrap: wrap;
+}
+
+.pq-dismiss {
+  flex-shrink: 0;
+  align-self: stretch;
+  padding: 0 12px;
+  background: none;
+  border: none;
+  border-left: 1.5px solid var(--border);
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-muted);
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+
+.pq-dismiss:hover {
+  background: var(--bg);
+  color: var(--text);
+}

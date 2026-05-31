@@ -1,0 +1,241 @@
+/* Inherits .modal-overlay, .modal, .form-group, .form-row,
+   .modal-footer, .btn-cancel, .btn-save from AddTodoModal.css
+   via shared CSS variables. Only quick-add-specific styles here. */
+
+.quick-modal {
+  width: 480px;
+}
+
+.quick-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: -12px 0 18px;
+}
+
+.quick-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  resize: vertical;
+  outline: none;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+  margin-bottom: 4px;
+}
+
+.quick-textarea:focus {
+  border-color: rgba(139, 92, 246, 0.7);
+  background: var(--surface);
+}
+
+.quick-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Loading */
+.quick-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.quick-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: #a78bfa;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Tag toggles (same as AddTodoModal) */
+.quick-modal .tag-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-modal .tag-toggle {
+  padding: 4px 12px;
+  border-radius: 12px;
+  border: 1.5px solid;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+/* Error */
+.quick-error {
+  padding: 8px 0;
+}
+
+.quick-error-title {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.quick-error-msg {
+  font-size: 13px;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+/* Reuse AddTodoModal form styles */
+.quick-modal .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+
+.quick-modal .form-row {
+  display: flex;
+  gap: 14px;
+}
+
+.quick-modal .form-row .form-group {
+  flex: 1;
+}
+
+.quick-modal .form-group label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quick-modal .form-group input[type="text"],
+.quick-modal .form-group input[type="datetime-local"],
+.quick-modal .form-group textarea,
+.quick-modal .form-group select {
+  width: 100%;
+  padding: 8px 11px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.quick-modal .form-group input:focus,
+.quick-modal .form-group textarea:focus,
+.quick-modal .form-group select:focus {
+  border-color: rgba(139, 92, 246, 0.7);
+}
+
+.quick-modal .modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.quick-modal .btn-cancel {
+  padding: 8px 18px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: inherit;
+}
+
+.quick-modal .btn-save {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 7px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.quick-modal .btn-save:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+.quick-modal .btn-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.quick-modal .raw-input-display {
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+@media (max-width: 640px) {
+  .quick-modal {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 20px 20px 0 0;
+    padding: 20px 16px 36px;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: sheet-up 0.25s ease;
+  }
+
+  .quick-textarea {
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  .quick-modal .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .quick-modal .modal-footer {
+    gap: 10px;
+  }
+
+  .quick-modal .btn-cancel,
+  .quick-modal .btn-save {
+    flex: 1;
+    text-align: center;
+    padding: 11px 12px;
+    font-size: 14px;
+  }
+
+  .quick-modal .tag-toggle {
+    padding: 7px 14px;
+    font-size: 13px;
+  }
+}

@@ -1,0 +1,41 @@
+/* Hidden on desktop — sidebar handles tag filtering there */
+.tag-filter-bar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .tag-filter-bar {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 12px 10px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    flex-shrink: 0;
+  }
+
+  .tag-filter-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tag-filter-bar-pill {
+    flex-shrink: 0;
+    padding: 5px 13px;
+    border-radius: 14px;
+    border: 1.5px solid var(--border);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    color: var(--text-muted);
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    white-space: nowrap;
+  }
+
+  .tag-filter-bar-pill--active {
+    background: var(--text);
+    border-color: var(--text);
+    color: var(--surface);
+  }
+}

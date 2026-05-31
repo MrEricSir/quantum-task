@@ -1,0 +1,227 @@
+.today-page {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+/* ── Header ── */
+.today-header {
+  margin-bottom: 16px;
+}
+
+.today-date {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+
+.today-summary {
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.today-summary span + span::before {
+  content: ' · ';
+  white-space: pre;
+}
+
+.today-summary-clear {
+  color: #4ade80;
+  font-weight: 500;
+}
+
+/* ── Briefing spacing ── */
+.today-page .briefing {
+  margin-bottom: 14px;
+}
+
+/* ── Sections ── */
+.today-section {
+  background: rgba(10, 6, 22, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+/* ── Collapsible section header ── */
+.today-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 16px;
+  cursor: default;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.today-section-header--toggleable {
+  cursor: pointer;
+}
+
+.today-section-header--toggleable:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.today-section-title-text {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.today-section-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+.today-section-status {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.today-section-chevron {
+  display: flex;
+  align-items: center;
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+/* Body padding when open */
+.today-cards,
+.today-habits,
+.today-empty,
+.today-catchup {
+  padding: 0 16px 14px;
+}
+
+/* ── Cards ── */
+.today-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Empty / catchup ── */
+.today-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding-top: 0;
+  padding-bottom: 14px;
+}
+
+.today-catchup {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0.55;
+  padding-top: 0;
+}
+
+/* ── Habits ── */
+.today-habits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.today-habit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  transition: background 0.12s;
+}
+
+.today-habit--done {
+  opacity: 0.45;
+}
+
+.today-habit--done .today-habit-name {
+  text-decoration: line-through;
+}
+
+.today-habit-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.today-habit--done .today-habit-check {
+  background: #7c3aed;
+  border-color: #7c3aed;
+}
+
+.today-habit-check:hover {
+  border-color: #7c3aed;
+}
+
+.today-habit-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.today-habit-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.today-habit-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.today-habit-streak {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 8px;
+  padding: 2px 6px;
+}
+
+@media (max-width: 640px) {
+  .today-page {
+    max-width: 100%;
+  }
+}

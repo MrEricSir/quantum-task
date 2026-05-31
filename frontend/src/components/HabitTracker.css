@@ -1,0 +1,167 @@
+.habit-panel {
+  max-width: 1600px;
+  margin: 0 auto 20px;
+  background: var(--surface);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+/* ── Header ── */
+.habit-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.habit-panel-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #a78bfa;
+  flex-shrink: 0;
+}
+
+.habit-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.habit-panel-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+/* ── Body ── */
+.habit-panel-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  min-height: 44px;
+}
+
+.habit-panel-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Habit pill ── */
+.habit-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  border-radius: 20px;
+  padding: 4px 10px 4px 5px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.habit-row:hover {
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.habit-row--done {
+  border-color: rgba(139, 92, 246, 0.45);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+/* ── Checkbox ── */
+.habit-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  transition: border-color 0.15s, background 0.15s;
+  padding: 0;
+}
+
+.habit-check:hover {
+  border-color: #a78bfa;
+}
+
+.habit-row--done .habit-check {
+  border-color: #7c3aed;
+  background: #7c3aed;
+}
+
+/* ── Name ── */
+.habit-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.habit-row--done .habit-name {
+  color: var(--text-muted);
+}
+
+/* ── Tag dots ── */
+.habit-tag-dots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.habit-tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Streak ── */
+.habit-streak {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f97316;
+  white-space: nowrap;
+}
+
+.habit-streak::before {
+  content: '🔥 ';
+}
+
+/* ── Delete ── */
+.habit-delete {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.12s;
+  flex-shrink: 0;
+}
+
+.habit-delete:hover {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .habit-panel {
+    margin-bottom: 12px;
+  }
+}

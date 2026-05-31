@@ -1,0 +1,189 @@
+/* Shared base lives in EventCard.css — imported alongside this file in TodoCard.jsx */
+
+/* ── Done state ── */
+.event-card--done .event-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+/* ── Overdue state ── */
+.event-card--overdue .event-title {
+  color: #fcd34d;
+}
+
+.card-overdue-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #f59e0b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+
+/* ── Drag states ── */
+.event-card--dragging {
+  cursor: grabbing;
+}
+
+.event-card--overlay {
+  cursor: grabbing;
+  box-shadow: var(--shadow-lg) !important;
+  transform: rotate(1.5deg);
+}
+
+/* ── Checkbox (Radix) ── */
+.card-check {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border: 1.5px solid rgba(139, 92, 246, 0.5);
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.card-check:hover {
+  border-color: #a78bfa;
+}
+
+.card-check[data-state="checked"] {
+  background: #7c3aed;
+  border-color: #7c3aed;
+}
+
+.card-check-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  width: 12px;
+  height: 12px;
+}
+
+/* ── Clock icon (inside .event-time) ── */
+.clock-icon {
+  font-size: 12px;
+}
+
+/* ── Recurrence badge ── */
+.card-recurrence {
+  font-size: 11px;
+  color: #a78bfa;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+/* ── Todo-specific detail values ── */
+.event-detail-value {
+  white-space: pre-wrap;
+}
+
+/* ── Section badge ── */
+.card-section-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+
+/* ── Action buttons ── */
+.card-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.card-action-delete {
+  background: none;
+  border: 1px solid #fca5a5;
+  color: #ef4444;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.card-action-delete:hover {
+  background: #fef2f2;
+}
+
+.card-action-edit {
+  background: #3b82f6;
+  border: none;
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.card-action-edit:hover {
+  background: #2563eb;
+}
+
+/* ── Move section (mobile only) ── */
+.card-move-row {
+  display: none;
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .card-move-row {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    align-items: flex-start;
+  }
+
+  .card-move-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .card-move-btn {
+    padding: 5px 11px;
+    border-radius: 10px;
+    border: 1.5px solid;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  /* Expanded touch target for checkbox */
+  .card-check {
+    width: 44px;
+    height: 44px;
+    margin-top: -13px;
+    margin-left: -13px;
+  }
+
+  .card-action-delete,
+  .card-action-edit {
+    padding: 8px 18px;
+    font-size: 13px;
+    flex: 1;
+    text-align: center;
+  }
+
+  .card-detail-actions {
+    gap: 8px;
+  }
+}

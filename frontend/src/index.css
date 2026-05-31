@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-today: #60a5fa;
+  --color-week: #a78bfa;
+  --color-month: #fbbf24;
+  --color-later: #94a3b8;
+
+  --bg: #07040f;
+  --surface: rgba(20, 12, 40, 0.72);
+  --border: rgba(139, 92, 246, 0.2);
+  --text: #ede9fe;
+  --text-muted: #9d8ec4;
+  --radius: 10px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.55);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.7);
+}
+
+body {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  /* Eliminate 300ms tap delay on mobile */
+  touch-action: manipulation;
+}
+
+button {
+  font-family: inherit;
+}
+
+input, textarea, select {
+  font-family: inherit;
+}

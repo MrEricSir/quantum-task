@@ -1,0 +1,30 @@
+# Virtual environment — installed fresh in the image
+venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Local database — Cloud Storage volume is used in production
+*.db
+*.db-shm
+*.db-wal
+
+# Test and dev files — not needed in production image
+test_*.py
+conftest.py
+benchmark.py
+benchmark_report.md
+requirements-dev.txt
+
+# Logs
+*.log
+
+# Secrets
+.env
+.env.*
+
+# VCS
+.git
+.gitignore

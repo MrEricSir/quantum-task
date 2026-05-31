@@ -1,0 +1,22 @@
+# GCP deployment configuration
+# Copy this file to .gcp-config and fill in your values.
+# .gcp-config is gitignored — never commit it.
+
+# GCP project ID (find it in the GCP Console or `gcloud projects list`)
+GCP_PROJECT_ID="your-project-id"
+
+# Region for Cloud Run and Artifact Registry
+GCP_REGION="us-central1"
+
+# Cloud Run service name
+GCP_SERVICE_NAME="todo-backend"
+
+# Artifact Registry repository name
+GCP_AR_REPO="todo"
+
+# Gemini API key — get a free key from https://aistudio.google.com
+GEMINI_API_KEY="your-gemini-api-key"
+
+# Firebase Hosting URL — set after first deploy (e.g. https://your-project.web.app)
+# Used as the ALLOWED_ORIGIN for CORS on the backend.
+ALLOWED_ORIGIN="https://your-project.web.app"

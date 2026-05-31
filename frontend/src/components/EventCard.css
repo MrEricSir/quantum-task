@@ -1,0 +1,145 @@
+/* ─────────────────────────────────────────
+   Shared styles for TodoCard & CalendarEventCard
+   ───────────────────────────────────────── */
+
+/* ── Shell ── */
+.event-card {
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-left: 3px solid #6b7280;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow 0.15s, opacity 0.15s;
+  position: relative;
+}
+
+.event-card:hover {
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.3), var(--shadow-md);
+}
+
+.event-card:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+/* ── Header row ── */
+.event-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+/* Left icon (calendar emoji, checkbox wrapper, etc.) — standardised to 18px wide */
+.event-icon {
+  width: 18px;
+  flex-shrink: 0;
+  font-size: 12px;
+  opacity: 0.6;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.event-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.event-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+/* ── Secondary info line (scheduled time / event time) ── */
+/* margin-left = 18px icon + 7px gap */
+.event-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  margin-left: 25px;
+  font-size: 11px;
+  color: var(--color-today);
+  font-weight: 500;
+}
+
+/* ── Expanded detail section ── */
+.event-details {
+  margin-top: 8px;
+  margin-left: 25px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.event-detail-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  align-items: flex-start;
+}
+
+.event-detail-label {
+  font-weight: 500;
+  color: var(--text-muted);
+  min-width: 52px;
+  flex-shrink: 0;
+}
+
+.event-detail-value {
+  color: var(--text);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+/* ── Tags / badges ── */
+.event-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  margin-left: 25px;
+}
+
+.event-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  line-height: 1.4;
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .event-card {
+    padding: 12px 14px;
+  }
+
+  .event-title {
+    font-size: 14px;
+    padding-top: 1px;
+  }
+
+  .event-chevron {
+    padding: 10px 6px;
+    margin-top: -8px;
+    margin-right: -6px;
+  }
+}

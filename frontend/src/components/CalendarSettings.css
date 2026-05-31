@@ -1,0 +1,241 @@
+.cal-settings-modal {
+  max-width: 560px;
+  width: 100%;
+}
+
+.cal-settings-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted, #6b7280);
+  margin: 0 0 0.5rem;
+}
+
+.cal-settings-hint:last-of-type {
+  margin-bottom: 1.25rem;
+}
+
+.cal-loading {
+  color: var(--text-muted, #6b7280);
+  font-size: 0.9rem;
+}
+
+.cal-feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 1.25rem;
+}
+
+.cal-empty {
+  font-size: 0.875rem;
+  color: var(--text-muted, #6b7280);
+}
+
+/* ── Feed card ── */
+.cal-feed-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cal-feed-top-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cal-feed-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.82rem;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.cal-feed-name-input:focus {
+  outline: 2px solid #7c3aed;
+  outline-offset: -1px;
+}
+
+.cal-feed-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cal-feed-tag-pill {
+  padding: 3px 11px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.cal-feed-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.cal-feed-remove:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+/* ── URL input ── */
+.cal-url-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.78rem;
+  color: var(--text);
+  font-family: monospace;
+}
+
+.cal-url-input:focus {
+  outline: 2px solid #7c3aed;
+  outline-offset: -1px;
+}
+
+/* ── Export section ── */
+.cal-export-section {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-bottom: 16px;
+}
+
+.cal-export-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cal-export-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.cal-feed-tag-pill--all {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--surface);
+}
+
+.cal-export-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cal-export-url-input {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted) !important;
+  cursor: text;
+}
+
+.cal-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.cal-copy-btn:hover {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: #7c3aed;
+  color: #a78bfa;
+}
+
+.cal-copy-btn--copied {
+  border-color: #4ade80;
+  color: #4ade80;
+}
+
+/* ── Rotate token inline link ── */
+.cal-rotate-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+  color: #a78bfa;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.cal-rotate-link:hover {
+  color: #7c3aed;
+}
+
+.cal-rotate-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Add feed button ── */
+.cal-add-feed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  width: 100%;
+  justify-content: center;
+}
+
+.cal-add-feed:hover {
+  border-color: #7c3aed;
+  color: #a78bfa;
+  background: rgba(124, 58, 237, 0.06);
+}

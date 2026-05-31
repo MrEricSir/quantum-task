@@ -1,0 +1,457 @@
+.calp {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* ── Toolbar ── */
+.calp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.calp-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.calp-view-btn {
+  padding: 6px 18px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.calp-view-btn + .calp-view-btn {
+  border-left: 1px solid var(--border);
+}
+
+.calp-view-btn--active {
+  background: rgba(124, 58, 237, 0.18);
+  color: #a78bfa;
+}
+
+.calp-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.calp-updated {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.calp-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.calp-refresh:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.calp-refresh--spinning svg {
+  animation: calp-spin 0.9s linear infinite;
+}
+
+@keyframes calp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Today badge ── */
+.calp-today-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.12);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+/* ── List view ── */
+.calp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.calp-day-group {
+  background: rgba(10, 6, 22, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.calp-day-group--today {
+  border-color: rgba(124, 58, 237, 0.35);
+}
+
+.calp-day-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.calp-day-name {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  width: 32px;
+  flex-shrink: 0;
+}
+
+.calp-day-date {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.calp-day-items {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.calp-day-empty {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  opacity: 0.5;
+  padding: 4px 4px;
+}
+
+/* ── Task row ── */
+.calp-task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.calp-task-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.calp-task-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: none;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.calp-task-check:hover {
+  border-color: #7c3aed;
+}
+
+.calp-task-time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.calp-task-title {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calp-task-tags {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.calp-task-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Month view ── */
+.calp-month-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.calp-month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.calp-month-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.calp-month-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.calp-month-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+/* ── Month grid ── */
+.calp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(10, 6, 22, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.calp-grid-dow {
+  padding: 8px 0;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  opacity: 0.7;
+}
+
+.calp-grid-cell {
+  min-height: 80px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 6px 5px 4px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.calp-grid-cell:nth-child(7n) {
+  border-right: none;
+}
+
+/* Remove bottom border for last row */
+.calp-grid-cell:nth-last-child(-n+7) {
+  border-bottom: none;
+}
+
+.calp-grid-cell:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.calp-grid-cell--outside {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.calp-grid-cell--outside:hover {
+  background: none;
+}
+
+.calp-grid-cell--today .calp-grid-day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #7c3aed;
+  color: #fff;
+  font-weight: 700;
+}
+
+.calp-grid-cell--selected:not(.calp-grid-cell--today) {
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.calp-grid-cell--selected:not(.calp-grid-cell--today) .calp-grid-day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid #7c3aed;
+  color: #a78bfa;
+  font-weight: 700;
+}
+
+.calp-grid-day {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calp-grid-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.calp-grid-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.calp-grid-label-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.calp-grid-label-text {
+  font-size: 0.68rem;
+  line-height: 1.2;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.calp-grid-more {
+  font-size: 0.64rem;
+  color: var(--text-muted);
+  line-height: 1.2;
+  padding-left: 10px;
+}
+
+/* ── Selected day panel ── */
+.calp-day-panel {
+  margin-top: 12px;
+  background: rgba(10, 6, 22, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.calp-day-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.calp-day-panel-date {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.calp-day-panel-empty {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  opacity: 0.5;
+  padding: 14px 14px;
+}
+
+.calp-day-panel-items {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .calp {
+    max-width: 100%;
+  }
+
+  .calp-grid-cell {
+    min-height: 58px;
+    padding: 4px 3px 3px;
+  }
+
+  .calp-grid-label-text {
+    font-size: 0.6rem;
+  }
+
+  .calp-grid-more {
+    font-size: 0.58rem;
+    padding-left: 8px;
+  }
+
+  .calp-updated {
+    display: none;
+  }
+}

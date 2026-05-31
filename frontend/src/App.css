@@ -1,0 +1,345 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-bg-video {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -1;
+  opacity: 0.52;
+  pointer-events: none;
+  transform: rotate(180deg);
+}
+
+/* ── Header ── */
+.app-header {
+  background: rgba(7, 4, 15, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: #fff;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.header-inner {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-logo {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.app-header h1 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.header-weather {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+}
+
+.header-weather-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.header-weather-temp {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.75);
+  white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-ghost {
+  background: none;
+  color: rgba(255,255,255,0.7);
+  border: none;
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-size: 24px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.btn-ghost:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.08);
+}
+
+/* ── Notifications toggle in settings dropdown ── */
+.settings-dropdown-notif {
+  display: flex !important;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.notif-toggle {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.15);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.notif-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.5);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.notif-toggle--on {
+  background: #7c3aed;
+}
+
+.notif-toggle--on::after {
+  transform: translateX(12px);
+  background: #fff;
+}
+
+.btn-secondary {
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 7px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-secondary:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+.btn-primary {
+  background: #7c3aed;
+  color: #fff;
+  border: none;
+  padding: 7px 16px;
+  border-radius: 7px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary:hover {
+  background: #6d28d9;
+}
+
+/* ── Mobile tab bar (hidden on desktop) ── */
+.mobile-tabs {
+  display: none;
+}
+
+
+/* ── Settings dropdown (Radix DropdownMenu — rendered in portal) ── */
+.settings-dropdown {
+  background: rgba(14, 8, 28, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  min-width: 190px;
+  padding: 4px;
+  z-index: 200;
+  animation: dropdown-in 0.12s ease;
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.settings-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  outline: none;
+  transition: background 0.12s, color 0.12s;
+}
+
+.settings-dropdown-item:hover,
+.settings-dropdown-item[data-highlighted] {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--text);
+}
+
+.settings-dropdown-item[data-disabled] {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.settings-dropdown-divider {
+  height: 1px;
+  background: rgba(139, 92, 246, 0.15);
+  margin: 4px 0;
+}
+
+/* ── Body layout (sidebar + content) ── */
+.app-body {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  min-height: 0;
+}
+
+/* ── Board ── */
+.board-wrapper {
+  flex: 1;
+  padding: 24px;
+  min-width: 0;
+}
+
+.board {
+  display: flex;
+  gap: 16px;
+  max-width: 1600px;
+  margin: 0 auto;
+  align-items: flex-start;
+}
+
+.loading {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 60px;
+  font-size: 15px;
+}
+
+/* ── Mobile responsive ── */
+@media (max-width: 640px) {
+  .app-header {
+    padding: 0 12px;
+    height: 52px;
+  }
+
+  .app-header h1 {
+    font-size: 15px;
+  }
+
+  .header-logo {
+    width: 24px;
+    height: 24px;
+  }
+
+  .btn-primary {
+    padding: 6px 14px;
+    font-size: 14px;
+  }
+
+  .btn-ghost {
+    padding: 6px 10px;
+    font-size: 28px;
+  }
+
+  .header-weather-temp {
+    display: none;
+  }
+
+  .header-weather-emoji {
+    font-size: 20px;
+  }
+
+  .board-wrapper {
+    padding: 12px;
+    padding-bottom: calc(56px + 12px + env(safe-area-inset-bottom));
+  }
+
+  .board {
+    flex-direction: column;
+    gap: 0;
+    align-items: stretch;
+  }
+
+
+  /* Tab bar */
+  .mobile-tabs {
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  .mobile-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 4px 8px;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.15s, border-color 0.15s;
+    gap: 2px;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .mobile-tab-count {
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
