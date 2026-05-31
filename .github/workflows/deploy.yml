@@ -54,13 +54,6 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Download background video
-        run: |
-          curl -L --fail \
-            "https://github.com/MrEricSir/quantum-task/releases/download/assets/bg.webm" \
-            -o frontend/public/bg.webm \
-          || echo "Warning: bg.webm unavailable — build will proceed without video background"
-
       - name: Install and build
         run: cd frontend && npm ci && npm run build
 
