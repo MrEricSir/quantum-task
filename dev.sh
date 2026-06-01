@@ -289,16 +289,11 @@ LLM_MODEL=gemini-2.0-flash" \
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created $GHA_SA." || echo "    Already exists — skipping."
 
-  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder; do
+  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder roles/iam.serviceAccountUser; do
     gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
       --member="serviceAccount:$GHA_SA" \
       --role="$role" --quiet
   done
-  # Allow CI to deploy as the Cloud Run service account
-  gcloud iam service-accounts add-iam-policy-binding "$CLOUD_RUN_SA" \
-    --member="serviceAccount:$GHA_SA" \
-    --role="roles/iam.serviceAccountUser" \
-    --project "$GCP_PROJECT_ID" --quiet
 
   # ── 8. Generate and save service account key ──────────────────────────────────
   echo "==> Generating GitHub Actions service account key..."
