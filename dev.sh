@@ -6,6 +6,8 @@ PID_FILE="$SCRIPT_DIR/.dev.pids"
 BACKEND_LOG="$SCRIPT_DIR/backend.log"
 FRONTEND_LOG="$SCRIPT_DIR/frontend.log"
 
+# ── Local dev ─────────────────────────────────────────────────────────────────
+
 setup() {
   echo "==> Backend"
   cd "$SCRIPT_DIR/backend"
@@ -129,41 +131,7 @@ benchmark() {
   "$SCRIPT_DIR/backend/venv/bin/python" benchmark.py "$@"
 }
 
-# ── GCP helpers ───────────────────────────────────────────────────────────────
-
-_ensure_docker() {
-  if docker info &>/dev/null; then
-    return 0
-  fi
-
-  echo "==> Docker daemon is not running."
-
-  if command -v colima &>/dev/null; then
-    echo "    Starting Colima..."
-    colima start
-    local retries=15
-    while (( retries-- > 0 )); do
-      if docker info &>/dev/null; then
-        echo "    Colima is ready."
-        return 0
-      fi
-      sleep 2
-    done
-    echo "ERROR: Colima started but Docker daemon is still unreachable."
-    exit 1
-  fi
-
-  if [[ -d "/Applications/Docker.app" ]]; then
-    echo "ERROR: Docker Desktop is installed but not running."
-    echo "  Open Docker Desktop and wait for it to start, then re-run this command."
-    exit 1
-  fi
-
-  echo "ERROR: No Docker runtime found. Install one of:"
-  echo "  Colima (lightweight): brew install colima && brew install docker"
-  echo "  Docker Desktop:       https://www.docker.com/products/docker-desktop"
-  exit 1
-}
+# ── GCP shared helpers ────────────────────────────────────────────────────────
 
 _check_gcp_auth() {
   if ! gcloud auth print-access-token --quiet &>/dev/null; then
@@ -174,7 +142,7 @@ _check_gcp_auth() {
 }
 
 _check_firebase_auth() {
-  if ! firebase projects:list --json 2>/dev/null | grep -q '"id"'; then
+  if ! firebase projects:list --json 2>/dev/null | grep -q '"status"'; then
     echo "ERROR: Not authenticated with Firebase."
     echo "  Run: firebase login"
     exit 1
@@ -205,24 +173,61 @@ _load_gcp_config() {
     for v in "${missing[@]}"; do echo "  $v"; done
     exit 1
   fi
+
+  gcloud config set project "$GCP_PROJECT_ID" --quiet
 }
 
-gcp_setup() {
+# Check that required CLIs are installed and gcloud is authenticated.
+# Pass "firebase" as argument to also verify Firebase auth.
+_gcp_prereqs() {
   echo "==> Checking prerequisites..."
-  for cmd in gcloud firebase docker; do
+  for cmd in gcloud firebase; do
     if ! command -v "$cmd" &>/dev/null; then
       case "$cmd" in
         gcloud)   echo "  gcloud not found. Install: brew install google-cloud-sdk" ;;
         firebase) echo "  firebase not found. Install: npm install -g firebase-tools" ;;
-        docker)   echo "  docker not found. Install: brew install colima && brew install docker" ;;
       esac
       exit 1
     fi
   done
-
-  _ensure_docker
   _check_gcp_auth
-  _check_firebase_auth
+  [[ "${1:-}" == "firebase" ]] && _check_firebase_auth
+}
+
+# Build the backend image using Cloud Build (runs on native linux/amd64 in GCP,
+# no local Docker or architecture concerns) and tag the result.
+# Primary tag is built directly; any extra tags are applied via artifact tagging.
+# Usage: _build_and_push PRIMARY_TAG [EXTRA_TAG ...]
+# Requires $IMAGE and $GCP_PROJECT_ID to be set.
+_build_and_push() {
+  local primary="$1"
+
+  echo "==> Building and pushing Docker image via Cloud Build ($primary)..."
+  gcloud builds submit "$SCRIPT_DIR/backend" \
+    --tag "$IMAGE:$primary" \
+    --project "$GCP_PROJECT_ID" \
+    --quiet
+
+  for t in "${@:2}"; do
+    gcloud artifacts docker tags add \
+      "$IMAGE:$primary" "$IMAGE:$t" \
+      --project "$GCP_PROJECT_ID" --quiet
+  done
+}
+
+# Build the frontend and deploy to Firebase Hosting.
+# Requires $GCP_PROJECT_ID to be set.
+_deploy_frontend() {
+  echo "==> Building frontend..."
+  cd "$SCRIPT_DIR/frontend" && npm ci && npm run build
+  echo "==> Deploying frontend to Firebase Hosting..."
+  firebase deploy --only hosting --project "$GCP_PROJECT_ID"
+}
+
+# ── GCP commands ──────────────────────────────────────────────────────────────
+
+gcp_setup() {
+  _gcp_prereqs firebase
   _load_gcp_config
 
   local IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_AR_REPO/backend"
@@ -238,13 +243,12 @@ gcp_setup() {
   echo "    Bucket  : gs://$GCS_BUCKET"
   echo ""
 
-  gcloud config set project "$GCP_PROJECT_ID" --quiet
-
   # ── 1. Enable required APIs ──────────────────────────────────────────────────
   echo "==> Enabling GCP APIs (this may take a minute on a new project)..."
   gcloud services enable \
     run.googleapis.com \
     artifactregistry.googleapis.com \
+    cloudbuild.googleapis.com \
     storage.googleapis.com \
     iam.googleapis.com \
     cloudresourcemanager.googleapis.com \
@@ -278,14 +282,7 @@ gcp_setup() {
     --role="roles/storage.objectAdmin" --quiet
 
   # ── 5. Build and push the initial Docker image ────────────────────────────────
-  echo "==> Authenticating Docker with Artifact Registry..."
-  gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-
-  echo "==> Building Docker image..."
-  docker build -t "$IMAGE:latest" "$SCRIPT_DIR/backend"
-
-  echo "==> Pushing to Artifact Registry..."
-  docker push "$IMAGE:latest"
+  _build_and_push latest
 
   # ── 6. Deploy to Cloud Run ────────────────────────────────────────────────────
   echo "==> Deploying to Cloud Run (first time)..."
@@ -313,10 +310,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
 
   # ── 7. Frontend (Firebase) ────────────────────────────────────────────────────
   if [[ -f "$SCRIPT_DIR/.firebaserc" ]]; then
-    echo "==> Building frontend..."
-    cd "$SCRIPT_DIR/frontend" && npm run build
-    echo "==> Deploying frontend to Firebase Hosting..."
-    firebase deploy --only hosting --project "$GCP_PROJECT_ID"
+    _deploy_frontend
   else
     echo ""
     echo "    Firebase Hosting is not yet initialized. To set it up:"
@@ -364,6 +358,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
 
   # ── 10. Generate and save service account keys ───────────────────────────────
   echo "==> Generating service account keys..."
+  rm -f "$SCRIPT_DIR/.github-actions-sa-key.json" "$SCRIPT_DIR/.firebase-sa-key.json"
   gcloud iam service-accounts keys create "$SCRIPT_DIR/.github-actions-sa-key.json" \
     --iam-account "$GHA_SA" --project "$GCP_PROJECT_ID"
   gcloud iam service-accounts keys create "$SCRIPT_DIR/.firebase-sa-key.json" \
@@ -394,28 +389,14 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
 }
 
 gcp_deploy() {
-  echo "==> Checking prerequisites..."
-  for cmd in gcloud firebase docker; do
-    command -v "$cmd" &>/dev/null || { echo "  $cmd not found. Run './dev.sh gcp-setup' first."; exit 1; }
-  done
-
-  _ensure_docker
-  _check_gcp_auth
+  _gcp_prereqs
   _load_gcp_config
 
   local TAG
   TAG="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo 'manual')"
   local IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_AR_REPO/backend"
 
-  gcloud config set project "$GCP_PROJECT_ID" --quiet
-  gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-
-  echo "==> Building Docker image ($TAG)..."
-  docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$SCRIPT_DIR/backend"
-
-  echo "==> Pushing to Artifact Registry..."
-  docker push "$IMAGE:$TAG"
-  docker push "$IMAGE:latest"
+  _build_and_push "$TAG" latest
 
   echo "==> Deploying backend to Cloud Run..."
   gcloud run deploy "$GCP_SERVICE_NAME" \
@@ -425,11 +406,7 @@ gcp_deploy() {
     --project "$GCP_PROJECT_ID" \
     --quiet
 
-  echo "==> Building frontend..."
-  cd "$SCRIPT_DIR/frontend" && npm run build
-
-  echo "==> Deploying frontend to Firebase Hosting..."
-  firebase deploy --only hosting --project "$GCP_PROJECT_ID"
+  _deploy_frontend
 
   echo ""
   echo "==> Deployment complete!"
@@ -439,6 +416,7 @@ gcp_deploy() {
 }
 
 gcp_update_env() {
+  _check_gcp_auth
   _load_gcp_config
   echo "==> Updating Cloud Run environment variables..."
   gcloud run services update "$GCP_SERVICE_NAME" \
@@ -450,6 +428,8 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     --quiet
   echo "    Done."
 }
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
   setup)          setup ;;
