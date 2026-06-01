@@ -289,7 +289,7 @@ LLM_MODEL=gemini-2.0-flash" \
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created $GHA_SA." || echo "    Already exists — skipping."
 
-  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder roles/iam.serviceAccountUser; do
+  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder roles/iam.serviceAccountUser roles/logging.viewer; do
     gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
       --member="serviceAccount:$GHA_SA" \
       --role="$role" --quiet
