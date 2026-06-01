@@ -80,15 +80,18 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build and push via Cloud Build
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
         run: |
-          gcloud builds submit . \
+          docker build \
+            --platform linux/amd64 \
             --tag "$IMAGE:${{ github.sha }}" \
-            --project ${{ vars.GCP_PROJECT_ID }} \
-            --quiet
-          gcloud artifacts docker tags add \
-            "$IMAGE:${{ github.sha }}" "$IMAGE:latest" \
-            --project ${{ vars.GCP_PROJECT_ID }} --quiet
+            --tag "$IMAGE:latest" \
+            .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
 
       - name: Deploy to Cloud Run
         run: |
