@@ -261,6 +261,14 @@ gcp_setup() {
   firebase projects:addfirebase "$GCP_PROJECT_ID" --no-input 2>/dev/null \
     && echo "    Firebase added." || echo "    Firebase already configured — skipping."
 
+  echo "==> Creating Firebase Hosting site..."
+  if firebase hosting:sites:list --project "$GCP_PROJECT_ID" 2>/dev/null | grep -q "$GCP_PROJECT_ID"; then
+    echo "    Hosting site already exists — skipping."
+  else
+    firebase hosting:sites:create "$GCP_PROJECT_ID" --project "$GCP_PROJECT_ID"
+    echo "    Hosting site created."
+  fi
+
   # ── 3. Artifact Registry ─────────────────────────────────────────────────────
   echo "==> Creating Artifact Registry repository..."
   gcloud artifacts repositories create "$GCP_AR_REPO" \
