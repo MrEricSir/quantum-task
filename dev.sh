@@ -252,9 +252,16 @@ gcp_setup() {
     storage.googleapis.com \
     iam.googleapis.com \
     cloudresourcemanager.googleapis.com \
+    firebase.googleapis.com \
+    firebasehosting.googleapis.com \
     --project "$GCP_PROJECT_ID" --quiet
 
-  # ── 2. Artifact Registry ─────────────────────────────────────────────────────
+  # ── 2. Add Firebase to the GCP project (idempotent) ──────────────────────────
+  echo "==> Adding Firebase to project..."
+  firebase projects:addfirebase "$GCP_PROJECT_ID" --no-input 2>/dev/null \
+    && echo "    Firebase added." || echo "    Firebase already configured — skipping."
+
+  # ── 3. Artifact Registry ─────────────────────────────────────────────────────
   echo "==> Creating Artifact Registry repository..."
   gcloud artifacts repositories create "$GCP_AR_REPO" \
     --repository-format=docker \
@@ -262,14 +269,14 @@ gcp_setup() {
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created." || echo "    Already exists — skipping."
 
-  # ── 3. Cloud Storage bucket for SQLite ───────────────────────────────────────
+  # ── 4. Cloud Storage bucket for SQLite ───────────────────────────────────────
   echo "==> Creating Cloud Storage bucket..."
   gcloud storage buckets create "gs://$GCS_BUCKET" \
     --location="$GCP_REGION" \
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created gs://$GCS_BUCKET." || echo "    Already exists — skipping."
 
-  # ── 4. Cloud Run service account ─────────────────────────────────────────────
+  # ── 5. Cloud Run service account ─────────────────────────────────────────────
   echo "==> Creating Cloud Run service account..."
   gcloud iam service-accounts create cloud-run \
     --display-name="Cloud Run Backend" \
@@ -281,10 +288,10 @@ gcp_setup() {
     --member="serviceAccount:$CLOUD_RUN_SA" \
     --role="roles/storage.objectAdmin" --quiet
 
-  # ── 5. Build and push the initial Docker image ────────────────────────────────
+  # ── 6. Build and push the initial Docker image ────────────────────────────────
   _build_and_push latest
 
-  # ── 6. Deploy to Cloud Run ────────────────────────────────────────────────────
+  # ── 7. Deploy to Cloud Run ────────────────────────────────────────────────────
   echo "==> Deploying to Cloud Run (first time)..."
   gcloud run deploy "$GCP_SERVICE_NAME" \
     --image "$IMAGE:latest" \
@@ -308,7 +315,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
     --format 'value(status.url)'
 
-  # ── 7. Frontend (Firebase) ────────────────────────────────────────────────────
+  # ── 8. Frontend (Firebase) ────────────────────────────────────────────────────
   if [[ -f "$SCRIPT_DIR/.firebaserc" ]]; then
     _deploy_frontend
   else
@@ -323,7 +330,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     echo "      3. ./dev.sh gcp-deploy   (to push the first frontend build)"
   fi
 
-  # ── 8. GitHub Actions service account ────────────────────────────────────────
+  # ── 9. GitHub Actions service account ────────────────────────────────────────
   echo ""
   echo "==> Creating GitHub Actions service account..."
   gcloud iam service-accounts create github-actions \
@@ -342,7 +349,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     --role="roles/iam.serviceAccountUser" \
     --project "$GCP_PROJECT_ID" --quiet
 
-  # ── 9. Firebase deploy service account ───────────────────────────────────────
+  # ── 10. Firebase deploy service account ──────────────────────────────────────
   echo "==> Creating Firebase deploy service account..."
   gcloud iam service-accounts create firebase-deploy \
     --display-name="Firebase Hosting Deploy" \
@@ -356,7 +363,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     --member="serviceAccount:$FIREBASE_SA" \
     --role="roles/serviceusage.serviceUsageConsumer" --quiet
 
-  # ── 10. Generate and save service account keys ───────────────────────────────
+  # ── 11. Generate and save service account keys ───────────────────────────────
   echo "==> Generating service account keys..."
   rm -f "$SCRIPT_DIR/.github-actions-sa-key.json" "$SCRIPT_DIR/.firebase-sa-key.json"
   gcloud iam service-accounts keys create "$SCRIPT_DIR/.github-actions-sa-key.json" \
