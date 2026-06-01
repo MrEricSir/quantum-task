@@ -1,0 +1,48 @@
+# Python
+backend/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Database
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+
+# Test / dev
+backend/test_*.py
+backend/conftest.py
+backend/benchmark.py
+backend/benchmark_report.md
+backend/requirements-dev.txt
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Logs & runtime
+*.log
+backend.log
+frontend.log
+.dev.pids
+
+# Secrets & local config
+.env
+.env.*
+backend/credentials.json
+.gcp-config
+.github-actions-sa-key.json
+.firebase-sa-key.json
+
+# Editor / OS
+.DS_Store
+.claude/
+
+# Git
+.git
+.gitignore
+.github/
+
+# Docs
+*.md
+deploy-gcp.md

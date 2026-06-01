@@ -20,6 +20,7 @@ import gcal as gcal_lib
 from database import SessionLocal, engine
 from model_plugins import get_plugin
 from fastapi.responses import Response as FastAPIResponse
+from fastapi.staticfiles import StaticFiles
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_API_KEY  = os.getenv("LLM_API_KEY", "ollama")
@@ -1071,3 +1072,10 @@ def delete_todo(todo_id: int, db: Session = Depends(get_db)):
     db.delete(db_todo)
     db.commit()
     return {"ok": True}
+
+
+# Serve the bundled frontend for all non-API routes.
+# Must be mounted last so API routes take precedence.
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="frontend")

@@ -141,14 +141,6 @@ _check_gcp_auth() {
   fi
 }
 
-_check_firebase_auth() {
-  if ! firebase projects:list --json 2>/dev/null | grep -q '"status"'; then
-    echo "ERROR: Not authenticated with Firebase."
-    echo "  Run: firebase login"
-    exit 1
-  fi
-}
-
 _load_gcp_config() {
   local config="$SCRIPT_DIR/.gcp-config"
   if [[ ! -f "$config" ]]; then
@@ -162,7 +154,7 @@ _load_gcp_config() {
 
   # Validate required fields
   local missing=()
-  for var in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_AR_REPO GEMINI_API_KEY ALLOWED_ORIGIN; do
+  for var in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_AR_REPO GEMINI_API_KEY; do
     local val="${!var:-}"
     if [[ -z "$val" || "$val" == *"your-"* ]]; then
       missing+=("$var")
@@ -177,33 +169,24 @@ _load_gcp_config() {
   gcloud config set project "$GCP_PROJECT_ID" --quiet
 }
 
-# Check that required CLIs are installed and gcloud is authenticated.
-# Pass "firebase" as argument to also verify Firebase auth.
 _gcp_prereqs() {
   echo "==> Checking prerequisites..."
-  for cmd in gcloud firebase; do
-    if ! command -v "$cmd" &>/dev/null; then
-      case "$cmd" in
-        gcloud)   echo "  gcloud not found. Install: brew install google-cloud-sdk" ;;
-        firebase) echo "  firebase not found. Install: npm install -g firebase-tools" ;;
-      esac
-      exit 1
-    fi
-  done
+  if ! command -v gcloud &>/dev/null; then
+    echo "  gcloud not found. Install: brew install google-cloud-sdk"
+    exit 1
+  fi
   _check_gcp_auth
-  [[ "${1:-}" == "firebase" ]] && _check_firebase_auth
 }
 
-# Build the backend image using Cloud Build (runs on native linux/amd64 in GCP,
-# no local Docker or architecture concerns) and tag the result.
-# Primary tag is built directly; any extra tags are applied via artifact tagging.
+# Build the combined frontend+backend image using Cloud Build (native linux/amd64)
+# and push all given tags. Primary tag is built; extra tags are applied cheaply.
 # Usage: _build_and_push PRIMARY_TAG [EXTRA_TAG ...]
 # Requires $IMAGE and $GCP_PROJECT_ID to be set.
 _build_and_push() {
   local primary="$1"
 
-  echo "==> Building and pushing Docker image via Cloud Build ($primary)..."
-  gcloud builds submit "$SCRIPT_DIR/backend" \
+  echo "==> Building and pushing image via Cloud Build ($primary)..."
+  gcloud builds submit "$SCRIPT_DIR" \
     --tag "$IMAGE:$primary" \
     --project "$GCP_PROJECT_ID" \
     --quiet
@@ -215,26 +198,16 @@ _build_and_push() {
   done
 }
 
-# Build the frontend and deploy to Firebase Hosting.
-# Requires $GCP_PROJECT_ID to be set.
-_deploy_frontend() {
-  echo "==> Building frontend..."
-  cd "$SCRIPT_DIR/frontend" && npm ci && npm run build
-  echo "==> Deploying frontend to Firebase Hosting..."
-  firebase deploy --only hosting --project "$GCP_PROJECT_ID"
-}
-
 # ── GCP commands ──────────────────────────────────────────────────────────────
 
 gcp_setup() {
-  _gcp_prereqs firebase
+  _gcp_prereqs
   _load_gcp_config
 
   local IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_AR_REPO/backend"
   local GCS_BUCKET="${GCP_PROJECT_ID}-todo-db"
   local CLOUD_RUN_SA="cloud-run@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
   local GHA_SA="github-actions@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
-  local FIREBASE_SA="firebase-deploy@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 
   echo ""
   echo "==> Project : $GCP_PROJECT_ID"
@@ -252,24 +225,9 @@ gcp_setup() {
     storage.googleapis.com \
     iam.googleapis.com \
     cloudresourcemanager.googleapis.com \
-    firebase.googleapis.com \
-    firebasehosting.googleapis.com \
     --project "$GCP_PROJECT_ID" --quiet
 
-  # ── 2. Add Firebase to the GCP project (idempotent) ──────────────────────────
-  echo "==> Adding Firebase to project..."
-  firebase projects:addfirebase "$GCP_PROJECT_ID" --no-input 2>/dev/null \
-    && echo "    Firebase added." || echo "    Firebase already configured — skipping."
-
-  echo "==> Creating Firebase Hosting site..."
-  if firebase hosting:sites:list --project "$GCP_PROJECT_ID" 2>/dev/null | grep -q "$GCP_PROJECT_ID"; then
-    echo "    Hosting site already exists — skipping."
-  else
-    firebase hosting:sites:create "$GCP_PROJECT_ID" --project "$GCP_PROJECT_ID"
-    echo "    Hosting site created."
-  fi
-
-  # ── 3. Artifact Registry ─────────────────────────────────────────────────────
+  # ── 2. Artifact Registry ─────────────────────────────────────────────────────
   echo "==> Creating Artifact Registry repository..."
   gcloud artifacts repositories create "$GCP_AR_REPO" \
     --repository-format=docker \
@@ -277,14 +235,14 @@ gcp_setup() {
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created." || echo "    Already exists — skipping."
 
-  # ── 4. Cloud Storage bucket for SQLite ───────────────────────────────────────
+  # ── 3. Cloud Storage bucket for SQLite ───────────────────────────────────────
   echo "==> Creating Cloud Storage bucket..."
   gcloud storage buckets create "gs://$GCS_BUCKET" \
     --location="$GCP_REGION" \
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created gs://$GCS_BUCKET." || echo "    Already exists — skipping."
 
-  # ── 5. Cloud Run service account ─────────────────────────────────────────────
+  # ── 4. Cloud Run service account ─────────────────────────────────────────────
   echo "==> Creating Cloud Run service account..."
   gcloud iam service-accounts create cloud-run \
     --display-name="Cloud Run Backend" \
@@ -296,10 +254,10 @@ gcp_setup() {
     --member="serviceAccount:$CLOUD_RUN_SA" \
     --role="roles/storage.objectAdmin" --quiet
 
-  # ── 6. Build and push the initial Docker image ────────────────────────────────
+  # ── 5. Build and push image ───────────────────────────────────────────────────
   _build_and_push latest
 
-  # ── 7. Deploy to Cloud Run ────────────────────────────────────────────────────
+  # ── 6. Deploy to Cloud Run ────────────────────────────────────────────────────
   echo "==> Deploying to Cloud Run (first time)..."
   gcloud run deploy "$GCP_SERVICE_NAME" \
     --image "$IMAGE:latest" \
@@ -313,32 +271,17 @@ gcp_setup() {
 DATABASE_URL=sqlite:////app/data/todos.db,\
 LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/,\
 LLM_API_KEY=$GEMINI_API_KEY,\
-LLM_MODEL=gemini-2.0-flash,\
-ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
+LLM_MODEL=gemini-2.0-flash" \
     --project "$GCP_PROJECT_ID" \
     --quiet
 
-  echo "    Backend deployed:"
+  echo ""
+  echo "==> Deployed! Service URL:"
   gcloud run services describe "$GCP_SERVICE_NAME" \
     --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
     --format 'value(status.url)'
 
-  # ── 8. Frontend (Firebase) ────────────────────────────────────────────────────
-  if [[ -f "$SCRIPT_DIR/.firebaserc" ]]; then
-    _deploy_frontend
-  else
-    echo ""
-    echo "    Firebase Hosting is not yet initialized. To set it up:"
-    echo "      1. firebase login"
-    echo "      2. firebase init hosting"
-    echo "         - Use existing project: $GCP_PROJECT_ID"
-    echo "         - Public directory: frontend/dist"
-    echo "         - Configure as SPA: yes"
-    echo "         - Overwrite index.html: no"
-    echo "      3. ./dev.sh gcp-deploy   (to push the first frontend build)"
-  fi
-
-  # ── 9. GitHub Actions service account ────────────────────────────────────────
+  # ── 7. GitHub Actions service account ────────────────────────────────────────
   echo ""
   echo "==> Creating GitHub Actions service account..."
   gcloud iam service-accounts create github-actions \
@@ -346,7 +289,7 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created $GHA_SA." || echo "    Already exists — skipping."
 
-  for role in roles/run.admin roles/artifactregistry.writer; do
+  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder; do
     gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
       --member="serviceAccount:$GHA_SA" \
       --role="$role" --quiet
@@ -357,27 +300,11 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
     --role="roles/iam.serviceAccountUser" \
     --project "$GCP_PROJECT_ID" --quiet
 
-  # ── 10. Firebase deploy service account ──────────────────────────────────────
-  echo "==> Creating Firebase deploy service account..."
-  gcloud iam service-accounts create firebase-deploy \
-    --display-name="Firebase Hosting Deploy" \
-    --project "$GCP_PROJECT_ID" 2>/dev/null \
-    && echo "    Created $FIREBASE_SA." || echo "    Already exists — skipping."
-
-  gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-    --member="serviceAccount:$FIREBASE_SA" \
-    --role="roles/firebasehosting.admin" --quiet
-  gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-    --member="serviceAccount:$FIREBASE_SA" \
-    --role="roles/serviceusage.serviceUsageConsumer" --quiet
-
-  # ── 11. Generate and save service account keys ───────────────────────────────
-  echo "==> Generating service account keys..."
-  rm -f "$SCRIPT_DIR/.github-actions-sa-key.json" "$SCRIPT_DIR/.firebase-sa-key.json"
+  # ── 8. Generate and save service account key ──────────────────────────────────
+  echo "==> Generating GitHub Actions service account key..."
+  rm -f "$SCRIPT_DIR/.github-actions-sa-key.json"
   gcloud iam service-accounts keys create "$SCRIPT_DIR/.github-actions-sa-key.json" \
     --iam-account "$GHA_SA" --project "$GCP_PROJECT_ID"
-  gcloud iam service-accounts keys create "$SCRIPT_DIR/.firebase-sa-key.json" \
-    --iam-account "$FIREBASE_SA" --project "$GCP_PROJECT_ID"
 
   # ── Summary ───────────────────────────────────────────────────────────────────
   echo ""
@@ -390,15 +317,12 @@ ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
   echo ""
   echo "  SECRETS (sensitive — use 'New repository secret'):"
   echo "    GCP_SA_KEY              $(cat "$SCRIPT_DIR/.github-actions-sa-key.json" | tr -d '\n' | head -c 60)..."
-  echo "    FIREBASE_SERVICE_ACCOUNT $(cat "$SCRIPT_DIR/.firebase-sa-key.json" | tr -d '\n' | head -c 60)..."
   echo "    GEMINI_API_KEY          $GEMINI_API_KEY"
   echo ""
   echo "  VARIABLES (non-sensitive — use 'New repository variable'):"
   echo "    GCP_PROJECT_ID          $GCP_PROJECT_ID"
   echo ""
-  echo "  Key files are saved (gitignored):"
-  echo "    .github-actions-sa-key.json"
-  echo "    .firebase-sa-key.json"
+  echo "  Key file saved (gitignored): .github-actions-sa-key.json"
   echo ""
   echo "  Once secrets are set, push to main to trigger automatic deployment."
 }
@@ -413,15 +337,13 @@ gcp_deploy() {
 
   _build_and_push "$TAG" latest
 
-  echo "==> Deploying backend to Cloud Run..."
+  echo "==> Deploying to Cloud Run..."
   gcloud run deploy "$GCP_SERVICE_NAME" \
     --image "$IMAGE:$TAG" \
     --region "$GCP_REGION" \
     --platform managed \
     --project "$GCP_PROJECT_ID" \
     --quiet
-
-  _deploy_frontend
 
   echo ""
   echo "==> Deployment complete!"
@@ -438,8 +360,7 @@ gcp_update_env() {
     --region "$GCP_REGION" \
     --project "$GCP_PROJECT_ID" \
     --update-env-vars "\
-LLM_API_KEY=$GEMINI_API_KEY,\
-ALLOWED_ORIGIN=$ALLOWED_ORIGIN" \
+LLM_API_KEY=$GEMINI_API_KEY" \
     --quiet
   echo "    Done."
 }
@@ -471,7 +392,7 @@ case "${1:-}" in
     echo ""
     echo "GCP deployment:"
     echo "  gcp-setup       One-time GCP infrastructure setup + initial deploy"
-    echo "  gcp-deploy      Build, push, and deploy backend + frontend manually"
+    echo "  gcp-deploy      Build and deploy manually"
     echo "  gcp-update-env  Push updated env vars from .gcp-config to Cloud Run"
     exit 1
     ;;

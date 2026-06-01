@@ -17,6 +17,3 @@ GCP_AR_REPO="todo"
 # Gemini API key — get a free key from https://aistudio.google.com
 GEMINI_API_KEY="your-gemini-api-key"
 
-# Firebase Hosting URL — set after first deploy (e.g. https://your-project.web.app)
-# Used as the ALLOWED_ORIGIN for CORS on the backend.
-ALLOWED_ORIGIN="https://your-project.web.app"
