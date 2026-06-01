@@ -44,25 +44,29 @@ with engine.connect() as _conn:
         pass  # not on v1 schema
 
 with engine.connect() as _conn:
-    try:
-        _conn.execute(text("SELECT name FROM calendar_mappings LIMIT 1"))
-    except Exception:
-        # name column missing — recreate table without the unique constraint
-        _conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS calendar_mappings_new (
-                id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                ical_url TEXT NOT NULL,
-                name    TEXT NOT NULL DEFAULT ''
-            )
-        """))
-        _conn.execute(text("""
-            INSERT INTO calendar_mappings_new (id, tag_id, ical_url, name)
-            SELECT id, tag_id, ical_url, '' FROM calendar_mappings
-        """))
-        _conn.execute(text("DROP TABLE calendar_mappings"))
-        _conn.execute(text("ALTER TABLE calendar_mappings_new RENAME TO calendar_mappings"))
-        _conn.commit()
+    table_exists = _conn.execute(text(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_mappings'"
+    )).fetchone()
+    if table_exists:
+        try:
+            _conn.execute(text("SELECT name FROM calendar_mappings LIMIT 1"))
+        except Exception:
+            # name column missing — recreate table without the unique constraint
+            _conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS calendar_mappings_new (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                    ical_url TEXT NOT NULL,
+                    name    TEXT NOT NULL DEFAULT ''
+                )
+            """))
+            _conn.execute(text("""
+                INSERT INTO calendar_mappings_new (id, tag_id, ical_url, name)
+                SELECT id, tag_id, ical_url, '' FROM calendar_mappings
+            """))
+            _conn.execute(text("DROP TABLE calendar_mappings"))
+            _conn.execute(text("ALTER TABLE calendar_mappings_new RENAME TO calendar_mappings"))
+            _conn.commit()
 
 models.Base.metadata.create_all(bind=engine)
 

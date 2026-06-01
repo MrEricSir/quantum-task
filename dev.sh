@@ -131,6 +131,56 @@ benchmark() {
 
 # ── GCP helpers ───────────────────────────────────────────────────────────────
 
+_ensure_docker() {
+  if docker info &>/dev/null; then
+    return 0
+  fi
+
+  echo "==> Docker daemon is not running."
+
+  if command -v colima &>/dev/null; then
+    echo "    Starting Colima..."
+    colima start
+    local retries=15
+    while (( retries-- > 0 )); do
+      if docker info &>/dev/null; then
+        echo "    Colima is ready."
+        return 0
+      fi
+      sleep 2
+    done
+    echo "ERROR: Colima started but Docker daemon is still unreachable."
+    exit 1
+  fi
+
+  if [[ -d "/Applications/Docker.app" ]]; then
+    echo "ERROR: Docker Desktop is installed but not running."
+    echo "  Open Docker Desktop and wait for it to start, then re-run this command."
+    exit 1
+  fi
+
+  echo "ERROR: No Docker runtime found. Install one of:"
+  echo "  Colima (lightweight): brew install colima && brew install docker"
+  echo "  Docker Desktop:       https://www.docker.com/products/docker-desktop"
+  exit 1
+}
+
+_check_gcp_auth() {
+  if ! gcloud auth print-access-token --quiet &>/dev/null; then
+    echo "ERROR: Not authenticated with gcloud."
+    echo "  Run: gcloud auth login"
+    exit 1
+  fi
+}
+
+_check_firebase_auth() {
+  if ! firebase projects:list --json 2>/dev/null | grep -q '"id"'; then
+    echo "ERROR: Not authenticated with Firebase."
+    echo "  Run: firebase login"
+    exit 1
+  fi
+}
+
 _load_gcp_config() {
   local config="$SCRIPT_DIR/.gcp-config"
   if [[ ! -f "$config" ]]; then
@@ -164,12 +214,15 @@ gcp_setup() {
       case "$cmd" in
         gcloud)   echo "  gcloud not found. Install: brew install google-cloud-sdk" ;;
         firebase) echo "  firebase not found. Install: npm install -g firebase-tools" ;;
-        docker)   echo "  docker not found. Install Docker Desktop from https://docker.com" ;;
+        docker)   echo "  docker not found. Install: brew install colima && brew install docker" ;;
       esac
       exit 1
     fi
   done
 
+  _ensure_docker
+  _check_gcp_auth
+  _check_firebase_auth
   _load_gcp_config
 
   local IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_AR_REPO/backend"
@@ -346,6 +399,8 @@ gcp_deploy() {
     command -v "$cmd" &>/dev/null || { echo "  $cmd not found. Run './dev.sh gcp-setup' first."; exit 1; }
   done
 
+  _ensure_docker
+  _check_gcp_auth
   _load_gcp_config
 
   local TAG
