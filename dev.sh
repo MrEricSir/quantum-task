@@ -154,7 +154,7 @@ _load_gcp_config() {
 
   # Validate required fields
   local missing=()
-  for var in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_AR_REPO GEMINI_API_KEY; do
+  for var in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_AR_REPO GEMINI_API_KEY AUTH_PASSWORD; do
     local val="${!var:-}"
     if [[ -z "$val" || "$val" == *"your-"* ]]; then
       missing+=("$var")
@@ -271,7 +271,8 @@ gcp_setup() {
 DATABASE_URL=sqlite:////app/data/todos.db,\
 LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/,\
 LLM_API_KEY=$GEMINI_API_KEY,\
-LLM_MODEL=gemini-2.0-flash" \
+LLM_MODEL=gemini-2.0-flash,\
+AUTH_PASSWORD=$AUTH_PASSWORD" \
     --project "$GCP_PROJECT_ID" \
     --quiet
 
@@ -355,7 +356,8 @@ gcp_update_env() {
     --region "$GCP_REGION" \
     --project "$GCP_PROJECT_ID" \
     --update-env-vars "\
-LLM_API_KEY=$GEMINI_API_KEY" \
+LLM_API_KEY=$GEMINI_API_KEY,\
+AUTH_PASSWORD=$AUTH_PASSWORD" \
     --quiet
   echo "    Done."
 }

@@ -17,3 +17,6 @@ GCP_AR_REPO="todo"
 # Gemini API key — get a free key from https://aistudio.google.com
 GEMINI_API_KEY="your-gemini-api-key"
 
+# Password for the single-user login gate (leave empty to disable auth)
+AUTH_PASSWORD="your-password"
+

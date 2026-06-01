@@ -1,9 +1,11 @@
 import os
+import hmac as _hmac
 import secrets
 import requests as http_requests
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text, or_
 from sqlalchemy.orm import Session
 from typing import List
@@ -12,6 +14,7 @@ from datetime import datetime, timezone, date, timedelta
 import hashlib
 import json
 from openai import OpenAI
+from pydantic import BaseModel
 
 import icalendar
 import models
@@ -26,6 +29,30 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_API_KEY  = os.getenv("LLM_API_KEY", "ollama")
 LLM_MODEL    = os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "llama3.2"))
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
+
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+_SESSION_TOKEN = (
+    _hmac.new(AUTH_PASSWORD.encode(), b"session-v1", "sha256").hexdigest()
+    if AUTH_PASSWORD else ""
+)
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not AUTH_PASSWORD:
+            return await call_next(request)
+        path = request.url.path
+        # Pass through: auth endpoints, calendar export (has its own token), non-API paths
+        if (
+            not path.startswith("/api/")
+            or path.startswith("/api/auth/")
+            or path == "/api/calendar/export.ics"
+        ):
+            return await call_next(request)
+        token = request.cookies.get("session", "")
+        if not _hmac.compare_digest(token, _SESSION_TOKEN):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
 
 
 def llm_client() -> OpenAI:
@@ -110,6 +137,7 @@ with SessionLocal() as _db:
 # ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Todo Dashboard API")
 
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[ALLOWED_ORIGIN],
@@ -125,6 +153,41 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+class _LoginBody(BaseModel):
+    password: str
+
+
+@app.get("/api/auth/check")
+def auth_check(request: Request):
+    if not AUTH_PASSWORD:
+        return {"authed": True, "enabled": False}
+    token = request.cookies.get("session", "")
+    return {"authed": _hmac.compare_digest(token, _SESSION_TOKEN), "enabled": True}
+
+
+@app.post("/api/auth/login")
+def auth_login(body: _LoginBody):
+    if not AUTH_PASSWORD:
+        return JSONResponse({"ok": True})
+    if not _hmac.compare_digest(body.password, AUTH_PASSWORD):
+        raise HTTPException(status_code=401, detail="Wrong password")
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        "session", _SESSION_TOKEN,
+        httponly=True, samesite="lax", max_age=30 * 24 * 3600,
+    )
+    return resp
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("session", samesite="lax")
+    return resp
 
 
 # ── Google Calendar ──────────────────────────────────────────────────────────

@@ -100,6 +100,7 @@ jobs:
             --region ${{ env.GCP_REGION }} \
             --platform managed \
             --project ${{ vars.GCP_PROJECT_ID }} \
+            --update-env-vars "AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}" \
             --quiet
 
       - name: Print service URL

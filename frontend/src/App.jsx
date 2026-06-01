@@ -31,7 +31,8 @@ import TodayPage from './components/TodayPage'
 import Sidebar from './components/Sidebar'
 import MobileNav from './components/MobileNav'
 import TagFilterBar from './components/TagFilterBar'
-import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote } from './api'
+import LoginPage from './components/LoginPage'
+import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote, checkAuth, logout } from './api'
 import './App.css'
 
 export const SECTIONS = ['today', 'week', 'month', 'later']
@@ -49,6 +50,8 @@ const SECTION_COLORS = {
 }
 
 export default function App() {
+  const [authed, setAuthed] = useState(null)   // null=checking, true/false
+  const [authEnabled, setAuthEnabled] = useState(false)
   const [todos, setTodos] = useState([])
   const [tags, setTags] = useState([])
   const [loading, setLoading] = useState(true)
@@ -142,6 +145,14 @@ export default function App() {
   )
 
   useEffect(() => {
+    checkAuth().then(({ authed: a, enabled: e }) => {
+      setAuthed(a)
+      setAuthEnabled(e)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!authed) return
     Promise.all([fetchTodos(), fetchTags(), fetchHabits(), fetchNotes()])
       .then(([todosData, tagsData, habitsData, notesData]) => {
         setTodos(todosData)
@@ -154,7 +165,7 @@ export default function App() {
     fetchCalendarEvents()
       .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
       .catch(() => {})
-  }, [])
+  }, [authed])
 
   // Poll for calendar updates every 15 minutes
   useEffect(() => {
@@ -487,6 +498,9 @@ export default function App() {
     closeModal()
   }
 
+  if (authed === null) return null
+  if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />
+
   return (
     <div className="app">
       <video className="app-bg-video" autoPlay muted loop playsInline disablePictureInPicture>
@@ -559,6 +573,17 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowModal(true)}>
                     + Add Task (Advanced)
                   </DropdownMenu.Item>
+                  {authEnabled && (
+                    <>
+                      <DropdownMenu.Separator className="settings-dropdown-divider" />
+                      <DropdownMenu.Item
+                        className="settings-dropdown-item"
+                        onSelect={async () => { await logout(); setAuthed(false) }}
+                      >
+                        &#x1F512; Sign out
+                      </DropdownMenu.Item>
+                    </>
+                  )}
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>

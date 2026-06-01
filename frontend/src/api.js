@@ -222,3 +222,22 @@ export async function reorderTodos(updates) {
   })
   if (!res.ok) throw new Error('Failed to reorder todos')
 }
+
+export async function checkAuth() {
+  const res = await fetch('/api/auth/check')
+  if (!res.ok) return { authed: false, enabled: true }
+  return res.json()
+}
+
+export async function login(password) {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) throw new Error('Wrong password')
+}
+
+export async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' })
+}
