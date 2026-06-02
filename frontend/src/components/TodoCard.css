@@ -167,12 +167,14 @@
     font-family: inherit;
   }
 
-  /* Expanded touch target for checkbox */
+  /* Expand touch target without growing the visible checkbox */
   .card-check {
-    width: 44px;
-    height: 44px;
-    margin-top: -13px;
-    margin-left: -13px;
+    position: relative;
+  }
+  .card-check::after {
+    content: '';
+    position: absolute;
+    inset: -13px;
   }
 
   .card-action-delete,
