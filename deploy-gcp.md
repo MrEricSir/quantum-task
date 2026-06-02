@@ -5,17 +5,16 @@
 ```
 Browser
   │
-  ├─ static assets ──────────────────────▶ Firebase Hosting  (free tier)
-  │
-  └─ /api/** (rewrite) ─────────────────▶ Cloud Run         (~$0, scales to zero)
-                                                │
-                                    ┌───────────┴────────────┐
-                                    │                        │
-                               Cloud Storage            Gemini 2.0 Flash
-                            SQLite on GCS (~$0)          (replaces Ollama)
+  └─ All traffic ───────────────────────▶ Cloud Run  (~$0, scales to zero)
+                                               │
+                                   ┌───────────┴────────────┐
+                                   │                        │
+                              Cloud Storage            LLM API
+                           SQLite on GCS (~$0)   (Gemini / Groq / Ollama)
 ```
 
-Firebase Hosting rewrites `/api/**` to Cloud Run — no frontend code changes needed.
+Cloud Run serves both the frontend (static files) and the `/api/**` backend
+from a single Docker image — no separate hosting service needed.
 
 ---
 
@@ -25,22 +24,17 @@ Firebase Hosting rewrites `/api/**` to Cloud Run — no frontend code changes ne
 |---|---|---|
 | Cloud Run | 2M req + 360K vCPU-sec free tier | $0 |
 | Cloud Storage | Tiny SQLite file, 5GB free tier | $0 |
-| Firebase Hosting | 10GB bandwidth free tier | $0 |
-| Gemini 2.0 Flash | ~$0.0001/request | < $0.50 |
-| **Total** | | **< $1/mo** |
+| Gemini 2.0 Flash | ~$0.0001/request (if using Gemini) | < $0.50 |
+| Groq | Free tier available | $0 |
+| **Total** | | **~$0–$1/mo** |
 
 ---
 
 ## Prerequisites
 
-Install the required CLIs if you haven't already:
-
 ```bash
 brew install google-cloud-sdk
-npm install -g firebase-tools
-
 gcloud auth login
-firebase login
 ```
 
 ---
@@ -51,27 +45,23 @@ firebase login
 
 ```bash
 cp .gcp-config.example .gcp-config
-# Edit .gcp-config — fill in GCP_PROJECT_ID, GEMINI_API_KEY, ALLOWED_ORIGIN
+# Edit .gcp-config and fill in your values
 ```
 
-Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com).
+Fields to set:
 
-For `ALLOWED_ORIGIN`, use `https://YOUR_PROJECT_ID.web.app` initially (you can
-update it after the first deploy with `./dev.sh gcp-update-env`).
+- **`GCP_PROJECT_ID`** — your GCP project ID (`gcloud projects list`)
+- **`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`** — choose one provider:
 
-### 2. Initialize Firebase Hosting (one time)
+  | Provider | LLM_BASE_URL | LLM_MODEL | Key from |
+  |---|---|---|---|
+  | Gemini (cheap, pay-as-you-go) | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.0-flash` | aistudio.google.com |
+  | Groq (free tier) | `https://api.groq.com/openai/v1` | `llama-3.1-8b-instant` | console.groq.com |
+  | Ollama (local dev only) | `http://localhost:11434/v1` | `llama3.2` | — |
 
-```bash
-firebase init hosting
-# - Use existing project: your-project-id
-# - Public directory: frontend/dist
-# - Configure as single-page app: yes
-# - Don't overwrite index.html
-```
+- **`AUTH_PASSWORD`** — password for the login gate (leave empty to disable)
 
-This creates `.firebaserc` and updates `firebase.json`.
-
-### 3. Run the setup script
+### 2. Run the setup script
 
 ```bash
 ./dev.sh gcp-setup
@@ -82,14 +72,13 @@ This script:
 2. Creates an Artifact Registry repository for Docker images
 3. Creates a Cloud Storage bucket for the SQLite database
 4. Creates a Cloud Run service account with storage access
-5. Builds and pushes the initial Docker image
-6. Deploys the backend to Cloud Run
-7. Builds and deploys the frontend to Firebase Hosting
-8. Creates a GitHub Actions service account + Firebase deploy service account
-9. Generates service account key files (`.github-actions-sa-key.json`, `.firebase-sa-key.json`)
-10. Prints the GitHub secrets you need to add
+5. Builds and pushes the initial Docker image via Cloud Build
+6. Deploys to Cloud Run (frontend + backend, single service)
+7. Creates a GitHub Actions service account
+8. Generates a service account key file (`.github-actions-sa-key.json`)
+9. Prints the GitHub secrets you need to add
 
-### 4. Set GitHub secrets
+### 3. Set GitHub secrets
 
 After `gcp-setup` finishes, add these to your GitHub repository under
 **Settings → Secrets and variables → Actions**:
@@ -97,11 +86,14 @@ After `gcp-setup` finishes, add these to your GitHub repository under
 | Type | Name | Value |
 |---|---|---|
 | Secret | `GCP_SA_KEY` | Contents of `.github-actions-sa-key.json` |
-| Secret | `FIREBASE_SERVICE_ACCOUNT` | Contents of `.firebase-sa-key.json` |
-| Secret | `GEMINI_API_KEY` | Your Gemini API key |
+| Secret | `AUTH_PASSWORD` | Your login password (if auth is enabled) |
 | Variable | `GCP_PROJECT_ID` | Your GCP project ID |
 
-The key files are gitignored and stay on your machine only.
+The key file is gitignored and stays on your machine only.
+
+> **LLM settings are not stored as GitHub secrets.** They are baked into the
+> Cloud Run service during `gcp-setup` and persist across deployments. To
+> change providers later, update `.gcp-config` and run `./dev.sh gcp-update-env`.
 
 ---
 
@@ -111,12 +103,10 @@ The key files are gitignored and stay on your machine only.
 
 Push to `main`. The CI/CD pipeline (`.github/workflows/deploy.yml`) will:
 1. Run backend unit tests
-2. Build the frontend (fails fast if the build is broken)
-3. Build and push the Docker image to Artifact Registry
-4. Deploy the new image to Cloud Run
-5. Deploy the built frontend to Firebase Hosting
+2. Build the Docker image and push to Artifact Registry
+3. Deploy the new image to Cloud Run
 
-Pull requests run the tests and a Docker build check, but don't deploy.
+Pull requests run the tests and a build check, but don't deploy.
 
 ### Manually
 
@@ -124,29 +114,37 @@ Pull requests run the tests and a Docker build check, but don't deploy.
 ./dev.sh gcp-deploy
 ```
 
-Builds and deploys both backend and frontend from your local machine.
+Builds via Cloud Build (native linux/amd64) and deploys from your local machine.
 
 ---
 
 ## Updating environment variables
 
-To rotate the Gemini API key or update the CORS origin, edit `.gcp-config`
-and run:
+To switch LLM provider, rotate the auth password, or change any other setting,
+edit `.gcp-config` and run:
 
 ```bash
 ./dev.sh gcp-update-env
 ```
 
-This updates only the env vars on the running Cloud Run service — no
-redeploy of the image needed.
+This updates the env vars on the running Cloud Run service — no image rebuild needed.
 
 ---
 
-## Local development (unchanged)
+## Local development
 
 Without any env vars set, the backend falls back to:
 - SQLite at `./todos.db`
-- Ollama at `http://localhost:11434/v1`
-- CORS origin `http://localhost:5173`
+- Ollama at `http://localhost:11434/v1` (model: `llama3.2`)
+- No auth (login gate disabled)
 
-`./dev.sh start` continues to work as before.
+To test a cloud LLM provider locally, export the vars before starting:
+
+```bash
+export LLM_BASE_URL="https://api.groq.com/openai/v1"
+export LLM_API_KEY="gsk_..."
+export LLM_MODEL="llama-3.1-8b-instant"
+./dev.sh start
+```
+
+`./dev.sh start` continues to work as before for local development.

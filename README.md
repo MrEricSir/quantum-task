@@ -7,7 +7,7 @@ A Kanban-style todo dashboard with AI-powered task parsing, calendar integration
 - **Frontend**: React + Vite + Radix UI + @dnd-kit
 - **Backend**: Python FastAPI
 - **Database**: SQLite (via SQLAlchemy) — swappable via env var
-- **AI Quick Add**: Ollama + llama3.2 locally, or any OpenAI-compatible API (e.g. Gemini)
+- **AI Quick Add**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
 - **Calendar**: iCal/ICS feed integration
 - **Weather**: Open-Meteo (no API key required)
 
@@ -141,28 +141,36 @@ Tests that call Ollama are skipped automatically with a clear message when Ollam
 
 ## Configuration
 
-All configuration is via environment variables. Defaults are set for local development — no `.env` file is required to run locally. Copy `.env.example` to `.env` to override specific values.
+All configuration is via environment variables. Defaults work for local development — no config file needed.
 
 ### LLM (AI Quick Add + Daily Briefing)
 
 | Variable | Default | Description |
 |---|---|---|
 | `LLM_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible API base URL |
-| `LLM_API_KEY` | `ollama` | API key (`ollama` for local Ollama) |
+| `LLM_API_KEY` | `ollama` | API key |
 | `LLM_MODEL` | `llama3.2` | Model name |
 
-The backend uses the OpenAI Python SDK for all LLM calls. Any service with an OpenAI-compatible API works — including Ollama locally or Gemini in production.
-
-**To use Gemini instead of Ollama:**
+Any OpenAI-compatible API works. To test a cloud provider locally, export the vars before starting:
 
 ```bash
-LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
-LLM_API_KEY=your-gemini-api-key \
-LLM_MODEL=gemini-2.0-flash \
+export LLM_BASE_URL="https://api.groq.com/openai/v1"
+export LLM_API_KEY="your-key"
+export LLM_MODEL="llama-3.1-8b-instant"
 ./dev.sh start
 ```
 
-A free Gemini API key is available from [Google AI Studio](https://aistudio.google.com). This is also the path taken in the GCP deployment (see `deploy-gcp.md`).
+### Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///./todos.db` | SQLAlchemy connection string |
+
+### Auth
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_PASSWORD` | _(unset)_ | Login password — auth disabled if not set |
 
 **To benchmark Ollama models locally:**
 
@@ -172,76 +180,9 @@ A free Gemini API key is available from [Google AI Studio](https://aistudio.goog
 
 Compares parse quality and speed across all locally available Ollama models and writes `benchmark_report.md`.
 
-### Database
-
-| Variable | Default | Description |
-|---|---|---|
-| `DATABASE_URL` | `sqlite:///./todos.db` | SQLAlchemy connection string |
-
-The default SQLite database is created at `backend/todos.db` on first run. To use PostgreSQL (e.g. for multi-user deployments), set `DATABASE_URL` to a `postgresql+psycopg2://` connection string and add `psycopg2-binary` to `requirements.txt`.
-
-### CORS
-
-| Variable | Default | Description |
-|---|---|---|
-| `ALLOWED_ORIGIN` | `http://localhost:5173` | Allowed frontend origin |
-
-Set this to your production frontend URL when deploying.
-
 ## Deploying to GCP
 
-See `deploy-gcp.md` for the full guide. The short version:
-
-- **Frontend**: Firebase Hosting (free tier) — built by CI, deployed automatically on push to `main`
-- **Backend**: Cloud Run (scales to zero, ~$0 for personal use) — Docker container deployed by CI
-- **Database**: SQLite on a Cloud Storage volume mount (~$0/mo)
-- **AI**: Gemini 2.0 Flash via the existing OpenAI-compatible client (~$0.50/mo)
-
-### First-time setup
-
-```bash
-# 1. Copy and fill in your GCP project ID, Gemini API key, and hosting URL
-cp .gcp-config.example .gcp-config
-
-# 2. Initialise Firebase Hosting (one time, interactive)
-firebase init hosting
-
-# 3. Provision all infrastructure and do the first deploy
-./dev.sh gcp-setup
-```
-
-`gcp-setup` handles everything: enables GCP APIs, creates Artifact Registry and Cloud Storage,
-builds and pushes the Docker image, deploys to Cloud Run, deploys the frontend to Firebase,
-creates CI service accounts, and prints the GitHub secrets to add.
-
-### Subsequent deploys
-
-Push to `main` — GitHub Actions runs tests, then deploys backend and frontend automatically.
-Or deploy manually at any time:
-
-```bash
-./dev.sh gcp-deploy
-```
-
-### Rotating secrets / updating env vars
-
-Edit `.gcp-config` and run:
-
-```bash
-./dev.sh gcp-update-env
-```
-
-**To test the Docker container locally:**
-
-```bash
-docker build -t todo-backend ./backend
-docker run -p 8080:8080 \
-  -e LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
-  -e LLM_API_KEY=your-gemini-api-key \
-  -e LLM_MODEL=gemini-2.0-flash \
-  -e ALLOWED_ORIGIN=http://localhost:5173 \
-  todo-backend
-```
+See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitHub secrets, LLM provider options, and CI/CD details.
 
 ## Project structure
 
@@ -262,9 +203,8 @@ todo/
       App.jsx          # Root component, state management
       components/      # Board, Sidebar, Modals, Queue, Briefing, Calendar, Archive
     dist/              # Production build output (gitignored)
-  firebase.json        # Firebase Hosting config + Cloud Run rewrite rules
-  .env.example         # Environment variable reference
-  deploy-gcp.md        # Full GCP deployment plan
+  Dockerfile           # Multi-stage build (frontend + backend)
+  deploy-gcp.md        # Full GCP deployment guide
   dev.sh               # Development helper script
 ```
 
