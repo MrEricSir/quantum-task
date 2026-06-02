@@ -8,7 +8,7 @@ real iCal URL is needed.
 
 import pytest
 from unittest.mock import patch
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date, time, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -150,14 +150,14 @@ class TestGetCalendarEvents:
         client.put("/api/calendar-mappings", json=[
             {"tag_id": work_id, "ical_url": "https://example.com/work.ics"}
         ])
-        # Use a future time so the event is never filtered as "already ended"
-        now = datetime.now()
+        # Pin start to noon today (always today's date regardless of when CI runs)
+        # and end to +1 day so it's never filtered as "already ended".
         mock_event = {
             "id": "evt-001",
             "title": "Team standup",
             "description": None,
-            "start": now + timedelta(hours=1),
-            "end": now + timedelta(hours=2),
+            "start": datetime.combine(date.today(), time(12, 0)),
+            "end": datetime.now() + timedelta(days=1),
             "all_day": False,
         }
         with patch("gcal.fetch_events", return_value=[mock_event]):

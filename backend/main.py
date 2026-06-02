@@ -439,12 +439,10 @@ def _build_today_context(todos: list, cal_events: list, today: date, habits: lis
             lines.append(f"  - {t.title}{suffix}{overdue}")
     if habits:
         pending = [h.name for h in habits if not h.completed_today]
-        done = [h.name for h in habits if h.completed_today]
-        lines.append("Daily habits:")
-        for name in done:
-            lines.append(f"  - {name} [done]")
-        for name in pending:
-            lines.append(f"  - {name} [not yet done]")
+        if pending:
+            lines.append("Habits still to do today:")
+            for name in pending:
+                lines.append(f"  - {name}")
     if not cal_events and not todos and not habits:
         lines.append("No tasks or events scheduled.")
     return "\n".join(lines)
@@ -527,22 +525,24 @@ def _week_hash(todos: list, events: list) -> str:
 
 
 _TODAY_SYSTEM = (
-    "Summarise the items listed below. "
-    "Write one short sentence per item. "
+    "You write spoken-word daily briefings. "
+    "Your output will be read aloud, so it must be flowing prose — never lists. "
+    "NEVER use bullet points, dashes, asterisks, numbers, or any list formatting. "
+    "NEVER start a line with '-', '*', '•', or a digit. "
+    "Write one short sentence per item, each as its own plain sentence. "
     "Never combine or connect unrelated items into a single sentence. "
     "Do not add, invent, or infer anything not explicitly listed. "
-    "Lead with time-specific events. Be direct. No filler words. "
-    "Do not use bullet points, asterisks, dashes, or any markdown formatting. "
-    "Output plain prose only."
+    "Lead with time-specific events. Be direct. No filler words."
 )
 _WEEK_SYSTEM = (
-    "Summarise the week ahead using the items listed below, organized by day. "
-    "Write one short sentence per day that has items. "
+    "You write spoken-word weekly briefings. "
+    "Your output will be read aloud, so it must be flowing prose — never lists. "
+    "NEVER use bullet points, dashes, asterisks, numbers, or any list formatting. "
+    "NEVER start a line with '-', '*', '•', or a digit. "
+    "Write one short sentence per day that has items, covering that day's events. "
     "Do not combine items from different days. "
     "Do not add, invent, or infer anything not explicitly listed. "
-    "Be direct. No filler words. Do not mention weather. "
-    "Do not use bullet points, asterisks, dashes, or any markdown formatting. "
-    "Output plain prose only."
+    "Be direct. No filler words. Do not mention weather."
 )
 _CACHE_TTL = BRIEFING_MAX_AGE_HOURS * 3600
 

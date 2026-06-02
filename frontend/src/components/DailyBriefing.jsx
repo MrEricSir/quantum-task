@@ -102,15 +102,16 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
 
   const hasContent = sections.today || sections.week
 
-  // Strip markdown bullet markers that the model sometimes emits despite instructions
+  // Collapse newlines and strip any bullet markers the model emits despite instructions
   function cleanBriefingText(text) {
     if (!text) return text
-    // Handle "Intro text: * item * item" inline pattern
-    let s = text.replace(/^[^*\n\-•]+[:\-]\s*(?=[*\-•])/, '')
-    // Normalize newline+bullet and inline " * " separators into newlines
-    s = s.replace(/\n\s*[*\-•]\s*/g, '\n').replace(/\s{2,}\*\s+/g, '\n')
-    // Strip any remaining leading bullet on first line
-    s = s.replace(/^[*\-•]\s+/, '')
+    let s = text
+    // Collapse newlines to spaces (model uses them as sentence separators)
+    s = s.replace(/\n+/g, ' ')
+    // Strip bullet markers: "- item", "* item", "• item"
+    s = s.replace(/\s*[*\-•]\s+/g, ' ')
+    // Collapse multiple spaces
+    s = s.replace(/  +/g, ' ')
     return s.trim()
   }
 
@@ -138,13 +139,13 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
         {sections.today && (
           <div className="briefing-row">
             <span className="briefing-label">Today</span>
-            <span className="briefing-text" style={{ whiteSpace: 'pre-line' }}>{cleanBriefingText(sections.today)}</span>
+            <span className="briefing-text">{cleanBriefingText(sections.today)}</span>
           </div>
         )}
         {sections.week && !todayOnly && (
           <div className="briefing-row">
             <span className="briefing-label">This week</span>
-            <span className="briefing-text" style={{ whiteSpace: 'pre-line' }}>{cleanBriefingText(sections.week)}</span>
+            <span className="briefing-text">{cleanBriefingText(sections.week)}</span>
           </div>
         )}
       </div>

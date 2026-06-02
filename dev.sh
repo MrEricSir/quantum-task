@@ -154,7 +154,7 @@ _load_gcp_config() {
 
   # Validate required fields
   local missing=()
-  for var in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_AR_REPO GEMINI_API_KEY AUTH_PASSWORD; do
+  for var in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_AR_REPO LLM_BASE_URL LLM_API_KEY LLM_MODEL AUTH_PASSWORD; do
     local val="${!var:-}"
     if [[ -z "$val" || "$val" == *"your-"* ]]; then
       missing+=("$var")
@@ -269,9 +269,9 @@ gcp_setup() {
     --add-volume-mount "volume=db,mount-path=/app/data" \
     --set-env-vars "\
 DATABASE_URL=sqlite:////app/data/todos.db,\
-LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/,\
-LLM_API_KEY=$GEMINI_API_KEY,\
-LLM_MODEL=gemini-2.0-flash,\
+LLM_BASE_URL=$LLM_BASE_URL,\
+LLM_API_KEY=$LLM_API_KEY,\
+LLM_MODEL=$LLM_MODEL,\
 AUTH_PASSWORD=$AUTH_PASSWORD" \
     --project "$GCP_PROJECT_ID" \
     --quiet
@@ -313,10 +313,13 @@ AUTH_PASSWORD=$AUTH_PASSWORD" \
   echo ""
   echo "  SECRETS (sensitive — use 'New repository secret'):"
   echo "    GCP_SA_KEY              $(cat "$SCRIPT_DIR/.github-actions-sa-key.json" | tr -d '\n' | head -c 60)..."
-  echo "    GEMINI_API_KEY          $GEMINI_API_KEY"
+  echo "    AUTH_PASSWORD           $AUTH_PASSWORD"
   echo ""
   echo "  VARIABLES (non-sensitive — use 'New repository variable'):"
   echo "    GCP_PROJECT_ID          $GCP_PROJECT_ID"
+  echo ""
+  echo "  LLM settings ($LLM_MODEL) are baked into the Cloud Run service."
+  echo "  To change providers later, edit .gcp-config and run: ./dev.sh gcp-update-env"
   echo ""
   echo "  Key file saved (gitignored): .github-actions-sa-key.json"
   echo ""
@@ -356,7 +359,9 @@ gcp_update_env() {
     --region "$GCP_REGION" \
     --project "$GCP_PROJECT_ID" \
     --update-env-vars "\
-LLM_API_KEY=$GEMINI_API_KEY,\
+LLM_BASE_URL=$LLM_BASE_URL,\
+LLM_API_KEY=$LLM_API_KEY,\
+LLM_MODEL=$LLM_MODEL,\
 AUTH_PASSWORD=$AUTH_PASSWORD" \
     --quiet
   echo "    Done."
