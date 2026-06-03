@@ -99,9 +99,13 @@ async function mockAPIs(page) {
   await page.route('**/api/auth/check', r =>
     r.fulfill({ json: { authed: true, enabled: false } }))
 
+  // Block background video so screenshots are pixel-stable (no video frame variability)
+  await page.route(/\.(mp4|webm|ogg)(\?.*)?$/, r => r.abort())
+
   await page.route('**/api/todos', r => r.fulfill({ json: TODOS }))
   await page.route('**/api/tags', r => r.fulfill({ json: TAGS }))
-  await page.route('**/api/calendar/events', r => r.fulfill({ json: CALENDAR_EVENTS }))
+  await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
+  await page.route('**/api/calendar-mappings', r => r.fulfill({ json: {} }))
   await page.route('**/api/habits', r => r.fulfill({ json: HABITS }))
   await page.route('**/api/notes', r => r.fulfill({ json: NOTES }))
 
@@ -112,7 +116,7 @@ async function mockAPIs(page) {
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
       body:
         'data: {"type":"weather","emojis":"⛅","high":72,"low":58}\n\n' +
-        'data: {"type":"text","text":"A productive day ahead."}\n\n' +
+        'data: {"section":"today","text":"A productive day ahead."}\n\n' +
         'data: [DONE]\n\n',
     }))
 }
@@ -120,7 +124,12 @@ async function mockAPIs(page) {
 // Wait for the app shell to render (avoids networkidle issues with SSE connections)
 async function waitForApp(page) {
   await page.waitForSelector('.app-header', { state: 'visible' })
-  // Give React one more tick to flush state updates
+  // Pause background video so consecutive screenshots are stable
+  await page.evaluate(() => document.querySelectorAll('video').forEach(v => { v.pause(); v.currentTime = 0 }))
+  // Wait for briefing spinner to disappear (hidden = not in DOM OR not visible)
+  // On pages without a briefing this resolves immediately
+  await page.waitForSelector('.briefing-spinner', { state: 'hidden', timeout: 10000 }).catch(() => {})
+  // Give React one more tick to flush any remaining state updates
   await page.waitForTimeout(300)
 }
 

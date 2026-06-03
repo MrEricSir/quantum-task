@@ -12,6 +12,10 @@ export default defineConfig({
     trace: 'on-first-retry',
     ...devices['Desktop Chrome'],
   },
+  expect: {
+    // Allow minor sub-pixel / emoji rendering differences (≤ 0.1% of pixels)
+    toHaveScreenshot: { maxDiffPixelRatio: 0.001 },
+  },
   // Build once then preview — faster and production-faithful
   webServer: {
     command: 'npm run build && npm run preview',
