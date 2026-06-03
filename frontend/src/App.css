@@ -45,7 +45,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1;
 }
 
 .header-logo {
@@ -63,8 +62,9 @@
 .header-weather {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  margin-right: 4px;
+  flex: 1;
 }
 
 .header-weather-emoji {
@@ -83,8 +83,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
-  justify-content: flex-end;
+  margin-left: auto;
 }
 
 .btn-ghost {
