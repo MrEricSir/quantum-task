@@ -118,11 +118,24 @@ test() {
   # Calendar tests are pure unit tests (no Ollama required).
   # Parse tests call the live Ollama model and are skipped automatically if it is not running.
   echo ""
-  echo "==> Unit tests"
+  echo "==> Backend unit tests"
   "$SCRIPT_DIR/backend/venv/bin/pytest" test_calendar.py test_briefing.py -v
   echo ""
   echo "==> Quick Add parse integration tests (requires Ollama)"
   "$SCRIPT_DIR/backend/venv/bin/pytest" test_parse.py -v
+  echo ""
+  echo "==> Frontend tests"
+  cd "$SCRIPT_DIR/frontend"
+  npx playwright test
+}
+
+test_frontend() {
+  if [[ ! -d "$SCRIPT_DIR/frontend/node_modules" ]]; then
+    echo "Dependencies not installed. Run './dev.sh setup' first."
+    exit 1
+  fi
+  cd "$SCRIPT_DIR/frontend"
+  npx playwright test
 }
 
 benchmark() {
@@ -381,6 +394,7 @@ case "${1:-}" in
   restart)        stop; sleep 1; start ;;
   logs)           logs ;;
   test)           test ;;
+  test-frontend)  test_frontend ;;
   benchmark)      benchmark "$@" ;;
   gcp-setup)      gcp_setup ;;
   gcp-deploy)     gcp_deploy ;;
@@ -394,7 +408,8 @@ case "${1:-}" in
     echo "  stop       Stop both processes"
     echo "  restart    Stop then start"
     echo "  logs       Tail backend.log and frontend.log"
-    echo "  test       Run all backend tests (calendar unit tests + AI parse integration tests)"
+    echo "  test           Run all tests (backend unit + AI parse integration + frontend)"
+  echo "  test-frontend  Run only the frontend Playwright tests"
     echo "  benchmark  Run tests across all models and write benchmark_report.md"
     echo ""
     echo "GCP deployment:"

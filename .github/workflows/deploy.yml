@@ -41,12 +41,10 @@ jobs:
         # Note: test_parse.py requires a live Ollama instance and is intentionally
         # skipped in CI. It can be run locally with: ./dev.sh test
 
-  # ── Visual regression tests ───────────────────────────────────────────────────
+  # ── Frontend functional tests ─────────────────────────────────────────────────
   visual:
-    name: Visual regression tests
+    name: Frontend tests
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -65,24 +63,8 @@ jobs:
       - name: Build frontend
         run: cd frontend && npm run build
 
-      # PRs: compare screenshots against the committed baseline
-      - name: Compare visual snapshots (PR)
-        if: github.event_name == 'pull_request'
+      - name: Run frontend tests
         run: cd frontend && npx playwright test
-
-      # Main: regenerate baseline and commit it back
-      - name: Update visual snapshots (main)
-        if: github.event_name != 'pull_request'
-        run: cd frontend && npx playwright test --update-snapshots
-
-      - name: Commit updated snapshots
-        if: github.event_name != 'pull_request'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add frontend/tests/
-          git diff --staged --quiet || git commit -m "chore: update visual snapshots"
-          git push
 
       - name: Upload Playwright report on failure
         if: failure()

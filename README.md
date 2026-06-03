@@ -44,8 +44,11 @@ Use the `dev.sh` script from the project root for everything:
 # Tail logs from both processes
 ./dev.sh logs
 
-# Run all backend tests
+# Run all tests (backend + frontend)
 ./dev.sh test
+
+# Run only frontend tests
+./dev.sh test-frontend
 
 # Benchmark parse quality across all available Ollama models
 ./dev.sh benchmark
@@ -82,25 +85,30 @@ cd frontend && npm run dev
 ## Testing
 
 ```bash
+# Run all tests (backend + frontend)
 ./dev.sh test
+
+# Run only frontend tests
+./dev.sh test-frontend
 ```
 
-This runs two test suites in sequence:
+`./dev.sh test` runs three suites in sequence:
 
-**Calendar unit tests** (`test_calendar.py`) — no external services required:
-- Calendar feed CRUD (save/replace/clear mappings)
-- Section assignment (today / week / month) and past-event filtering
-- Tag info attachment
-- iCal export: token auth (valid, invalid, missing, rotate-invalidates), scheduled tasks appear, completed/unscheduled tasks excluded, DTSTART is timezone-aware, tag filter, time round-trip
-- iCal import (`gcal.fetch_events`): UTC→local timezone conversion, `STATUS:CANCELLED` filtering, all-day events, `SEQUENCE`/`UID` fields parsed
-- UID deduplication: higher `SEQUENCE` wins across feeds, no-UID events are never deduped
+**Backend unit tests** (`test_calendar.py`, `test_briefing.py`) — no external services required:
+- Calendar feed CRUD, section assignment, past-event filtering, tag attachment
+- iCal export/import, UID deduplication, timezone handling
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
-- `type` field (task / habit / note), habit recurrence, note/list detection, `note_content` formatting
-- Regression tests (integer description coercion, schema name leak)
+- `type` field (task / habit / note), habit recurrence, note/list detection
+- Regression tests
 
-Tests that call Ollama are skipped automatically with a clear message when Ollama is not running — no failures.
+Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
+
+**Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
+- 19 Playwright tests verifying key elements are visible on each page
+- Covers: app shell nav, today page, tasks board, notes, habits, quick-add modal
+- All API calls are mocked; runs against a production build (`npm run build`)
 
 ## Features
 

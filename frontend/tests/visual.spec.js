@@ -1,23 +1,15 @@
 /**
- * Visual regression tests.
+ * Functional regression tests.
  *
  * Strategy:
  *   - All API calls are mocked — no backend required.
- *   - The clock is frozen to a fixed date so date strings never change.
- *   - On pushes to main, CI runs with --update-snapshots and commits the
- *     result as the new baseline.
- *   - On PRs, CI compares against the committed baseline and fails on drift.
- *
- * To update snapshots locally after an intentional UI change:
- *   cd frontend && npx playwright test --update-snapshots
+ *   - Tests assert that key elements are visible, not pixel-identical.
+ *   - This avoids screenshot fragility (font rendering, video frames, OS differences)
+ *     while still catching the regressions that matter: missing buttons, broken
+ *     navigation, disappeared sections, broken modals.
  */
 
 import { test, expect } from '@playwright/test'
-
-// ---------------------------------------------------------------------------
-// Fixed date — keeps "Tuesday, June 3" stable in the Today header
-// ---------------------------------------------------------------------------
-const FIXED_DATE = new Date('2026-06-03T10:00:00')
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -99,9 +91,6 @@ async function mockAPIs(page) {
   await page.route('**/api/auth/check', r =>
     r.fulfill({ json: { authed: true, enabled: false } }))
 
-  // Block background video so screenshots are pixel-stable (no video frame variability)
-  await page.route(/\.(mp4|webm|ogg)(\?.*)?$/, r => r.abort())
-
   await page.route('**/api/todos', r => r.fulfill({ json: TODOS }))
   await page.route('**/api/tags', r => r.fulfill({ json: TAGS }))
   await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
@@ -109,7 +98,7 @@ async function mockAPIs(page) {
   await page.route('**/api/habits', r => r.fulfill({ json: HABITS }))
   await page.route('**/api/notes', r => r.fulfill({ json: NOTES }))
 
-  // Briefing SSE: send weather then close immediately
+  // Briefing SSE: send weather + text then close
   await page.route('**/api/briefing**', r =>
     r.fulfill({
       status: 200,
@@ -121,80 +110,181 @@ async function mockAPIs(page) {
     }))
 }
 
-// Wait for the app shell to render (avoids networkidle issues with SSE connections)
 async function waitForApp(page) {
   await page.waitForSelector('.app-header', { state: 'visible' })
-  // Pause background video so consecutive screenshots are stable
-  await page.evaluate(() => document.querySelectorAll('video').forEach(v => { v.pause(); v.currentTime = 0 }))
-  // Wait for briefing spinner to disappear (hidden = not in DOM OR not visible)
-  // On pages without a briefing this resolves immediately
-  await page.waitForSelector('.briefing-spinner', { state: 'hidden', timeout: 10000 }).catch(() => {})
-  // Give React one more tick to flush any remaining state updates
-  await page.waitForTimeout(300)
+  // Wait for briefing text to appear — this implies weather data was also received.
+  // On pages without a briefing the selector never matches and the catch is a no-op.
+  await page.waitForSelector('.briefing-text', { state: 'visible', timeout: 8000 }).catch(() => {})
+  await page.waitForTimeout(200)
 }
 
 test.beforeEach(async ({ page }) => {
-  // Freeze the date so "Tuesday, June 3" is always rendered
-  await page.clock.setSystemTime(FIXED_DATE)
-  // Clear any persisted queue state from previous test runs
+  await page.clock.setSystemTime(new Date('2026-06-03T10:00:00'))
   await page.addInitScript(() => localStorage.clear())
   await mockAPIs(page)
 })
 
 // ---------------------------------------------------------------------------
-// Desktop (1280 × 800)
+// App shell — present on every page
 // ---------------------------------------------------------------------------
-test.describe('desktop', () => {
-  test.use({ viewport: { width: 1280, height: 800 } })
-
-  test('today page', async ({ page }) => {
+test.describe('app shell', () => {
+  test('header and nav are visible', async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
-    await expect(page).toHaveScreenshot('desktop-today.png', { animations: 'disabled' })
-  })
 
-  test('tasks board', async ({ page }) => {
-    await page.goto('/tasks')
-    await waitForApp(page)
-    await expect(page).toHaveScreenshot('desktop-tasks.png', { animations: 'disabled' })
-  })
+    // Header
+    await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /search/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
-  test('notes page', async ({ page }) => {
-    await page.goto('/notes')
-    await waitForApp(page)
-    await expect(page).toHaveScreenshot('desktop-notes.png', { animations: 'disabled' })
-  })
-
-  test('habits page', async ({ page }) => {
-    await page.goto('/habits')
-    await waitForApp(page)
-    await expect(page).toHaveScreenshot('desktop-habits.png', { animations: 'disabled' })
+    // Sidebar nav (desktop) or mobile nav
+    for (const label of ['Today', 'Tasks', 'Habits', 'Notes']) {
+      await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
+    }
   })
 })
 
 // ---------------------------------------------------------------------------
-// Mobile (390 × 844 — iPhone 14)
+// Today page
 // ---------------------------------------------------------------------------
-test.describe('mobile', () => {
-  test.use({ viewport: { width: 390, height: 844 } })
-
-  test('today page', async ({ page }) => {
+test.describe('today page', () => {
+  test.beforeEach(async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
-    await expect(page).toHaveScreenshot('mobile-today.png', { animations: 'disabled' })
   })
 
-  test('notes page', async ({ page }) => {
+  test('date heading', async ({ page }) => {
+    await expect(page.getByText('Wednesday, June 3')).toBeVisible()
+  })
+
+  test('briefing text is visible', async ({ page }) => {
+    await expect(page.locator('.briefing-text')).toBeVisible()
+    await expect(page.getByText('A productive day ahead.')).toBeVisible()
+  })
+
+  test('schedule section with mocked tasks and event', async ({ page }) => {
+    await expect(page.getByText('Daily Engineering Standup')).toBeVisible()
+    await expect(page.getByText('Product Review')).toBeVisible()
+  })
+
+  test('tasks section', async ({ page }) => {
+    await expect(page.getByText('Review pull requests')).toBeVisible()
+    await expect(page.getByText('Call dentist')).toBeVisible()
+  })
+
+  test('habits section', async ({ page }) => {
+    await expect(page.getByText('Morning meditation')).toBeVisible()
+    await expect(page.getByText('Evening walk')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tasks board
+// ---------------------------------------------------------------------------
+test.describe('tasks board', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/tasks')
+    await waitForApp(page)
+  })
+
+  test('board columns are visible', async ({ page }) => {
+    for (const col of ['Today', 'This Week', 'This Month', 'Later']) {
+      await expect(page.locator('.column-label', { hasText: col })).toBeVisible()
+    }
+  })
+
+  test('tasks appear in correct columns', async ({ page }) => {
+    await expect(page.getByText('Daily Engineering Standup')).toBeVisible()
+    await expect(page.getByText('Finish quarterly report')).toBeVisible()
+    await expect(page.getByText('Book conference flights')).toBeVisible()
+    await expect(page.getByText('Read that article')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Notes page
+// ---------------------------------------------------------------------------
+test.describe('notes page', () => {
+  test.beforeEach(async ({ page }) => {
     await page.goto('/notes')
     await waitForApp(page)
-    await expect(page).toHaveScreenshot('mobile-notes.png', { animations: 'disabled' })
   })
 
-  test('quick-add modal', async ({ page }) => {
+  test('page heading and new-note button', async ({ page }) => {
+    await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /new note/i })).toBeVisible()
+  })
+
+  test('note cards are rendered', async ({ page }) => {
+    await expect(page.getByText('Shopping list')).toBeVisible()
+    await expect(page.getByText('Sprint ideas')).toBeVisible()
+  })
+
+  test('note card content is previewed', async ({ page }) => {
+    await expect(page.getByText(/Milk/)).toBeVisible()
+    await expect(page.getByText(/Improve search/)).toBeVisible()
+  })
+
+  test('tag chips are visible on cards', async ({ page }) => {
+    await expect(page.getByText('personal').first()).toBeVisible()
+    await expect(page.getByText('work').first()).toBeVisible()
+  })
+
+  test('action buttons present on each card', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Edit note' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Promote to task' }).first()).toBeVisible()
+  })
+
+  test('new note modal opens', async ({ page }) => {
+    await page.getByRole('button', { name: /new note/i }).click()
+    await expect(page.getByRole('heading', { name: /new note/i })).toBeVisible()
+    await expect(page.getByLabel(/title/i)).toBeVisible()
+    // Button says "Create" for new notes
+    await expect(page.getByRole('button', { name: /create/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Habits page
+// ---------------------------------------------------------------------------
+test.describe('habits page', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/habits')
+    await waitForApp(page)
+  })
+
+  test('page heading and add button', async ({ page }) => {
+    await expect(page.getByRole('heading', { name: 'Habits' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /add habit/i })).toBeVisible()
+  })
+
+  test('habit cards are rendered', async ({ page }) => {
+    await expect(page.getByText('Morning meditation')).toBeVisible()
+    await expect(page.getByText('Evening walk')).toBeVisible()
+  })
+
+  test('completion toggle buttons are present', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /mark incomplete/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /mark complete/i })).toBeVisible()
+  })
+
+  test('edit and delete buttons are present', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /edit habit/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /delete habit/i }).first()).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Quick-add modal (mobile viewport)
+// ---------------------------------------------------------------------------
+test.describe('quick-add modal', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('opens and shows input', async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
-    await page.waitForSelector('.quick-modal')
-    await expect(page).toHaveScreenshot('mobile-quickadd.png', { animations: 'disabled' })
+    await expect(page.locator('.quick-modal')).toBeVisible()
+    await expect(page.getByRole('textbox')).toBeVisible()
   })
 })

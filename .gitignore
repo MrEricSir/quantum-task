@@ -12,6 +12,10 @@ backend/*.db-wal
 # ── Test / dev artifacts ──────────────────────────────────────────────────────
 backend/.pytest_cache/
 backend/benchmark_report.md
+frontend/test-results/
+frontend/playwright-report/
+frontend/tests/visual.spec.js-snapshots/
+test-results/
 
 # ── Node ──────────────────────────────────────────────────────────────────────
 frontend/node_modules/
