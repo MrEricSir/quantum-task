@@ -204,12 +204,7 @@
 
 @media (max-width: 640px) {
   .quick-modal {
-    width: 100%;
-    max-width: 100%;
-    border-radius: 20px 20px 0 0;
-    padding: 20px 16px 36px;
     overflow-y: auto;
-    animation: sheet-up 0.25s ease;
   }
 
   .quick-textarea {
