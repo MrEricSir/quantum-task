@@ -45,6 +45,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
 }
 
 .header-logo {
@@ -82,6 +83,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
 }
 
 .btn-ghost {
@@ -269,13 +272,16 @@
     height: 52px;
   }
 
-  .app-header h1 {
-    font-size: 15px;
+  .header-title {
+    display: none;
   }
 
-  .header-logo {
-    width: 24px;
-    height: 24px;
+  .header-weather-emoji {
+    font-size: 20px;
+  }
+
+  .header-weather-temp {
+    font-size: 14px;
   }
 
   .btn-primary {
@@ -286,14 +292,6 @@
   .btn-ghost {
     padding: 6px 10px;
     font-size: 28px;
-  }
-
-  .header-weather-temp {
-    display: none;
-  }
-
-  .header-weather-emoji {
-    font-size: 20px;
   }
 
   .board-wrapper {
