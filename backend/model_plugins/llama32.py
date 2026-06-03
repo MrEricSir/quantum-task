@@ -9,10 +9,15 @@ Known quirks this plugin corrects:
   - Invents an afternoon scheduled_at for "next week" events with no clock time stated
 """
 
+import re
+
 from .base import BaseModelPlugin
 
-# Words that indicate the user explicitly stated a time of day.
-_TIME_WORDS = {"am", "pm", "noon", "midnight", "morning", "afternoon", "evening", "o'clock"}
+_TIME_RE = re.compile(
+    r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b'
+    r'|\b(?:noon|midnight|morning|afternoon|evening)\b',
+    re.I,
+)
 
 
 class Llama32Plugin(BaseModelPlugin):
@@ -72,8 +77,7 @@ class Llama32Plugin(BaseModelPlugin):
         # appears in the input, any scheduled_at on a week/month task is
         # fabricated — clear it.
         if parsed.scheduled_at and parsed.section in ("week", "month"):
-            stated_words = set(text.lower().split())
-            if not stated_words & _TIME_WORDS:
+            if not _TIME_RE.search(text):
                 parsed.scheduled_at = None
 
         return parsed

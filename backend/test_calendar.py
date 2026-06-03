@@ -602,6 +602,11 @@ class TestICalImport:
 # ── UID deduplication (endpoint level) ───────────────────────────────────────
 
 class TestUIDDeduplication:
+    # Fixed start so cross-feed duplicates share the same uid+start dedup key.
+    # End is start+1 day so the event is never filtered as already-ended.
+    _FIXED_START = datetime.combine(date.today(), time(12, 0))
+    _FIXED_END   = datetime.combine(date.today(), time(12, 0)) + timedelta(days=1)
+
     def _mock_event(self, uid: str, title: str, sequence: int) -> dict:
         return {
             "id": uid,
@@ -609,8 +614,8 @@ class TestUIDDeduplication:
             "sequence": sequence,
             "title": title,
             "description": None,
-            "start": datetime.now() + timedelta(hours=1),
-            "end": None,
+            "start": self._FIXED_START,
+            "end": self._FIXED_END,
             "all_day": False,
         }
 

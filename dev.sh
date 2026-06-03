@@ -113,8 +113,8 @@ test() {
   # Calendar tests are pure unit tests (no Ollama required).
   # Parse tests call the live Ollama model and are skipped automatically if it is not running.
   echo ""
-  echo "==> Calendar unit tests"
-  "$SCRIPT_DIR/backend/venv/bin/pytest" test_calendar.py -v
+  echo "==> Unit tests"
+  "$SCRIPT_DIR/backend/venv/bin/pytest" test_calendar.py test_briefing.py -v
   echo ""
   echo "==> Quick Add parse integration tests (requires Ollama)"
   "$SCRIPT_DIR/backend/venv/bin/pytest" test_parse.py -v

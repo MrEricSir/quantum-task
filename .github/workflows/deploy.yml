@@ -36,8 +36,8 @@ jobs:
           pip install -r backend/requirements.txt \
                       -r backend/requirements-dev.txt
 
-      - name: Run calendar unit tests
-        run: cd backend && python -m pytest test_calendar.py -v
+      - name: Run unit tests
+        run: cd backend && python -m pytest test_calendar.py test_briefing.py -v
         # Note: test_parse.py requires a live Ollama instance and is intentionally
         # skipped in CI. It can be run locally with: ./dev.sh test
 

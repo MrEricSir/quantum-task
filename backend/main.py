@@ -293,10 +293,13 @@ def get_calendar_events(db: Session = Depends(get_db)):
 
                 uid = ev.get("uid", "")
                 if uid:
-                    # Deduplicate: keep the version with the highest SEQUENCE number
-                    existing = seen.get(uid)
+                    # Key by uid + start time: deduplicates the same occurrence across
+                    # multiple feeds while preserving distinct recurring event instances
+                    # (which share a UID but have different start times).
+                    dedup_key = f"{uid}::{candidate['start'].isoformat()}"
+                    existing = seen.get(dedup_key)
                     if existing is None or candidate["sequence"] >= existing["sequence"]:
-                        seen[uid] = candidate
+                        seen[dedup_key] = candidate
                 else:
                     # No UID — use a unique synthetic key so it's never deduped
                     seen[f"{m.id}::{ev['id']}"] = candidate
@@ -438,13 +441,12 @@ def _build_today_context(todos: list, cal_events: list, today: date, habits: lis
             suffix = f" at {_fmt_time(t.scheduled_at)}" if t.scheduled_at else ""
             overdue = f" [OVERDUE by {t.overdue_days} day{'s' if t.overdue_days != 1 else ''}]" if t.overdue_days > 0 else ""
             lines.append(f"  - {t.title}{suffix}{overdue}")
-    if habits:
-        pending = [h.name for h in habits if not h.completed_today]
-        if pending:
-            lines.append("Habits still to do today:")
-            for name in pending:
-                lines.append(f"  - {name}")
-    if not cal_events and not todos and not habits:
+    pending_habit_names = [h.name for h in (habits or []) if not h.completed_today]
+    if pending_habit_names:
+        lines.append("Habits still to do today:")
+        for name in pending_habit_names:
+            lines.append(f"  - {name}")
+    if not cal_events and not todos and not pending_habit_names:
         lines.append("No tasks or events scheduled.")
     return "\n".join(lines)
 
@@ -615,6 +617,7 @@ def stream_briefing(req: schemas.BriefingRequest):
                                  headers={"X-Briefing-Cached": "true"})
 
     # ── Generate missing sections ──────────────────────────────────────────────
+    pending_habits = [h for h in req.habits if not h.completed_today]
     weather = _fetch_weather(req.lat, req.lon) if req.lat is not None and req.lon is not None else None
     today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits)
     week_ctx  = _build_week_context(week_todos, week_events, today_dt) if need_week else None
@@ -633,7 +636,7 @@ def stream_briefing(req: schemas.BriefingRequest):
                 yield f"data: {weather_raw}\n\n"
 
             today_acc: list[str] = []
-            if not (today_todos or today_events or req.habits):
+            if not (today_todos or today_events or pending_habits):
                 text = 'Nothing scheduled today.'
                 yield f"data: {json.dumps({'section': 'today', 'text': text})}\n\n"
                 today_acc.append(text)
