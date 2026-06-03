@@ -30,6 +30,11 @@ setup() {
   npm install
 
   echo ""
+  echo "==> Playwright (visual regression tests)"
+  cd "$SCRIPT_DIR/frontend"
+  npx playwright install --with-deps chromium
+
+  echo ""
   echo "==> Ollama (AI quick-add)"
   if command -v ollama &>/dev/null; then
     echo "    Pulling llama3.2 model (this may take a while on first run)..."
