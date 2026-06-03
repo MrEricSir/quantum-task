@@ -70,6 +70,7 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
             "sequence": sequence,
             "title": str(ev.get("SUMMARY", "(No title)")),
             "description": str(ev.get("DESCRIPTION", "")) or None,
+            "location": str(ev.get("LOCATION", "")) or None,
             "start": start_dt,
             "end": end_dt,
             "all_day": all_day,

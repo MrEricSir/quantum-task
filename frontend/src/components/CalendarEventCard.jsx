@@ -81,6 +81,20 @@ export default function CalendarEventCard({ event }) {
               <span className="event-detail-value">{formatTime(event.start)} – {formatTime(event.end)}</span>
             </div>
           )}
+          {event.location && (
+            <div className="event-detail-row">
+              <span className="event-detail-label">Location</span>
+              <a
+                className="event-detail-value event-location-link"
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.location)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {event.location}
+              </a>
+            </div>
+          )}
           {event.description && (
             <div className="event-detail-row">
               <span className="event-detail-label">Notes</span>

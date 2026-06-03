@@ -103,6 +103,7 @@ class CalendarEvent(BaseModel):
     id: str
     title: str
     description: Optional[str] = None
+    location: Optional[str] = None
     start: datetime
     end: Optional[datetime] = None
     all_day: bool = False

@@ -280,6 +280,7 @@ def get_calendar_events(db: Session = Depends(get_db)):
                     sequence=ev.get("sequence", 0),
                     title=ev["title"],
                     description=ev.get("description"),
+                    location=ev.get("location"),
                     start=ev["start"],
                     end=ev.get("end"),
                     all_day=ev["all_day"],
