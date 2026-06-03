@@ -225,6 +225,41 @@
   font-weight: 400;
 }
 
+.note-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.note-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 15px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  user-select: none;
+}
+
+.note-toolbar-btn:hover {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.4);
+  color: #a78bfa;
+}
+
+.note-toolbar-bold {
+  font-weight: 700;
+  font-size: 14px;
+}
+
 .note-content-input {
   font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
   font-size: 0.85rem;
@@ -245,5 +280,18 @@
 
   .note-card-actions {
     opacity: 1;
+  }
+
+  .note-toolbar-btn {
+    min-width: 44px;
+    height: 38px;
+    font-size: 17px;
+  }
+
+  /* Make checkboxes in card previews easier to tap */
+  .note-card-preview input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
   }
 }
