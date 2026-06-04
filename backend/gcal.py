@@ -5,7 +5,7 @@ No authentication required. Uses Google Calendar's
 "Secret address in iCal format" (or any public iCal URL).
 """
 
-from datetime import date, datetime, time as dt_time
+from datetime import date, datetime, time as dt_time, timezone
 
 import requests
 import icalendar
@@ -16,7 +16,7 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
     """Fetch and expand events from an iCal URL in [start, end).
 
     Handles recurring events, all-day events, and timezone-aware datetimes.
-    Returns datetimes as naive local time for consistency with the rest of the app.
+    Returns timed-event datetimes as UTC-aware so callers can convert to any local timezone.
 
     Each dict: id, title, description, start (datetime), end (datetime|None), all_day (bool)
     """
@@ -53,9 +53,10 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
                 else None
             )
         else:
-            # Convert tz-aware datetimes to naive local time
-            start_dt = start_val.astimezone().replace(tzinfo=None) if start_val.tzinfo else start_val
-            end_dt = end_val.astimezone().replace(tzinfo=None) if (end_val and end_val.tzinfo) else end_val
+            # Normalize to UTC so the frontend can convert to the user's local timezone.
+            # Naive datetimes are assumed to already be in UTC (e.g. from floating events).
+            start_dt = start_val.astimezone(timezone.utc) if start_val.tzinfo else start_val.replace(tzinfo=timezone.utc)
+            end_dt = end_val.astimezone(timezone.utc) if (end_val and end_val.tzinfo) else (end_val.replace(tzinfo=timezone.utc) if end_val else None)
 
         # Skip cancelled events
         status = str(ev.get("STATUS", "")).upper()

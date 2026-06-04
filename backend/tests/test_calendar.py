@@ -150,14 +150,14 @@ class TestGetCalendarEvents:
         client.put("/api/calendar-mappings", json=[
             {"tag_id": work_id, "ical_url": "https://example.com/work.ics"}
         ])
-        # Pin start to noon today (always today's date regardless of when CI runs)
-        # and end to +1 day so it's never filtered as "already ended".
+        # Pin start to noon today (UTC-aware so it compares correctly with datetime.now(UTC)).
+        # End is +1 day so it's never filtered as "already ended".
         mock_event = {
             "id": "evt-001",
             "title": "Team standup",
             "description": None,
-            "start": datetime.combine(date.today(), time(12, 0)),
-            "end": datetime.now() + timedelta(days=1),
+            "start": datetime.combine(date.today(), time(12, 0), tzinfo=timezone.utc),
+            "end": datetime.now(timezone.utc) + timedelta(days=1),
             "all_day": False,
         }
         with patch("gcal.fetch_events", return_value=[mock_event]):
@@ -178,7 +178,7 @@ class TestGetCalendarEvents:
             "id": "evt-002",
             "title": "Sprint review",
             "description": None,
-            "start": datetime.combine(in_3_days, datetime.min.time().replace(hour=14)),
+            "start": datetime.combine(in_3_days, datetime.min.time().replace(hour=14), tzinfo=timezone.utc),
             "end": None,
             "all_day": False,
         }
@@ -197,7 +197,7 @@ class TestGetCalendarEvents:
             "id": "evt-003",
             "title": "Quarterly review",
             "description": None,
-            "start": datetime.combine(in_2_weeks, datetime.min.time().replace(hour=10)),
+            "start": datetime.combine(in_2_weeks, datetime.min.time().replace(hour=10), tzinfo=timezone.utc),
             "end": None,
             "all_day": False,
         }
@@ -216,7 +216,7 @@ class TestGetCalendarEvents:
             "id": "evt-004",
             "title": "Yesterday's meeting",
             "description": None,
-            "start": datetime.combine(yesterday, datetime.min.time().replace(hour=10)),
+            "start": datetime.combine(yesterday, datetime.min.time().replace(hour=10), tzinfo=timezone.utc),
             "end": None,
             "all_day": False,
         }
@@ -235,7 +235,7 @@ class TestGetCalendarEvents:
             "id": "evt-005",
             "title": "All hands",
             "description": None,
-            "start": datetime.now() + timedelta(hours=1),
+            "start": datetime.now(timezone.utc) + timedelta(hours=1),
             "end": None,
             "all_day": False,
         }
@@ -245,6 +245,36 @@ class TestGetCalendarEvents:
         assert event["tag_id"] == work_id
         assert event["tag_name"] == "work"
         assert event["tag_color"] == "#3b82f6"
+
+    def test_mixed_allday_and_timed_events_sort_without_error(self, client):
+        """Sorting must not raise TypeError when all-day (naive) and timed (UTC-aware) events coexist."""
+        work_id = get_tag_id(client, "work")
+        client.put("/api/calendar-mappings", json=[
+            {"tag_id": work_id, "ical_url": "https://example.com/work.ics"}
+        ])
+        tomorrow = date.today() + timedelta(days=1)
+        timed_event = {
+            "id": "timed-1",
+            "title": "Timed event",
+            "description": None,
+            "start": datetime.combine(tomorrow, time(10, 0), tzinfo=timezone.utc),
+            "end": datetime.combine(tomorrow, time(11, 0), tzinfo=timezone.utc),
+            "all_day": False,
+        }
+        allday_event = {
+            "id": "allday-1",
+            "title": "All day event",
+            "description": None,
+            "start": datetime.combine(tomorrow, time(0, 0)),  # naive, as gcal.py returns
+            "end": None,
+            "all_day": True,
+        }
+        with patch("gcal.fetch_events", return_value=[timed_event, allday_event]):
+            res = client.get("/api/calendar-events")
+        assert res.status_code == 200, f"Got 500: mixed naive/aware sort should not raise TypeError"
+        titles = {e["title"] for e in res.json()}
+        assert "Timed event" in titles
+        assert "All day event" in titles
 
     def test_skips_failing_url_gracefully(self, client):
         work_id = get_tag_id(client, "work")
@@ -488,10 +518,9 @@ def _tomorrow_utc_dtstart() -> str:
     return tomorrow.strftime("%Y%m%d") + "T140000Z"
 
 
-def _expected_local(dtstart_utc: str) -> datetime:
-    """Convert a UTC dtstart string (YYYYMMDDTHHMMSSZ) to expected naive local datetime."""
-    dt = datetime.strptime(dtstart_utc, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
-    return dt.astimezone().replace(tzinfo=None)
+def _expected_utc(dtstart_utc: str) -> datetime:
+    """Parse a UTC dtstart string (YYYYMMDDTHHMMSSZ) into a UTC-aware datetime."""
+    return datetime.strptime(dtstart_utc, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
 
 
 def _fetch(ics_content: bytes) -> list[dict]:
@@ -539,16 +568,54 @@ class TestICalImport:
         events = _fetch(_vcal(_vevent("noseq@test", "No seq", dtstart)))
         assert events[0]["sequence"] == 0
 
-    def test_utc_datetime_converted_to_naive_local(self):
-        """UTC datetimes must be converted to naive local time (not kept as UTC)."""
+    def test_utc_datetime_normalized_to_utc_aware(self):
+        """UTC datetimes must be returned as UTC-aware so the frontend converts to local time."""
         dtstart = _tomorrow_utc_dtstart()
-        expected = _expected_local(dtstart)
+        expected = _expected_utc(dtstart)
         events = _fetch(_vcal(_vevent("tz@test", "UTC event", dtstart)))
         assert len(events) == 1
         result_start = events[0]["start"]
         assert result_start == expected, \
-            f"Expected local time {expected}, got {result_start}"
-        assert result_start.tzinfo is None, "Returned datetime must be naive (tz stripped)"
+            f"Expected UTC-aware {expected}, got {result_start}"
+        assert result_start.tzinfo is not None, "Returned datetime must be UTC-aware"
+        assert result_start.utcoffset().total_seconds() == 0, "Offset must be zero (UTC)"
+
+    def test_utc_datetime_wall_clock_preserved(self):
+        """The wall-clock UTC hour/minute must be unchanged after normalization."""
+        dtstart = _tomorrow_utc_dtstart()   # e.g. "20260604T140000Z"
+        events = _fetch(_vcal(_vevent("wallclock@test", "Wall clock", dtstart)))
+        result_start = events[0]["start"]
+        # Parse the expected UTC wall-clock time
+        expected_utc = _expected_utc(dtstart)
+        assert result_start.hour == expected_utc.hour
+        assert result_start.minute == expected_utc.minute
+
+    def test_non_utc_tz_aware_normalized_to_utc(self):
+        """Events in non-UTC timezones must be normalized to UTC, not kept as-is."""
+        # Build an ICS event in US/Eastern (UTC-5 in winter, UTC-4 in summer).
+        # We use a fixed offset TZID so the test is deterministic.
+        ics = (
+            b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            b"BEGIN:VTIMEZONE\r\nTZID:Etc/GMT+5\r\n"
+            b"BEGIN:STANDARD\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\n"
+            b"TZNAME:EST\r\nDTSTART:19700101T000000\r\nEND:STANDARD\r\n"
+            b"END:VTIMEZONE\r\n"
+            b"BEGIN:VEVENT\r\n"
+            b"UID:tz-eastern@test\r\n"
+            b"SUMMARY:Eastern event\r\n"
+            b"DTSTART;TZID=Etc/GMT+5:20260604T140000\r\n"  # 2pm EST = 7pm UTC
+            b"DTSTAMP:20260101T000000Z\r\n"
+            b"END:VEVENT\r\n"
+            b"END:VCALENDAR\r\n"
+        )
+        events = _fetch(ics)
+        assert len(events) == 1
+        result_start = events[0]["start"]
+        assert result_start.tzinfo is not None, "Must be tz-aware"
+        assert result_start.utcoffset().total_seconds() == 0, "Must be normalized to UTC"
+        # 2pm EST (UTC-5) = 19:00 UTC
+        assert result_start.hour == 19, \
+            f"Expected 19:00 UTC, got {result_start.hour}:00"
 
     def test_utc_event_is_not_all_day(self):
         events = _fetch(_vcal(_vevent("timed@test", "Timed", _tomorrow_utc_dtstart())))
@@ -604,8 +671,8 @@ class TestICalImport:
 class TestUIDDeduplication:
     # Fixed start so cross-feed duplicates share the same uid+start dedup key.
     # End is start+1 day so the event is never filtered as already-ended.
-    _FIXED_START = datetime.combine(date.today(), time(12, 0))
-    _FIXED_END   = datetime.combine(date.today(), time(12, 0)) + timedelta(days=1)
+    _FIXED_START = datetime.combine(date.today(), time(12, 0), tzinfo=timezone.utc)
+    _FIXED_END   = datetime.combine(date.today(), time(12, 0), tzinfo=timezone.utc) + timedelta(days=1)
 
     def _mock_event(self, uid: str, title: str, sequence: int) -> dict:
         return {
@@ -662,7 +729,7 @@ class TestUIDDeduplication:
             "uid": "",
             "sequence": 0,
             "description": None,
-            "start": datetime.now() + timedelta(hours=1),
+            "start": datetime.now(timezone.utc) + timedelta(hours=1),
             "end": None,
             "all_day": False,
         }

@@ -43,7 +43,7 @@ MODELS = [
     },
 ]
 
-VENV_PYTHON = Path(__file__).parent / "venv" / "bin" / "python3.14"
+VENV_PYTHON = Path(__file__).parent.parent / "venv" / "bin" / "python3.14"
 PYTEST = str(VENV_PYTHON.parent / "pytest")
 
 
@@ -325,7 +325,7 @@ def main():
 
     # Write report
     report = generate_report(model_results)
-    out_path = Path(__file__).parent / "benchmark_report.md"
+    out_path = Path(__file__).parent.parent / "benchmark_report.md"
     out_path.write_text(report)
     print(f"Report written to {out_path}")
 

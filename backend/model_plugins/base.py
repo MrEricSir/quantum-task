@@ -13,6 +13,7 @@ To add a new model:
 """
 
 from __future__ import annotations
+import re
 from datetime import time as dt_time
 from typing import Any
 
@@ -176,13 +177,50 @@ class BaseModelPlugin:
         "yearly": "later",
     }
 
+    # Phrase patterns that must map to a specific section regardless of LLM output.
+    # Checked against the lowercased original user input.
+    _SECTION_OVERRIDES: list[tuple[re.Pattern, str]] = [
+        (re.compile(r'\bnext week\b'),    "week"),
+        (re.compile(r'\bthis week\b'),    "week"),
+        (re.compile(r'\btomorrow\b'),     "week"),
+        (re.compile(r'\bin a few days\b'), "week"),
+        (re.compile(r'\bthis (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b'), "week"),
+        (re.compile(r'\bnext month\b'),   "month"),
+        (re.compile(r'\bin two weeks\b'), "month"),
+        (re.compile(r'\bin three weeks\b'), "month"),
+    ]
+
+    # Input prefixes that always signal a note regardless of LLM type output.
+    _NOTE_PREFIXES = ("note:", "idea:", "thought:", "remember:", "jot down", "write down")
+
     def post_process(self, parsed: Any, *, text: str = "") -> Any:
         """
         Called on the validated ParsedTodo after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
+        lowered = text.strip().lower()
+
+        # Enforce section from explicit temporal phrases in the input text.
+        # This catches cases where the LLM correctly understands the phrase but
+        # maps it to the wrong section bucket.
+        for pattern, forced_section in self._SECTION_OVERRIDES:
+            if pattern.search(lowered):
+                parsed.section = forced_section
+                break
+
+        # Enforce note type from capture-phrase prefixes stated in the prompt.
+        if parsed.type != "note" and any(lowered.startswith(p) for p in self._NOTE_PREFIXES):
+            parsed.type = "note"
+            if parsed.note_content is None:
+                # Strip the prefix and use the remainder as minimal note content
+                for p in self._NOTE_PREFIXES:
+                    if lowered.startswith(p):
+                        parsed.note_content = text[len(p):].strip()
+                        break
+
         # Recurring tasks default to "later" from the LLM because there's no
         # specific deadline — override with a section that matches the cadence.
         if parsed.recurrence_rule and parsed.section == "later":
             parsed.section = self._RECURRENCE_SECTION.get(parsed.recurrence_rule, "week")
+
         return parsed

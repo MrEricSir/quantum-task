@@ -244,7 +244,7 @@ def get_calendar_events(db: Session = Depends(get_db)):
 
     today = date.today()
     window_end = today + timedelta(days=28)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     # uid -> best candidate so far (dict with schema fields + sequence for dedup)
     seen: dict[str, dict] = {}
@@ -311,7 +311,10 @@ def get_calendar_events(db: Session = Depends(get_db)):
         schemas.CalendarEvent(**{k: v for k, v in c.items() if k not in ("uid", "sequence")})
         for c in seen.values()
     ]
-    events.sort(key=lambda e: e.start)
+    # Normalize sort key: all-day events have naive datetimes; timed events have
+    # UTC-aware datetimes after our timezone fix.  Attach UTC to naive ones so
+    # Python can compare them without raising TypeError.
+    events.sort(key=lambda e: e.start if e.start.tzinfo is not None else e.start.replace(tzinfo=timezone.utc))
     return events
 
 

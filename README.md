@@ -94,9 +94,10 @@ cd frontend && npm run dev
 
 `./dev.sh test` runs three suites in sequence:
 
-**Backend unit tests** (`test_calendar.py`, `test_briefing.py`) — no external services required:
+**Backend unit tests** (`test_calendar.py`, `test_briefing.py`, `test_plugins.py`) — no external services required:
 - Calendar feed CRUD, section assignment, past-event filtering, tag attachment
 - iCal export/import, UID deduplication, timezone handling
+- Plugin post-processing: deterministic section/type overrides from input text
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
@@ -202,6 +203,11 @@ todo/
     schemas.py         # Pydantic schemas
     database.py        # DB engine, reads DATABASE_URL from env
     model_plugins/     # Per-model prompt formatting (Ollama models)
+    tests/
+      test_calendar.py # Calendar feed CRUD, timezone, iCal export/import
+      test_briefing.py # Daily briefing unit tests
+      test_parse.py    # Quick Add parse integration tests (requires Ollama)
+      benchmark.py     # Parse quality benchmark across Ollama models
     Dockerfile
     requirements.txt
   frontend/
@@ -210,6 +216,8 @@ todo/
     src/
       App.jsx          # Root component, state management
       components/      # Board, Sidebar, Modals, Queue, Briefing, Calendar, Archive
+    tests/
+      visual.spec.js   # Playwright functional tests (all APIs mocked)
     dist/              # Production build output (gitignored)
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide

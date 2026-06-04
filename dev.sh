@@ -115,14 +115,14 @@ test() {
   echo "Installing test dependencies..."
   "$SCRIPT_DIR/backend/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements-dev.txt" -q
   cd "$SCRIPT_DIR/backend"
-  # Calendar tests are pure unit tests (no Ollama required).
+  # Calendar and briefing tests are pure unit tests (no Ollama required).
   # Parse tests call the live Ollama model and are skipped automatically if it is not running.
   echo ""
   echo "==> Backend unit tests"
-  "$SCRIPT_DIR/backend/venv/bin/pytest" test_calendar.py test_briefing.py -v
+  "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_calendar.py tests/test_briefing.py tests/test_plugins.py -v
   echo ""
   echo "==> Quick Add parse integration tests (requires Ollama)"
-  "$SCRIPT_DIR/backend/venv/bin/pytest" test_parse.py -v
+  "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_parse.py -v
   echo ""
   echo "==> Frontend tests"
   cd "$SCRIPT_DIR/frontend"
@@ -146,7 +146,7 @@ benchmark() {
   echo "Installing test dependencies..."
   "$SCRIPT_DIR/backend/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements-dev.txt" -q
   cd "$SCRIPT_DIR/backend"
-  "$SCRIPT_DIR/backend/venv/bin/python" benchmark.py "$@"
+  "$SCRIPT_DIR/backend/venv/bin/python" tests/benchmark.py "$@"
 }
 
 # ── GCP shared helpers ────────────────────────────────────────────────────────
