@@ -119,7 +119,7 @@ test() {
   # Parse tests call the live Ollama model and are skipped automatically if it is not running.
   echo ""
   echo "==> Backend unit tests"
-  "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_calendar.py tests/test_briefing.py tests/test_plugins.py -v
+  "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_calendar.py tests/test_briefing.py tests/test_plugins.py tests/test_localtime.py -v
   echo ""
   echo "==> Quick Add parse integration tests (requires Ollama)"
   "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_parse.py -v

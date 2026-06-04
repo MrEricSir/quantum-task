@@ -35,9 +35,12 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
     const location = await getLocation()
 
     try {
+      const d = new Date()
+      const pad = n => String(n).padStart(2, '0')
+      const localDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
       const response = await fetch('/api/briefing/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate },
         body: JSON.stringify({
           todos: todosRef.current,
           calendar_events: calEventsRef.current,

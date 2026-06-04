@@ -190,6 +190,23 @@ def auth_logout():
     return resp
 
 
+# ── Timezone helper ──────────────────────────────────────────────────────────
+
+def _local_date(request: Request) -> date:
+    """Return the client's local date from the X-Local-Date header.
+
+    The frontend sends its local YYYY-MM-DD date on every request so that
+    section assignment, habit resets, and filtering all use the user's clock
+    rather than the server's (which is UTC on Cloud Run).
+    Falls back to date.today() when the header is absent (e.g. direct API calls).
+    """
+    raw = request.headers.get("X-Local-Date", "")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return date.today()
+
+
 # ── Google Calendar ──────────────────────────────────────────────────────────
 
 @app.get("/api/calendar-mappings", response_model=List[schemas.CalendarMappingItem])
@@ -237,12 +254,12 @@ def rotate_export_token(db: Session = Depends(get_db)):
 
 
 @app.get("/api/calendar-events", response_model=List[schemas.CalendarEvent])
-def get_calendar_events(db: Session = Depends(get_db)):
+def get_calendar_events(request: Request, db: Session = Depends(get_db)):
     mappings = db.query(models.CalendarMapping).all()
     if not mappings:
         return []
 
-    today = date.today()
+    today = _local_date(request)
     window_end = today + timedelta(days=28)
     now = datetime.now(timezone.utc)
 
@@ -582,8 +599,8 @@ def _cache_set(section: str, content_hash: str, text: str, weather_json: str | N
 
 
 @app.post("/api/briefing/stream")
-def stream_briefing(req: schemas.BriefingRequest):
-    today_dt = date.today()
+def stream_briefing(request: Request, req: schemas.BriefingRequest):
+    today_dt = _local_date(request)
 
     today_todos  = [t for t in req.todos if t.section == "today"]
     today_events = [e for e in req.calendar_events if e.section == "today"]
@@ -761,8 +778,7 @@ def delete_tag(tag_id: int, db: Session = Depends(get_db)):
 
 # ── Habits ───────────────────────────────────────────────────────────────────
 
-def _compute_streak(db: Session, habit_id: int) -> int:
-    today = date.today()
+def _compute_streak(db: Session, habit_id: int, today: date) -> int:
     today_done = db.query(models.HabitCompletion).filter_by(
         habit_id=habit_id, date=today.isoformat()
     ).first() is not None
@@ -781,8 +797,8 @@ def _compute_streak(db: Session, habit_id: int) -> int:
     return streak
 
 
-def _habit_out(db: Session, habit: models.Habit) -> schemas.Habit:
-    today_str = date.today().isoformat()
+def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
+    today_str = today.isoformat()
     completed_today = db.query(models.HabitCompletion).filter_by(
         habit_id=habit.id, date=today_str
     ).first() is not None
@@ -792,7 +808,7 @@ def _habit_out(db: Session, habit: models.Habit) -> schemas.Habit:
         created_at=habit.created_at,
         tags=list(habit.tags),
         completed_today=completed_today,
-        streak=_compute_streak(db, habit.id),
+        streak=_compute_streak(db, habit.id, today),
     )
 
 
@@ -862,24 +878,27 @@ def promote_note(note_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/habits", response_model=List[schemas.Habit])
-def get_habits(db: Session = Depends(get_db)):
+def get_habits(request: Request, db: Session = Depends(get_db)):
+    today = _local_date(request)
     habits = db.query(models.Habit).order_by(models.Habit.created_at).all()
-    return [_habit_out(db, h) for h in habits]
+    return [_habit_out(db, h, today) for h in habits]
 
 
 @app.post("/api/habits", response_model=schemas.Habit, status_code=201)
-def create_habit(habit: schemas.HabitCreate, db: Session = Depends(get_db)):
+def create_habit(request: Request, habit: schemas.HabitCreate, db: Session = Depends(get_db)):
+    today = _local_date(request)
     db_habit = models.Habit(name=habit.name)
     if habit.tag_ids:
         db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(habit.tag_ids)).all()
     db.add(db_habit)
     db.commit()
     db.refresh(db_habit)
-    return _habit_out(db, db_habit)
+    return _habit_out(db, db_habit, today)
 
 
 @app.put("/api/habits/{habit_id}", response_model=schemas.Habit)
-def update_habit(habit_id: int, habit: schemas.HabitUpdate, db: Session = Depends(get_db)):
+def update_habit(request: Request, habit_id: int, habit: schemas.HabitUpdate, db: Session = Depends(get_db)):
+    today = _local_date(request)
     db_habit = db.query(models.Habit).filter(models.Habit.id == habit_id).first()
     if not db_habit:
         raise HTTPException(status_code=404, detail="Habit not found")
@@ -889,7 +908,7 @@ def update_habit(habit_id: int, habit: schemas.HabitUpdate, db: Session = Depend
         db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(habit.tag_ids)).all()
     db.commit()
     db.refresh(db_habit)
-    return _habit_out(db, db_habit)
+    return _habit_out(db, db_habit, today)
 
 
 @app.delete("/api/habits/{habit_id}")
@@ -903,8 +922,8 @@ def delete_habit(habit_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/habits/{habit_id}/check")
-def check_habit(habit_id: int, db: Session = Depends(get_db)):
-    today_str = date.today().isoformat()
+def check_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
+    today_str = _local_date(request).isoformat()
     if not db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first():
         db.add(models.HabitCompletion(habit_id=habit_id, date=today_str))
         db.commit()
@@ -912,8 +931,8 @@ def check_habit(habit_id: int, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/habits/{habit_id}/check")
-def uncheck_habit(habit_id: int, db: Session = Depends(get_db)):
-    today_str = date.today().isoformat()
+def uncheck_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
+    today_str = _local_date(request).isoformat()
     row = db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first()
     if row:
         db.delete(row)
@@ -925,10 +944,9 @@ def uncheck_habit(habit_id: int, db: Session = Depends(get_db)):
 
 _SECTION_ORDER = {"today": 0, "week": 1, "month": 2, "later": 3}
 
-def _auto_migrate_sections(db: Session) -> None:
+def _auto_migrate_sections(db: Session, today: date) -> None:
     """Advance todos with scheduled_at into the correct section based on today's date.
     Only moves forward (e.g. week → today); never pushes a todo to a later section."""
-    today = date.today()
     todos = (
         db.query(models.Todo)
         .filter(models.Todo.completed == False, models.Todo.scheduled_at.isnot(None))
@@ -970,8 +988,8 @@ def search_todos(q: str = Query(default="", min_length=1), db: Session = Depends
 
 
 @app.get("/api/todos", response_model=List[schemas.Todo])
-def get_todos(db: Session = Depends(get_db)):
-    _auto_migrate_sections(db)
+def get_todos(request: Request, db: Session = Depends(get_db)):
+    _auto_migrate_sections(db, _local_date(request))
     return (
         db.query(models.Todo)
         .order_by(models.Todo.section, models.Todo.position)
@@ -1005,8 +1023,8 @@ def reorder_todos(updates: List[schemas.TodoReorderItem], db: Session = Depends(
 
 
 @app.post("/api/todos/parse", response_model=schemas.ParsedTodo)
-def parse_todo(req: schemas.ParseRequest, db: Session = Depends(get_db)):
-    today = date.today()
+def parse_todo(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
+    today = _local_date(request)
     tomorrow = today + timedelta(days=1)
     tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
     tags_section = (
@@ -1071,7 +1089,7 @@ def _section_for_date(d: date, today: date) -> str:
 
 
 @app.put("/api/todos/{todo_id}", response_model=schemas.Todo)
-def update_todo(todo_id: int, todo: schemas.TodoUpdate, db: Session = Depends(get_db)):
+def update_todo(request: Request, todo_id: int, todo: schemas.TodoUpdate, db: Session = Depends(get_db)):
     db_todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
     if not db_todo:
         raise HTTPException(status_code=404, detail="Todo not found")
@@ -1092,7 +1110,7 @@ def update_todo(todo_id: int, todo: schemas.TodoUpdate, db: Session = Depends(ge
     if completing and db_todo.recurrence_rule:
         base = db_todo.scheduled_at or datetime.now(timezone.utc)
         next_dt = _next_occurrence(base, db_todo.recurrence_rule)
-        next_section = _section_for_date(next_dt.date(), date.today())
+        next_section = _section_for_date(next_dt.date(), _local_date(request))
         count = db.query(models.Todo).filter(models.Todo.section == next_section).count()
         next_todo = models.Todo(
             title=db_todo.title,
