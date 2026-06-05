@@ -22,7 +22,7 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
-        globPatterns: ['**/*.{js,css,html,svg,png,webm}'],
+        globPatterns: ['**/*.{js,css,html,svg,png}'],
         runtimeCaching: [
           {
             urlPattern: /^\/api\//,
