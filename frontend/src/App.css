@@ -23,7 +23,8 @@
   font-size: 13px;
   font-weight: 500;
   text-align: center;
-  padding: 8px 16px;
+  /* Consume the safe-area-inset-top so the header below doesn't double it */
+  padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
   position: sticky;
   top: 0;
   z-index: 101;
@@ -35,14 +36,20 @@
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   color: #fff;
-  height: 58px;
+  /* grow to accommodate the notch / Dynamic Island */
+  min-height: 58px;
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: env(safe-area-inset-top) 24px 0;
   position: sticky;
   top: 0;
   z-index: 100;
   border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+/* When the offline banner is above the header it already consumed the inset */
+.offline-banner + .app-header {
+  padding-top: 0;
 }
 
 .header-inner {
@@ -280,12 +287,17 @@
 /* ── Mobile responsive ── */
 @media (max-width: 640px) {
   .app-header {
-    padding: 0 12px;
-    height: 52px;
+    padding: env(safe-area-inset-top) 12px 0;
+    min-height: 52px;
   }
 
   .header-title {
     display: none;
+  }
+
+  /* Without a title, weather is the leftmost item — left-align its content */
+  .header-weather {
+    justify-content: flex-start;
   }
 
   .header-weather-emoji {

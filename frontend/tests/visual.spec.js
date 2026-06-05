@@ -288,3 +288,78 @@ test.describe('quick-add modal', () => {
     await expect(page.getByRole('textbox')).toBeVisible()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Mobile header layout
+// ---------------------------------------------------------------------------
+test.describe('mobile header layout', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('weather widget is left-aligned on mobile', async ({ page }) => {
+    await page.goto('/')
+    await waitForApp(page)
+
+    const weather = page.locator('.header-weather')
+    await expect(weather).toBeVisible()
+
+    // Content must start in the left half of the viewport
+    const box = await weather.boundingBox()
+    const viewportWidth = 390
+    expect(box.x).toBeLessThan(viewportWidth / 2)
+    // And the left edge should be near the screen edge (within 32px of left padding)
+    expect(box.x).toBeLessThan(32)
+  })
+
+  test('header is visible and usable on mobile', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+
+    const header = page.locator('.app-header')
+    await expect(header).toBeVisible()
+
+    // Header must not be zero-height
+    const box = await header.boundingBox()
+    expect(box.height).toBeGreaterThan(40)
+
+    // Action buttons must be reachable (not hidden behind notch area)
+    await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Offline banner
+// ---------------------------------------------------------------------------
+test.describe('offline banner', () => {
+  test('banner appears when offline event fires', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+
+    // Banner not shown while online
+    await expect(page.locator('.offline-banner')).toHaveCount(0)
+
+    // Simulate going offline
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')))
+    await expect(page.locator('.offline-banner')).toBeVisible()
+  })
+
+  test('banner disappears when connection is restored', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')))
+    await expect(page.locator('.offline-banner')).toBeVisible()
+
+    await page.evaluate(() => window.dispatchEvent(new Event('online')))
+    await expect(page.locator('.offline-banner')).toHaveCount(0)
+  })
+
+  test('header remains visible while offline', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')))
+    await expect(page.locator('.offline-banner')).toBeVisible()
+    await expect(page.locator('.app-header')).toBeVisible()
+  })
+})
