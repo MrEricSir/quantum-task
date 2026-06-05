@@ -592,8 +592,10 @@ class TestICalImport:
 
     def test_non_utc_tz_aware_normalized_to_utc(self):
         """Events in non-UTC timezones must be normalized to UTC, not kept as-is."""
-        # Build an ICS event in US/Eastern (UTC-5 in winter, UTC-4 in summer).
-        # We use a fixed offset TZID so the test is deterministic.
+        # Build an ICS event in Etc/GMT+5 (a fixed UTC-5 offset, POSIX convention).
+        # Use tomorrow so the event falls within the _FETCH_START/_FETCH_END window.
+        tomorrow = date.today() + timedelta(days=1)
+        dtstart_local = tomorrow.strftime("%Y%m%d") + "T140000"  # 2pm local = 19:00 UTC
         ics = (
             b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
             b"BEGIN:VTIMEZONE\r\nTZID:Etc/GMT+5\r\n"
@@ -603,8 +605,8 @@ class TestICalImport:
             b"BEGIN:VEVENT\r\n"
             b"UID:tz-eastern@test\r\n"
             b"SUMMARY:Eastern event\r\n"
-            b"DTSTART;TZID=Etc/GMT+5:20260604T140000\r\n"  # 2pm EST = 7pm UTC
-            b"DTSTAMP:20260101T000000Z\r\n"
+            + f"DTSTART;TZID=Etc/GMT+5:{dtstart_local}\r\n".encode()
+            + b"DTSTAMP:20260101T000000Z\r\n"
             b"END:VEVENT\r\n"
             b"END:VCALENDAR\r\n"
         )
