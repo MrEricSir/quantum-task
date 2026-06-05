@@ -50,6 +50,7 @@ const SECTION_COLORS = {
 }
 
 export default function App() {
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [authed, setAuthed] = useState(null)   // null=checking, true/false
   const [authEnabled, setAuthEnabled] = useState(false)
   const [todos, setTodos] = useState([])
@@ -100,6 +101,14 @@ export default function App() {
     const handler = (e) => setIsMobile(e.matches)
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  useEffect(() => {
+    const online = () => setIsOnline(true)
+    const offline = () => setIsOnline(false)
+    window.addEventListener('online', online)
+    window.addEventListener('offline', offline)
+    return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline) }
   }, [])
 
   useEffect(() => {
@@ -506,6 +515,9 @@ export default function App() {
       <video className="app-bg-video" autoPlay muted loop playsInline disablePictureInPicture>
         <source src="/bg.webm" type="video/webm" />
       </video>
+      {!isOnline && (
+        <div className="offline-banner">No internet connection — changes won't sync until you're back online.</div>
+      )}
       <header className="app-header">
         <div className="header-inner">
           <div className="header-title">
