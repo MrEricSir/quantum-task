@@ -254,7 +254,7 @@
 .habit-card-btn {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.45);
   cursor: pointer;
   padding: 5px;
   border-radius: 5px;
@@ -271,6 +271,114 @@
 .habit-card-btn--delete:hover {
   color: #f87171;
   background: rgba(248, 113, 113, 0.1);
+}
+
+.habit-card-btn--archive:hover {
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+/* ── Archive section ── */
+.habits-archive {
+  margin-top: 32px;
+}
+
+.habits-archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.12s;
+}
+
+.habits-archive-toggle:hover { color: var(--text); }
+
+.habits-archive-chevron {
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+}
+
+.habits-archive-count {
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+}
+
+.habits-archive-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.habits-archive-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.habits-archive-row-name {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.habits-archive-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.habits-archive-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.habits-archive-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+}
+
+.habits-archive-btn--delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.habits-archive-btn--delete:hover {
+  background: rgba(239,68,68,0.12);
+  border-color: rgba(239,68,68,0.4);
+  color: #f87171;
 }
 
 /* ── Mobile ── */

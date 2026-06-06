@@ -1,15 +1,49 @@
 import { useState, useRef, useEffect } from 'react'
-import { Pencil1Icon, TrashIcon, CheckIcon } from '@radix-ui/react-icons'
-import ConfirmDialog from './ConfirmDialog'
+import { Pencil1Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon } from '@radix-ui/react-icons'
 import './HabitsPage.css'
 
-export default function HabitsPage({ habits, allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete }) {
+function HabitsArchive({ habits, onUnarchive, onDelete }) {
+  const [open, setOpen] = useState(true)
+  if (habits.length === 0) return null
+  return (
+    <div className="habits-archive">
+      <button className="habits-archive-toggle" onClick={() => setOpen((v) => !v)}>
+        <span className="habits-archive-chevron">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
+        Habit Archive
+        <span className="habits-archive-count">{habits.length}</span>
+      </button>
+      {open && (
+        <div className="habits-archive-list">
+          {habits.map((habit) => (
+            <div key={habit.id} className="habits-archive-row">
+              <span className="habits-archive-row-name">{habit.name}</span>
+              <div className="habits-archive-row-actions">
+                <button className="habits-archive-btn" onClick={() => onUnarchive(habit.id)} title="Restore habit">
+                  Restore
+                </button>
+                <button
+                  className="habits-archive-btn habits-archive-btn--delete"
+                  onClick={() => onDelete(habit.id)}
+                  aria-label="Delete habit"
+                  title="Delete permanently"
+                >
+                  <Cross2Icon />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive }) {
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const [newTagIds, setNewTagIds] = useState([])
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const addInputRef = useRef(null)
   const editInputRef = useRef(null)
 
@@ -190,12 +224,16 @@ export default function HabitsPage({ habits, allTags, selectedTagId = null, onTo
                 </button>
                 <button
                   type="button"
-                  className="habit-card-btn habit-card-btn--delete"
-                  onClick={() => setConfirmDeleteId(habit.id)}
-                  aria-label="Delete habit"
-                  title="Delete habit"
+                  className="habit-card-btn habit-card-btn--archive"
+                  onClick={() => onArchive(habit.id)}
+                  aria-label="Archive habit"
+                  title="Archive habit"
                 >
-                  <TrashIcon width={13} height={13} />
+                  <svg width="13" height="13" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="1" y="1" width="13" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1.2"/>
+                    <path d="M1.5 4.5v8.5a.5.5 0 00.5.5h11a.5.5 0 00.5-.5V4.5" stroke="currentColor" strokeWidth="1.2"/>
+                    <path d="M5.5 8.5l2 2 2-2M7.5 10.5V7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
                 </button>
               </div>
             </div>
@@ -203,16 +241,12 @@ export default function HabitsPage({ habits, allTags, selectedTagId = null, onTo
         </div>
       )}
 
-      <ConfirmDialog
-        open={confirmDeleteId !== null}
-        title="Delete habit?"
-        description={(() => {
-          const h = habits.find((h) => h.id === confirmDeleteId)
-          return h ? `"${h.name}" and all its completion history will be permanently deleted.` : ''
-        })()}
-        onConfirm={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null) }}
-        onCancel={() => setConfirmDeleteId(null)}
+      <HabitsArchive
+        habits={archivedHabits}
+        onUnarchive={onUnarchive}
+        onDelete={onDelete}
       />
+
     </div>
   )
 }

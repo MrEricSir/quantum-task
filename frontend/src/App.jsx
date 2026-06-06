@@ -32,7 +32,7 @@ import Sidebar from './components/Sidebar'
 import MobileNav from './components/MobileNav'
 import TagFilterBar from './components/TagFilterBar'
 import LoginPage from './components/LoginPage'
-import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote, checkAuth, logout } from './api'
+import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote, checkAuth, logout, fetchArchivedNotes, archiveNote, unarchiveNote, fetchArchivedHabits, archiveHabit, unarchiveHabit } from './api'
 import './App.css'
 
 export const SECTIONS = ['today', 'week', 'month', 'later']
@@ -69,7 +69,9 @@ export default function App() {
   const [activeSection, setActiveSection] = useState('today')
   const [weather, setWeather] = useState(null)
   const [habits, setHabits] = useState([])
+  const [archivedHabits, setArchivedHabits] = useState([])
   const [notes, setNotes] = useState([])
+  const [archivedNotes, setArchivedNotes] = useState([])
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
     todos,
@@ -174,6 +176,9 @@ export default function App() {
     fetchCalendarEvents()
       .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
       .catch(() => {})
+
+    fetchArchivedNotes().then(setArchivedNotes).catch(() => {})
+    fetchArchivedHabits().then(setArchivedHabits).catch(() => {})
   }, [authed])
 
   // Poll for calendar updates every 15 minutes
@@ -350,7 +355,22 @@ export default function App() {
 
   const handleDeleteHabit = async (id) => {
     setHabits((prev) => prev.filter((h) => h.id !== id))
+    setArchivedHabits((prev) => prev.filter((h) => h.id !== id))
     await deleteHabit(id)
+  }
+
+  const handleArchiveHabit = async (id) => {
+    await archiveHabit(id)
+    const habit = habits.find((h) => h.id === id)
+    setHabits((prev) => prev.filter((h) => h.id !== id))
+    if (habit) setArchivedHabits((prev) => [...prev, { ...habit, archived: true }])
+  }
+
+  const handleUnarchiveHabit = async (id) => {
+    await unarchiveHabit(id)
+    const habit = archivedHabits.find((h) => h.id === id)
+    setArchivedHabits((prev) => prev.filter((h) => h.id !== id))
+    if (habit) setHabits((prev) => [...prev, { ...habit, archived: false }])
   }
 
   const handleToggleHabit = async (habit) => {
@@ -473,6 +493,21 @@ export default function App() {
   const handleDeleteNote = async (id) => {
     await deleteNote(id)
     setNotes((prev) => prev.filter((n) => n.id !== id))
+    setArchivedNotes((prev) => prev.filter((n) => n.id !== id))
+  }
+
+  const handleArchiveNote = async (id) => {
+    await archiveNote(id)
+    const note = notes.find((n) => n.id === id)
+    setNotes((prev) => prev.filter((n) => n.id !== id))
+    if (note) setArchivedNotes((prev) => [{ ...note, archived: true }, ...prev])
+  }
+
+  const handleUnarchiveNote = async (id) => {
+    await unarchiveNote(id)
+    const note = archivedNotes.find((n) => n.id === id)
+    setArchivedNotes((prev) => prev.filter((n) => n.id !== id))
+    if (note) setNotes((prev) => [{ ...note, archived: false }, ...prev])
   }
 
   const handlePromoteNote = async (id) => {
@@ -636,21 +671,27 @@ export default function App() {
         ) : isHabitsPage ? (
           <HabitsPage
             habits={habits}
+            archivedHabits={archivedHabits}
             allTags={tags}
             selectedTagId={selectedTagId}
             onToggle={handleToggleHabit}
             onAdd={handleAddHabit}
             onUpdate={handleUpdateHabit}
             onDelete={handleDeleteHabit}
+            onArchive={handleArchiveHabit}
+            onUnarchive={handleUnarchiveHabit}
           />
         ) : isNotesPage ? (
           <NotesPage
             notes={selectedTagId === null ? notes : notes.filter((n) => (n.tags ?? []).some((t) => t.id === selectedTagId))}
+            archivedNotes={selectedTagId === null ? archivedNotes : archivedNotes.filter((n) => (n.tags ?? []).some((t) => t.id === selectedTagId))}
             allTags={tags}
             onAdd={handleAddNote}
             onUpdate={handleUpdateNote}
             onDelete={handleDeleteNote}
             onPromote={handlePromoteNote}
+            onArchive={handleArchiveNote}
+            onUnarchive={handleUnarchiveNote}
           />
         ) : isCalendarPage ? (
           <CalendarPage

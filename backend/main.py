@@ -118,6 +118,18 @@ with engine.connect() as _conn:
     # habits / habit_completions tables are created by create_all above (new models)
     # No ALTER TABLE needed — they're new tables
 
+    for _stmt in [
+        "ALTER TABLE habits ADD COLUMN archived BOOLEAN DEFAULT 0",
+        "ALTER TABLE habits ADD COLUMN archived_at DATETIME",
+        "ALTER TABLE notes ADD COLUMN archived BOOLEAN DEFAULT 0",
+        "ALTER TABLE notes ADD COLUMN archived_at DATETIME",
+    ]:
+        try:
+            _conn.execute(text(_stmt))
+            _conn.commit()
+        except Exception:
+            pass  # column already exists
+
     # Migrate briefing_cache to per-section schema (old schema had today_text/week_text columns).
     # Cached briefings are cheap to regenerate, so just drop and recreate.
     try:
@@ -813,8 +825,13 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
 
 
 @app.get("/api/notes", response_model=List[schemas.Note])
-def get_notes(db: Session = Depends(get_db)):
-    return db.query(models.Note).order_by(models.Note.updated_at.desc()).all()
+def get_notes(archived: bool = False, db: Session = Depends(get_db)):
+    return (
+        db.query(models.Note)
+        .filter(models.Note.archived == archived)
+        .order_by(models.Note.updated_at.desc())
+        .all()
+    )
 
 
 @app.post("/api/notes", response_model=schemas.Note, status_code=201)
@@ -838,6 +855,8 @@ def update_note(note_id: int, note: schemas.NoteUpdate, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="Note not found")
     data = note.model_dump(exclude_unset=True)
     tag_ids = data.pop("tag_ids", None)
+    if "archived" in data:
+        data["archived_at"] = datetime.now(timezone.utc) if data["archived"] else None
     for key, val in data.items():
         setattr(db_note, key, val)
     db_note.updated_at = datetime.now(timezone.utc)
@@ -878,9 +897,14 @@ def promote_note(note_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/habits", response_model=List[schemas.Habit])
-def get_habits(request: Request, db: Session = Depends(get_db)):
+def get_habits(request: Request, archived: bool = False, db: Session = Depends(get_db)):
     today = _local_date(request)
-    habits = db.query(models.Habit).order_by(models.Habit.created_at).all()
+    habits = (
+        db.query(models.Habit)
+        .filter(models.Habit.archived == archived)
+        .order_by(models.Habit.created_at)
+        .all()
+    )
     return [_habit_out(db, h, today) for h in habits]
 
 
@@ -906,6 +930,9 @@ def update_habit(request: Request, habit_id: int, habit: schemas.HabitUpdate, db
         db_habit.name = habit.name
     if habit.tag_ids is not None:
         db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(habit.tag_ids)).all()
+    if habit.archived is not None:
+        db_habit.archived = habit.archived
+        db_habit.archived_at = datetime.now(timezone.utc) if habit.archived else None
     db.commit()
     db.refresh(db_habit)
     return _habit_out(db, db_habit, today)

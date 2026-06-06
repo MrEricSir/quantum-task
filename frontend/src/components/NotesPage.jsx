@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { marked, Renderer } from 'marked'
 import DOMPurify from 'dompurify'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Pencil2Icon, TrashIcon, ArrowUpIcon, PlusIcon, Cross2Icon } from '@radix-ui/react-icons'
+import { Pencil2Icon, TrashIcon, ArrowUpIcon, PlusIcon, Cross2Icon, ChevronDownIcon, ChevronRightIcon } from '@radix-ui/react-icons'
 import Modal from './Modal'
 import './NotesPage.css'
 
@@ -29,6 +29,13 @@ function toggleNthCheckbox(content, idx) {
   })
 }
 
+// Returns true if the content has at least one checkbox and all are checked.
+function allCheckboxesChecked(content) {
+  if (!content) return false
+  const items = content.match(/- \[[ x]\]/gi) || []
+  return items.length > 0 && items.every((m) => m[3].toLowerCase() === 'x')
+}
+
 function timeAgo(iso) {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
   if (diff < 60) return 'just now'
@@ -36,6 +43,64 @@ function timeAgo(iso) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return `${Math.floor(diff / 86400)}d ago`
 }
+
+function noteDisplayTitle(note) {
+  return note.title || note.content?.split('\n')[0]?.replace(/^#+\s*/, '').slice(0, 80) || 'Untitled'
+}
+
+// ── Note view modal (read-only, interactive checkboxes) ────────────────────
+
+function NoteViewModal({ note, onClose, onEdit, onArchive, onCheckboxToggle }) {
+  const handleContentClick = (e) => {
+    if (e.target.type === 'checkbox') {
+      e.stopPropagation()
+      const all = [...e.currentTarget.querySelectorAll('input[type="checkbox"]')]
+      const idx = all.indexOf(e.target)
+      if (idx !== -1) onCheckboxToggle(note, idx)
+    }
+  }
+
+  return (
+    <Modal onClose={onClose} className="note-view-modal">
+      <div className="note-view-header">
+        <Dialog.Title asChild>
+          <h2 className="note-view-title">{noteDisplayTitle(note)}</h2>
+        </Dialog.Title>
+        <div className="note-view-header-actions">
+          <button className="btn-secondary note-view-edit-btn" onClick={onEdit} aria-label="Edit note">
+            Edit
+          </button>
+          <button className="note-view-close-btn" onClick={onClose} aria-label="Close">
+            <Cross2Icon />
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="note-view-content"
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(note.content) }}
+        onClick={handleContentClick}
+      />
+
+      {note.tags?.length > 0 && (
+        <div className="note-view-tags">
+          {note.tags.map((tag) => (
+            <span key={tag.id} className="note-card-tag" style={{ background: tag.color }}>{tag.name}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="note-view-footer">
+        <span className="note-view-age">{timeAgo(note.updated_at)}</span>
+        <button className="note-view-archive-btn" onClick={onArchive}>
+          Archive
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+// ── Note editor modal ──────────────────────────────────────────────────────
 
 function NoteEditorModal({ note, allTags, onSave, onDelete, onClose }) {
   const isNew = !note?.id
@@ -62,13 +127,11 @@ function NoteEditorModal({ note, allTags, onSave, onDelete, onClose }) {
     onClose()
   }
 
-  // Insert a line prefix (e.g. "- [ ] ") at the start of the current line.
   const insertLinePrefix = (prefix) => {
     const ta = textareaRef.current
     if (!ta) return
     const pos = ta.selectionStart
     const lineStart = content.lastIndexOf('\n', pos - 1) + 1
-    // If cursor is not at start of line and line has content, prepend a newline.
     const needsNewline = pos > lineStart && content.slice(lineStart, pos).trim().length > 0
     const insert = needsNewline ? '\n' + prefix : prefix
     const insertAt = needsNewline ? pos : lineStart
@@ -78,7 +141,6 @@ function NoteEditorModal({ note, allTags, onSave, onDelete, onClose }) {
     requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(newPos, newPos) })
   }
 
-  // Wrap selected text with a markdown wrapper (e.g. "**").
   const wrapSelection = (wrapper) => {
     const ta = textareaRef.current
     if (!ta) return
@@ -175,8 +237,10 @@ function NoteEditorModal({ note, allTags, onSave, onDelete, onClose }) {
   )
 }
 
-function NoteCard({ note, onEdit, onPromote, onCheckboxToggle }) {
-  const displayTitle = note.title || (note.content?.split('\n')[0]?.replace(/^#+\s*/, '').slice(0, 80) || 'Untitled')
+// ── Note card ─────────────────────────────────────────────────────────────
+
+function NoteCard({ note, onView, onEdit, onPromote, onCheckboxToggle }) {
+  const displayTitle = noteDisplayTitle(note)
   const hasBody = note.content && note.content.trim()
 
   const handlePreviewClick = (e) => {
@@ -189,14 +253,13 @@ function NoteCard({ note, onEdit, onPromote, onCheckboxToggle }) {
   }
 
   return (
-    <div className="note-card" onClick={() => onEdit(note)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onEdit(note)}>
+    <div className="note-card" onClick={() => onView(note)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onView(note)}>
       <div className="note-card-header">
         <span className="note-card-title">{displayTitle}</span>
         <span className="note-card-age">{timeAgo(note.updated_at)}</span>
       </div>
 
       {hasBody && !note.title && (
-        // Only show preview if there's more content beyond the title line
         note.content.includes('\n') && (
           <div
             className="note-card-preview"
@@ -245,18 +308,68 @@ function NoteCard({ note, onEdit, onPromote, onCheckboxToggle }) {
   )
 }
 
-export default function NotesPage({ notes, allTags, onAdd, onUpdate, onDelete, onPromote }) {
+// ── Notes archive ──────────────────────────────────────────────────────────
+
+function NotesArchive({ notes, onUnarchive, onDelete }) {
+  const [open, setOpen] = useState(true)
+  if (notes.length === 0) return null
+
+  return (
+    <div className="notes-archive">
+      <button className="notes-archive-toggle" onClick={() => setOpen((v) => !v)}>
+        <span className="notes-archive-chevron">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
+        Note Archive
+        <span className="notes-archive-count">{notes.length}</span>
+      </button>
+      {open && (
+        <div className="notes-archive-list">
+          {notes.map((note) => (
+            <div key={note.id} className="notes-archive-row">
+              <span className="notes-archive-row-title">{noteDisplayTitle(note)}</span>
+              <div className="notes-archive-row-actions">
+                <button
+                  className="notes-archive-btn"
+                  onClick={() => onUnarchive(note.id)}
+                  title="Restore note"
+                >
+                  Restore
+                </button>
+                <button
+                  className="notes-archive-btn notes-archive-btn--delete"
+                  onClick={() => onDelete(note.id)}
+                  title="Delete permanently"
+                  aria-label="Delete note"
+                >
+                  <Cross2Icon />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── NotesPage ──────────────────────────────────────────────────────────────
+
+export default function NotesPage({ notes, archivedNotes = [], allTags, onAdd, onUpdate, onDelete, onPromote, onArchive, onUnarchive }) {
+  const [viewingNote, setViewingNote] = useState(null)
   const [editingNote, setEditingNote] = useState(null)
   const [showEditor, setShowEditor] = useState(false)
   const [promoteMsg, setPromoteMsg] = useState('')
 
-  const openNew = () => {
-    setEditingNote(null)
+  const openView = (note) => setViewingNote(note)
+  const closeView = () => setViewingNote(null)
+
+  const openEdit = (note) => {
+    setViewingNote(null)
+    setEditingNote(note)
     setShowEditor(true)
   }
 
-  const openEdit = (note) => {
-    setEditingNote(note)
+  const openNew = () => {
+    setEditingNote(null)
     setShowEditor(true)
   }
 
@@ -274,9 +387,24 @@ export default function NotesPage({ notes, allTags, onAdd, onUpdate, onDelete, o
     setTimeout(() => setPromoteMsg(''), 2500)
   }
 
-  const handleCheckboxToggle = async (note, idx) => {
+  // Card-level checkbox toggle (no view modal open)
+  const handleCardCheckboxToggle = async (note, idx) => {
     const newContent = toggleNthCheckbox(note.content, idx)
     await onUpdate(note.id, { title: note.title, content: newContent, tag_ids: note.tags.map((t) => t.id) })
+    if (allCheckboxesChecked(newContent)) {
+      await onArchive(note.id)
+    }
+  }
+
+  // Checkbox toggle inside the view modal — keep modal in sync, then maybe archive
+  const handleViewCheckboxToggle = async (note, idx) => {
+    const newContent = toggleNthCheckbox(note.content, idx)
+    setViewingNote((prev) => prev?.id === note.id ? { ...prev, content: newContent } : prev)
+    await onUpdate(note.id, { title: note.title, content: newContent, tag_ids: note.tags.map((t) => t.id) })
+    if (allCheckboxesChecked(newContent)) {
+      setViewingNote(null)
+      await onArchive(note.id)
+    }
   }
 
   return (
@@ -303,12 +431,29 @@ export default function NotesPage({ notes, allTags, onAdd, onUpdate, onDelete, o
             <NoteCard
               key={note.id}
               note={note}
+              onView={openView}
               onEdit={openEdit}
               onPromote={handlePromote}
-              onCheckboxToggle={handleCheckboxToggle}
+              onCheckboxToggle={handleCardCheckboxToggle}
             />
           ))}
         </div>
+      )}
+
+      <NotesArchive
+        notes={archivedNotes}
+        onUnarchive={onUnarchive}
+        onDelete={onDelete}
+      />
+
+      {viewingNote && (
+        <NoteViewModal
+          note={viewingNote}
+          onClose={closeView}
+          onEdit={() => openEdit(viewingNote)}
+          onArchive={() => { closeView(); onArchive(viewingNote.id) }}
+          onCheckboxToggle={handleViewCheckboxToggle}
+        />
       )}
 
       {showEditor && (

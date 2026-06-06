@@ -95,8 +95,16 @@ async function mockAPIs(page) {
   await page.route('**/api/tags', r => r.fulfill({ json: TAGS }))
   await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
   await page.route('**/api/calendar-mappings', r => r.fulfill({ json: {} }))
-  await page.route('**/api/habits', r => r.fulfill({ json: HABITS }))
-  await page.route('**/api/notes', r => r.fulfill({ json: NOTES }))
+  // habits: handle both active and archived requests
+  await page.route(/\/api\/habits(\?|$)/, r => {
+    const url = r.request().url()
+    return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
+  })
+  // notes: handle both active and archived requests
+  await page.route(/\/api\/notes(\?|$)/, r => {
+    const url = r.request().url()
+    return r.fulfill({ json: url.includes('archived=true') ? [] : NOTES })
+  })
 
   // Briefing SSE: send weather + text then close
   await page.route('**/api/briefing**', r =>
@@ -242,6 +250,28 @@ test.describe('notes page', () => {
     // Button says "Create" for new notes
     await expect(page.getByRole('button', { name: /create/i })).toBeVisible()
   })
+
+  test('clicking a note card opens view modal', async ({ page }) => {
+    await page.locator('.note-card').first().click()
+    // View modal shows Edit and Close buttons, not the editor textarea
+    await expect(page.locator('.note-view-modal')).toBeVisible()
+    await expect(page.getByRole('button', { name: /edit note/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /close/i })).toBeVisible()
+  })
+
+  test('Edit button in view modal opens editor', async ({ page }) => {
+    await page.locator('.note-card').first().click()
+    await expect(page.locator('.note-view-modal')).toBeVisible()
+    await page.getByRole('button', { name: /edit note/i }).click()
+    // Editor modal should now be open with a textarea
+    await expect(page.locator('.note-editor-modal')).toBeVisible()
+    await expect(page.locator('#note-content')).toBeVisible()
+  })
+
+  test('note archive section is hidden when empty', async ({ page }) => {
+    // No archived notes in mock → section should not render
+    await expect(page.locator('.notes-archive')).toHaveCount(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -268,9 +298,17 @@ test.describe('habits page', () => {
     await expect(page.getByRole('button', { name: /mark complete/i })).toBeVisible()
   })
 
-  test('edit and delete buttons are present', async ({ page }) => {
+  test('edit button is present on habit cards', async ({ page }) => {
     await expect(page.getByRole('button', { name: /edit habit/i }).first()).toBeVisible()
-    await expect(page.getByRole('button', { name: /delete habit/i }).first()).toBeVisible()
+  })
+
+  test('archive button is present on each habit card', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /archive habit/i }).first()).toBeVisible()
+  })
+
+  test('habit archive section is hidden when empty', async ({ page }) => {
+    // No archived habits in mock → section should not render
+    await expect(page.locator('.habits-archive')).toHaveCount(0)
   })
 })
 

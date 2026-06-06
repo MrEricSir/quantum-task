@@ -74,12 +74,15 @@ class HabitCreate(BaseModel):
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
     tag_ids: Optional[List[int]] = None
+    archived: Optional[bool] = None
 
 
 class Habit(BaseModel):
     id: int
     name: str
     created_at: datetime
+    archived: bool = False
+    archived_at: Optional[datetime] = None
     tags: List[Tag] = []
     completed_today: bool = False
     streak: int = 0
@@ -124,6 +127,7 @@ class NoteUpdate(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     tag_ids: Optional[List[int]] = None
+    archived: Optional[bool] = None
 
 
 class Note(BaseModel):
@@ -132,6 +136,8 @@ class Note(BaseModel):
     content: str
     created_at: datetime
     updated_at: datetime
+    archived: bool = False
+    archived_at: Optional[datetime] = None
     tags: List[Tag] = []
 
     model_config = {"from_attributes": True}

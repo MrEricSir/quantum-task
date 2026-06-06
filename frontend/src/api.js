@@ -155,6 +155,20 @@ export async function fetchHabits() {
   return res.json()
 }
 
+export async function fetchArchivedHabits() {
+  const res = await apiFetch('/api/habits?archived=true')
+  if (!res.ok) throw new Error('Failed to fetch archived habits')
+  return res.json()
+}
+
+export async function archiveHabit(id) {
+  return updateHabit(id, { archived: true })
+}
+
+export async function unarchiveHabit(id) {
+  return updateHabit(id, { archived: false })
+}
+
 export async function createHabit(data) {
   const res = await apiFetch('/api/habits', {
     method: 'POST',
@@ -194,6 +208,20 @@ export async function fetchNotes() {
   const res = await apiFetch('/api/notes')
   if (!res.ok) throw new Error('Failed to fetch notes')
   return res.json()
+}
+
+export async function fetchArchivedNotes() {
+  const res = await apiFetch('/api/notes?archived=true')
+  if (!res.ok) throw new Error('Failed to fetch archived notes')
+  return res.json()
+}
+
+export async function archiveNote(id) {
+  return updateNote(id, { archived: true })
+}
+
+export async function unarchiveNote(id) {
+  return updateNote(id, { archived: false })
 }
 
 export async function createNote(data) {

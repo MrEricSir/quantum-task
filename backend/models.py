@@ -60,6 +60,8 @@ class Habit(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    archived = Column(Boolean, default=False)
+    archived_at = Column(DateTime, nullable=True)
     tags = relationship("Tag", secondary="habit_tags", lazy="joined")
 
 
@@ -88,6 +90,8 @@ class Note(Base):
     content = Column(String, nullable=False, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    archived = Column(Boolean, default=False)
+    archived_at = Column(DateTime, nullable=True)
     tags = relationship("Tag", secondary="note_tags", lazy="joined")
 
 
