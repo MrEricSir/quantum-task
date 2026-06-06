@@ -94,7 +94,8 @@ export default function App() {
     location.pathname.match(/^\/tag\/(\d+)$/)          ||
     location.pathname.match(/^\/habits\/tag\/(\d+)$/)   ||
     location.pathname.match(/^\/tasks\/tag\/(\d+)$/)    ||
-    location.pathname.match(/^\/calendar\/tag\/(\d+)$/)
+    location.pathname.match(/^\/calendar\/tag\/(\d+)$/) ||
+    location.pathname.match(/^\/notes\/tag\/(\d+)$/)
   const selectedTagId = tagMatch ? parseInt(tagMatch[1]) : null
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 640px)').matches)
 
@@ -838,6 +839,9 @@ export default function App() {
           onSubmit={(text) => {
             addToParseQueue(text)
             setShowQuickAdd(false)
+          }}
+          onAddNote={async (content) => {
+            await handleAddNote({ title: null, content, tag_ids: [] })
           }}
         />
       )}

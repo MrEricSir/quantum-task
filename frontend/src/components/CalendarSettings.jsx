@@ -67,7 +67,7 @@ export default function CalendarSettings({ tags, onClose }) {
   }
 
   return (
-    <Modal onClose={onClose} className="cal-settings-modal">
+    <Modal onClose={onClose} className="modal--md cal-settings-modal">
       <Dialog.Title asChild><h2>Calendar Settings</h2></Dialog.Title>
       <p className="cal-settings-hint">
         Add one entry per calendar feed. Each feed is assigned a tag — events

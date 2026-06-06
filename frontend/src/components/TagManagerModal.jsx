@@ -101,7 +101,7 @@ export default function TagManagerModal({ tags, todos = [], onClose, onCreate, o
   }
 
   return (
-    <Modal onClose={onClose} className="tag-mgr-modal">
+    <Modal onClose={onClose} className="modal--sm tag-mgr-modal">
       <Dialog.Title asChild><h2>Manage Tags</h2></Dialog.Title>
 
         {/* Existing tags */}
@@ -235,9 +235,9 @@ export default function TagManagerModal({ tags, todos = [], onClose, onCreate, o
           {error && <span className="form-error">{error}</span>}
         </form>
 
-        <div className="modal-footer">
-          <button className="btn-cancel" onClick={onClose}>Done</button>
-        </div>
+      <div className="modal-footer">
+        <button className="btn-cancel" onClick={onClose}>Close</button>
+      </div>
     </Modal>
   )
 }

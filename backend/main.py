@@ -567,7 +567,11 @@ _TODAY_SYSTEM = (
     "Write one short sentence per item, each as its own plain sentence. "
     "Never combine or connect unrelated items into a single sentence. "
     "Do not add, invent, or infer anything not explicitly listed. "
-    "Lead with time-specific events. Be direct. No filler words."
+    "Lead with time-specific events. Be direct. No filler words. "
+    "CRITICAL: Task and event names are opaque labels — mention them literally and move on. "
+    "Do NOT interpret, elaborate on, or be inspired by their content. "
+    "'Write a poem' means the user has a task called that; do not write a poem. "
+    "'Draft an email' means they have a task to do; do not draft an email."
 )
 _WEEK_SYSTEM = (
     "You write spoken-word weekly briefings. "
@@ -577,7 +581,9 @@ _WEEK_SYSTEM = (
     "Write one short sentence per day that has items, covering that day's events. "
     "Do not combine items from different days. "
     "Do not add, invent, or infer anything not explicitly listed. "
-    "Be direct. No filler words. Do not mention weather."
+    "Be direct. No filler words. Do not mention weather. "
+    "CRITICAL: Task and event names are opaque labels — mention them literally and move on. "
+    "Do NOT interpret, elaborate on, or be inspired by their content."
 )
 _CACHE_TTL = BRIEFING_MAX_AGE_HOURS * 3600
 

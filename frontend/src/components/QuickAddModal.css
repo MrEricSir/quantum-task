@@ -2,14 +2,44 @@
    .modal-footer, .btn-cancel, .btn-save from AddTodoModal.css
    via shared CSS variables. Only quick-add-specific styles here. */
 
-.quick-modal {
-  width: 480px;
-}
-
 .quick-hint {
   font-size: 13px;
   color: var(--text-muted);
-  margin: -12px 0 18px;
+  margin: -4px 0 16px;
+}
+
+/* ── Mode tabs ── */
+.quick-tabs {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 16px;
+}
+
+.quick-tab {
+  flex: 1;
+  padding: 6px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.quick-tab--active {
+  background: rgba(124, 58, 237, 0.3);
+  color: #c4b5fd;
+}
+
+.quick-textarea--note {
+  font-family: inherit;
+  line-height: 1.6;
 }
 
 .quick-textarea {

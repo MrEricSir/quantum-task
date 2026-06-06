@@ -16,11 +16,14 @@ function isoToLocal(iso) {
 
 // Input mode:   pass onSubmit(text) — submits text to queue and closes
 // Confirm mode: pass preloaded={ text, result } + onSave(data) — shows editable preview
-export default function QuickAddModal({ allTags = [], onClose, onSubmit, onSave, preloaded = null }) {
+export default function QuickAddModal({ allTags = [], onClose, onSubmit, onSave, onAddNote, preloaded = null }) {
   const isConfirm = !!preloaded
 
   // Input mode state
+  const [mode, setMode] = useState('task') // 'task' | 'note'
   const [text, setText] = useState('')
+  const [noteText, setNoteText] = useState('')
+  const [addingNote, setAddingNote] = useState(false)
 
   // Confirm mode state (initialized from preloaded)
   const [title, setTitle] = useState(preloaded?.result?.title ?? '')
@@ -63,27 +66,75 @@ export default function QuickAddModal({ allTags = [], onClose, onSubmit, onSave,
   }
 
   return (
-    <Modal onClose={onClose} className="quick-modal">
+    <Modal onClose={onClose} className="modal--md quick-modal">
 
         {/* ── Input mode ── */}
         {!isConfirm && (
           <>
             <Dialog.Title asChild><h2>Quick Add</h2></Dialog.Title>
-            <p className="quick-hint">Describe a task or habit in plain language — it will be parsed and added automatically.</p>
-            <textarea
-              className="quick-textarea"
-              placeholder={'e.g. "dentist appointment tomorrow at 10am"\n     "send Bob the report by Friday"'}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              autoFocus
-              rows={4}
-            />
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={onClose}>Cancel</button>
-              <button className="btn-save" onClick={handleSubmit} disabled={!text.trim()}>
-                Add
-              </button>
-            </div>
+
+            {onAddNote && (
+              <div className="quick-tabs">
+                <button
+                  className={`quick-tab${mode === 'task' ? ' quick-tab--active' : ''}`}
+                  onClick={() => setMode('task')}
+                  type="button"
+                >
+                  Task
+                </button>
+                <button
+                  className={`quick-tab${mode === 'note' ? ' quick-tab--active' : ''}`}
+                  onClick={() => setMode('note')}
+                  type="button"
+                >
+                  Note
+                </button>
+              </div>
+            )}
+
+            {mode === 'task' ? (
+              <>
+                <p className="quick-hint">Describe a task or habit in plain language — it will be parsed and added automatically.</p>
+                <textarea
+                  className="quick-textarea"
+                  placeholder={'e.g. "dentist appointment tomorrow at 10am"\n     "send Bob the report by Friday"'}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  autoFocus
+                  rows={4}
+                />
+                <div className="modal-footer">
+                  <button className="btn-cancel" onClick={onClose}>Cancel</button>
+                  <button className="btn-save" onClick={handleSubmit} disabled={!text.trim()}>Add</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="quick-hint">Jot down anything — tap it later to edit or turn it into a task.</p>
+                <textarea
+                  className="quick-textarea quick-textarea--note"
+                  placeholder="Start typing..."
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  autoFocus
+                  rows={6}
+                />
+                <div className="modal-footer">
+                  <button className="btn-cancel" onClick={onClose}>Cancel</button>
+                  <button
+                    className="btn-save"
+                    disabled={!noteText.trim() || addingNote}
+                    onClick={async () => {
+                      setAddingNote(true)
+                      await onAddNote(noteText.trim())
+                      onClose()
+                    }}
+                  >
+                    {addingNote ? 'Saving…' : 'Save note'}
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
 

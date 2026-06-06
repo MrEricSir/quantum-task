@@ -96,7 +96,7 @@ async function mockAPIs(page) {
   await page.route('**/api/todos', r => r.fulfill({ json: TODOS }))
   await page.route('**/api/tags', r => r.fulfill({ json: TAGS }))
   await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
-  await page.route('**/api/calendar-mappings', r => r.fulfill({ json: {} }))
+  await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
   // habits: handle both active and archived requests
   await page.route(/\/api\/habits(\?|$)/, r => {
     const url = r.request().url()
@@ -230,48 +230,30 @@ test.describe('notes page', () => {
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
 
-  test('note card content is previewed', async ({ page }) => {
+  test('note content is previewed in the list', async ({ page }) => {
     await expect(page.getByText(/Milk/)).toBeVisible()
     await expect(page.getByText(/Improve search/)).toBeVisible()
   })
 
-  test('tag chips are visible on cards', async ({ page }) => {
-    await expect(page.getByText('personal').first()).toBeVisible()
-    await expect(page.getByText('work').first()).toBeVisible()
-  })
-
-  test('action buttons present on each card', async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Edit note' }).first()).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Promote to task' }).first()).toBeVisible()
-  })
-
-  test('new note modal opens', async ({ page }) => {
+  test('new note modal opens with textarea and Cancel/Create footer', async ({ page }) => {
     await page.getByRole('button', { name: /new note/i }).click()
     await expect(page.getByRole('heading', { name: /new note/i })).toBeVisible()
-    await expect(page.getByLabel(/title/i)).toBeVisible()
-    // Button says "Create" for new notes
+    await expect(page.locator('#note-content')).toBeVisible()
+    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /create/i })).toBeVisible()
+    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
-  test('clicking a note card opens view modal', async ({ page }) => {
-    await page.locator('.note-card').first().click()
-    // View modal shows Edit and Close buttons, not the editor textarea
-    await expect(page.locator('.note-view-modal')).toBeVisible()
-    await expect(page.getByRole('button', { name: /edit note/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /close/i })).toBeVisible()
-  })
-
-  test('Edit button in view modal opens editor', async ({ page }) => {
-    await page.locator('.note-card').first().click()
-    await expect(page.locator('.note-view-modal')).toBeVisible()
-    await page.getByRole('button', { name: /edit note/i }).click()
-    // Editor modal should now be open with a textarea
+  test('clicking a note row opens editor with Cancel/Save footer', async ({ page }) => {
+    await page.locator('.note-row').first().click()
     await expect(page.locator('.note-editor-modal')).toBeVisible()
     await expect(page.locator('#note-content')).toBeVisible()
+    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /save/i })).toBeVisible()
+    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
   test('note archive section is hidden when empty', async ({ page }) => {
-    // No archived notes in mock → section should not render
     await expect(page.locator('.notes-archive')).toHaveCount(0)
   })
 })
@@ -327,6 +309,15 @@ test.describe('quick-add modal', () => {
     await expect(page.locator('.quick-modal')).toBeVisible()
     await expect(page.getByRole('textbox')).toBeVisible()
   })
+
+  test('has Cancel and Add footer buttons, no X button', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button.btn-primary').first().click()
+    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /add/i })).toBeVisible()
+    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -364,6 +355,50 @@ test.describe('mobile header layout', () => {
     // Action buttons must be reachable (not hidden behind notch area)
     await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Settings modals
+// ---------------------------------------------------------------------------
+test.describe('settings modals', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/settings/export-token', r =>
+      r.fulfill({ json: 'test-export-token' }))
+    await page.goto('/today')
+    await waitForApp(page)
+  })
+
+  test('tag manager opens with Manage Tags heading and Close footer button', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    await expect(page.getByRole('heading', { name: 'Manage Tags' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /close/i })).toBeVisible()
+    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
+  })
+
+  test('tag manager lists existing tags', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await expect(modal.locator('.tag-mgr-name', { hasText: 'work' })).toBeVisible()
+    await expect(modal.locator('.tag-mgr-name', { hasText: 'personal' })).toBeVisible()
+  })
+
+  test('calendar settings opens with heading and Save/Cancel footer buttons', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /calendar/i }).click()
+    await expect(page.getByRole('heading', { name: 'Calendar Settings' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /save/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
+    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
+  })
+
+  test('calendar settings shows export URL section', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /calendar/i }).click()
+    await expect(page.getByText(/export tasks as ical/i)).toBeVisible()
+    await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
   })
 })
 
