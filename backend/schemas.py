@@ -86,6 +86,7 @@ class Habit(BaseModel):
     tags: List[Tag] = []
     completed_today: bool = False
     streak: int = 0
+    recent_completions: List[bool] = []
 
     model_config = {"from_attributes": True}
 

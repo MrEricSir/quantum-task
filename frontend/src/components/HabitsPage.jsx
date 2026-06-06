@@ -206,11 +206,23 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                     ))}
                   </div>
                 )}
-              </div>
 
-              {habit.streak > 0 && (
-                <span className="habit-card-streak">🔥 {habit.streak} day{habit.streak !== 1 ? 's' : ''}</span>
-              )}
+                {habit.recent_completions?.length > 0 && (
+                  <div className="habit-card-history">
+                    <div className="habit-dots">
+                      {habit.recent_completions.map((done, i) => (
+                        <span
+                          key={i}
+                          className={`habit-dot${done ? ' habit-dot--done' : ''}${i === 6 ? ' habit-dot--today' : ''}`}
+                        />
+                      ))}
+                    </div>
+                    {habit.streak > 0 && (
+                      <span className="habit-card-streak">🔥 {habit.streak}</span>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="habit-card-actions">
                 <button

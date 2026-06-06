@@ -159,6 +159,7 @@ export default function App() {
     checkAuth().then(({ authed: a, enabled: e }) => {
       setAuthed(a)
       setAuthEnabled(e)
+      if (location.pathname === '/') navigate('/today', { replace: true })
     })
   }, [])
 
@@ -519,7 +520,7 @@ export default function App() {
   const handlePageNavigate = (page, tagId) => {
     if (page === 'today')    return navigate('/today')
     if (page === 'habits')   return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
-    if (page === 'overview') return navigate(tagId ? `/tag/${tagId}` : '/')
+    if (page === 'overview') return navigate(tagId ? `/tag/${tagId}` : '/overview')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 
@@ -667,6 +668,7 @@ export default function App() {
             onEdit={openEdit}
             onDelete={handleDeleteTodo}
             onMove={handleMoveSection}
+            onWeather={setWeather}
           />
         ) : isHabitsPage ? (
           <HabitsPage

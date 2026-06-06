@@ -814,6 +814,12 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
     completed_today = db.query(models.HabitCompletion).filter_by(
         habit_id=habit.id, date=today_str
     ).first() is not None
+    recent_completions = [
+        db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=(today - timedelta(days=6 - i)).isoformat()
+        ).first() is not None
+        for i in range(7)
+    ]
     return schemas.Habit(
         id=habit.id,
         name=habit.name,
@@ -821,6 +827,7 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         tags=list(habit.tags),
         completed_today=completed_today,
         streak=_compute_streak(db, habit.id, today),
+        recent_completions=recent_completions,
     )
 
 

@@ -235,13 +235,50 @@
   border: 1px solid;
 }
 
+/* ── History dots ── */
+.habit-card-history {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.habit-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.habit-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+}
+
+.habit-dot--done {
+  background: #7c3aed;
+  border-color: #7c3aed;
+}
+
+.habit-dot--today {
+  border-color: rgba(255, 255, 255, 0.4);
+  width: 9px;
+  height: 9px;
+}
+
+.habit-dot--today.habit-dot--done {
+  background: #a78bfa;
+  border-color: #a78bfa;
+}
+
 /* ── Streak ── */
 .habit-card-streak {
   font-size: 12px;
   font-weight: 600;
   color: #f97316;
   white-space: nowrap;
-  flex-shrink: 0;
 }
 
 /* ── Action buttons ── */

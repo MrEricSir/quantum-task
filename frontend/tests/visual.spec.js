@@ -54,10 +54,12 @@ const HABITS = [
   {
     id: 1, name: 'Morning meditation', completed_today: true, streak: 7,
     tags: [], recurrence_rule: 'daily',
+    recent_completions: [true, true, true, true, false, true, true],
   },
   {
     id: 2, name: 'Evening walk', completed_today: false, streak: 3,
     tags: [{ id: 2, name: 'personal', color: '#10b981' }], recurrence_rule: 'daily',
+    recent_completions: [false, false, false, false, true, true, false],
   },
 ]
 
@@ -334,7 +336,7 @@ test.describe('mobile header layout', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
   test('weather widget is left-aligned on mobile', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/today')
     await waitForApp(page)
 
     const weather = page.locator('.header-weather')
