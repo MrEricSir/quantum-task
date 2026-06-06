@@ -14,4 +14,4 @@ Tests are in `frontend/tests/visual.spec.js`. They check element presence and vi
 
 - All API calls are mocked — no backend needed
 - Clock is frozen to `2026-06-03T10:00:00`
-- 19 tests covering: app shell, today page, tasks board, notes, habits, quick-add modal
+- 34 tests covering: app shell, today page, tasks board, notes, habits, quick-add modal (input + confirm screen), settings modals (tag manager, calendar settings), offline banner

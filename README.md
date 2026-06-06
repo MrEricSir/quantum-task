@@ -1,13 +1,13 @@
-# Todo Dashboard
+# Quantum Task
 
-A Kanban-style todo dashboard with AI-powered task parsing, calendar integration, and a daily briefing.
+A personal productivity dashboard with AI-powered quick add, calendar integration, habits tracking, notes, and a daily briefing.
 
 ## Stack
 
 - **Frontend**: React + Vite + Radix UI + @dnd-kit
 - **Backend**: Python FastAPI
 - **Database**: SQLite (via SQLAlchemy) — swappable via env var
-- **AI Quick Add**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
+- **AI**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
 - **Calendar**: iCal/ICS feed integration
 - **Weather**: Open-Meteo (no API key required)
 
@@ -15,7 +15,7 @@ A Kanban-style todo dashboard with AI-powered task parsing, calendar integration
 
 - Python 3.11+
 - Node 18+
-- [Ollama](https://ollama.com) — only needed for the AI Quick Add feature when running locally
+- [Ollama](https://ollama.com) — only needed for AI features when running locally
 
 Install Ollama via Homebrew:
 
@@ -107,13 +107,19 @@ cd frontend && npm run dev
 Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
 
 **Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
-- 19 Playwright tests verifying key elements are visible on each page
-- Covers: app shell nav, today page, tasks board, notes, habits, quick-add modal
+- 34 Playwright tests verifying key elements are visible on each page
+- Covers: app shell, today page, tasks board, notes, habits, quick-add modal (input + confirm screen), settings modals
 - All API calls are mocked; runs against a production build (`npm run build`)
 
 ## Features
 
-### Board
+### Today (default page)
+- Daily overview showing today's schedule, tasks, and habits
+- AI-generated daily briefing with weather, upcoming events, and a summary of your day
+- Briefing auto-refreshes 10 seconds after data changes (new tasks, habit toggles, calendar refresh)
+- Manual regenerate button always available
+
+### Tasks Board
 - Four columns: **Today**, **This Week**, **This Month**, **Later**
 - Drag cards between columns or reorder within a column
 - Add tasks with optional description, scheduled date/time, and tags
@@ -121,23 +127,38 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Edit and delete tasks via the `⋯` card menu
 
 ### AI Quick Add
-- Describe a task in plain English; the configured LLM parses it into structured fields (title, due date, tags, etc.)
-- Items are submitted to the **Processing Queue** and added to the board automatically when parsing completes
-- The queue persists across page refreshes; pending items resume automatically on reload
-- Failed items show an error with a retry button
+- Describe anything in plain English — the LLM classifies it as a **task**, **habit**, or **note** automatically
+- A confirm screen shows the detected type with a one-click override, then type-specific fields to review before saving
+- Deterministic post-processing catches common patterns (list inputs → note, explicit recurrence → habit) even when the model guesses wrong
+- Tags are auto-suggested from your existing tags
+
+### Habits
+- Track recurring habits with a daily completion toggle
+- 7-day completion history shown as dots on each card
+- Streak counter
+- Archive habits instead of deleting them; restore from the archive at any time
+
+### Notes
+- Plain-text quick capture — no markdown, no formatting
+- Notes can also be created directly from Quick Add
+- Notes can be promoted to tasks with one click
+- Tag and archive notes; restore from archive
 
 ### Daily Briefing
-- Streaming AI summary of your day: weather, upcoming tasks, and calendar events
-- Reflects exactly what is currently displayed (respects tag filter, hides past events)
+- Streaming AI summary of your day: weather, schedule, tasks, and habits
+- Respects the active tag filter
+- Auto-refreshes with a 10-second debounce after any meaningful data change
+- Force-regenerate anytime with the refresh button
 
 ### Calendar
 - Subscribe to any iCal/ICS feed (e.g. Google Calendar, Apple Calendar)
-- Events are displayed in a strip above the board and in the daily briefing
+- Events appear in the Today schedule and daily briefing
+- Export your tasks as an iCal feed to subscribe from any calendar app
 - Past timed events are automatically hidden
 
 ### Tags
 - Create and manage color-coded tags
-- Filter the board to a single tag via the sidebar
+- Filter any page to a single tag via the sidebar
 - Tags are auto-suggested during AI Quick Add parsing
 
 ### Archive
@@ -147,6 +168,8 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 ### Other
 - Responsive layout, works on mobile
 - Dark "cyber" theme with animated background
+- Offline banner when network connection is lost
+- Optional password auth (set `AUTH_PASSWORD` env var)
 
 ## Configuration
 
@@ -202,10 +225,11 @@ todo/
     models.py          # SQLAlchemy models
     schemas.py         # Pydantic schemas
     database.py        # DB engine, reads DATABASE_URL from env
-    model_plugins/     # Per-model prompt formatting (Ollama models)
+    model_plugins/     # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini)
     tests/
       test_calendar.py # Calendar feed CRUD, timezone, iCal export/import
       test_briefing.py # Daily briefing unit tests
+      test_plugins.py  # Post-processing: section overrides, type detection, list→note
       test_parse.py    # Quick Add parse integration tests (requires Ollama)
       benchmark.py     # Parse quality benchmark across Ollama models
     Dockerfile
@@ -214,8 +238,10 @@ todo/
     public/
       bg.webm          # Background video
     src/
-      App.jsx          # Root component, state management
-      components/      # Board, Sidebar, Modals, Queue, Briefing, Calendar, Archive
+      App.jsx          # Root component, routing, global state
+      api.js           # All API calls
+      components/      # TodayPage, TasksBoard, HabitsPage, NotesPage, CalendarPage,
+                       # DailyBriefing, QuickAddModal, modals, sidebar, archive
     tests/
       visual.spec.js   # Playwright functional tests (all APIs mocked)
     dist/              # Production build output (gitignored)
