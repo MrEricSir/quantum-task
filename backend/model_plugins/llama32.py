@@ -62,12 +62,11 @@ class Llama32Plugin(BaseModelPlugin):
             '"section":"later","scheduled_at":null,"suggested_tags":[],'
             '"note_content":"The meeting room code is 4821."}}',
         ),
-        # note — list intent → markdown checklist
         (
             "grocery list: milk, eggs, bread",
             '{{"type":"note","title":"Grocery list","description":null,'
             '"section":"later","scheduled_at":null,"suggested_tags":[],'
-            '"note_content":"- [ ] milk\\n- [ ] eggs\\n- [ ] bread"}}',
+            '"note_content":"milk\\neggs\\nbread"}}',
         ),
     ]
 

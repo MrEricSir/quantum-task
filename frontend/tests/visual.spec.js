@@ -318,6 +318,59 @@ test.describe('quick-add modal', () => {
     await expect(page.getByRole('button', { name: /add/i })).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
+
+  test('confirm screen shows detected type and Back/Add buttons', async ({ page }) => {
+    await page.route('**/api/todos/parse', r =>
+      r.fulfill({ json: {
+        type: 'task', title: 'Call dentist', description: null,
+        section: 'week', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
+      }}))
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button.btn-primary').first().click()
+    await page.getByRole('textbox').fill('Call dentist next week')
+    await page.getByRole('button', { name: /^add$/i }).click()
+    // Confirm screen
+    await expect(page.getByRole('heading', { name: /confirm/i })).toBeVisible()
+    await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
+    await expect(page.locator('.quick-type-tabs')).toBeVisible()
+    await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /add task/i })).toBeVisible()
+  })
+
+  test('confirm screen type can be overridden', async ({ page }) => {
+    await page.route('**/api/todos/parse', r =>
+      r.fulfill({ json: {
+        type: 'task', title: 'Morning run', description: null,
+        section: 'today', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
+      }}))
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button.btn-primary').first().click()
+    await page.getByRole('textbox').fill('Morning run every day')
+    await page.getByRole('button', { name: /^add$/i }).click()
+    await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
+    // Override to habit
+    await page.locator('.quick-type-tab', { hasText: 'Habit' }).click()
+    await expect(page.locator('.quick-type-tab--active')).toHaveText('Habit')
+    await expect(page.getByRole('button', { name: /add habit/i })).toBeVisible()
+  })
+
+  test('confirm screen Back returns to input', async ({ page }) => {
+    await page.route('**/api/todos/parse', r =>
+      r.fulfill({ json: {
+        type: 'note', title: 'Grocery list', note_content: 'milk, eggs',
+        section: 'later', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
+      }}))
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button.btn-primary').first().click()
+    await page.getByRole('textbox').fill('grocery list: milk eggs')
+    await page.getByRole('button', { name: /^add$/i }).click()
+    await expect(page.locator('.quick-type-tab--active')).toHaveText('Note')
+    await page.getByRole('button', { name: /back/i }).click()
+    await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
+  })
 })
 
 // ---------------------------------------------------------------------------

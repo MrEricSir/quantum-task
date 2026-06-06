@@ -59,7 +59,7 @@ class Phi4MiniPlugin(BaseModelPlugin):
             "packing list: passport, charger, headphones",
             '{{"type":"note","title":"Packing list","description":null,'
             '"section":"later","scheduled_at":null,"suggested_tags":[],'
-            '"note_content":"- [ ] passport\\n- [ ] charger\\n- [ ] headphones"}}',
+            '"note_content":"passport\\ncharger\\nheadphones"}}',
         ),
     ]
 

@@ -50,11 +50,9 @@ Fields:
                             - input is clearly informational (passwords, facts, recipes,
                               addresses, quotes, reference material)
                           Default to "task" when unclear.
-  note_content  — For type "note" only: the full markdown content of the note.
-                  For list intent, format items as a markdown checklist:
-                    - [ ] item one
-                    - [ ] item two
-                  For other notes, write the content naturally in plain prose or markdown.
+  note_content  — For type "note" only: the plain text content of the note.
+                  Write naturally — no markdown, no checkboxes, no bullet syntax.
+                  For lists, put each item on its own line.
                   null for tasks and habits.
   title         — task, habit, or note name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
@@ -155,6 +153,10 @@ class BaseModelPlugin:
         Called on the raw dict from json.loads() before Pydantic validation.
         Use this to fix structural issues — wrong types, malformed values, etc.
         """
+        # Some models wrap their output in an array — unwrap it.
+        if isinstance(raw, list):
+            raw = raw[0] if raw else {}
+
         type_val = str(raw.get("type", "task")).strip().lower()
         raw["type"] = type_val if type_val in self._VALID_TYPES else "task"
 
@@ -200,6 +202,14 @@ class BaseModelPlugin:
     # Input prefixes that always signal a note regardless of LLM type output.
     _NOTE_PREFIXES = ("note:", "idea:", "thought:", "remember:", "jot down", "write down")
 
+    # Patterns that reliably signal list/note intent — enforced even if LLM says "task".
+    _LIST_RE = re.compile(
+        r'\b(?:shopping|grocery|groceries|packing|to-?do|check(?:list)?)\s+list\b'
+        r'|\blist\s+of\b'
+        r'|\blist:',
+        re.I,
+    )
+
     def post_process(self, parsed: Any, *, text: str = "") -> Any:
         """
         Called on the validated ParsedTodo after Pydantic.
@@ -219,11 +229,16 @@ class BaseModelPlugin:
         if parsed.type != "note" and any(lowered.startswith(p) for p in self._NOTE_PREFIXES):
             parsed.type = "note"
             if parsed.note_content is None:
-                # Strip the prefix and use the remainder as minimal note content
                 for p in self._NOTE_PREFIXES:
                     if lowered.startswith(p):
                         parsed.note_content = text[len(p):].strip()
                         break
+
+        # Enforce note type for list-like inputs regardless of LLM classification.
+        if parsed.type != "note" and self._LIST_RE.search(lowered):
+            parsed.type = "note"
+            if parsed.note_content is None:
+                parsed.note_content = text.strip()
 
         # Recurring tasks default to "later" from the LLM because there's no
         # specific deadline — override with a section that matches the cadence.

@@ -835,14 +835,11 @@ export default function App() {
 
       {showQuickAdd && (
         <QuickAddModal
+          allTags={tags}
           onClose={() => setShowQuickAdd(false)}
-          onSubmit={(text) => {
-            addToParseQueue(text)
-            setShowQuickAdd(false)
-          }}
-          onAddNote={async (content) => {
-            await handleAddNote({ title: null, content, tag_ids: [] })
-          }}
+          onSaveTask={async (data) => { await handleAddTodo(data) }}
+          onSaveHabit={async (data) => { await handleAddHabit(data) }}
+          onSaveNote={async (data) => { await handleAddNote(data) }}
         />
       )}
 

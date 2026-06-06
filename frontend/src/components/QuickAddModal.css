@@ -8,19 +8,33 @@
   margin: -4px 0 16px;
 }
 
-/* ── Mode tabs ── */
-.quick-tabs {
+/* ── Type selector (confirm step) ── */
+.quick-type-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.quick-type-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.quick-type-tabs {
   display: flex;
   gap: 2px;
   background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   padding: 3px;
-  margin-bottom: 16px;
 }
 
-.quick-tab {
-  flex: 1;
-  padding: 6px 0;
+.quick-type-tab {
+  padding: 5px 14px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -32,9 +46,21 @@
   transition: background 0.12s, color 0.12s;
 }
 
-.quick-tab--active {
-  background: rgba(124, 58, 237, 0.3);
+.quick-type-tab--active {
+  background: rgba(124, 58, 237, 0.35);
   color: #c4b5fd;
+}
+
+/* ── Parse error ── */
+.quick-parse-error {
+  font-size: 13px;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 4px 0 8px;
+  line-height: 1.5;
 }
 
 .quick-textarea--note {
