@@ -37,7 +37,7 @@ function SectionHeader({ title, badge, status, open, onToggle, toggleable = fals
   )
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather }) {
+export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0 }) {
   const activeTodos = todos.filter((t) => !t.completed)
   const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
@@ -132,6 +132,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           ready
           todayOnly
           onWeather={onWeather}
+          invalidationKey={briefingKey}
         />
 
         {hasSchedule && (

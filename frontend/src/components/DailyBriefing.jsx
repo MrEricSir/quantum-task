@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { UpdateIcon, ExclamationTriangleIcon } from '@radix-ui/react-icons'
 import './DailyBriefing.css'
 
-export default function DailyBriefing({ todos, calendarEvents, habits = [], tagId = null, ready = true, onWeather, todayOnly = false }) {
+export default function DailyBriefing({ todos, calendarEvents, habits = [], tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
   const [sections, setSections] = useState({ today: '', week: '' })
   const [status, setStatus] = useState('idle') // idle | loading | done | error
   const [error, setError] = useState('')
@@ -13,6 +13,9 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   todosRef.current = todos
   calEventsRef.current = calendarEvents
   habitsRef.current = habits
+  const mountedRef = useRef(false)
+  const debounceRef = useRef(null)
+  const generateRef = useRef(null)
 
   const getLocation = () =>
     new Promise((resolve) => {
@@ -97,11 +100,25 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
     }
   }
 
+  generateRef.current = generate
+
   useEffect(() => {
     if (!ready) return
     generate()
     return () => abortRef.current?.abort()
   }, [tagId, ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-refresh with debounce when upstream data changes (new tasks, calendar
+  // events, habit toggles). Skip the initial mount — generate() handles that.
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      generateRef.current(true)
+      debounceRef.current = null
+    }, 10_000)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [invalidationKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasContent = sections.today || sections.week
 

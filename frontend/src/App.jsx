@@ -56,6 +56,8 @@ export default function App() {
   const [todos, setTodos] = useState([])
   const [tags, setTags] = useState([])
   const [loading, setLoading] = useState(true)
+  const [briefingKey, setBriefingKey] = useState(0)
+  const invalidateBriefing = () => setBriefingKey((k) => k + 1)
   const [showModal, setShowModal] = useState(false)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
@@ -279,6 +281,7 @@ export default function App() {
   const handleAddTodo = async (data) => {
     const created = await createTodo(data)
     setTodos((prev) => [...prev, created])
+    invalidateBriefing()
   }
 
   const handleUpdateTodo = async (id, data) => {
@@ -293,6 +296,7 @@ export default function App() {
 
   const handleToggle = async (todo) => {
     await handleUpdateTodo(todo.id, { completed: !todo.completed })
+    invalidateBriefing()
   }
 
   const handleAddTag = async (todoId, tagId) => {
@@ -392,6 +396,7 @@ export default function App() {
       }
       const updated = await fetchHabits()
       setHabits(updated)
+      invalidateBriefing()
     } catch {
       setHabits((prev) => prev.map((h) => (h.id === habit.id ? habit : h)))
     }
@@ -468,6 +473,7 @@ export default function App() {
       const events = await fetchCalendarEvents()
       setCalendarEvents(events)
       setLastRefreshed(new Date())
+      invalidateBriefing()
     } catch {
       // ignore
     } finally {
@@ -670,6 +676,7 @@ export default function App() {
             onDelete={handleDeleteTodo}
             onMove={handleMoveSection}
             onWeather={setWeather}
+            briefingKey={briefingKey}
           />
         ) : isHabitsPage ? (
           <HabitsPage
@@ -715,6 +722,7 @@ export default function App() {
             tagId={selectedTagId}
             ready={!loading}
             onWeather={setWeather}
+            invalidationKey={briefingKey}
           />
           {!isTasksPage && (
             <HabitTracker
