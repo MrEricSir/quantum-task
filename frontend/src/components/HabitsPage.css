@@ -65,6 +65,8 @@
 /* ── Add card ── */
 .habits-add-card {
   background: var(--surface);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid rgba(139, 92, 246, 0.35);
   border-radius: var(--radius);
   padding: 16px;
@@ -147,10 +149,13 @@
   align-items: center;
   gap: 14px;
   background: var(--surface);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
   transition: border-color 0.15s;
+  animation: fade-in-up 0.2s ease backwards;
 }
 
 .habit-card:hover {
@@ -320,35 +325,6 @@
   margin-top: 32px;
 }
 
-.habits-archive-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  padding: 4px 0;
-  transition: color 0.12s;
-}
-
-.habits-archive-toggle:hover { color: var(--text); }
-
-.habits-archive-chevron {
-  display: flex;
-  align-items: center;
-  opacity: 0.6;
-}
-
-.habits-archive-count {
-  background: rgba(255,255,255,0.08);
-  border-radius: 10px;
-  padding: 1px 7px;
-  font-size: 11px;
-}
 
 .habits-archive-list {
   margin-top: 10px;
@@ -363,7 +339,9 @@
   justify-content: space-between;
   gap: 10px;
   padding: 8px 14px;
-  background: rgba(255,255,255,0.03);
+  background: var(--surface);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
   border-radius: 8px;
 }

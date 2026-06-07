@@ -14,6 +14,14 @@
   to   { opacity: 1; }
 }
 
+.modal-overlay[data-state="closed"] {
+  animation: overlay-out 0.18s ease forwards;
+}
+
+@keyframes overlay-out {
+  to { opacity: 0; }
+}
+
 /* ── Dialog box ── */
 /* Radix renders overlay and content as siblings in the portal,
    so the content must position itself. */
@@ -40,6 +48,14 @@
 @keyframes modal-in {
   from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.modal[data-state="closed"] {
+  animation: modal-out 0.16s ease forwards;
+}
+
+@keyframes modal-out {
+  to { opacity: 0; transform: translate(-50%, -49%) scale(0.97); }
 }
 
 .modal h2 {
@@ -112,5 +128,13 @@
   @keyframes sheet-down {
     from { transform: translateY(-40px); opacity: 0; }
     to   { transform: translateY(0);     opacity: 1; }
+  }
+
+  .modal[data-state="closed"] {
+    animation: sheet-up 0.2s ease forwards;
+  }
+
+  @keyframes sheet-up {
+    to { transform: translateY(-30px); opacity: 0; }
   }
 }

@@ -99,9 +99,9 @@
 }
 
 .calp-day-group {
-  background: rgba(10, 6, 22, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--container-bg);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -261,9 +261,9 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
-  background: rgba(10, 6, 22, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--container-bg);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
 }
 
 .calp-grid-dow {
@@ -395,9 +395,9 @@
 /* ── Selected day panel ── */
 .calp-day-panel {
   margin-top: 12px;
-  background: rgba(10, 6, 22, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--container-bg);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;

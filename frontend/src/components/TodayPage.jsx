@@ -4,6 +4,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@radix-ui/react-icons
 import TodoCard from './TodoCard'
 import CalendarEventCard from './CalendarEventCard'
 import DailyBriefing from './DailyBriefing'
+import { CollapseBody } from './Collapsible'
 import './TodayPage.css'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -179,34 +180,36 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
             onToggle={() => setUuntimedOpen((v) => !v)}
             toggleable={untimedAllDone}
           />
-          {untimedOpen && (
-            sortedUntimedTasks.length === 0 ? (
-              <div className="today-empty">
-                {untimedAllDone ? 'All tasks complete.' : 'No unscheduled tasks for today.'}
-              </div>
-            ) : (
-              <>
-                <div className="today-cards">
-                  {sortedUntimedTasks.map((todo) => (
-                    <TodoCard
-                      key={todo.id}
-                      todo={todo}
-                      onEdit={onEdit}
-                      onDelete={onDelete}
-                      onToggle={onToggle}
-                      onMove={onMove}
-                      isMobile
-                    />
-                  ))}
+          <CollapseBody open={untimedOpen}>
+            <div>
+              {sortedUntimedTasks.length === 0 ? (
+                <div className="today-empty">
+                  {untimedAllDone ? 'All tasks complete.' : 'No unscheduled tasks for today.'}
                 </div>
-                {catchUpCount > 0 && (
-                  <div className="today-catchup">
-                    {catchUpCount} more task{catchUpCount !== 1 ? 's' : ''} in This Week
+              ) : (
+                <>
+                  <div className="today-cards">
+                    {sortedUntimedTasks.map((todo) => (
+                      <TodoCard
+                        key={todo.id}
+                        todo={todo}
+                        onEdit={onEdit}
+                        onDelete={onDelete}
+                        onToggle={onToggle}
+                        onMove={onMove}
+                        isMobile
+                      />
+                    ))}
                   </div>
-                )}
-              </>
-            )
-          )}
+                  {catchUpCount > 0 && (
+                    <div className="today-catchup">
+                      {catchUpCount} more task{catchUpCount !== 1 ? 's' : ''} in This Week
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </CollapseBody>
         </section>
 
         {habits.length > 0 && (
@@ -218,7 +221,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
               onToggle={() => setHabitsOpen((v) => !v)}
               toggleable={habitsAllDone}
             />
-            {habitsOpen && (
+            <CollapseBody open={habitsOpen}>
               <div className="today-habits">
                 {habits.map((habit) => (
                   <div
@@ -247,7 +250,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                   </div>
                 ))}
               </div>
-            )}
+            </CollapseBody>
           </section>
         )}
       </div>

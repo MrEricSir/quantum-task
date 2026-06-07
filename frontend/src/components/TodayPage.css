@@ -41,14 +41,15 @@
 
 /* ── Sections ── */
 .today-section {
-  background: rgba(10, 6, 22, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--container-bg);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0;
   margin-bottom: 14px;
   overflow: hidden;
+  animation: fade-in-up 0.22s ease backwards;
 }
 
 /* ── Collapsible section header ── */
@@ -154,9 +155,12 @@
   gap: 10px;
   padding: 7px 10px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
-  transition: background 0.12s;
+  transition: box-shadow 0.15s;
+  animation: fade-in-up 0.2s ease backwards;
 }
 
 .today-habit--done {

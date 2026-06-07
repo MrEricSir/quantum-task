@@ -2,8 +2,8 @@
   width: 200px;
   flex-shrink: 0;
   background: rgba(10, 6, 22, 0.35);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border-right: 1px solid var(--border);
   padding: 12px 8px;
   position: sticky;

@@ -2,8 +2,8 @@
   max-width: 1600px;
   margin: 0 auto 20px;
   background: var(--surface);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border-radius: var(--radius);
   border: 1px solid var(--border);
 }

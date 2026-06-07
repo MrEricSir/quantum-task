@@ -13,7 +13,9 @@
   --color-later: #94a3b8;
 
   --bg: #07040f;
-  --surface: rgba(20, 12, 40, 0.72);
+  --surface: rgba(20, 12, 40, 0.72);     /* individual card background */
+  --surface-blur: blur(12px);            /* shared backdrop blur */
+  --container-bg: rgba(10, 6, 22, 0.45); /* section/grouping container */
   --border: rgba(139, 92, 246, 0.2);
   --text: #ede9fe;
   --text-muted: #9d8ec4;

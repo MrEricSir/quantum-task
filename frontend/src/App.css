@@ -4,6 +4,12 @@
   flex-direction: column;
 }
 
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { transform: translateY(0); }
+}
+
+
 .app-bg-video {
   position: fixed;
   inset: 0;

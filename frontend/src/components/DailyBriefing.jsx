@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { UpdateIcon, ExclamationTriangleIcon } from '@radix-ui/react-icons'
 import './DailyBriefing.css'
 
@@ -16,6 +16,8 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   const mountedRef = useRef(false)
   const debounceRef = useRef(null)
   const generateRef = useRef(null)
+  const containerRef = useRef(null)
+  const prevHeightRef = useRef(0)
 
   const getLocation = () =>
     new Promise((resolve) => {
@@ -102,6 +104,19 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
 
   generateRef.current = generate
 
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const newHeight = el.offsetHeight
+    if (prevHeightRef.current > 0 && prevHeightRef.current !== newHeight) {
+      el.animate(
+        [{ height: `${prevHeightRef.current}px` }, { height: `${newHeight}px` }],
+        { duration: 250, easing: 'ease-out', fill: 'none' },
+      )
+    }
+    prevHeightRef.current = newHeight
+  }, [sections, status])
+
   useEffect(() => {
     if (!ready) return
     generate()
@@ -146,7 +161,7 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   )
 
   if (status === 'loading' && !hasContent) return (
-    <div className="briefing">
+    <div className="briefing" ref={containerRef}>
       <div className="briefing-sections">
         <span className="briefing-spinner" />
       </div>
@@ -154,7 +169,7 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   )
 
   return (
-    <div className="briefing">
+    <div className="briefing" ref={containerRef}>
       <div className="briefing-sections">
         {sections.today && (
           <div className="briefing-row">

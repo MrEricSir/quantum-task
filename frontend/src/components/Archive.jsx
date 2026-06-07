@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { CheckIcon, Cross2Icon, ChevronDownIcon, ChevronRightIcon } from '@radix-ui/react-icons'
+import { CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
+import Collapsible from './Collapsible'
 import './Archive.css'
 
 const SECTION_LABELS = {
@@ -28,8 +28,6 @@ function formatCompletedAt(iso) {
 }
 
 export default function Archive({ todos, onDelete, onToggle }) {
-  const [open, setOpen] = useState(false)
-
   const sorted = [...todos].sort((a, b) => {
     if (!a.completed_at && !b.completed_at) return 0
     if (!a.completed_at) return 1
@@ -39,15 +37,7 @@ export default function Archive({ todos, onDelete, onToggle }) {
 
   return (
     <div className="archive">
-      <button className="archive-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className="archive-chevron">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-        Archive
-        {todos.length > 0 && (
-          <span className="archive-count">{todos.length}</span>
-        )}
-      </button>
-
-      {open && (
+      <Collapsible label="Archive" count={todos.length}>
         <div className="archive-grid">
           {sorted.length === 0 ? (
             <p className="archive-empty">No completed tasks yet.</p>
@@ -93,7 +83,7 @@ export default function Archive({ todos, onDelete, onToggle }) {
             ))
           )}
         </div>
-      )}
+      </Collapsible>
     </div>
   )
 }

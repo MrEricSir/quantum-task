@@ -1,18 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { Pencil1Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon } from '@radix-ui/react-icons'
+import { Pencil1Icon, CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
+import Collapsible from './Collapsible'
 import './HabitsPage.css'
 
 function HabitsArchive({ habits, onUnarchive, onDelete }) {
-  const [open, setOpen] = useState(true)
   if (habits.length === 0) return null
   return (
     <div className="habits-archive">
-      <button className="habits-archive-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className="habits-archive-chevron">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-        Habit Archive
-        <span className="habits-archive-count">{habits.length}</span>
-      </button>
-      {open && (
+      <Collapsible label="Habit Archive" count={habits.length} defaultOpen={true}>
         <div className="habits-archive-list">
           {habits.map((habit) => (
             <div key={habit.id} className="habits-archive-row">
@@ -33,7 +28,7 @@ function HabitsArchive({ habits, onUnarchive, onDelete }) {
             </div>
           ))}
         </div>
-      )}
+      </Collapsible>
     </div>
   )
 }

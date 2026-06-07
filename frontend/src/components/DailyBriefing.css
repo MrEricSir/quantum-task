@@ -5,12 +5,13 @@
   align-items: center;
   gap: 0;
   background: var(--surface);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
   border: 1px solid var(--border);
   border-left: 3px solid var(--color-today);
   border-radius: 10px;
   overflow: hidden;
+  will-change: height;
 }
 
 .briefing--error {
@@ -32,6 +33,7 @@
   display: flex;
   align-items: baseline;
   gap: 10px;
+  animation: fade-in-up 0.3s ease backwards;
 }
 
 .briefing-label {

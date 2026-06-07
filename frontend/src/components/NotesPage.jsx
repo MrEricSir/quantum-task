@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { PlusIcon, Cross2Icon, ChevronDownIcon, ChevronRightIcon } from '@radix-ui/react-icons'
+import { PlusIcon, Cross2Icon } from '@radix-ui/react-icons'
 import Modal from './Modal'
+import Collapsible from './Collapsible'
 import './NotesPage.css'
 
 function timeAgo(iso) {
@@ -115,17 +116,10 @@ function NoteEditorModal({ note, allTags, onSave, onDelete, onArchive, onPromote
 // ── Notes archive ──────────────────────────────────────────────────────────
 
 function NotesArchive({ notes, onUnarchive, onDelete }) {
-  const [open, setOpen] = useState(true)
   if (notes.length === 0) return null
-
   return (
     <div className="notes-archive">
-      <button className="notes-archive-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className="notes-archive-chevron">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-        Note Archive
-        <span className="notes-archive-count">{notes.length}</span>
-      </button>
-      {open && (
+      <Collapsible label="Note Archive" count={notes.length} defaultOpen={true}>
         <div className="notes-archive-list">
           {notes.map((note) => (
             <div key={note.id} className="notes-archive-row">
@@ -143,7 +137,7 @@ function NotesArchive({ notes, onUnarchive, onDelete }) {
             </div>
           ))}
         </div>
-      )}
+      </Collapsible>
     </div>
   )
 }
