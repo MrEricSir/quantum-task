@@ -59,11 +59,16 @@ class ParsedTodo(BaseModel):
     suggested_tags: List[str] = []
     recurrence_rule: Optional[Literal["daily", "weekly", "monthly", "yearly"]] = None
     note_content: Optional[str] = None
+    clarification_question: Optional[str] = None
 
     @field_validator('scheduled_at', 'description', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
         return None if v == '' else v
+
+
+class BulkParseResponse(BaseModel):
+    items: List[ParsedTodo]
 
 
 class HabitCreate(BaseModel):

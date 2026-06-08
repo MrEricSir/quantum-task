@@ -14,7 +14,7 @@ To add a new model:
 
 from __future__ import annotations
 import re
-from datetime import time as dt_time
+from datetime import date, datetime, time as dt_time, timedelta
 from typing import Any
 
 # ── Shared prompt instructions ────────────────────────────────────────────────
@@ -72,6 +72,9 @@ Fields:
                   Common times: noon=12:00:00, midnight=00:00:00, morning=09:00:00,
                   afternoon=14:00:00, evening=18:00:00
   suggested_tags  — list of applicable tag names from the available tags; [] if none fit
+  clarification_question — a short clarifying question for the user IF and ONLY IF the type
+                  is genuinely ambiguous (e.g. could be task or habit). null in all other cases.
+                  Example: "Did you mean to track this as a recurring habit?"
   recurrence_rule — "daily" | "weekly" | "monthly" | "yearly" | null
                     Set only when the input explicitly describes a repeating task:
                     "every day" / "daily" / "each morning"  → "daily"   (section: "today")
@@ -81,6 +84,118 @@ Fields:
                     null if no recurrence is mentioned
                     When set, section must reflect the cadence above, not "later"\
 """
+
+
+BULK_SUFFIX = """\
+
+IMPORTANT — MULTIPLE ITEMS:
+- The input may contain multiple todos separated by commas, periods, "and", or newlines.
+- Parse EACH distinct action or event as its own item in the array.
+- EXCEPTION: if the input is clearly a shopping/grocery list — e.g. "buy X, Y, and Z" \
+with 3+ items, or a store name followed by food items on separate lines — group ALL of \
+them into ONE item with type="note" and each item on its own line in note_content.
+Return ONLY valid JSON: {{"items": [<ParsedTodo>, ...]}} — no prose, no explanation.\
+"""
+
+# Weekday name → weekday index (Monday=0)
+_ISO_IN_TITLE_RE = re.compile(r'\s*\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\b')
+
+_WEEKDAY_IDX: dict[str, int] = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+_WEEKDAY_RE = re.compile(
+    r'\b(?:next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b',
+    re.I,
+)
+
+_TIME_RE = re.compile(
+    r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b'
+    r'|\b(noon|midnight|morning|afternoon|evening)\b'
+    r'|\bat\s+(\d{1,2})(?::(\d{2}))?\b',  # bare "at N" with no am/pm
+    re.I,
+)
+
+_TIME_WORDS: dict[str, dt_time] = {
+    "noon":      dt_time(12, 0),
+    "midnight":  dt_time(0, 0),
+    "morning":   dt_time(9, 0),
+    "afternoon": dt_time(14, 0),
+    "evening":   dt_time(18, 0),
+}
+
+
+def resolve_dates(parsed: Any, *, text: str, today: date) -> Any:
+    """
+    Post-parse hook: resolve relative date phrases in `text` to concrete
+    dates in `parsed.scheduled_at`.  Only fills scheduled_at when it is
+    currently None (respects any time the LLM already resolved).
+
+    Handles:
+      - "today"            → today at noon
+      - "tomorrow"         → tomorrow at noon
+      - "(next) <weekday>" → nearest future occurrence at noon
+    When a time is mentioned alongside the phrase, uses that time instead of noon.
+    """
+    lowered = text.strip().lower()
+
+    # Determine the time-of-day from the original input (if any).
+    def _extract_time() -> dt_time:
+        m = _TIME_RE.search(lowered)
+        if not m:
+            return dt_time(12, 0)  # default: noon
+        if m.group(4):                          # named word: noon, morning, …
+            return _TIME_WORDS[m.group(4).lower()]
+        if m.group(5) is not None:              # bare "at N" — assume pm for 1–11
+            hour = int(m.group(5))
+            minute = int(m.group(6)) if m.group(6) else 0
+            if 1 <= hour <= 11:
+                hour += 12
+            return dt_time(hour, minute)
+        hour = int(m.group(1))                  # explicit am/pm
+        minute = int(m.group(2)) if m.group(2) else 0
+        meridiem = m.group(3).lower()
+        if meridiem == "pm" and hour != 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        return dt_time(hour, minute)
+
+    if parsed.scheduled_at is not None:
+        return parsed
+
+    target_date: date | None = None
+
+    if re.search(r'\btoday\b', lowered):
+        target_date = today
+    elif re.search(r'\btomorrow\b', lowered):
+        target_date = today + timedelta(days=1)
+    else:
+        wm = _WEEKDAY_RE.search(lowered)
+        if wm:
+            target_wd = _WEEKDAY_IDX[wm.group(1).lower()]
+            current_wd = today.weekday()
+            days_ahead = (target_wd - current_wd) % 7 or 7  # always future
+            target_date = today + timedelta(days=days_ahead)
+        elif _TIME_RE.search(lowered):
+            # Bare time phrase with no date → assume today
+            target_date = today
+
+    if target_date is not None:
+        t = _extract_time()
+        parsed.scheduled_at = datetime.combine(target_date, t)
+        # Fix up section to match the resolved date
+        if parsed.section == "later":
+            delta = (target_date - today).days
+            if delta <= 0:
+                parsed.section = "today"
+            elif delta <= 7:
+                parsed.section = "week"
+            elif delta <= 30:
+                parsed.section = "month"
+
+    return parsed
 
 
 class BaseModelPlugin:
@@ -96,6 +211,10 @@ class BaseModelPlugin:
     # output_json_template may contain {today} and {tomorrow} placeholders.
     # Use {{ / }} for literal braces inside the JSON string.
     EXAMPLES: list[tuple[str, str]] = []
+
+    # Examples specifically for the bulk prompt. Same format but output must
+    # be wrapped in {"items": [...]}.
+    BULK_EXAMPLES: list[tuple[str, str]] = []
 
     # ── Prompt ────────────────────────────────────────────────────────────────
 
@@ -116,11 +235,43 @@ class BaseModelPlugin:
         examples = self._build_examples(today, tomorrow)
         return body + ("\n\n" + examples if examples else "")
 
+    def get_bulk_system_prompt(
+        self,
+        *,
+        today: str,
+        weekday: str,
+        tomorrow: str,
+        tags_section: str,
+    ) -> str:
+        # Full field definitions + model-specific examples + bulk wrapper
+        body = BASE_INSTRUCTIONS.format(
+            today=today,
+            weekday=weekday,
+            tomorrow=tomorrow,
+            tags_section=tags_section,
+        )
+        examples = self._build_examples(today, tomorrow)
+        bulk_examples = self._build_bulk_examples(today, tomorrow)
+        return (body
+                + ("\n\n" + examples if examples else "")
+                + BULK_SUFFIX
+                + ("\n\n" + bulk_examples if bulk_examples else ""))
+
     def _build_examples(self, today: str, tomorrow: str) -> str:
         if not self.EXAMPLES:
             return ""
         lines = [f"Examples (today is {today}, tomorrow is {tomorrow}):"]
         for input_text, json_tmpl in self.EXAMPLES:
+            json_str = json_tmpl.format(today=today, tomorrow=tomorrow)
+            lines.append(f'  Input : "{input_text}"')
+            lines.append(f'  Output: {json_str}')
+        return "\n".join(lines)
+
+    def _build_bulk_examples(self, today: str, tomorrow: str) -> str:
+        if not self.BULK_EXAMPLES:
+            return ""
+        lines = [f"Bulk examples (today is {today}, tomorrow is {tomorrow}):"]
+        for input_text, json_tmpl in self.BULK_EXAMPLES:
             json_str = json_tmpl.format(today=today, tomorrow=tomorrow)
             lines.append(f'  Input : "{input_text}"')
             lines.append(f'  Output: {json_str}')
@@ -157,6 +308,34 @@ class BaseModelPlugin:
         if isinstance(raw, list):
             raw = raw[0] if raw else {}
 
+        # If the LLM embedded an ISO datetime inside the title, rescue it into scheduled_at
+        if isinstance(raw.get("title"), str):
+            m = _ISO_IN_TITLE_RE.search(raw["title"])
+            if m:
+                if not raw.get("scheduled_at"):
+                    raw["scheduled_at"] = m.group(1)
+                cleaned = _ISO_IN_TITLE_RE.sub("", raw["title"]).strip(" -:,")
+                # If stripping left the title empty, promote description to title
+                if not cleaned and isinstance(raw.get("description"), str) and raw["description"]:
+                    cleaned = raw.pop("description")
+                raw["title"] = cleaned
+
+        # Common field-name hallucinations for "title"
+        _KNOWN_FIELDS = {
+            "type", "title", "description", "section", "scheduled_at",
+            "suggested_tags", "recurrence_rule", "note_content", "clarification_question",
+        }
+        if "title" not in raw:
+            for alias in ("text", "name", "task", "content", "item", "summary", "label", "todo"):
+                if alias in raw and isinstance(raw[alias], str):
+                    raw["title"] = raw.pop(alias)
+                    break
+            else:
+                # Last resort: join all unrecognised string values into a title
+                parts = [v for k, v in raw.items() if k not in _KNOWN_FIELDS and isinstance(v, str)]
+                if parts:
+                    raw["title"] = " ".join(parts)
+
         type_val = str(raw.get("type", "task")).strip().lower()
         raw["type"] = type_val if type_val in self._VALID_TYPES else "task"
 
@@ -172,7 +351,7 @@ class BaseModelPlugin:
                 raw["recurrence_rule"] = self._RECURRENCE_ALIASES.get(normalized, None)
 
         # Coerce any non-string value in nullable string fields to None
-        for field in ("description", "note_content", "scheduled_at"):
+        for field in ("description", "note_content", "scheduled_at", "clarification_question"):
             val = raw.get(field)
             if val is not None and not isinstance(val, str):
                 raw[field] = None
@@ -202,11 +381,18 @@ class BaseModelPlugin:
     # Input prefixes that always signal a note regardless of LLM type output.
     _NOTE_PREFIXES = ("note:", "idea:", "thought:", "remember:", "jot down", "write down")
 
+    # "add a habit to X" / "create a habit for X" → type=habit, title=X
+    _ADD_HABIT_RE = re.compile(
+        r'^(?:add|create|make|start|set up|track)\s+(?:a\s+|an\s+|the\s+)?habit\s+(?:to\s+|of\s+|for\s+|about\s+)?(.+)$',
+        re.I,
+    )
+
     # Patterns that reliably signal list/note intent — enforced even if LLM says "task".
     _LIST_RE = re.compile(
         r'\b(?:shopping|grocery|groceries|packing|to-?do|check(?:list)?)\s+list\b'
         r'|\blist\s+of\b'
-        r'|\blist:',
+        r'|\blist:'
+        r'|\bbuy\b.+,.+,.+',   # "buy X, Y, and Z" with 3+ items (2+ commas)
         re.I,
     )
 
@@ -225,6 +411,16 @@ class BaseModelPlugin:
                 parsed.section = forced_section
                 break
 
+        # "add a habit to X" → convert to habit with title X
+        m = self._ADD_HABIT_RE.match(lowered)
+        if m:
+            parsed.type = "habit"
+            parsed.title = m.group(1).strip().capitalize()
+            if not parsed.recurrence_rule:
+                parsed.recurrence_rule = "daily"
+            if parsed.section == "later":
+                parsed.section = self._RECURRENCE_SECTION.get(parsed.recurrence_rule, "today")
+
         # Enforce note type from capture-phrase prefixes stated in the prompt.
         if parsed.type != "note" and any(lowered.startswith(p) for p in self._NOTE_PREFIXES):
             parsed.type = "note"
@@ -233,6 +429,12 @@ class BaseModelPlugin:
                     if lowered.startswith(p):
                         parsed.note_content = text[len(p):].strip()
                         break
+
+        # note_content belongs to notes only — clear it from tasks and habits.
+        # LLMs sometimes dump the full input or unrelated text into note_content on
+        # non-note items; blindly flipping the type to "note" causes more harm than good.
+        if parsed.type != "note" and parsed.note_content:
+            parsed.note_content = None
 
         # Enforce note type for list-like inputs regardless of LLM classification.
         if parsed.type != "note" and self._LIST_RE.search(lowered):

@@ -22,6 +22,7 @@ import schemas
 import gcal as gcal_lib
 from database import SessionLocal, engine
 from model_plugins import get_plugin
+from model_plugins.base import resolve_dates
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -1091,7 +1092,66 @@ def parse_todo(request: Request, req: schemas.ParseRequest, db: Session = Depend
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=req.text)
+        parsed = resolve_dates(parsed, text=req.text, today=today)
         return parsed
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"LLM request failed ({LLM_BASE_URL}, model={plugin.model_name}): {e}",
+        )
+
+
+@app.post("/api/todos/parse-bulk", response_model=schemas.BulkParseResponse)
+def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
+    today = _local_date(request)
+    tomorrow = today + timedelta(days=1)
+    tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
+    tags_section = (
+        f"Available tags: {', '.join(tag_names)}"
+        if tag_names
+        else "No tags available."
+    )
+    plugin = get_plugin(LLM_MODEL)
+    prompt = plugin.get_bulk_system_prompt(
+        today=today.isoformat(),
+        weekday=today.strftime("%A"),
+        tomorrow=tomorrow.isoformat(),
+        tags_section=tags_section,
+    )
+    try:
+        client = llm_client()
+        response = client.chat.completions.create(
+            model=plugin.model_name,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": req.text},
+            ],
+        )
+        data = json.loads(response.choices[0].message.content)
+        raw_items = data.get("items", [])
+        # Normalise + validate each item
+        lines = [l.strip() for l in req.text.splitlines() if l.strip()]
+        items = []
+        for i, raw in enumerate(raw_items):
+            # Save the LLM's raw title before normalisation — it often contains the
+            # original time phrase (e.g. "Dinner with Andre at 7") which we need for
+            # resolve_dates when no per-line text is available (comma-separated input).
+            raw_title = raw.get("title", "") if isinstance(raw.get("title"), str) else ""
+            raw = plugin.normalize_raw(raw)
+            line = lines[i] if i < len(lines) else ""
+            # Use per-item line only when lines map 1-1 to items (newline-separated
+            # input). For comma-separated input (1 line, N items) using lines[0] for
+            # every item would contaminate all items with the full input text, causing
+            # list-detection rules to wrongly flip tasks to notes.
+            if len(lines) == len(raw_items):
+                date_hint = line or raw_title
+            else:
+                date_hint = raw_title
+            parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=date_hint)
+            parsed = resolve_dates(parsed, text=date_hint, today=today)
+            items.append(parsed)
+        return schemas.BulkParseResponse(items=items)
     except Exception as e:
         raise HTTPException(
             status_code=503,

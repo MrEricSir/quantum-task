@@ -115,6 +115,19 @@ export async function parseTodo(text) {
   return res.json()
 }
 
+export async function parseBulkTodos(text) {
+  const res = await apiFetch(`${BASE}/parse-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to parse')
+  }
+  return res.json()
+}
+
 export async function fetchCalendarMappings() {
   const res = await apiFetch('/api/calendar-mappings')
   if (!res.ok) throw new Error('Failed to fetch calendar mappings')

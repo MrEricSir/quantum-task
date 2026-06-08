@@ -14,7 +14,8 @@ from .base import BaseModelPlugin
 
 _TIME_RE = re.compile(
     r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b'
-    r'|\b(?:noon|midnight|morning|afternoon|evening)\b',
+    r'|\b(?:noon|midnight|morning|afternoon|evening)\b'
+    r'|\bat\s+\d{1,2}(?::\d{2})?\b',  # bare "at N" with no am/pm
     re.I,
 )
 
@@ -78,6 +79,50 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '{{"type":"note","title":"WiFi password","description":null,'
             '"section":"later","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":null,"note_content":"WiFi password is quantum42."}}',
+        ),
+    ]
+
+    BULK_EXAMPLES = [
+        # Mixed: task with time + shopping list → note + habit
+        (
+            "call sam at 3pm, buy lettuce milk bagels, add a habit to eat fiber",
+            '{{"items":['
+            '{{"type":"task","title":"Call Sam","description":null,"section":"today",'
+            '"scheduled_at":"{today}T15:00:00","suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}},'
+            '{{"type":"note","title":"Shopping list","description":null,"section":"later",'
+            '"scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":"lettuce\\nmilk\\nbagels"}},'
+            '{{"type":"habit","title":"Eat fiber","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":"daily","note_content":null}}'
+            ']}}',
+        ),
+        # Multi-task comma-separated input → separate items, times resolved
+        (
+            "call tom at 6pm, dinner with andre at 7",
+            '{{"items":['
+            '{{"type":"task","title":"Call Tom","description":null,"section":"today",'
+            '"scheduled_at":"{today}T18:00:00","suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}},'
+            '{{"type":"task","title":"Dinner with Andre","description":null,"section":"today",'
+            '"scheduled_at":"{today}T19:00:00","suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}'
+            ']}}',
+        ),
+        # "buy X, Y, and Z" with multiple items → single note
+        (
+            "buy eggs, fish, and apple juice",
+            '{{"items":[{{"type":"note","title":"Shopping list","description":null,'
+            '"section":"later","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":"eggs\\nfish\\napple juice"}}]}}',
+        ),
+        # Store name + items on separate lines → single note
+        (
+            "trader joe\'s\nmuffin mix\nyogurt\nsalad",
+            '{{"items":[{{"type":"note","title":"Trader Joe\'s shopping list","description":null,'
+            '"section":"later","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":"Trader Joe\'s\\nmuffin mix\\nyogurt\\nsalad"}}]}}',
         ),
     ]
 

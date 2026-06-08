@@ -158,6 +158,107 @@
   line-height: 1.5;
 }
 
+/* ── Clarification callout ── */
+.quick-clarification {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #c4b5fd;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.quick-clarification-icon {
+  font-style: normal;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+
+/* ── Bulk confirm list ── */
+.quick-bulk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.quick-bulk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.quick-bulk-item:hover {
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.quick-bulk-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.quick-bulk-type-badge--task {
+  background: rgba(96, 165, 250, 0.15);
+  color: #93c5fd;
+}
+
+.quick-bulk-type-badge--habit {
+  background: rgba(167, 139, 250, 0.15);
+  color: #c4b5fd;
+}
+
+.quick-bulk-type-badge--note {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fcd34d;
+}
+
+.quick-bulk-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-bulk-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.quick-bulk-remove:hover {
+  opacity: 1;
+  color: #f87171;
+}
+
 /* Reuse AddTodoModal form styles */
 .quick-modal .form-group {
   display: flex;

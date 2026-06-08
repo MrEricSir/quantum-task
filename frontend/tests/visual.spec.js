@@ -320,11 +320,11 @@ test.describe('quick-add modal', () => {
   })
 
   test('confirm screen shows detected type and Back/Add buttons', async ({ page }) => {
-    await page.route('**/api/todos/parse', r =>
-      r.fulfill({ json: {
+    await page.route('**/api/todos/parse-bulk', r =>
+      r.fulfill({ json: { items: [{
         type: 'task', title: 'Call dentist', description: null,
         section: 'week', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
-      }}))
+      }]}}))
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
@@ -339,11 +339,11 @@ test.describe('quick-add modal', () => {
   })
 
   test('confirm screen type can be overridden', async ({ page }) => {
-    await page.route('**/api/todos/parse', r =>
-      r.fulfill({ json: {
+    await page.route('**/api/todos/parse-bulk', r =>
+      r.fulfill({ json: { items: [{
         type: 'task', title: 'Morning run', description: null,
         section: 'today', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
-      }}))
+      }]}}))
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
@@ -357,11 +357,11 @@ test.describe('quick-add modal', () => {
   })
 
   test('confirm screen Back returns to input', async ({ page }) => {
-    await page.route('**/api/todos/parse', r =>
-      r.fulfill({ json: {
+    await page.route('**/api/todos/parse-bulk', r =>
+      r.fulfill({ json: { items: [{
         type: 'note', title: 'Grocery list', note_content: 'milk, eggs',
         section: 'later', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
-      }}))
+      }]}}))
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()

@@ -5,8 +5,11 @@ These are pure unit tests — no LLM, no server, no database.
 They verify that the deterministic overrides in BaseModelPlugin.post_process()
 enforce the rules stated in the prompt even when the LLM returns wrong values.
 """
+import re
 import pytest
-from model_plugins.base import BaseModelPlugin
+from datetime import date, datetime
+from model_plugins.base import BaseModelPlugin, resolve_dates
+from model_plugins.llama31_8b import Llama31_8bPlugin
 from schemas import ParsedTodo
 
 plugin = BaseModelPlugin()
@@ -154,3 +157,100 @@ class TestRecurrenceSection:
     def test_recurrence_does_not_override_explicit_section(self):
         result = _pp("meditate daily", recurrence_rule="daily", section="today")
         assert result.section == "today"
+
+
+# ── Bulk timestamp parsing ─────────────────────────────────────────────────────
+# Regression: "call tom at 6pm, dinner with andre at 7"
+# The LLM (llama-3.1-8b-instant) sometimes embeds ISO datetimes in the title
+# field instead of (or in addition to) scheduled_at, and may not resolve bare
+# "at N" hour references without am/pm.
+
+_llama = Llama31_8bPlugin()
+_TODAY = date(2026, 6, 7)
+
+
+def _full_pipeline(raw: dict, *, text: str = "") -> ParsedTodo:
+    """normalize_raw → post_process → resolve_dates, using the Llama 3.1 8b plugin."""
+    raw = _llama.normalize_raw(raw)
+    parsed = _llama.post_process(ParsedTodo.model_validate(raw), text=text)
+    return resolve_dates(parsed, text=text, today=_TODAY)
+
+
+def _task(**overrides) -> dict:
+    base = dict(type="task", title="Test", description=None, section="later",
+                scheduled_at=None, suggested_tags=[], recurrence_rule=None, note_content=None)
+    base.update(overrides)
+    return base
+
+
+class TestBulkTimestampParsing:
+    """
+    Regression: "call tom at 6pm, dinner with andre at 7" produced two events
+    where the ISO datetime appeared in the title and the actual task name was
+    hidden in the description (or the scheduled_at was missing entirely).
+    """
+
+    def test_iso_embedded_in_title_is_extracted(self):
+        """LLM appends the resolved ISO datetime inside the title string."""
+        result = _full_pipeline(
+            _task(title="Call Tom 2026-06-07T18:00:00", section="today"),
+            text="call tom at 6pm",
+        )
+        assert not re.search(r'\d{4}-\d{2}-\d{2}', result.title), \
+            f"ISO date fragment leaked into title: {result.title!r}"
+        assert "tom" in result.title.lower()
+        assert result.scheduled_at == datetime(2026, 6, 7, 18, 0, 0)
+
+    def test_iso_as_entire_title_promotes_description(self):
+        """LLM uses the ISO datetime as the entire title; real name is in description."""
+        result = _full_pipeline(
+            _task(title="2026-06-07T18:00:00", description="Call Tom",
+                  scheduled_at="2026-06-07T18:00:00", section="today"),
+            text="call tom at 6pm",
+        )
+        assert not re.search(r'\d{4}-\d{2}-\d{2}', result.title), \
+            f"ISO date fragment leaked into title: {result.title!r}"
+        assert result.title.lower() == "call tom"
+        assert result.scheduled_at == datetime(2026, 6, 7, 18, 0, 0)
+
+    def test_bare_at_hour_no_ampm_resolves_to_pm(self):
+        """'at 7' without am/pm should resolve to 19:00 on today's date."""
+        result = _full_pipeline(
+            _task(title="Dinner with Andre", section="later"),
+            text="dinner with andre at 7",
+        )
+        assert result.scheduled_at == datetime(2026, 6, 7, 19, 0, 0), \
+            f"'at 7' should resolve to 19:00, got: {result.scheduled_at!r}"
+        assert result.section == "today"
+
+    def test_iso_in_title_dinner_at_7(self):
+        """LLM puts ISO datetime as title for the 'at 7' item; name is in description."""
+        result = _full_pipeline(
+            _task(title="2026-06-07T19:00:00", description="Dinner with Andre",
+                  scheduled_at="2026-06-07T19:00:00", section="today"),
+            text="dinner with andre at 7",
+        )
+        assert not re.search(r'\d{4}-\d{2}-\d{2}', result.title), \
+            f"ISO date fragment leaked into title: {result.title!r}"
+        assert result.title.lower() == "dinner with andre"
+        assert result.scheduled_at == datetime(2026, 6, 7, 19, 0, 0)
+
+    def test_explicit_6pm_resolves_correctly(self):
+        """'at 6pm' explicit → 18:00 today, section='today'."""
+        result = _full_pipeline(
+            _task(title="Call Tom", section="later"),
+            text="call tom at 6pm",
+        )
+        assert result.scheduled_at == datetime(2026, 6, 7, 18, 0, 0)
+        assert result.section == "today"
+
+    @pytest.mark.parametrize("raw_title,description", [
+        ("2026-06-07T18:00:00",              "Call Tom"),
+        ("Call Tom 2026-06-07T18:00:00",     None),
+        ("2026-06-07T19:00:00 Dinner Andre", None),
+    ])
+    def test_title_never_contains_iso_fragment(self, raw_title, description):
+        """No LLM output variant should leave an ISO date string in the title."""
+        result = _full_pipeline(_task(title=raw_title, description=description))
+        assert not re.search(r'\d{4}-\d{2}-\d{2}', result.title), \
+            f"ISO date fragment in title for input {raw_title!r}: got {result.title!r}"
