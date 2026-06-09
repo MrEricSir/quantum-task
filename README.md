@@ -128,8 +128,12 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 
 ### AI Quick Add
 - Describe anything in plain English — the LLM classifies it as a **task**, **habit**, or **note** automatically
+- Paste or type multiple items at once ("call sam at 3pm, buy milk and eggs, meditate daily") — each is split and parsed individually
+- Date and time phrases are resolved to real datetimes: "call dentist tomorrow at 9am", "project review next Friday", "standup at 9"
 - A confirm screen shows the detected type with a one-click override, then type-specific fields to review before saving
-- Deterministic post-processing catches common patterns (list inputs → note, explicit recurrence → habit) even when the model guesses wrong
+- Multiple items show a bulk-confirm list; click any item to open its full edit form before saving
+- Deterministic post-processing catches common patterns (list inputs → note, explicit recurrence → habit, "add a habit to X" → habit) even when the model guesses wrong
+- If type is genuinely ambiguous, a clarifying question is surfaced before you confirm
 - Tags are auto-suggested from your existing tags
 
 ### Habits
@@ -248,6 +252,7 @@ todo/
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide
   dev.sh               # Development helper script
+  LLM_IDEAS.md         # Backlog of LLM integration ideas
 ```
 
 ## Credits

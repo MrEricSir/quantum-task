@@ -139,8 +139,8 @@ class TestLocalDateHeader:
         client.put("/api/calendar-mappings", json=[
             {"tag_id": work_id, "ical_url": "https://example.com/work.ics"}
         ])
-        # Fixed event: Sunday 2026-06-07 at noon UTC
-        event_date = date(2026, 6, 7)
+        # Use a date 3 days from now so the event is always in the future
+        event_date = date.today() + timedelta(days=3)
         mock_event = {
             "id": "hdr-test",
             "title": "Sunday event",
@@ -150,12 +150,12 @@ class TestLocalDateHeader:
             "all_day": False,
         }
         with patch("gcal.fetch_events", return_value=[mock_event]):
-            # Three days before → "week"
+            # Three days before the event → "week"
             res_week = client.get("/api/calendar-events",
-                                  headers={"X-Local-Date": "2026-06-04"})
-            # On the same day → "today"
+                                  headers={"X-Local-Date": (event_date - timedelta(days=3)).isoformat()})
+            # On the same day as the event → "today"
             res_today = client.get("/api/calendar-events",
-                                   headers={"X-Local-Date": "2026-06-07"})
+                                   headers={"X-Local-Date": event_date.isoformat()})
 
         assert res_week.status_code == 200
         assert res_today.status_code == 200
