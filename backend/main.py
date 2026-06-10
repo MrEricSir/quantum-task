@@ -770,9 +770,9 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
     tomorrow = today + timedelta(days=1)
     lines = [f"Week ahead starting {tomorrow.strftime('%A, %B %d, %Y')}:"]
 
-    # Condensed block for recurring events
+    # Condensed block for recurring events (mention once — do not repeat per day)
     if recurring_keys:
-        lines.append("\nRecurring this week:")
+        lines.append("\nRecurring this week (mention ONCE at the start, never repeat per day):")
         for (title, time_key), occurrences in sorted(recur_groups.items(), key=lambda x: x[0][0]):
             if (title, time_key) not in recurring_keys:
                 continue
@@ -858,8 +858,12 @@ _WEEK_SYSTEM = (
     "Your output will be read aloud, so it must be flowing prose — never lists. "
     "NEVER use bullet points, dashes, asterisks, numbers, or any list formatting. "
     "NEVER start a line with '-', '*', '•', or a digit. "
-    "Write one short sentence per day that has items, covering that day's events. "
-    "Only mention days that have items listed — do not mention today or any empty day. "
+    "If a 'Recurring this week' section is present, open with a single sentence that covers "
+    "those events (e.g. 'The daily stand-up runs at 10 AM each morning.'). "
+    "CRITICAL: After that opening sentence, NEVER mention recurring events again — not even "
+    "as context or background for individual days. "
+    "Then write one short sentence per day that has NON-recurring items. "
+    "Only mention days that have non-recurring items listed — skip days whose only events are recurring. "
     "Do not combine items from different days. "
     "Do not add, invent, or infer anything not explicitly listed. "
     "Be direct. No filler words. Do not mention weather. "
