@@ -16,6 +16,39 @@ function saveShown(set) {
   catch {}
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const rawData = atob(base64)
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)))
+}
+
+async function registerPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+  try {
+    const reg = await navigator.serviceWorker.ready
+    // Re-use existing subscription if present (idempotent)
+    let sub = await reg.pushManager.getSubscription()
+    if (!sub) {
+      const keyRes = await fetch('/api/push/vapid-key')
+      if (!keyRes.ok) return
+      const { public_key } = await keyRes.json()
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(public_key),
+      })
+    }
+    // Always re-POST so the server record stays current after a DB wipe
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub.toJSON()),
+    })
+  } catch {
+    // Push not supported or blocked — silent fallback to in-page notifications
+  }
+}
+
 export function useNotifications(todos, onOpenTodo) {
   const [permission, setPermission] = useState(
     () => (typeof Notification !== 'undefined' ? Notification.permission : 'denied')
@@ -31,19 +64,38 @@ export function useNotifications(todos, onOpenTodo) {
     localStorage.setItem(ENABLED_KEY, String(val))
   }
 
-  // Listen for notification clicks forwarded via BroadcastChannel
+  // Handle notification clicks from BroadcastChannel (in-page) and SW messages
   useEffect(() => {
-    if (typeof BroadcastChannel === 'undefined') return
-    const ch = new BroadcastChannel(CHANNEL_NAME)
-    channelRef.current = ch
-    ch.onmessage = (e) => {
+    // BroadcastChannel — in-page notifications
+    if (typeof BroadcastChannel !== 'undefined') {
+      const ch = new BroadcastChannel(CHANNEL_NAME)
+      channelRef.current = ch
+      ch.onmessage = (e) => {
+        if (e.data?.type === 'open_todo' && e.data.todoId) {
+          window.focus()
+          onOpenTodo?.(e.data.todoId)
+        }
+      }
+    }
+    // Service worker messages — push notifications
+    const swHandler = (e) => {
       if (e.data?.type === 'open_todo' && e.data.todoId) {
         window.focus()
         onOpenTodo?.(e.data.todoId)
       }
     }
-    return () => ch.close()
+    navigator.serviceWorker?.addEventListener('message', swHandler)
+
+    return () => {
+      channelRef.current?.close()
+      navigator.serviceWorker?.removeEventListener('message', swHandler)
+    }
   }, [onOpenTodo])
+
+  // Subscribe to Web Push when permission is granted
+  useEffect(() => {
+    if (permission === 'granted') registerPushSubscription()
+  }, [permission])
 
   const requestPermission = async () => {
     if (typeof Notification === 'undefined') return
@@ -51,6 +103,7 @@ export function useNotifications(todos, onOpenTodo) {
     setPermission(result)
   }
 
+  // In-page notification polling (fires when app is open)
   useEffect(() => {
     if (permission !== 'granted' || !enabled) return
 
@@ -76,8 +129,6 @@ export function useNotifications(todos, onOpenTodo) {
         })
         notif.onclick = () => {
           window.focus()
-          // BroadcastChannel lets the click handler (which runs in the page context)
-          // communicate back to the React app even if the tab was backgrounded
           if (channelRef.current) {
             channelRef.current.postMessage({ type: 'open_todo', todoId: todo.id })
           }

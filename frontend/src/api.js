@@ -308,7 +308,9 @@ export async function fetchEngineeringItems() {
 
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
-  if (!res.ok) return { authed: false, enabled: true }
+  // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.
+  if (res.status === 401) return { authed: false, enabled: true }
+  if (!res.ok) throw new Error(`Auth check failed: ${res.status}`)
   return res.json()
 }
 

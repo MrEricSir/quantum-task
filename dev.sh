@@ -64,7 +64,9 @@ start() {
 
   echo "Starting backend..."
   cd "$SCRIPT_DIR/backend"
-  "$SCRIPT_DIR/backend/venv/bin/uvicorn" main:app --reload \
+  # Unset AUTH_PASSWORD so local dev never prompts for a password,
+  # even if .gcp-config was sourced in the current shell session.
+  env -u AUTH_PASSWORD "$SCRIPT_DIR/backend/venv/bin/uvicorn" main:app --reload \
     > "$BACKEND_LOG" 2>&1 &
   BACKEND_PID=$!
 

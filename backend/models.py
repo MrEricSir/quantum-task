@@ -96,6 +96,17 @@ class Note(Base):
     tags = relationship("Tag", secondary="note_tags", lazy="joined")
 
 
+class PushSubscription(Base):
+    """Web Push subscription for a browser/device."""
+    __tablename__ = "push_subscriptions"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    endpoint   = Column(String, nullable=False, unique=True)
+    keys_auth  = Column(String, nullable=False)
+    keys_p256dh = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class AppSetting(Base):
     """Generic key-value store for app-wide settings (e.g. export token)."""
     __tablename__ = "app_settings"

@@ -23,9 +23,12 @@ import gcal as gcal_lib
 from database import SessionLocal, engine
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
+import asyncio
 import github_sync
+import push as push_lib
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_API_KEY  = os.getenv("LLM_API_KEY", "ollama")
@@ -153,8 +156,74 @@ with SessionLocal() as _db:
             _db.add(models.Tag(name=name, color=color))
     _db.commit()
 
+# Ensure VAPID keys exist
+with SessionLocal() as _db:
+    push_lib.ensure_vapid_keys(_db)
+
+# ── Push notification scheduler ───────────────────────────────────────────────
+
+_push_sent: set[str] = set()  # "todo_id:scheduled_at" — resets on restart, acceptable
+
+
+def _fire_due_push_notifications() -> None:
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(minutes=15)
+    with SessionLocal() as db:
+        todos = db.query(models.Todo).filter(
+            models.Todo.scheduled_at.isnot(None),
+            models.Todo.completed == False,   # noqa: E712
+            models.Todo.scheduled_at >= now,
+            models.Todo.scheduled_at <= cutoff,
+        ).all()
+        if not todos:
+            return
+        subs = db.query(models.PushSubscription).all()
+        if not subs:
+            return
+        private_key = db.query(models.AppSetting).filter_by(key="vapid_private_key").first()
+        if not private_key or not private_key.value:
+            return
+        priv = private_key.value
+        dead_endpoints = []
+        for todo in todos:
+            key = f"{todo.id}:{todo.scheduled_at.isoformat()}"
+            if key in _push_sent:
+                continue
+            _push_sent.add(key)
+            mins = round((todo.scheduled_at.replace(tzinfo=timezone.utc) - now).total_seconds() / 60)
+            payload = {
+                "title": todo.title,
+                "body": "Due now" if mins <= 1 else f"Due in {mins} minute{'s' if mins != 1 else ''}",
+                "tag": key,
+                "todoId": todo.id,
+            }
+            for sub in subs:
+                alive = push_lib.send_notification(sub, payload, priv)
+                if not alive:
+                    dead_endpoints.append(sub.endpoint)
+        for ep in set(dead_endpoints):
+            db.query(models.PushSubscription).filter_by(endpoint=ep).delete()
+        db.commit()
+
+
+async def _push_scheduler() -> None:
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, _fire_due_push_notifications)
+        except Exception as e:
+            print(f"[push] scheduler error: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    task = asyncio.create_task(_push_scheduler())
+    yield
+    task.cancel()
+
+
 # ── App ──────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Todo Dashboard API")
+app = FastAPI(title="Todo Dashboard API", lifespan=lifespan)
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
@@ -255,6 +324,44 @@ def run_engineering_sync(db: Session = Depends(get_db)):
 @app.get("/api/engineering/items", response_model=List[schemas.EngineeringItem])
 def get_engineering_items(db: Session = Depends(get_db)):
     return db.query(models.EngineeringItem).filter_by(state="open").all()
+
+
+# ── Push notifications ────────────────────────────────────────────────────────
+
+class _PushSubscribeBody(BaseModel):
+    endpoint: str
+    keys: dict  # {"auth": str, "p256dh": str}
+
+
+@app.get("/api/push/vapid-key")
+def get_vapid_key(db: Session = Depends(get_db)):
+    key = push_lib.get_vapid_public_key(db)
+    if not key:
+        raise HTTPException(status_code=503, detail="VAPID keys not initialised")
+    return {"public_key": key}
+
+
+@app.post("/api/push/subscribe", status_code=201)
+def subscribe_push(body: _PushSubscribeBody, db: Session = Depends(get_db)):
+    existing = db.query(models.PushSubscription).filter_by(endpoint=body.endpoint).first()
+    if existing:
+        existing.keys_auth   = body.keys.get("auth", "")
+        existing.keys_p256dh = body.keys.get("p256dh", "")
+    else:
+        db.add(models.PushSubscription(
+            endpoint=body.endpoint,
+            keys_auth=body.keys.get("auth", ""),
+            keys_p256dh=body.keys.get("p256dh", ""),
+        ))
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/push/unsubscribe")
+def unsubscribe_push(body: _PushSubscribeBody, db: Session = Depends(get_db)):
+    db.query(models.PushSubscription).filter_by(endpoint=body.endpoint).delete()
+    db.commit()
+    return {"ok": True}
 
 
 # ── Calendar ──────────────────────────────────────────────────────────────────

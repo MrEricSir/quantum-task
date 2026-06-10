@@ -166,12 +166,35 @@ export default function App() {
   )
 
   useEffect(() => {
-    checkAuth().then(({ authed: a, enabled: e }) => {
-      setAuthed(a)
-      setAuthEnabled(e)
-      if (location.pathname === '/') navigate('/today', { replace: true })
-    })
+    checkAuth()
+      .then(({ authed: a, enabled: e }) => {
+        setAuthed(a)
+        setAuthEnabled(e)
+        if (location.pathname === '/') navigate('/today', { replace: true })
+      })
+      .catch(() => setAuthed(false))
   }, [])
+
+  // Remove the HTML splash screen once auth check resolves
+  useEffect(() => {
+    if (authed === null) return
+    const splash = document.getElementById('qt-splash')
+    if (!splash) return
+    splash.classList.add('qt-splash--out')
+    const t = setTimeout(() => splash.remove(), 350)
+    return () => clearTimeout(t)
+  }, [authed])
+
+  // App badge: count of overdue tasks
+  useEffect(() => {
+    if (!('setAppBadge' in navigator)) return
+    const overdue = todos.filter((t) => !t.completed && (t.overdue_days ?? 0) > 0).length
+    if (overdue > 0) {
+      navigator.setAppBadge(overdue).catch(() => {})
+    } else {
+      navigator.clearAppBadge().catch(() => {})
+    }
+  }, [todos])
 
   const refreshEngineeringItems = useCallback(() => {
     setEngineeringSyncing(true)
@@ -663,17 +686,16 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowModal(true)}>
                     + Add Task (Advanced)
                   </DropdownMenu.Item>
-                  {authEnabled && (
-                    <>
-                      <DropdownMenu.Separator className="settings-dropdown-divider" />
-                      <DropdownMenu.Item
-                        className="settings-dropdown-item"
-                        onSelect={async () => { await logout(); setAuthed(false) }}
-                      >
-                        &#x1F512; Sign out
-                      </DropdownMenu.Item>
-                    </>
-                  )}
+                  <DropdownMenu.Separator className="settings-dropdown-divider" />
+                  <DropdownMenu.Item
+                    className="settings-dropdown-item"
+                    disabled={!authEnabled}
+                    onSelect={async () => { if (authEnabled) { await logout(); setAuthed(false) } }}
+                    style={!authEnabled ? { opacity: 0.4, cursor: 'default' } : undefined}
+                    title={!authEnabled ? 'Auth is disabled in local dev' : undefined}
+                  >
+                    &#x1F512; Sign out
+                  </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
