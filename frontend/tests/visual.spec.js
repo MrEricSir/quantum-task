@@ -494,6 +494,71 @@ test.describe('engineering page', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Recurring calendar events (CalendarStrip)
+// ---------------------------------------------------------------------------
+test.describe('recurring calendar events', () => {
+  const RECURRING_EVENTS = [
+    // "Team Standup" appears Mon/Wed/Fri in the week section → should be grouped
+    {
+      id: 'r1', title: 'Team Standup', section: 'week',
+      start: '2026-06-04T09:00:00', end: '2026-06-04T09:30:00', all_day: false,
+    },
+    {
+      id: 'r2', title: 'Team Standup', section: 'week',
+      start: '2026-06-06T09:00:00', end: '2026-06-06T09:30:00', all_day: false,
+    },
+    {
+      id: 'r3', title: 'Team Standup', section: 'week',
+      start: '2026-06-08T09:00:00', end: '2026-06-08T09:30:00', all_day: false,
+    },
+    // "One-off Review" appears only once → should render normally
+    {
+      id: 'r4', title: 'One-off Review', section: 'week',
+      start: '2026-06-05T14:00:00', end: '2026-06-05T15:00:00', all_day: false,
+    },
+    // "Monthly All-hands" appears twice in month section → grouped
+    {
+      id: 'r5', title: 'Monthly All-hands', section: 'month',
+      start: '2026-06-10T10:00:00', end: '2026-06-10T11:00:00', all_day: false,
+    },
+    {
+      id: 'r6', title: 'Monthly All-hands', section: 'month',
+      start: '2026-06-24T10:00:00', end: '2026-06-24T11:00:00', all_day: false,
+    },
+  ]
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/calendar-events', r => r.fulfill({ json: RECURRING_EVENTS }))
+    await page.goto('/overview')
+    await waitForApp(page)
+  })
+
+  test('recurring week event title appears only once', async ({ page }) => {
+    const titles = page.locator('.event-title', { hasText: 'Team Standup' })
+    await expect(titles).toHaveCount(1)
+  })
+
+  test('recurring week event shows day pills', async ({ page }) => {
+    const pills = page.locator('.recurring-day-pill')
+    // 3 pills for Mon/Wed/Fri
+    await expect(pills).toHaveCount(5) // 3 for week Standup + 2 for month All-hands
+  })
+
+  test('single-occurrence event renders as normal card without day pills', async ({ page }) => {
+    // One-off Review should appear with no day pills attached to it
+    await expect(page.locator('.event-title', { hasText: 'One-off Review' })).toBeVisible()
+    // Normal event cards don't have the recurring-event-card class
+    const normalCard = page.locator('.event-card:not(.recurring-event-card)', { hasText: 'One-off Review' })
+    await expect(normalCard).toBeVisible()
+  })
+
+  test('recurring month event title appears only once', async ({ page }) => {
+    const titles = page.locator('.event-title', { hasText: 'Monthly All-hands' })
+    await expect(titles).toHaveCount(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Offline banner
 // ---------------------------------------------------------------------------
 test.describe('offline banner', () => {

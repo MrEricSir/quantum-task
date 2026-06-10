@@ -725,7 +725,19 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
     if not todos and not cal_events:
         return None
 
-    # Bucket all items by calendar date; value is list of (sort_dt, text)
+    # Detect recurring calendar events: same (title, time) on 2+ days
+    # Key: (title, time_str_or_"all_day") -> list of (day, start, all_day)
+    recur_groups: dict[tuple, list] = {}
+    for e in cal_events:
+        start = e.start
+        day = start.date() if hasattr(start, "date") else start
+        if day <= today:
+            continue
+        time_key = "all_day" if e.all_day else _fmt_time(start, utc_offset_minutes)
+        recur_groups.setdefault((e.title, time_key), []).append((day, start, e.all_day))
+    recurring_keys = {k for k, v in recur_groups.items() if len(v) >= 2}
+
+    # Bucket remaining items by calendar date; value is list of (sort_dt, text)
     by_day: dict[date, list[tuple]] = {}
     unscheduled: list[str] = []
 
@@ -734,6 +746,9 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
         day = start.date() if hasattr(start, "date") else start
         if day <= today:
             continue  # today's events belong in the Today briefing
+        time_key = "all_day" if e.all_day else _fmt_time(start, utc_offset_minutes)
+        if (e.title, time_key) in recurring_keys:
+            continue  # handled in condensed recurring block below
         if e.all_day:
             by_day.setdefault(day, []).append((None, f"- {e.title} (all day)"))
         else:
@@ -749,11 +764,23 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
             unscheduled.append(f"- {t.title}")
 
     # Nothing left after filtering out today/past items
-    if not by_day and not unscheduled and not eng_issues:
+    if not by_day and not unscheduled and not recurring_keys and not eng_issues:
         return None
 
     tomorrow = today + timedelta(days=1)
     lines = [f"Week ahead starting {tomorrow.strftime('%A, %B %d, %Y')}:"]
+
+    # Condensed block for recurring events
+    if recurring_keys:
+        lines.append("\nRecurring this week:")
+        for (title, time_key), occurrences in sorted(recur_groups.items(), key=lambda x: x[0][0]):
+            if (title, time_key) not in recurring_keys:
+                continue
+            day_names = ", ".join(d.strftime("%a") for d, _, _ in sorted(occurrences, key=lambda x: x[0]))
+            if time_key == "all_day":
+                lines.append(f"  - {title} (all day) — {day_names}")
+            else:
+                lines.append(f"  - {title} at {time_key} — {day_names}")
 
     for day in sorted(by_day):
         lines.append(f"\n{day.strftime('%A, %B %d')}:")
