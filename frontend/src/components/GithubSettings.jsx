@@ -1,0 +1,149 @@
+import { useState, useEffect } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { fetchEngineeringConfig, saveEngineeringConfig, syncEngineering } from '../api'
+import Modal from './Modal'
+import './GithubSettings.css'
+
+export default function GithubSettings({ onClose, onSynced }) {
+  const [token, setToken] = useState('')
+  const [repos, setRepos] = useState('')
+  const [configured, setConfigured] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetchEngineeringConfig()
+      .then((cfg) => {
+        setConfigured(cfg.configured)
+        setRepos(cfg.repos.join('\n'))
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError('')
+    setSyncResult(null)
+    try {
+      const repoList = repos.split('\n').map((r) => r.trim()).filter(Boolean)
+      await saveEngineeringConfig({ token: token.trim(), repos: repoList })
+      const result = await syncEngineering()
+      setSyncResult(result)
+      if ((result.created > 0 || result.closed > 0) && onSynced) onSynced()
+      if (!result.error) setConfigured(true)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setError('')
+    setSyncResult(null)
+    try {
+      const result = await syncEngineering()
+      setSyncResult(result)
+      if ((result.created > 0 || result.closed > 0) && onSynced) onSynced()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const syncSummary = () => {
+    if (!syncResult) return null
+    if (syncResult.error) return <span className="gh-sync-error">{syncResult.error}</span>
+    const parts = []
+    if (syncResult.created > 0) parts.push(`${syncResult.created} new`)
+    if (syncResult.closed > 0) parts.push(`${syncResult.closed} closed`)
+    if (parts.length === 0) parts.push('Already up to date')
+    return <span className="gh-sync-ok">{parts.join(', ')}</span>
+  }
+
+  return (
+    <Modal onClose={onClose} className="modal--md gh-settings-modal">
+      <Dialog.Title asChild><h2>GitHub</h2></Dialog.Title>
+      <p className="gh-hint">
+        Syncs issues assigned to you and PRs requesting your review into the Engineering page.
+        Items are read-only — GitHub is the source of truth.
+      </p>
+
+      {loading && <p className="gh-loading">Loading…</p>}
+
+      {!loading && (
+        <>
+          <div className="gh-field">
+            <label className="gh-label">
+              Personal access token
+              {configured && !token && (
+                <span className="gh-configured-badge">configured</span>
+              )}
+            </label>
+            <input
+              type="password"
+              className="gh-input"
+              placeholder={configured ? 'Enter new token to replace' : 'ghp_…'}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="gh-hint gh-hint--small">
+              Generate at GitHub → Settings → Developer settings → Personal access tokens.
+              Required scopes: <code>repo</code> (or <code>public_repo</code> for public repos only).
+            </p>
+          </div>
+
+          <div className="gh-field">
+            <label className="gh-label">Repositories to watch <span className="gh-optional">(optional)</span></label>
+            <textarea
+              className="gh-repos-input"
+              placeholder={'owner/repo\nowner/another-repo'}
+              value={repos}
+              onChange={(e) => setRepos(e.target.value)}
+              rows={4}
+              spellCheck={false}
+            />
+            <p className="gh-hint gh-hint--small">
+              One <code>owner/repo</code> per line. Leave blank to watch all repos you have access to.
+            </p>
+          </div>
+
+          {configured && (
+            <div className="gh-sync-row">
+              <button
+                type="button"
+                className="gh-sync-btn"
+                onClick={handleSync}
+                disabled={syncing}
+              >
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+              {syncSummary()}
+            </div>
+          )}
+        </>
+      )}
+
+      {error && <p className="form-error">{error}</p>}
+
+      <div className="modal-footer">
+        <button className="btn-cancel" onClick={onClose}>Cancel</button>
+        <button
+          className="btn-save"
+          onClick={handleSave}
+          disabled={saving || loading || (!token.trim() && !configured)}
+        >
+          {saving ? 'Saving…' : 'Save & Sync'}
+        </button>
+      </div>
+    </Modal>
+  )
+}

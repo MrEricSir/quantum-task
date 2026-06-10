@@ -97,6 +97,9 @@ async function mockAPIs(page) {
   await page.route('**/api/tags', r => r.fulfill({ json: TAGS }))
   await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
   await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
+  await page.route('**/api/engineering/items', r => r.fulfill({ json: [] }))
+  await page.route('**/api/engineering/sync', r => r.fulfill({ json: { created: 0, closed: 0, skipped: 0, error: null } }))
+  await page.route('**/api/engineering/config', r => r.fulfill({ json: { configured: false, repos: [] } }))
   // habits: handle both active and archived requests
   await page.route(/\/api\/habits(\?|$)/, r => {
     const url = r.request().url()
@@ -148,7 +151,7 @@ test.describe('app shell', () => {
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
     // Sidebar nav (desktop) or mobile nav
-    for (const label of ['Today', 'Tasks', 'Habits', 'Notes']) {
+    for (const label of ['Today', 'Tasks', 'Habits', 'Notes', 'Engineering']) {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
   })
@@ -452,6 +455,41 @@ test.describe('settings modals', () => {
     await page.getByRole('menuitem', { name: /calendar/i }).click()
     await expect(page.getByText(/export tasks as ical/i)).toBeVisible()
     await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Engineering page
+// ---------------------------------------------------------------------------
+test.describe('engineering page', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/engineering')
+    await waitForApp(page)
+  })
+
+  test('empty state is shown when no items', async ({ page }) => {
+    await expect(page.locator('.eng-empty')).toBeVisible()
+  })
+
+  test('sync button is visible', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /sync/i })).toBeVisible()
+  })
+
+  test('shows PR and issue sections when items are present', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/pull/1', title: 'Fix login bug', item_type: 'pr',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
+        synced_at: new Date().toISOString() },
+      { id: 2, external_id: 'github:org/repo/issues/2', title: 'Add dark mode', item_type: 'issue',
+        repo: 'org/repo', number: 2, url: 'https://github.com/org/repo/issues/2', state: 'open',
+        synced_at: new Date().toISOString() },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    await expect(page.getByText('PRs to Review')).toBeVisible()
+    await expect(page.getByText('Assigned Issues')).toBeVisible()
+    await expect(page.getByText('Fix login bug')).toBeVisible()
+    await expect(page.getByText('Add dark mode')).toBeVisible()
   })
 })
 

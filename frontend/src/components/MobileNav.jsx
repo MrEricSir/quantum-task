@@ -1,13 +1,14 @@
-import { SunIcon, DashboardIcon, CheckboxIcon, CalendarIcon, LoopIcon, FileTextIcon } from '@radix-ui/react-icons'
+import { SunIcon, DashboardIcon, CheckboxIcon, CalendarIcon, LoopIcon, FileTextIcon, CommitIcon } from '@radix-ui/react-icons'
 import './MobileNav.css'
 
 const NAV_ITEMS = [
-  { page: 'today',    label: 'Today',    Icon: SunIcon       },
-  { page: 'overview', label: 'Overview', Icon: DashboardIcon },
-  { page: 'tasks',    label: 'Tasks',    Icon: CheckboxIcon  },
-  { page: 'calendar', label: 'Calendar', Icon: CalendarIcon  },
-  { page: 'habits',   label: 'Habits',   Icon: LoopIcon      },
-  { page: 'notes',    label: 'Notes',    Icon: FileTextIcon  },
+  { page: 'today',       label: 'Today',       Icon: SunIcon       },
+  { page: 'overview',    label: 'Overview',    Icon: DashboardIcon },
+  { page: 'tasks',       label: 'Tasks',       Icon: CheckboxIcon  },
+  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon  },
+  { page: 'habits',      label: 'Habits',      Icon: LoopIcon      },
+  { page: 'notes',       label: 'Notes',       Icon: FileTextIcon  },
+  { page: 'engineering', label: 'Engineering', Icon: CommitIcon    },
 ]
 
 export default function MobileNav({ page, onNavigate }) {

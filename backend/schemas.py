@@ -33,6 +33,7 @@ class TodoCreate(BaseModel):
     tag_ids: List[int] = []
     raw_input: Optional[str] = None
     recurrence_rule: Optional[str] = None
+    external_id: Optional[str] = None
 
 
 class TodoUpdate(BaseModel):
@@ -157,6 +158,21 @@ class BriefingRequest(BaseModel):
     lon: Optional[float] = None
     force: bool = False
     today_only: bool = False
+    utc_offset_minutes: Optional[int] = None
+
+
+class EngineeringItem(BaseModel):
+    id: int
+    external_id: str
+    title: str
+    item_type: str
+    repo: str
+    number: int
+    url: str
+    state: str
+    synced_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class TodoReorderItem(BaseModel):
@@ -177,6 +193,7 @@ class Todo(BaseModel):
     created_at: datetime
     raw_input: Optional[str] = None
     recurrence_rule: Optional[str] = None
+    external_id: Optional[str] = None
     tags: List[Tag] = []
 
     @computed_field

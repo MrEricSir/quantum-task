@@ -1,0 +1,97 @@
+.gh-settings-modal h2 { margin: 0 0 8px; }
+
+.gh-hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.gh-hint--small { margin-top: 6px; margin-bottom: 0; }
+
+.gh-hint code {
+  font-family: monospace;
+  background: var(--color-surface-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.gh-loading { color: var(--color-text-muted); font-size: 14px; }
+
+.gh-field { margin-bottom: 20px; }
+
+.gh-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.gh-optional { font-weight: 400; color: var(--color-text-muted); }
+
+.gh-configured-badge {
+  font-size: 11px;
+  font-weight: 500;
+  background: #22c55e22;
+  color: #22c55e;
+  border: 1px solid #22c55e44;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.gh-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 14px;
+  font-family: monospace;
+  box-sizing: border-box;
+}
+
+.gh-input:focus { outline: none; border-color: var(--color-accent); }
+
+.gh-repos-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 13px;
+  font-family: monospace;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.gh-repos-input:focus { outline: none; border-color: var(--color-accent); }
+
+.gh-sync-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.gh-sync-btn {
+  padding: 6px 14px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gh-sync-btn:hover:not(:disabled) { border-color: var(--color-accent); }
+.gh-sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.gh-sync-ok { font-size: 13px; color: #22c55e; }
+.gh-sync-error { font-size: 13px; color: var(--color-error, #ef4444); }

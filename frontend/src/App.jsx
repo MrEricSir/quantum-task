@@ -18,6 +18,8 @@ import QueueIndicator from './components/QueueIndicator'
 import SearchModal from './components/SearchModal'
 import TagManagerModal from './components/TagManagerModal'
 import CalendarSettings from './components/CalendarSettings'
+import GithubSettings from './components/GithubSettings'
+import EngineeringPage from './components/EngineeringPage'
 import CalendarStrip from './components/CalendarStrip'
 import CalendarPage from './components/CalendarPage'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
@@ -32,7 +34,7 @@ import Sidebar from './components/Sidebar'
 import MobileNav from './components/MobileNav'
 import TagFilterBar from './components/TagFilterBar'
 import LoginPage from './components/LoginPage'
-import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote, checkAuth, logout, fetchArchivedNotes, archiveNote, unarchiveNote, fetchArchivedHabits, archiveHabit, unarchiveHabit } from './api'
+import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote, checkAuth, logout, fetchArchivedNotes, archiveNote, unarchiveNote, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
 import './App.css'
 
 export const SECTIONS = ['today', 'week', 'month', 'later']
@@ -63,6 +65,7 @@ export default function App() {
   const [showSearch, setShowSearch] = useState(false)
   const [showTagManager, setShowTagManager] = useState(false)
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
+  const [showGithubSettings, setShowGithubSettings] = useState(false)
   const [calendarEvents, setCalendarEvents] = useState([])
   const [lastRefreshed, setLastRefreshed] = useState(null)
   const [calendarRefreshing, setCalendarRefreshing] = useState(false)
@@ -74,6 +77,9 @@ export default function App() {
   const [archivedHabits, setArchivedHabits] = useState([])
   const [notes, setNotes] = useState([])
   const [archivedNotes, setArchivedNotes] = useState([])
+  const [engineeringItems, setEngineeringItems] = useState([])
+  const [lastEngineeringSynced, setLastEngineeringSynced] = useState(null)
+  const [engineeringSyncing, setEngineeringSyncing] = useState(false)
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
     todos,
@@ -88,9 +94,10 @@ export default function App() {
   const isTodayPage    = location.pathname === '/today'
   const isHabitsPage   = location.pathname === '/habits'   || location.pathname.startsWith('/habits/tag/')
   const isTasksPage    = location.pathname === '/tasks'    || location.pathname.startsWith('/tasks/tag/')
-  const isCalendarPage = location.pathname === '/calendar' || location.pathname.startsWith('/calendar/tag/')
-  const isNotesPage    = location.pathname === '/notes'    || location.pathname.startsWith('/notes/tag/')
-  const currentPage    = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isTasksPage ? 'tasks' : isCalendarPage ? 'calendar' : isNotesPage ? 'notes' : 'overview'
+  const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
+  const isNotesPage       = location.pathname === '/notes'       || location.pathname.startsWith('/notes/tag/')
+  const isEngineeringPage = location.pathname === '/engineering'
+  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isTasksPage ? 'tasks' : isCalendarPage ? 'calendar' : isNotesPage ? 'notes' : isEngineeringPage ? 'engineering' : 'overview'
 
   const tagMatch =
     location.pathname.match(/^\/tag\/(\d+)$/)          ||
@@ -165,6 +172,30 @@ export default function App() {
       if (location.pathname === '/') navigate('/today', { replace: true })
     })
   }, [])
+
+  const refreshEngineeringItems = useCallback(() => {
+    setEngineeringSyncing(true)
+    syncEngineering()
+      .catch(() => {})  // silently ignore if not configured
+      .finally(() => {
+        fetchEngineeringItems()
+          .then((items) => { setEngineeringItems(items); setLastEngineeringSynced(new Date()) })
+          .catch(() => {})
+          .finally(() => setEngineeringSyncing(false))
+      })
+  }, [])
+
+  // Sync on login
+  useEffect(() => {
+    if (!authed) return
+    refreshEngineeringItems()
+  }, [authed]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll every 15 minutes (same as calendar)
+  useEffect(() => {
+    const id = setInterval(refreshEngineeringItems, 15 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [refreshEngineeringItems])
 
   useEffect(() => {
     if (!authed) return
@@ -525,9 +556,10 @@ export default function App() {
   }
 
   const handlePageNavigate = (page, tagId) => {
-    if (page === 'today')    return navigate('/today')
-    if (page === 'habits')   return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
-    if (page === 'overview') return navigate(tagId ? `/tag/${tagId}` : '/overview')
+    if (page === 'today')       return navigate('/today')
+    if (page === 'engineering') return navigate('/engineering')
+    if (page === 'habits')      return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
+    if (page === 'overview')    return navigate(tagId ? `/tag/${tagId}` : '/overview')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 
@@ -605,6 +637,9 @@ export default function App() {
                 <DropdownMenu.Content className="settings-dropdown" align="end" sideOffset={6}>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowCalendarSettings(true)}>
                     &#128197; Calendar
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowGithubSettings(true)}>
+                    &#128279; Engineering (GitHub)
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
                     &#127991; Tags
@@ -713,6 +748,14 @@ export default function App() {
             lastRefreshed={lastRefreshed}
             refreshing={calendarRefreshing}
           />
+        ) : isEngineeringPage ? (
+          <EngineeringPage
+            items={engineeringItems}
+            lastSynced={lastEngineeringSynced}
+            syncing={engineeringSyncing}
+            onSync={refreshEngineeringItems}
+            onOpenSettings={() => setShowGithubSettings(true)}
+          />
         ) : (
           <>
           <DailyBriefing
@@ -819,6 +862,13 @@ export default function App() {
             setShowCalendarSettings(false)
             handleRefreshCalendar()
           }}
+        />
+      )}
+
+      {showGithubSettings && (
+        <GithubSettings
+          onClose={() => setShowGithubSettings(false)}
+          onSynced={() => fetchTodos().then(setTodos).catch(() => {})}
         />
       )}
 

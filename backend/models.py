@@ -34,6 +34,7 @@ class Todo(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     raw_input = Column(String, nullable=True)
     recurrence_rule = Column(String, nullable=True)  # daily | weekly | monthly | yearly
+    external_id = Column(String, nullable=True, index=True)  # e.g. "github:owner/repo/issues/123"
     tags = relationship("Tag", secondary="todo_tags", lazy="joined")
 
 
@@ -101,6 +102,21 @@ class AppSetting(Base):
 
     key   = Column(String, primary_key=True)
     value = Column(String, nullable=False)
+
+
+class EngineeringItem(Base):
+    """Read-only mirror of GitHub issues / PRs assigned to the user."""
+    __tablename__ = "engineering_items"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    external_id = Column(String, nullable=False, unique=True, index=True)
+    title       = Column(String, nullable=False)
+    item_type   = Column(String, nullable=False)   # "pr" | "issue"
+    repo        = Column(String, nullable=False)   # "owner/repo"
+    number      = Column(Integer, nullable=False)
+    url         = Column(String, nullable=False)
+    state       = Column(String, nullable=False, default="open")  # "open" | "closed"
+    synced_at   = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class BriefingCache(Base):

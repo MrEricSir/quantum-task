@@ -278,6 +278,34 @@ export async function reorderTodos(updates) {
   if (!res.ok) throw new Error('Failed to reorder todos')
 }
 
+export async function fetchEngineeringConfig() {
+  const res = await apiFetch('/api/engineering/config')
+  if (!res.ok) throw new Error('Failed to fetch engineering config')
+  return res.json()
+}
+
+export async function saveEngineeringConfig(data) {
+  const res = await apiFetch('/api/engineering/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to save engineering config')
+  return res.json()
+}
+
+export async function syncEngineering() {
+  const res = await apiFetch('/api/engineering/sync', { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to sync engineering items')
+  return res.json()
+}
+
+export async function fetchEngineeringItems() {
+  const res = await apiFetch('/api/engineering/items')
+  if (!res.ok) throw new Error('Failed to fetch engineering items')
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   if (!res.ok) return { authed: false, enabled: true }

@@ -138,7 +138,7 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
 
       {(todo.tags ?? []).length > 0 && (
         <div className="event-tags">
-          {todo.tags.map((tag) => (
+          {(todo.tags ?? []).map((tag) => (
             <span key={tag.id} className="event-tag-pill" style={{ background: tag.color }}>
               {tag.name}
             </span>

@@ -23,6 +23,7 @@ import gcal as gcal_lib
 from database import SessionLocal, engine
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
+import github_sync
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -112,6 +113,11 @@ with engine.connect() as _conn:
         pass  # column already exists
     try:
         _conn.execute(text("ALTER TABLE todos ADD COLUMN recurrence_rule TEXT"))
+        _conn.commit()
+    except Exception:
+        pass  # column already exists
+    try:
+        _conn.execute(text("ALTER TABLE todos ADD COLUMN external_id TEXT"))
         _conn.commit()
     except Exception:
         pass  # column already exists
@@ -221,6 +227,37 @@ def _local_date(request: Request) -> date:
 
 
 # ── Google Calendar ──────────────────────────────────────────────────────────
+
+# ── Engineering integration ───────────────────────────────────────────────────
+
+class _EngineeringConfig(BaseModel):
+    token: str = ""
+    repos: List[str] = []
+
+
+@app.get("/api/engineering/config")
+def get_engineering_config(db: Session = Depends(get_db)):
+    token, repos = github_sync.get_config(db)
+    return {"configured": bool(token), "repos": repos}
+
+
+@app.put("/api/engineering/config")
+def set_engineering_config(body: _EngineeringConfig, db: Session = Depends(get_db)):
+    github_sync.save_config(db, body.token or None, body.repos)
+    return {"ok": True}
+
+
+@app.post("/api/engineering/sync")
+def run_engineering_sync(db: Session = Depends(get_db)):
+    return github_sync.sync(db)
+
+
+@app.get("/api/engineering/items", response_model=List[schemas.EngineeringItem])
+def get_engineering_items(db: Session = Depends(get_db)):
+    return db.query(models.EngineeringItem).filter_by(state="open").all()
+
+
+# ── Calendar ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/calendar-mappings", response_model=List[schemas.CalendarMappingItem])
 def get_calendar_mappings(db: Session = Depends(get_db)):
@@ -416,7 +453,9 @@ def export_calendar_ical(
 
 # ── Briefing ─────────────────────────────────────────────────────────────────
 
-def _fmt_time(dt: datetime) -> str:
+def _fmt_time(dt: datetime, utc_offset_minutes: int = 0) -> str:
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None) - timedelta(minutes=utc_offset_minutes)
     return dt.strftime("%I:%M %p").lstrip("0")
 
 
@@ -545,7 +584,7 @@ def _compute_observations(db: Session, today: date) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def _build_today_context(todos: list, cal_events: list, today: date, habits: list = None, observations: str | None = None) -> str:
+def _build_today_context(todos: list, cal_events: list, today: date, habits: list = None, observations: str | None = None, utc_offset_minutes: int = 0, eng_prs: list = None) -> str:
     lines = [f"Today is {today.strftime('%A, %B %d, %Y')}."]
     if cal_events:
         lines.append("Calendar events:")
@@ -553,19 +592,21 @@ def _build_today_context(todos: list, cal_events: list, today: date, habits: lis
             if e.all_day:
                 lines.append(f"  - {e.title} (all day)")
             else:
-                lines.append(f"  - {e.title} at {_fmt_time(e.start)}")
+                lines.append(f"  - {e.title} at {_fmt_time(e.start, utc_offset_minutes)}")
     if todos:
         lines.append("Tasks:")
         for t in todos:
-            suffix = f" at {_fmt_time(t.scheduled_at)}" if t.scheduled_at else ""
+            suffix = f" at {_fmt_time(t.scheduled_at, utc_offset_minutes)}" if t.scheduled_at else ""
             overdue = f" [OVERDUE by {t.overdue_days} day{'s' if t.overdue_days != 1 else ''}]" if t.overdue_days > 0 else ""
             lines.append(f"  - {t.title}{suffix}{overdue}")
+    if eng_prs:
+        lines.append(f"PRs awaiting review: {len(eng_prs)}")
     pending_habit_names = [h.name for h in (habits or []) if not h.completed_today]
     if pending_habit_names:
         lines.append("Habits still to do today:")
         for name in pending_habit_names:
             lines.append(f"  - {name}")
-    if not cal_events and not todos and not pending_habit_names:
+    if not cal_events and not todos and not eng_prs and not pending_habit_names:
         lines.append("No tasks or events scheduled.")
     if observations:
         lines.append("Patterns:")
@@ -573,7 +614,7 @@ def _build_today_context(todos: list, cal_events: list, today: date, habits: lis
     return "\n".join(lines)
 
 
-def _build_week_context(todos: list, cal_events: list, today: date) -> str | None:
+def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_minutes: int = 0, eng_issues: list = None) -> str | None:
     if not todos and not cal_events:
         return None
 
@@ -589,19 +630,19 @@ def _build_week_context(todos: list, cal_events: list, today: date) -> str | Non
         if e.all_day:
             by_day.setdefault(day, []).append((None, f"- {e.title} (all day)"))
         else:
-            by_day.setdefault(day, []).append((start, f"- {e.title} at {_fmt_time(start)}"))
+            by_day.setdefault(day, []).append((start, f"- {e.title} at {_fmt_time(start, utc_offset_minutes)}"))
 
     for t in todos:
         if t.scheduled_at:
             day = t.scheduled_at.date()
             if day <= today:
                 continue  # today's/overdue tasks belong in the Today briefing
-            by_day.setdefault(day, []).append((t.scheduled_at, f"- {t.title} at {_fmt_time(t.scheduled_at)}"))
+            by_day.setdefault(day, []).append((t.scheduled_at, f"- {t.title} at {_fmt_time(t.scheduled_at, utc_offset_minutes)}"))
         else:
             unscheduled.append(f"- {t.title}")
 
     # Nothing left after filtering out today/past items
-    if not by_day and not unscheduled:
+    if not by_day and not unscheduled and not eng_issues:
         return None
 
     tomorrow = today + timedelta(days=1)
@@ -618,6 +659,9 @@ def _build_week_context(todos: list, cal_events: list, today: date) -> str | Non
         lines.append("\nNo specific day:")
         for item in unscheduled:
             lines.append(f"  {item}")
+
+    if eng_issues:
+        lines.append(f"\nAssigned GitHub issues: {len(eng_issues)}")
 
     return "\n".join(lines)
 
@@ -762,8 +806,12 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     weather = _fetch_weather(req.lat, req.lon) if req.lat is not None and req.lon is not None else None
     with SessionLocal() as _obs_db:
         observations = _compute_observations(_obs_db, today_dt)
-    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations)
-    week_ctx  = _build_week_context(week_todos, week_events, today_dt) if need_week else None
+        eng_items = _obs_db.query(models.EngineeringItem).filter_by(state="open").all()
+    eng_prs    = [i for i in eng_items if i.item_type == "pr"]
+    eng_issues = [i for i in eng_items if i.item_type == "issue"]
+    tz_offset = req.utc_offset_minutes or 0
+    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs)
+    week_ctx  = _build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
     def generate():
         weather_raw: str | None = None

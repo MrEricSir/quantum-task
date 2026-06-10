@@ -1,13 +1,14 @@
-import { DashboardIcon, CheckboxIcon, CalendarIcon, LoopIcon, SunIcon, FileTextIcon } from '@radix-ui/react-icons'
+import { DashboardIcon, CheckboxIcon, CalendarIcon, LoopIcon, SunIcon, FileTextIcon, CommitIcon } from '@radix-ui/react-icons'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
-  { page: 'today',     label: 'Today',     Icon: SunIcon       },
-  { page: 'overview',  label: 'Overview',  Icon: DashboardIcon },
-  { page: 'tasks',     label: 'Tasks',     Icon: CheckboxIcon  },
-  { page: 'calendar',  label: 'Calendar',  Icon: CalendarIcon  },
-  { page: 'habits',    label: 'Habits',    Icon: LoopIcon      },
-  { page: 'notes',     label: 'Notes',     Icon: FileTextIcon  },
+  { page: 'today',       label: 'Today',       Icon: SunIcon       },
+  { page: 'overview',    label: 'Overview',    Icon: DashboardIcon },
+  { page: 'tasks',       label: 'Tasks',       Icon: CheckboxIcon  },
+  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon  },
+  { page: 'habits',      label: 'Habits',      Icon: LoopIcon      },
+  { page: 'notes',       label: 'Notes',       Icon: FileTextIcon  },
+  { page: 'engineering', label: 'Engineering', Icon: CommitIcon    },
 ]
 
 export default function Sidebar({ tags, selectedTagId, page, onNavigate }) {

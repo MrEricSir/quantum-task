@@ -52,6 +52,7 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
           habits: habitsRef.current.map(({ name, completed_today }) => ({ name, completed_today })),
           force,
           today_only: todayOnly,
+          utc_offset_minutes: new Date().getTimezoneOffset(),
           ...(location ?? {}),
         }),
         signal: controller.signal,
