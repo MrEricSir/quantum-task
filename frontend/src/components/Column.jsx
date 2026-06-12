@@ -36,7 +36,7 @@ export default function Column({ section, label, todos, isActive, isMobile, onEd
             />
           ))}
           {todos.length === 0 && !!active && (
-            <div className="column-empty">Drop tasks here</div>
+            <div className="column-empty">Drop cards here</div>
           )}
         </div>
       </SortableContext>

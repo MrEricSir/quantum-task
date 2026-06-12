@@ -7,7 +7,7 @@ const NAV_ITEMS = [
   { page: 'tasks',       label: 'Tasks',       Icon: CheckboxIcon  },
   { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon  },
   { page: 'habits',      label: 'Habits',      Icon: LoopIcon      },
-  { page: 'notes',       label: 'Notes',       Icon: FileTextIcon  },
+  { page: 'cards',       label: 'Cards',       Icon: FileTextIcon  },
   { page: 'engineering', label: 'Engineering', Icon: CommitIcon    },
 ]
 

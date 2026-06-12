@@ -268,6 +268,35 @@
   min-height: 0;
 }
 
+/* ── Tasks page header ── */
+.tasks-page-header {
+  display: flex;
+  justify-content: flex-end;
+  max-width: 1600px;
+  margin: 0 auto 12px;
+}
+
+.tasks-page-header .notes-new-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: rgba(124, 58, 237, 0.15);
+  border: 1.5px solid rgba(124, 58, 237, 0.35);
+  border-radius: 8px;
+  color: #a78bfa;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.tasks-page-header .notes-new-btn:hover {
+  background: rgba(124, 58, 237, 0.25);
+  border-color: #7c3aed;
+}
+
 /* ── Board ── */
 .board-wrapper {
   flex: 1;

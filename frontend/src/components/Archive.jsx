@@ -40,7 +40,7 @@ export default function Archive({ todos, onDelete, onToggle }) {
       <Collapsible label="Archive" count={todos.length}>
         <div className="archive-grid">
           {sorted.length === 0 ? (
-            <p className="archive-empty">No completed tasks yet.</p>
+            <p className="archive-empty">No completed cards yet.</p>
           ) : (
             sorted.map((todo) => (
               <div key={todo.id} className="archive-card">

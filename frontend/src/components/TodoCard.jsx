@@ -97,7 +97,7 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
         <div className="event-details">
           {todo.description && (
             <div className="event-detail-row">
-              <span className="event-detail-label">Notes</span>
+              <span className="event-detail-label">Description</span>
               <span className="event-detail-value">{todo.description}</span>
             </div>
           )}
@@ -148,7 +148,7 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
 
       <ConfirmDialog
         open={showConfirm}
-        title="Delete task?"
+        title="Delete card?"
         description={`"${todo.title}" will be permanently deleted.`}
         onConfirm={() => { setShowConfirm(false); onDelete?.(todo.id) }}
         onCancel={() => setShowConfirm(false)}

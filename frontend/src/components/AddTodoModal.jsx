@@ -1,8 +1,16 @@
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { SECTIONS, SECTION_LABELS } from '../App'
 import Modal from './Modal'
 import './AddTodoModal.css'
+
+// Section options for all card types. "none" = reference card (Cards page only).
+const ALL_SECTIONS = [
+  { value: 'none',  label: 'Reference (no section)' },
+  { value: 'today', label: 'Today' },
+  { value: 'week',  label: 'This Week' },
+  { value: 'month', label: 'This Month' },
+  { value: 'later', label: 'Later' },
+]
 
 function isoToLocal(iso) {
   if (!iso) return ''
@@ -14,21 +22,23 @@ function isoToLocal(iso) {
   )
 }
 
-export default function AddTodoModal({ todo, allTags = [], onClose, onSave, onDelete }) {
-  const isEdit = !!todo
+export default function AddTodoModal({ card, defaultSection = 'today', allTags = [], onClose, onSave, onDelete, onArchive }) {
+  const isEdit = !!card?.id
 
-  const [title, setTitle] = useState(todo?.title ?? '')
-  const [description, setDescription] = useState(todo?.description ?? '')
-  const [section, setSection] = useState(todo?.section ?? 'today')
+  const [title, setTitle] = useState(card?.title ?? '')
+  const [description, setDescription] = useState(card?.description ?? '')
+  const [section, setSection] = useState(card?.section ?? defaultSection)
   const [scheduledAt, setScheduledAt] = useState(
-    todo?.scheduled_at ? isoToLocal(todo.scheduled_at) : ''
+    card?.scheduled_at ? isoToLocal(card.scheduled_at) : ''
   )
-  const [recurrenceRule, setRecurrenceRule] = useState(todo?.recurrence_rule ?? '')
+  const [recurrenceRule, setRecurrenceRule] = useState(card?.recurrence_rule ?? '')
   const [selectedTagIds, setSelectedTagIds] = useState(
-    (todo?.tags ?? []).map((t) => t.id)
+    (card?.tags ?? []).map((t) => t.id)
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const isReference = section === 'none'
 
   const toggleTag = (id) => {
     setSelectedTagIds((prev) =>
@@ -38,15 +48,20 @@ export default function AddTodoModal({ todo, allTags = [], onClose, onSave, onDe
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!title.trim()) { setError('Title is required.'); return }
+    // Title is optional for reference cards — derive from first line of description if blank
+    const resolvedTitle = title.trim()
+      || description.split('\n')[0].trim().slice(0, 120)
+      || ''
+    if (!resolvedTitle) { setError('Title or description is required.'); return }
     setSaving(true)
     try {
       await onSave({
-        title: title.trim(),
+        title: resolvedTitle,
         description: description.trim() || null,
         section,
-        scheduled_at: scheduledAt || null,
-        recurrence_rule: recurrenceRule || null,
+        // Scheduled date and recurrence only apply to board cards
+        scheduled_at: isReference ? null : (scheduledAt || null),
+        recurrence_rule: isReference ? null : (recurrenceRule || null),
         tag_ids: selectedTagIds,
       })
     } catch {
@@ -56,59 +71,63 @@ export default function AddTodoModal({ todo, allTags = [], onClose, onSave, onDe
   }
 
   return (
-    <Modal onClose={onClose}>
-      <Dialog.Title asChild><h2>{isEdit ? 'Edit Task' : 'New Task'}</h2></Dialog.Title>
+    <Modal onClose={onClose} className="modal--md">
+      <Dialog.Title asChild><h2>{isEdit ? 'Edit Card' : 'New Card'}</h2></Dialog.Title>
 
-        <form onSubmit={handleSubmit} noValidate>
+      <form onSubmit={handleSubmit} noValidate>
+        <div className="form-group">
+          <label htmlFor="atm-title">Title</label>
+          <input
+            id="atm-title"
+            type="text"
+            value={title}
+            onChange={(e) => { setTitle(e.target.value); setError('') }}
+            placeholder={isReference ? 'Optional' : 'What needs to be done?'}
+            autoFocus={!isReference}
+          />
+          {error && <span className="form-error">{error}</span>}
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="atm-desc">Description</label>
+          <textarea
+            id="atm-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={isReference ? 'Card content…' : 'Optional details…'}
+            rows={isReference ? 8 : 3}
+            autoFocus={isReference}
+          />
+        </div>
+
+        <div className="form-row">
           <div className="form-group">
-            <label htmlFor="title">Title *</label>
-            <input
-              id="title"
-              type="text"
-              value={title}
-              onChange={(e) => { setTitle(e.target.value); setError('') }}
-              placeholder="What needs to be done?"
-              autoFocus
-            />
-            {error && <span className="form-error">{error}</span>}
+            <label htmlFor="atm-section">Section</label>
+            <select id="atm-section" value={section} onChange={(e) => setSection(e.target.value)}>
+              {ALL_SECTIONS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="desc">Description</label>
-            <textarea
-              id="desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional details..."
-              rows={3}
-            />
-          </div>
-
-          <div className="form-row">
+          {!isReference && (
             <div className="form-group">
-              <label htmlFor="section">Section</label>
-              <select id="section" value={section} onChange={(e) => setSection(e.target.value)}>
-                {SECTIONS.map((s) => (
-                  <option key={s} value={s}>{SECTION_LABELS[s]}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="scheduled">Scheduled date &amp; time</label>
+              <label htmlFor="atm-scheduled">Scheduled date &amp; time</label>
               <input
-                id="scheduled"
+                id="atm-scheduled"
                 type="datetime-local"
                 value={scheduledAt}
                 onChange={(e) => setScheduledAt(e.target.value)}
               />
             </div>
-          </div>
+          )}
+        </div>
 
+        {!isReference && (
           <div className="form-group">
-            <label htmlFor="recurrence">Repeats</label>
+            <label htmlFor="atm-recurrence">Repeats</label>
             <select
-              id="recurrence"
+              id="atm-recurrence"
               value={recurrenceRule}
               onChange={(e) => setRecurrenceRule(e.target.value)}
             >
@@ -119,52 +138,62 @@ export default function AddTodoModal({ todo, allTags = [], onClose, onSave, onDe
               <option value="yearly">Yearly</option>
             </select>
           </div>
+        )}
 
-          {allTags.length > 0 && (
-            <div className="form-group">
-              <label>Tags</label>
-              <div className="tag-toggles">
-                {allTags.map((tag) => {
-                  const on = selectedTagIds.includes(tag.id)
-                  return (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      className={`tag-toggle ${on ? 'tag-toggle--on' : ''}`}
-                      style={on
-                        ? { background: tag.color, borderColor: tag.color, color: '#fff' }
-                        : { borderColor: tag.color, color: tag.color }
-                      }
-                      onClick={() => toggleTag(tag.id)}
-                    >
-                      {tag.name}
-                    </button>
-                  )
-                })}
-              </div>
+        {allTags.length > 0 && (
+          <div className="form-group">
+            <label>Tags</label>
+            <div className="tag-toggles">
+              {allTags.map((tag) => {
+                const on = selectedTagIds.includes(tag.id)
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    className={`tag-toggle ${on ? 'tag-toggle--on' : ''}`}
+                    style={on
+                      ? { background: tag.color, borderColor: tag.color, color: '#fff' }
+                      : { borderColor: tag.color, color: tag.color }
+                    }
+                    onClick={() => toggleTag(tag.id)}
+                  >
+                    {tag.name}
+                  </button>
+                )
+              })}
             </div>
-          )}
-
-          <div className="modal-footer">
-            {isEdit && onDelete && (
-              <button
-                type="button"
-                className="btn-danger"
-                onClick={() => {
-                  if (window.confirm('Delete this task? This cannot be undone.')) {
-                    onDelete()
-                  }
-                }}
-              >
-                Delete
-              </button>
-            )}
-            <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-save" disabled={saving}>
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Task'}
-            </button>
           </div>
-        </form>
+        )}
+
+        <div className="modal-footer">
+          {isEdit && onDelete && (
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={() => {
+                if (window.confirm('Delete this card? This cannot be undone.')) {
+                  onDelete()
+                }
+              }}
+            >
+              Delete
+            </button>
+          )}
+          {isEdit && onArchive && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onArchive}
+            >
+              Archive
+            </button>
+          )}
+          <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-save" disabled={saving}>
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Card'}
+          </button>
+        </div>
+      </form>
     </Modal>
   )
 }

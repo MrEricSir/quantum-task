@@ -1,4 +1,4 @@
-const BASE = '/api/todos'
+const BASE = '/api/cards'
 const TAGS_BASE = '/api/tags'
 
 // Send the browser's local date on every request so the server uses the
@@ -217,55 +217,43 @@ export async function uncheckHabit(id) {
   if (!res.ok) throw new Error('Failed to uncheck habit')
 }
 
-export async function fetchNotes() {
-  const res = await apiFetch('/api/notes')
-  if (!res.ok) throw new Error('Failed to fetch notes')
+export async function fetchCards() {
+  const res = await apiFetch(BASE)
+  if (!res.ok) throw new Error('Failed to fetch cards')
   return res.json()
 }
 
-export async function fetchArchivedNotes() {
-  const res = await apiFetch('/api/notes?archived=true')
-  if (!res.ok) throw new Error('Failed to fetch archived notes')
-  return res.json()
-}
-
-export async function archiveNote(id) {
-  return updateNote(id, { archived: true })
-}
-
-export async function unarchiveNote(id) {
-  return updateNote(id, { archived: false })
-}
-
-export async function createNote(data) {
-  const res = await apiFetch('/api/notes', {
+export async function createCard(data) {
+  const res = await apiFetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error('Failed to create note')
+  if (!res.ok) throw new Error('Failed to create card')
   return res.json()
 }
 
-export async function updateNote(id, data) {
-  const res = await apiFetch(`/api/notes/${id}`, {
+export async function updateCard(id, data) {
+  const res = await apiFetch(`${BASE}/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error('Failed to update note')
+  if (!res.ok) throw new Error('Failed to update card')
   return res.json()
 }
 
-export async function deleteNote(id) {
-  const res = await apiFetch(`/api/notes/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to delete note')
+export async function deleteCard(id) {
+  const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete card')
 }
 
-export async function promoteNote(id) {
-  const res = await apiFetch(`/api/notes/${id}/promote`, { method: 'POST' })
-  if (!res.ok) throw new Error('Failed to promote note')
-  return res.json()
+export async function archiveCard(id) {
+  return updateCard(id, { archived: true })
+}
+
+export async function unarchiveCard(id) {
+  return updateCard(id, { archived: false })
 }
 
 export async function reorderTodos(updates) {

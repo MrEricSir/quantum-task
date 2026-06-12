@@ -24,17 +24,30 @@ class Todo(Base):
     __tablename__ = "todos"
 
     id = Column(Integer, primary_key=True, index=True)
+    # title: headline shown everywhere — required for all cards
     title = Column(String, nullable=False)
+    # description: optional text content
+    #   - board cards (section=today/week/month/later): short optional context shown in the detail modal
+    #   - reference cards (section=none): the card's full text content
+    #   - set by the LLM parser or manually in the add/edit modals
     description = Column(String, nullable=True)
-    section = Column(String, nullable=False, default="today")  # today | week | month | later
+    # section: which board column the card belongs to
+    #   today | week | month | later = shown on the board
+    #   none                         = reference card, shown only on the Cards page
+    section = Column(String, nullable=False, default="today")
     scheduled_at = Column(DateTime, nullable=True)
     completed = Column(Boolean, default=False)
     completed_at = Column(DateTime, nullable=True)
     position = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # raw_input: verbatim text the user typed into Quick Add — kept for debugging LLM parsing
     raw_input = Column(String, nullable=True)
     recurrence_rule = Column(String, nullable=True)  # daily | weekly | monthly | yearly
     external_id = Column(String, nullable=True, index=True)  # e.g. "github:owner/repo/issues/123"
+    body = Column(String, nullable=True)  # legacy column — not used in new code, kept to avoid migration
+    updated_at = Column(DateTime, nullable=True)
+    archived = Column(Boolean, default=False)
+    archived_at = Column(DateTime, nullable=True)
     tags = relationship("Tag", secondary="todo_tags", lazy="joined")
 
 

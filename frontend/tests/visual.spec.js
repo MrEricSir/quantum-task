@@ -71,20 +71,24 @@ const CALENDAR_EVENTS = [
   },
 ]
 
-const NOTES = [
+const CARDS = [
   {
-    id: 1, title: 'Shopping list',
-    content: '- [ ] Milk\n- [ ] Eggs\n- [x] Bread\n- [ ] Coffee',
+    id: 7, title: 'Shopping list',
+    description: 'Milk\nEggs\nBread\nCoffee',
+    section: 'none', completed: false, archived: false, position: 0,
     tags: [{ id: 2, name: 'personal', color: '#10b981' }],
     updated_at: '2026-06-03T08:00:00Z', created_at: '2026-06-03T08:00:00Z',
   },
   {
-    id: 2, title: 'Sprint ideas',
-    content: 'Next sprint candidates:\n\n- Improve search\n- Add dark mode option\n- Performance pass',
+    id: 8, title: 'Sprint ideas',
+    description: 'Next sprint candidates:\n\nImprove search\nAdd dark mode option\nPerformance pass',
+    section: 'none', completed: false, archived: false, position: 1,
     tags: [{ id: 1, name: 'work', color: '#3b82f6' }],
     updated_at: '2026-06-02T16:00:00Z', created_at: '2026-06-02T16:00:00Z',
   },
 ]
+
+const ALL_TODOS = [...TODOS, ...CARDS]
 
 // ---------------------------------------------------------------------------
 // Shared setup
@@ -93,7 +97,7 @@ async function mockAPIs(page) {
   await page.route('**/api/auth/check', r =>
     r.fulfill({ json: { authed: true, enabled: false } }))
 
-  await page.route('**/api/todos', r => r.fulfill({ json: TODOS }))
+  await page.route('**/api/cards', r => r.fulfill({ json: ALL_TODOS }))
   await page.route('**/api/tags', r => r.fulfill({ json: TAGS }))
   await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
   await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
@@ -104,11 +108,6 @@ async function mockAPIs(page) {
   await page.route(/\/api\/habits(\?|$)/, r => {
     const url = r.request().url()
     return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
-  })
-  // notes: handle both active and archived requests
-  await page.route(/\/api\/notes(\?|$)/, r => {
-    const url = r.request().url()
-    return r.fulfill({ json: url.includes('archived=true') ? [] : NOTES })
   })
 
   // Briefing SSE: send weather + text then close
@@ -151,7 +150,7 @@ test.describe('app shell', () => {
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
     // Sidebar nav (desktop) or mobile nav
-    for (const label of ['Today', 'Tasks', 'Habits', 'Notes', 'Engineering']) {
+    for (const label of ['Today', 'Tasks', 'Habits', 'Cards', 'Engineering']) {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
   })
@@ -215,48 +214,51 @@ test.describe('tasks board', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Notes page
+// Cards page
 // ---------------------------------------------------------------------------
-test.describe('notes page', () => {
+test.describe('cards page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/notes')
+    await page.goto('/cards')
     await waitForApp(page)
   })
 
-  test('page heading and new-note button', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /new note/i })).toBeVisible()
+  test('page heading and new-card button', async ({ page }) => {
+    await expect(page.getByRole('heading', { name: 'Cards' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /new card/i })).toBeVisible()
   })
 
-  test('note cards are rendered', async ({ page }) => {
+  test('card rows are rendered', async ({ page }) => {
     await expect(page.getByText('Shopping list')).toBeVisible()
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
 
-  test('note content is previewed in the list', async ({ page }) => {
+  test('card body is previewed in the list', async ({ page }) => {
     await expect(page.getByText(/Milk/)).toBeVisible()
     await expect(page.getByText(/Improve search/)).toBeVisible()
   })
 
-  test('new note modal opens with textarea and Cancel/Create footer', async ({ page }) => {
-    await page.getByRole('button', { name: /new note/i }).click()
-    await expect(page.getByRole('heading', { name: /new note/i })).toBeVisible()
-    await expect(page.locator('#note-content')).toBeVisible()
+  test('new card modal opens with title, description, section and Cancel/Add footer', async ({ page }) => {
+    await page.getByRole('button', { name: /new card/i }).click()
+    await expect(page.getByRole('heading', { name: /new card/i })).toBeVisible()
+    await expect(page.locator('#atm-title')).toBeVisible()
+    await expect(page.locator('#atm-desc')).toBeVisible()
+    await expect(page.locator('#atm-section')).toBeVisible()
     await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /create/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /add card/i })).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
-  test('clicking a note row opens editor with Cancel/Save footer', async ({ page }) => {
+  test('clicking a card row opens editor with Cancel/Save footer', async ({ page }) => {
     await page.locator('.note-row').first().click()
-    await expect(page.locator('.note-editor-modal')).toBeVisible()
-    await expect(page.locator('#note-content')).toBeVisible()
+    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
+    await expect(page.locator('#atm-title')).toBeVisible()
+    await expect(page.locator('#atm-desc')).toBeVisible()
     await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /save/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /save changes/i })).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
-  test('note archive section is hidden when empty', async ({ page }) => {
+  test('card archive section is hidden when empty', async ({ page }) => {
     await expect(page.locator('.notes-archive')).toHaveCount(0)
   })
 })
@@ -323,7 +325,7 @@ test.describe('quick-add modal', () => {
   })
 
   test('confirm screen shows detected type and Back/Add buttons', async ({ page }) => {
-    await page.route('**/api/todos/parse-bulk', r =>
+    await page.route('**/api/cards/parse-bulk', r =>
       r.fulfill({ json: { items: [{
         type: 'task', title: 'Call dentist', description: null,
         section: 'week', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
@@ -342,7 +344,7 @@ test.describe('quick-add modal', () => {
   })
 
   test('confirm screen type can be overridden', async ({ page }) => {
-    await page.route('**/api/todos/parse-bulk', r =>
+    await page.route('**/api/cards/parse-bulk', r =>
       r.fulfill({ json: { items: [{
         type: 'task', title: 'Morning run', description: null,
         section: 'today', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
@@ -360,17 +362,17 @@ test.describe('quick-add modal', () => {
   })
 
   test('confirm screen Back returns to input', async ({ page }) => {
-    await page.route('**/api/todos/parse-bulk', r =>
+    await page.route('**/api/cards/parse-bulk', r =>
       r.fulfill({ json: { items: [{
-        type: 'note', title: 'Grocery list', note_content: 'milk, eggs',
-        section: 'later', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
+        type: 'task', title: 'Grocery list', description: 'milk, eggs',
+        section: 'none', scheduled_at: null, suggested_tags: [], recurrence_rule: null,
       }]}}))
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('grocery list: milk eggs')
     await page.getByRole('button', { name: /^add$/i }).click()
-    await expect(page.locator('.quick-type-tab--active')).toHaveText('Note')
+    await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     await page.getByRole('button', { name: /back/i }).click()
     await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
   })

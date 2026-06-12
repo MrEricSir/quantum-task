@@ -27,7 +27,9 @@ class TagReplacement(BaseModel):
 
 class TodoCreate(BaseModel):
     title: str
+    # description: optional context — for reference cards (section="none") this is the full text content
     description: Optional[str] = None
+    body: Optional[str] = None  # legacy field — ignored in new code
     section: str = "today"
     scheduled_at: Optional[datetime] = None
     tag_ids: List[int] = []
@@ -38,13 +40,16 @@ class TodoCreate(BaseModel):
 
 class TodoUpdate(BaseModel):
     title: Optional[str] = None
+    # description: see TodoCreate — same semantics
     description: Optional[str] = None
+    body: Optional[str] = None  # legacy field — ignored in new code
     section: Optional[str] = None
     scheduled_at: Optional[datetime] = None
     completed: Optional[bool] = None
     position: Optional[int] = None
     tag_ids: Optional[List[int]] = None
     recurrence_rule: Optional[str] = None
+    archived: Optional[bool] = None
 
 
 class ParseRequest(BaseModel):
@@ -52,14 +57,18 @@ class ParseRequest(BaseModel):
 
 
 class ParsedTodo(BaseModel):
-    type: Literal["task", "habit", "note"] = "task"
+    # type: "task" = completable item; "habit" = ongoing recurring behaviour
+    type: Literal["task", "habit"] = "task"
     title: str
+    # description: optional short context from the user's input
+    #   board tasks: shown in the detail modal as extra context
+    #   reference cards (section="none"): serves as the card's text content
     description: Optional[str] = None
-    section: Literal["today", "week", "month", "later"] = "later"
+    # section: "none" = reference card (Cards page only), otherwise board column
+    section: Literal["today", "week", "month", "later", "none"] = "later"
     scheduled_at: Optional[datetime] = None
     suggested_tags: List[str] = []
     recurrence_rule: Optional[Literal["daily", "weekly", "monthly", "yearly"]] = None
-    note_content: Optional[str] = None
     clarification_question: Optional[str] = None
 
     @field_validator('scheduled_at', 'description', mode='before')
@@ -185,12 +194,16 @@ class Todo(BaseModel):
     id: int
     title: str
     description: Optional[str]
+    body: Optional[str] = None
     section: str
     scheduled_at: Optional[datetime]
     completed: bool
     completed_at: Optional[datetime]
     position: int
     created_at: datetime
+    updated_at: Optional[datetime] = None
+    archived: bool = False
+    archived_at: Optional[datetime] = None
     raw_input: Optional[str] = None
     recurrence_rule: Optional[str] = None
     external_id: Optional[str] = None

@@ -23,18 +23,18 @@ import EngineeringPage from './components/EngineeringPage'
 import CalendarStrip from './components/CalendarStrip'
 import CalendarPage from './components/CalendarPage'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
+import { GearIcon, MagnifyingGlassIcon, PlusIcon } from '@radix-ui/react-icons'
 import { useNotifications } from './hooks/useNotifications'
 import DailyBriefing from './components/DailyBriefing'
 import HabitTracker from './components/HabitTracker'
 import HabitsPage from './components/HabitsPage'
-import NotesPage from './components/NotesPage'
+import CardsPage from './components/CardsPage'
 import TodayPage from './components/TodayPage'
 import Sidebar from './components/Sidebar'
 import MobileNav from './components/MobileNav'
 import TagFilterBar from './components/TagFilterBar'
 import LoginPage from './components/LoginPage'
-import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, fetchNotes, createNote, updateNote, deleteNote, promoteNote, checkAuth, logout, fetchArchivedNotes, archiveNote, unarchiveNote, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
+import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
 import './App.css'
 
 export const SECTIONS = ['today', 'week', 'month', 'later']
@@ -75,8 +75,6 @@ export default function App() {
   const [weather, setWeather] = useState(null)
   const [habits, setHabits] = useState([])
   const [archivedHabits, setArchivedHabits] = useState([])
-  const [notes, setNotes] = useState([])
-  const [archivedNotes, setArchivedNotes] = useState([])
   const [engineeringItems, setEngineeringItems] = useState([])
   const [lastEngineeringSynced, setLastEngineeringSynced] = useState(null)
   const [engineeringSyncing, setEngineeringSyncing] = useState(false)
@@ -95,16 +93,16 @@ export default function App() {
   const isHabitsPage   = location.pathname === '/habits'   || location.pathname.startsWith('/habits/tag/')
   const isTasksPage    = location.pathname === '/tasks'    || location.pathname.startsWith('/tasks/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
-  const isNotesPage       = location.pathname === '/notes'       || location.pathname.startsWith('/notes/tag/')
+  const isCardsPage       = location.pathname === '/cards'       || location.pathname.startsWith('/cards/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
-  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isTasksPage ? 'tasks' : isCalendarPage ? 'calendar' : isNotesPage ? 'notes' : isEngineeringPage ? 'engineering' : 'overview'
+  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isTasksPage ? 'tasks' : isCalendarPage ? 'calendar' : isCardsPage ? 'cards' : isEngineeringPage ? 'engineering' : 'overview'
 
   const tagMatch =
     location.pathname.match(/^\/tag\/(\d+)$/)          ||
     location.pathname.match(/^\/habits\/tag\/(\d+)$/)   ||
     location.pathname.match(/^\/tasks\/tag\/(\d+)$/)    ||
     location.pathname.match(/^\/calendar\/tag\/(\d+)$/) ||
-    location.pathname.match(/^\/notes\/tag\/(\d+)$/)
+    location.pathname.match(/^\/cards\/tag\/(\d+)$/)
   const selectedTagId = tagMatch ? parseInt(tagMatch[1]) : null
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 640px)').matches)
 
@@ -222,12 +220,11 @@ export default function App() {
 
   useEffect(() => {
     if (!authed) return
-    Promise.all([fetchTodos(), fetchTags(), fetchHabits(), fetchNotes()])
-      .then(([todosData, tagsData, habitsData, notesData]) => {
+    Promise.all([fetchTodos(), fetchTags(), fetchHabits()])
+      .then(([todosData, tagsData, habitsData]) => {
         setTodos(todosData)
         setTags(tagsData)
         setHabits(habitsData)
-        setNotes(notesData)
       })
       .finally(() => setLoading(false))
 
@@ -235,7 +232,6 @@ export default function App() {
       .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
       .catch(() => {})
 
-    fetchArchivedNotes().then(setArchivedNotes).catch(() => {})
     fetchArchivedHabits().then(setArchivedHabits).catch(() => {})
   }, [authed])
 
@@ -249,8 +245,8 @@ export default function App() {
     return () => clearInterval(id)
   }, [])
 
-  const activeTodos = todos.filter((t) => !t.completed)
-  const completedTodos = todos.filter((t) => t.completed)
+  const activeTodos = todos.filter((t) => !t.completed && !t.archived && t.section !== 'none')
+  const completedTodos = todos.filter((t) => t.completed && !t.archived && t.section !== 'none')
 
   const visibleCalendarEvents = selectedTagId === null
     ? calendarEvents
@@ -474,12 +470,6 @@ export default function App() {
         try {
           if (result.type === 'habit') {
             await handleAddHabit({ name: result.title, tag_ids: tagIds })
-          } else if (result.type === 'note') {
-            await handleAddNote({
-              title: result.title || null,
-              content: result.note_content || result.description || text,
-              tag_ids: tagIds,
-            })
           } else {
             await handleAddTodo({
               title: result.title,
@@ -540,42 +530,25 @@ export default function App() {
     setActiveSection(newSection)
   }
 
-  const handleAddNote = async (data) => {
-    const created = await createNote(data)
-    setNotes((prev) => [created, ...prev])
+  const handleAddCard = async (data) => {
+    const created = await handleAddTodo({ ...data, section: data.section ?? 'none' })
     return created
   }
 
-  const handleUpdateNote = async (id, data) => {
-    const updated = await updateNote(id, data)
-    setNotes((prev) => prev.map((n) => (n.id === id ? updated : n)))
-    return updated
+  const handleUpdateCard = async (id, data) => {
+    return handleUpdateTodo(id, data)
   }
 
-  const handleDeleteNote = async (id) => {
-    await deleteNote(id)
-    setNotes((prev) => prev.filter((n) => n.id !== id))
-    setArchivedNotes((prev) => prev.filter((n) => n.id !== id))
+  const handleDeleteCard = async (id) => {
+    return handleDeleteTodo(id)
   }
 
-  const handleArchiveNote = async (id) => {
-    await archiveNote(id)
-    const note = notes.find((n) => n.id === id)
-    setNotes((prev) => prev.filter((n) => n.id !== id))
-    if (note) setArchivedNotes((prev) => [{ ...note, archived: true }, ...prev])
+  const handleArchiveCard = async (id) => {
+    return handleUpdateTodo(id, { archived: true })
   }
 
-  const handleUnarchiveNote = async (id) => {
-    await unarchiveNote(id)
-    const note = archivedNotes.find((n) => n.id === id)
-    setArchivedNotes((prev) => prev.filter((n) => n.id !== id))
-    if (note) setNotes((prev) => [{ ...note, archived: false }, ...prev])
-  }
-
-  const handlePromoteNote = async (id) => {
-    const todo = await promoteNote(id)
-    setTodos((prev) => [...prev, todo])
-    return todo
+  const handleUnarchiveCard = async (id) => {
+    return handleUpdateTodo(id, { archived: false })
   }
 
   const handlePageNavigate = (page, tagId) => {
@@ -683,10 +656,6 @@ export default function App() {
                     <span className={`notif-toggle ${notifPermission === 'granted' && notifEnabled ? 'notif-toggle--on' : ''}`} />
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator className="settings-dropdown-divider" />
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowModal(true)}>
-                    + Add Task (Advanced)
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Separator className="settings-dropdown-divider" />
                   <DropdownMenu.Item
                     className="settings-dropdown-item"
                     disabled={!authEnabled}
@@ -748,17 +717,16 @@ export default function App() {
             onArchive={handleArchiveHabit}
             onUnarchive={handleUnarchiveHabit}
           />
-        ) : isNotesPage ? (
-          <NotesPage
-            notes={selectedTagId === null ? notes : notes.filter((n) => (n.tags ?? []).some((t) => t.id === selectedTagId))}
-            archivedNotes={selectedTagId === null ? archivedNotes : archivedNotes.filter((n) => (n.tags ?? []).some((t) => t.id === selectedTagId))}
+        ) : isCardsPage ? (
+          <CardsPage
+            cards={todos.filter((t) => t.section === 'none' && !t.archived && (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))}
+            archivedCards={todos.filter((t) => t.section === 'none' && t.archived && (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))}
             allTags={tags}
-            onAdd={handleAddNote}
-            onUpdate={handleUpdateNote}
-            onDelete={handleDeleteNote}
-            onPromote={handlePromoteNote}
-            onArchive={handleArchiveNote}
-            onUnarchive={handleUnarchiveNote}
+            onAdd={handleAddCard}
+            onUpdate={handleUpdateCard}
+            onDelete={handleDeleteCard}
+            onArchive={handleArchiveCard}
+            onUnarchive={handleUnarchiveCard}
           />
         ) : isCalendarPage ? (
           <CalendarPage
@@ -780,20 +748,30 @@ export default function App() {
           />
         ) : (
           <>
-          <DailyBriefing
-            todos={visibleActiveTodos}
-            calendarEvents={visibleCalendarEvents}
-            habits={habits}
-            tagId={selectedTagId}
-            ready={!loading}
-            onWeather={setWeather}
-            invalidationKey={briefingKey}
-          />
+          {!isTasksPage && (
+            <DailyBriefing
+              todos={visibleActiveTodos}
+              calendarEvents={visibleCalendarEvents}
+              habits={habits}
+              tagId={selectedTagId}
+              ready={!loading}
+              onWeather={setWeather}
+              invalidationKey={briefingKey}
+            />
+          )}
           {!isTasksPage && (
             <HabitTracker
               habits={habits}
               onToggle={handleToggleHabit}
             />
+          )}
+
+          {isTasksPage && (
+            <div className="tasks-page-header">
+              <button className="notes-new-btn" onClick={() => { setEditingTodo(null); setShowModal(true) }}>
+                <PlusIcon /> New task
+              </button>
+            </div>
           )}
 
           <div className="mobile-tabs">
@@ -869,11 +847,12 @@ export default function App() {
 
       {showModal && (
         <AddTodoModal
-          todo={editingTodo}
+          card={editingTodo}
           allTags={tags}
           onClose={closeModal}
           onSave={handleModalSave}
           onDelete={editingTodo ? async () => { await handleDeleteTodo(editingTodo.id); closeModal() } : undefined}
+          onArchive={editingTodo ? async () => { await handleArchiveCard(editingTodo.id); closeModal() } : undefined}
         />
       )}
 
@@ -919,7 +898,6 @@ export default function App() {
           onClose={() => setShowQuickAdd(false)}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
-          onSaveNote={async (data) => { await handleAddNote(data) }}
         />
       )}
 

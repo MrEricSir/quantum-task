@@ -133,12 +133,24 @@ with engine.connect() as _conn:
         "ALTER TABLE habits ADD COLUMN archived_at DATETIME",
         "ALTER TABLE notes ADD COLUMN archived BOOLEAN DEFAULT 0",
         "ALTER TABLE notes ADD COLUMN archived_at DATETIME",
+        "ALTER TABLE todos ADD COLUMN body TEXT",
+        "ALTER TABLE todos ADD COLUMN updated_at DATETIME",
+        "ALTER TABLE todos ADD COLUMN archived BOOLEAN DEFAULT 0",
+        "ALTER TABLE todos ADD COLUMN archived_at DATETIME",
     ]:
         try:
             _conn.execute(text(_stmt))
             _conn.commit()
         except Exception:
             pass  # column already exists
+
+    # Copy description → body for existing todos
+    _conn.execute(text(
+        "UPDATE todos SET body = description"
+        " WHERE description IS NOT NULL AND description != ''"
+        " AND (body IS NULL OR body = '')"
+    ))
+    _conn.commit()
 
     # Migrate briefing_cache to per-section schema (old schema had today_text/week_text columns).
     # Cached briefings are cheap to regenerate, so just drop and recreate.
@@ -155,6 +167,27 @@ with SessionLocal() as _db:
         if not _db.query(models.Tag).filter_by(name=name).first():
             _db.add(models.Tag(name=name, color=color))
     _db.commit()
+
+# Migrate notes → cards (section="none") — idempotent via app_settings flag
+with SessionLocal() as _db:
+    if not _db.query(models.AppSetting).filter_by(key="notes_migrated_v1").first():
+        for note in _db.query(models.Note).all():
+            first_line = note.content.split('\n')[0][:120].strip() if note.content else ""
+            title = note.title or first_line or "Untitled"
+            db_card = models.Todo(
+                title=title,
+                body=note.content or None,
+                section="none",
+                position=0,
+                archived=note.archived,
+                archived_at=note.archived_at,
+                created_at=note.created_at,
+                updated_at=note.updated_at,
+            )
+            db_card.tags = list(note.tags)
+            _db.add(db_card)
+        _db.add(models.AppSetting(key="notes_migrated_v1", value="1"))
+        _db.commit()
 
 # Ensure VAPID keys exist
 with SessionLocal() as _db:
@@ -543,8 +576,9 @@ def export_calendar_ical(
         ev.add("dtstart", scheduled)
         ev.add("dtend",   scheduled + timedelta(hours=1))
 
-        if todo.description:
-            ev.add("description", todo.description)
+        desc = todo.body or todo.description
+        if desc:
+            ev.add("description", desc)
         if todo.recurrence_rule and todo.recurrence_rule in _RRULE_MAP:
             ev.add("rrule", {"FREQ": [_RRULE_MAP[todo.recurrence_rule]]})
 
@@ -1128,76 +1162,6 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
     )
 
 
-@app.get("/api/notes", response_model=List[schemas.Note])
-def get_notes(archived: bool = False, db: Session = Depends(get_db)):
-    return (
-        db.query(models.Note)
-        .filter(models.Note.archived == archived)
-        .order_by(models.Note.updated_at.desc())
-        .all()
-    )
-
-
-@app.post("/api/notes", response_model=schemas.Note, status_code=201)
-def create_note(note: schemas.NoteCreate, db: Session = Depends(get_db)):
-    data = note.model_dump()
-    tag_ids = data.pop("tag_ids", [])
-    now = datetime.now(timezone.utc)
-    db_note = models.Note(**data, created_at=now, updated_at=now)
-    if tag_ids:
-        db_note.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
-    db.add(db_note)
-    db.commit()
-    db.refresh(db_note)
-    return db_note
-
-
-@app.put("/api/notes/{note_id}", response_model=schemas.Note)
-def update_note(note_id: int, note: schemas.NoteUpdate, db: Session = Depends(get_db)):
-    db_note = db.query(models.Note).filter(models.Note.id == note_id).first()
-    if not db_note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    data = note.model_dump(exclude_unset=True)
-    tag_ids = data.pop("tag_ids", None)
-    if "archived" in data:
-        data["archived_at"] = datetime.now(timezone.utc) if data["archived"] else None
-    for key, val in data.items():
-        setattr(db_note, key, val)
-    db_note.updated_at = datetime.now(timezone.utc)
-    if tag_ids is not None:
-        db_note.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
-    db.commit()
-    db.refresh(db_note)
-    return db_note
-
-
-@app.delete("/api/notes/{note_id}", status_code=204)
-def delete_note(note_id: int, db: Session = Depends(get_db)):
-    db_note = db.query(models.Note).filter(models.Note.id == note_id).first()
-    if db_note:
-        db.delete(db_note)
-        db.commit()
-
-
-@app.post("/api/notes/{note_id}/promote", response_model=schemas.Todo, status_code=201)
-def promote_note(note_id: int, db: Session = Depends(get_db)):
-    db_note = db.query(models.Note).filter(models.Note.id == note_id).first()
-    if not db_note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    title = db_note.title or (db_note.content.split('\n')[0][:120].strip() if db_note.content else "Untitled")
-    count = db.query(models.Todo).filter(models.Todo.section == "later").count()
-    db_todo = models.Todo(
-        title=title,
-        description=db_note.content or None,
-        section="later",
-        position=count,
-        created_at=datetime.now(timezone.utc),
-    )
-    db_todo.tags = list(db_note.tags)
-    db.add(db_todo)
-    db.commit()
-    db.refresh(db_todo)
-    return db_todo
 
 
 @app.get("/api/habits", response_model=List[schemas.Habit])
@@ -1280,7 +1244,11 @@ def _auto_migrate_sections(db: Session, today: date) -> None:
     Only moves forward (e.g. week → today); never pushes a todo to a later section."""
     todos = (
         db.query(models.Todo)
-        .filter(models.Todo.completed == False, models.Todo.scheduled_at.isnot(None))
+        .filter(
+            models.Todo.completed == False,
+            models.Todo.scheduled_at.isnot(None),
+            models.Todo.section != "none",  # reference cards are never auto-migrated
+        )
         .all()
     )
     changed = False
@@ -1301,8 +1269,8 @@ def _auto_migrate_sections(db: Session, today: date) -> None:
         db.commit()
 
 
-@app.get("/api/todos/search", response_model=List[schemas.Todo])
-def search_todos(q: str = Query(default="", min_length=1), db: Session = Depends(get_db)):
+@app.get("/api/cards/search", response_model=List[schemas.Todo])
+def search_cards(q: str = Query(default="", min_length=1), db: Session = Depends(get_db)):
     pattern = f"%{q}%"
     return (
         db.query(models.Todo)
@@ -1318,8 +1286,8 @@ def search_todos(q: str = Query(default="", min_length=1), db: Session = Depends
     )
 
 
-@app.get("/api/todos", response_model=List[schemas.Todo])
-def get_todos(request: Request, db: Session = Depends(get_db)):
+@app.get("/api/cards", response_model=List[schemas.Todo])
+def get_cards(request: Request, db: Session = Depends(get_db)):
     _auto_migrate_sections(db, _local_date(request))
     return (
         db.query(models.Todo)
@@ -1328,12 +1296,13 @@ def get_todos(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@app.post("/api/todos", response_model=schemas.Todo, status_code=201)
-def create_todo(todo: schemas.TodoCreate, db: Session = Depends(get_db)):
+@app.post("/api/cards", response_model=schemas.Todo, status_code=201)
+def create_card(todo: schemas.TodoCreate, db: Session = Depends(get_db)):
     count = db.query(models.Todo).filter(models.Todo.section == todo.section).count()
     data = todo.model_dump()
     tag_ids = data.pop("tag_ids", [])
-    db_todo = models.Todo(**data, position=count)
+    now = datetime.now(timezone.utc)
+    db_todo = models.Todo(**data, position=count, updated_at=now)
     if tag_ids:
         db_todo.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
     db.add(db_todo)
@@ -1342,8 +1311,8 @@ def create_todo(todo: schemas.TodoCreate, db: Session = Depends(get_db)):
     return db_todo
 
 
-@app.post("/api/todos/reorder")
-def reorder_todos(updates: List[schemas.TodoReorderItem], db: Session = Depends(get_db)):
+@app.post("/api/cards/reorder")
+def reorder_cards(updates: List[schemas.TodoReorderItem], db: Session = Depends(get_db)):
     for item in updates:
         db_todo = db.query(models.Todo).filter(models.Todo.id == item.id).first()
         if db_todo:
@@ -1353,7 +1322,7 @@ def reorder_todos(updates: List[schemas.TodoReorderItem], db: Session = Depends(
     return {"ok": True}
 
 
-@app.post("/api/todos/parse", response_model=schemas.ParsedTodo)
+@app.post("/api/cards/parse", response_model=schemas.ParsedTodo)
 def parse_todo(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
     today = _local_date(request)
     tomorrow = today + timedelta(days=1)
@@ -1391,7 +1360,7 @@ def parse_todo(request: Request, req: schemas.ParseRequest, db: Session = Depend
         )
 
 
-@app.post("/api/todos/parse-bulk", response_model=schemas.BulkParseResponse)
+@app.post("/api/cards/parse-bulk", response_model=schemas.BulkParseResponse)
 def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
     today = _local_date(request)
     tomorrow = today + timedelta(days=1)
@@ -1478,38 +1447,44 @@ def _section_for_date(d: date, today: date) -> str:
     return "later"
 
 
-@app.put("/api/todos/{todo_id}", response_model=schemas.Todo)
-def update_todo(request: Request, todo_id: int, todo: schemas.TodoUpdate, db: Session = Depends(get_db)):
+@app.put("/api/cards/{todo_id}", response_model=schemas.Todo)
+def update_card(request: Request, todo_id: int, todo: schemas.TodoUpdate, db: Session = Depends(get_db)):
     db_todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
     if not db_todo:
-        raise HTTPException(status_code=404, detail="Todo not found")
+        raise HTTPException(status_code=404, detail="Card not found")
     data = todo.model_dump(exclude_unset=True)
     tag_ids = data.pop("tag_ids", None)
     completing = data.get("completed") and not db_todo.completed
+    now = datetime.now(timezone.utc)
     if "completed" in data:
         if completing:
-            db_todo.completed_at = datetime.now(timezone.utc)
+            db_todo.completed_at = now
         elif not data["completed"]:
             db_todo.completed_at = None
+    if "archived" in data:
+        data["archived_at"] = now if data["archived"] else None
     for key, value in data.items():
         setattr(db_todo, key, value)
+    db_todo.updated_at = now
     if tag_ids is not None:
         db_todo.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
 
     # Spawn next occurrence when completing a recurring todo
     if completing and db_todo.recurrence_rule:
-        base = db_todo.scheduled_at or datetime.now(timezone.utc)
+        base = db_todo.scheduled_at or now
         next_dt = _next_occurrence(base, db_todo.recurrence_rule)
         next_section = _section_for_date(next_dt.date(), _local_date(request))
         count = db.query(models.Todo).filter(models.Todo.section == next_section).count()
         next_todo = models.Todo(
             title=db_todo.title,
+            body=db_todo.body,
             description=db_todo.description,
             section=next_section,
             scheduled_at=next_dt,
             recurrence_rule=db_todo.recurrence_rule,
             position=count,
             tags=list(db_todo.tags),
+            updated_at=now,
         )
         db.add(next_todo)
 
@@ -1518,8 +1493,8 @@ def update_todo(request: Request, todo_id: int, todo: schemas.TodoUpdate, db: Se
     return db_todo
 
 
-@app.post("/api/todos/{todo_id}/tags/{tag_id}")
-def add_tag_to_todo(todo_id: int, tag_id: int, db: Session = Depends(get_db)):
+@app.post("/api/cards/{todo_id}/tags/{tag_id}")
+def add_tag_to_card(todo_id: int, tag_id: int, db: Session = Depends(get_db)):
     db_todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
     db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
     if not db_todo or not db_tag:
@@ -1530,8 +1505,8 @@ def add_tag_to_todo(todo_id: int, tag_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@app.delete("/api/todos/{todo_id}/tags/{tag_id}")
-def remove_tag_from_todo(todo_id: int, tag_id: int, db: Session = Depends(get_db)):
+@app.delete("/api/cards/{todo_id}/tags/{tag_id}")
+def remove_tag_from_card(todo_id: int, tag_id: int, db: Session = Depends(get_db)):
     db_todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
     db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
     if not db_todo or not db_tag:
@@ -1542,11 +1517,11 @@ def remove_tag_from_todo(todo_id: int, tag_id: int, db: Session = Depends(get_db
     return {"ok": True}
 
 
-@app.delete("/api/todos/{todo_id}")
-def delete_todo(todo_id: int, db: Session = Depends(get_db)):
+@app.delete("/api/cards/{todo_id}")
+def delete_card(todo_id: int, db: Session = Depends(get_db)):
     db_todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
     if not db_todo:
-        raise HTTPException(status_code=404, detail="Todo not found")
+        raise HTTPException(status_code=404, detail="Card not found")
     db.delete(db_todo)
     db.commit()
     return {"ok": True}
