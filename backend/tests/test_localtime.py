@@ -12,8 +12,8 @@ code path honours the header:
   • Habit check / uncheck — completion stored against local date
   • GET /api/habits — completed_today and streak respect local date
   • GET /api/calendar-events — section assignment uses local date
-  • GET /api/todos — _auto_migrate_sections uses local date
-  • PUT /api/todos/{id} — recurring next-occurrence section uses local date
+  • GET /api/cards — _auto_migrate_sections uses local date
+  • PUT /api/cards/{id} — recurring next-occurrence section uses local date
 """
 
 import pytest
@@ -314,46 +314,46 @@ class TestAutoMigrateSections:
 
     def test_future_todo_stays_in_week(self, client):
         # scheduled for June 7 (3 days out from June 4) → "week"
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Future task",
             "section": "week",
             "scheduled_at": "2026-06-07T10:00:00",
         })
-        todos = client.get("/api/todos", headers={"X-Local-Date": "2026-06-04"}).json()
+        todos = client.get("/api/cards", headers={"X-Local-Date": "2026-06-04"}).json()
         task = next(t for t in todos if t["title"] == "Future task")
         assert task["section"] == "week"
 
     def test_scheduled_date_advances_to_today(self, client):
         # Create in "week" section with scheduled_at = June 7
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Due today task",
             "section": "week",
             "scheduled_at": "2026-06-07T10:00:00",
         })
         # Fetch with local date = June 7 → auto-migrates to "today"
-        todos = client.get("/api/todos", headers={"X-Local-Date": "2026-06-07"}).json()
+        todos = client.get("/api/cards", headers={"X-Local-Date": "2026-06-07"}).json()
         task = next(t for t in todos if t["title"] == "Due today task")
         assert task["section"] == "today"
 
     def test_overdue_todo_advances_to_today(self, client):
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Overdue task",
             "section": "week",
             "scheduled_at": "2026-06-04T10:00:00",
         })
         # Fetching on June 6 (2 days later) → still "today" (overdue is treated as today)
-        todos = client.get("/api/todos", headers={"X-Local-Date": "2026-06-06"}).json()
+        todos = client.get("/api/cards", headers={"X-Local-Date": "2026-06-06"}).json()
         task = next(t for t in todos if t["title"] == "Overdue task")
         assert task["section"] == "today"
 
     def test_section_never_moves_backward(self, client):
         # "today" section task with scheduled_at in the future should not be demoted
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Manually placed today",
             "section": "today",
             "scheduled_at": "2026-06-10T10:00:00",
         })
-        todos = client.get("/api/todos", headers={"X-Local-Date": "2026-06-04"}).json()
+        todos = client.get("/api/cards", headers={"X-Local-Date": "2026-06-04"}).json()
         task = next(t for t in todos if t["title"] == "Manually placed today")
         # Still "today" — forward-only migration never pushes to a later section
         assert task["section"] == "today"
@@ -366,7 +366,7 @@ class TestRecurringTodoSection:
 
     def test_next_occurrence_in_week_section(self, client):
         # Daily recurring todo scheduled for June 4
-        create_res = client.post("/api/todos", json={
+        create_res = client.post("/api/cards", json={
             "title": "Daily standup",
             "section": "today",
             "scheduled_at": "2026-06-04T09:00:00",
@@ -375,11 +375,11 @@ class TestRecurringTodoSection:
         todo_id = create_res.json()["id"]
 
         # Complete it on June 4 → next occurrence is June 5 (1 day out → "week")
-        client.put(f"/api/todos/{todo_id}",
+        client.put(f"/api/cards/{todo_id}",
                    json={"completed": True},
                    headers={"X-Local-Date": "2026-06-04"})
 
-        todos = client.get("/api/todos", headers={"X-Local-Date": "2026-06-04"}).json()
+        todos = client.get("/api/cards", headers={"X-Local-Date": "2026-06-04"}).json()
         next_todo = next(
             (t for t in todos if t["title"] == "Daily standup" and not t["completed"]),
             None,
@@ -389,7 +389,7 @@ class TestRecurringTodoSection:
 
     def test_next_occurrence_section_uses_local_date(self, client):
         # Weekly recurring todo scheduled for June 4
-        create_res = client.post("/api/todos", json={
+        create_res = client.post("/api/cards", json={
             "title": "Weekly review",
             "section": "today",
             "scheduled_at": "2026-06-04T10:00:00",
@@ -399,11 +399,11 @@ class TestRecurringTodoSection:
 
         # Complete on June 4 → next occurrence is June 11 (7 days out)
         # From June 4's perspective: delta=7 → "week"
-        client.put(f"/api/todos/{todo_id}",
+        client.put(f"/api/cards/{todo_id}",
                    json={"completed": True},
                    headers={"X-Local-Date": "2026-06-04"})
 
-        todos = client.get("/api/todos", headers={"X-Local-Date": "2026-06-04"}).json()
+        todos = client.get("/api/cards", headers={"X-Local-Date": "2026-06-04"}).json()
         next_todo = next(
             (t for t in todos if t["title"] == "Weekly review" and not t["completed"]),
             None,

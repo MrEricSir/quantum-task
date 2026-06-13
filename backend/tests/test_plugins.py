@@ -17,7 +17,7 @@ plugin = BaseModelPlugin()
 
 def _parsed(**kwargs) -> ParsedTodo:
     """Build a minimal ParsedTodo with sensible defaults."""
-    defaults = dict(type="task", title="Test task", section="later", note_content=None)
+    defaults = dict(type="task", title="Test task", section="later")
     defaults.update(kwargs)
     return ParsedTodo(**defaults)
 
@@ -103,12 +103,14 @@ class TestSectionOverrides:
         assert result.section == "week"
 
 
-# ── Note-type overrides from capture prefixes ─────────────────────────────────
+# ── Reference-section overrides from capture prefixes ─────────────────────────
 
 class TestNoteTypeOverrides:
     """
-    Inputs that start with capture phrases must always produce type='note'
-    regardless of what the LLM returned.
+    Inputs that start with capture phrases must always produce section='none'
+    (reference card) regardless of what the LLM returned.
+    The 'note' type was merged into tasks; capture-prefix inputs now become
+    type='task' with section='none'.
     """
 
     @pytest.mark.parametrize("prefix,text", [
@@ -119,28 +121,30 @@ class TestNoteTypeOverrides:
         ("jot down",  "jot down my wifi password"),
         ("write down","write down the recipe"),
     ])
-    def test_prefix_forces_note_type(self, prefix, text):
-        result = _pp(text, type="task")   # LLM returned wrong type
-        assert result.type == "note", \
-            f"Prefix {prefix!r} must force type='note', got {result.type!r}"
+    def test_prefix_forces_reference_section(self, prefix, text):
+        result = _pp(text, type="task")
+        assert result.section == "none", \
+            f"Prefix {prefix!r} must force section='none', got {result.section!r}"
+        assert result.type == "task"
 
-    def test_note_prefix_populates_note_content_when_missing(self):
-        result = _pp("idea: build a habit tracker", type="task", note_content=None)
-        assert result.note_content is not None
-        assert "habit tracker" in result.note_content
+    def test_note_prefix_populates_description_when_missing(self):
+        result = _pp("idea: build a habit tracker", type="task")
+        assert result.description is not None
+        assert "habit tracker" in result.description
 
-    def test_note_prefix_preserves_existing_note_content(self):
-        result = _pp("idea: build a habit tracker", type="note", note_content="already set")
-        assert result.note_content == "already set"
+    def test_note_prefix_preserves_existing_description(self):
+        result = _pp("idea: build a habit tracker", type="task", description="already set")
+        assert result.description == "already set"
 
     def test_non_prefix_task_type_unchanged(self):
         result = _pp("buy groceries", type="task")
         assert result.type == "task"
 
-    def test_note_type_without_prefix_unchanged(self):
-        # LLM correctly returned note — don't interfere.
-        result = _pp("packing list for the trip", type="note", note_content="- [ ] passport")
-        assert result.type == "note"
+    def test_list_input_becomes_reference_section(self):
+        # List-like inputs are routed to section='none' regardless of LLM output.
+        result = _pp("packing list for the trip", type="task", description="- [ ] passport")
+        assert result.section == "none"
+        assert result.type == "task"
 
 
 # ── Recurrence section fix (pre-existing behaviour) ──────────────────────────

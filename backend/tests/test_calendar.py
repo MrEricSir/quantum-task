@@ -404,7 +404,7 @@ class TestICalExport:
         assert cal is not None
 
     def test_scheduled_todo_appears_in_export(self, client):
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Export test task",
             "section": "week",
             "scheduled_at": "2026-06-15T10:00:00",
@@ -418,7 +418,7 @@ class TestICalExport:
             f"Expected task in export, got: {summaries}"
 
     def test_unscheduled_todo_not_in_export(self, client):
-        client.post("/api/todos", json={"title": "No date task", "section": "later"})
+        client.post("/api/cards", json={"title": "No date task", "section": "later"})
         res = client.get(f"/api/calendar/export.ics?token={self._token(client)}")
         cal = ical_lib.Calendar.from_ical(res.content)
         summaries = [
@@ -427,12 +427,12 @@ class TestICalExport:
         assert "No date task" not in summaries
 
     def test_completed_todo_not_in_export(self, client):
-        todo_id = client.post("/api/todos", json={
+        todo_id = client.post("/api/cards", json={
             "title": "Completed task",
             "section": "today",
             "scheduled_at": "2026-06-15T10:00:00",
         }).json()["id"]
-        client.put(f"/api/todos/{todo_id}", json={"completed": True})
+        client.put(f"/api/cards/{todo_id}", json={"completed": True})
 
         res = client.get(f"/api/calendar/export.ics?token={self._token(client)}")
         cal = ical_lib.Calendar.from_ical(res.content)
@@ -443,7 +443,7 @@ class TestICalExport:
 
     def test_exported_dtstart_is_timezone_aware(self, client):
         """Exported DTSTART must carry timezone info so calendar apps parse it correctly."""
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "TZ export task",
             "section": "week",
             "scheduled_at": "2026-06-15T14:00:00",
@@ -461,7 +461,7 @@ class TestICalExport:
     def test_exported_time_matches_stored_time(self, client):
         """The exported UTC time must represent the same instant as the stored naive time."""
         stored_naive = "2026-06-15T14:00:00"
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Time match task",
             "section": "week",
             "scheduled_at": stored_naive,
@@ -481,13 +481,13 @@ class TestICalExport:
     def test_tag_filter_includes_matching_tag(self, client):
         work_id = get_tag_id(client, "work")
         personal_id = get_tag_id(client, "personal")
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Work task",
             "section": "week",
             "scheduled_at": "2026-06-15T10:00:00",
             "tag_ids": [work_id],
         })
-        client.post("/api/todos", json={
+        client.post("/api/cards", json={
             "title": "Personal task",
             "section": "week",
             "scheduled_at": "2026-06-15T11:00:00",
