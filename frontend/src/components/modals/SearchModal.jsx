@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { MagnifyingGlassIcon } from '@radix-ui/react-icons'
-import { searchTodos } from '../api'
+import { searchTodos } from '../../api'
 import './SearchModal.css'
 
 const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later' }

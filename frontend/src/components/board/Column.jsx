@@ -4,10 +4,10 @@ import TodoCard from './TodoCard'
 import './Column.css'
 
 const SECTION_COLORS = {
-  today: '#3b82f6',
-  week: '#8b5cf6',
-  month: '#f59e0b',
-  later: '#6b7280',
+  today: 'var(--color-today)',
+  week: 'var(--color-week)',
+  month: 'var(--color-month)',
+  later: 'var(--color-later)',
 }
 
 export default function Column({ section, label, todos, isActive, isMobile, onEdit, onDelete, onToggle, onMove }) {
@@ -35,8 +35,10 @@ export default function Column({ section, label, todos, isActive, isMobile, onEd
               onMove={onMove}
             />
           ))}
-          {todos.length === 0 && !!active && (
-            <div className="column-empty">Drop cards here</div>
+          {todos.length === 0 && (
+            <div className="column-empty">
+              {active ? 'Drop here' : 'Nothing here'}
+            </div>
           )}
         </div>
       </SortableContext>

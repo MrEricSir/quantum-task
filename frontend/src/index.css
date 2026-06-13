@@ -7,10 +7,10 @@
 }
 
 :root {
-  --color-today: #60a5fa;
-  --color-week: #a78bfa;
-  --color-month: #fbbf24;
-  --color-later: #94a3b8;
+  --color-today: #3b82f6;
+  --color-week: #8b5cf6;
+  --color-month: #f59e0b;
+  --color-later: #6b7280;
 
   --bg: #07040f;
   --surface: rgba(20, 12, 40, 0.72);     /* individual card background */

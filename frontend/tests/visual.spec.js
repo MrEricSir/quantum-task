@@ -256,9 +256,8 @@ test.describe('habits page', () => {
     await waitForApp(page)
   })
 
-  test('page heading and add button', async ({ page }) => {
+  test('page heading is visible', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'Habits' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /add habit/i })).toBeVisible()
   })
 
   test('habit cards are rendered', async ({ page }) => {

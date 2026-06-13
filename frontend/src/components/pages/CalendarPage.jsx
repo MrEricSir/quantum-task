@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { UpdateIcon, ChevronLeftIcon, ChevronRightIcon } from '@radix-ui/react-icons'
-import CalendarEventCard from './CalendarEventCard'
+import CalendarEventCard from '../board/CalendarEventCard'
 import './CalendarPage.css'
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']

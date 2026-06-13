@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Cross2Icon, PlusIcon, CopyIcon, CheckIcon } from '@radix-ui/react-icons'
-import { fetchCalendarMappings, saveCalendarMappings, fetchExportToken, rotateExportToken } from '../api'
+import { fetchCalendarMappings, saveCalendarMappings, fetchExportToken, rotateExportToken } from '../../api'
 import Modal from './Modal'
 import './CalendarSettings.css'
 

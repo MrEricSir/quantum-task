@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { DndContext } from '@dnd-kit/core'
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@radix-ui/react-icons'
-import TodoCard from './TodoCard'
-import CalendarEventCard from './CalendarEventCard'
-import DailyBriefing from './DailyBriefing'
-import { CollapseBody } from './Collapsible'
+import TodoCard from '../board/TodoCard'
+import CalendarEventCard from '../board/CalendarEventCard'
+import DailyBriefing from '../shared/DailyBriefing'
+import { CollapseBody } from '../layout/Collapsible'
 import './TodayPage.css'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']

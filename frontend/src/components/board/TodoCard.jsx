@@ -3,13 +3,13 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import * as Checkbox from '@radix-ui/react-checkbox'
 import { CheckIcon, ChevronUpIcon, ChevronDownIcon } from '@radix-ui/react-icons'
-import ConfirmDialog from './ConfirmDialog'
+import ConfirmDialog from '../modals/ConfirmDialog'
 import './EventCard.css'
 import './TodoCard.css'
 
 const SECTIONS = ['today', 'week', 'month', 'later']
 const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Someday' }
-const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
+const SECTION_COLORS = { today: 'var(--color-today)', week: 'var(--color-week)', month: 'var(--color-month)', later: 'var(--color-later)' }
 
 function formatScheduled(iso) {
   if (!iso) return null
@@ -90,7 +90,7 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
       )}
       {overdueDays > 0 && (
         <div className="card-overdue-badge">
-          {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
+          &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
         </div>
       )}
 

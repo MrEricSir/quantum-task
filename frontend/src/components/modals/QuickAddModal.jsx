@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { parseBulkTodos } from '../api'
+import { parseBulkTodos } from '../../api'
 import Modal from './Modal'
 import './QuickAddModal.css'
 

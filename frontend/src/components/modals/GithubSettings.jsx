@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { fetchEngineeringConfig, saveEngineeringConfig, syncEngineering } from '../api'
+import { fetchEngineeringConfig, saveEngineeringConfig, syncEngineering } from '../../api'
 import Modal from './Modal'
 import './GithubSettings.css'
 

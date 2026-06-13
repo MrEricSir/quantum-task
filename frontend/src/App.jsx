@@ -9,28 +9,28 @@ import {
   useSensors,
 } from '@dnd-kit/core'
 import { arrayMove } from '@dnd-kit/sortable'
-import Column from './components/Column'
-import TodoCard from './components/TodoCard'
-import AddTodoModal from './components/AddTodoModal'
-import Archive from './components/Archive'
-import QuickAddModal from './components/QuickAddModal'
-import QueueIndicator from './components/QueueIndicator'
-import SearchModal from './components/SearchModal'
-import TagManagerModal from './components/TagManagerModal'
-import CalendarSettings from './components/CalendarSettings'
-import GithubSettings from './components/GithubSettings'
-import EngineeringPage from './components/EngineeringPage'
-import CalendarStrip from './components/CalendarStrip'
-import CalendarPage from './components/CalendarPage'
+import Column from './components/board/Column'
+import TodoCard from './components/board/TodoCard'
+import Archive from './components/board/Archive'
+import CalendarStrip from './components/board/CalendarStrip'
+import Sidebar from './components/layout/Sidebar'
+import MobileNav from './components/layout/MobileNav'
+import TagFilterBar from './components/layout/TagFilterBar'
+import AddTodoModal from './components/modals/AddTodoModal'
+import QuickAddModal from './components/modals/QuickAddModal'
+import SearchModal from './components/modals/SearchModal'
+import TagManagerModal from './components/modals/TagManagerModal'
+import CalendarSettings from './components/modals/CalendarSettings'
+import GithubSettings from './components/modals/GithubSettings'
+import TodayPage from './components/pages/TodayPage'
+import HabitsPage from './components/pages/HabitsPage'
+import CalendarPage from './components/pages/CalendarPage'
+import EngineeringPage from './components/pages/EngineeringPage'
+import LoginPage from './components/pages/LoginPage'
+import QueueIndicator from './components/shared/QueueIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { GearIcon, MagnifyingGlassIcon, PlusIcon } from '@radix-ui/react-icons'
+import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { useNotifications } from './hooks/useNotifications'
-import HabitsPage from './components/HabitsPage'
-import TodayPage from './components/TodayPage'
-import Sidebar from './components/Sidebar'
-import MobileNav from './components/MobileNav'
-import TagFilterBar from './components/TagFilterBar'
-import LoginPage from './components/LoginPage'
 import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
 import './App.css'
 
@@ -42,10 +42,10 @@ export const SECTION_LABELS = {
   later: 'Someday',
 }
 const SECTION_COLORS = {
-  today: '#3b82f6',
-  week: '#8b5cf6',
-  month: '#f59e0b',
-  later: '#6b7280',
+  today: 'var(--color-today)',
+  week: 'var(--color-week)',
+  month: 'var(--color-month)',
+  later: 'var(--color-later)',
 }
 
 export default function App() {
@@ -758,12 +758,6 @@ export default function App() {
           />
         ) : isBoardPage ? (
           <>
-            <div className="tasks-page-header">
-              <button className="notes-new-btn" onClick={() => { setEditingTodo(null); setShowModal(true) }}>
-                <PlusIcon /> New task
-              </button>
-            </div>
-
             <div className="mobile-tabs">
               {SECTIONS.map((s) => (
                 <button

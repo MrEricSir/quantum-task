@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { login } from '../api'
+import { login } from '../../api'
 import './LoginPage.css'
 
 export default function LoginPage({ onLogin }) {

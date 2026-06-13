@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Pencil1Icon, CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
-import Collapsible from './Collapsible'
+import Collapsible from '../layout/Collapsible'
 import './HabitsPage.css'
 
 function HabitsArchive({ habits, onUnarchive, onDelete }) {
@@ -34,40 +34,13 @@ function HabitsArchive({ habits, onUnarchive, onDelete }) {
 }
 
 export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive }) {
-  const [adding, setAdding] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newTagIds, setNewTagIds] = useState([])
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
-  const addInputRef = useRef(null)
   const editInputRef = useRef(null)
-
-  useEffect(() => {
-    if (adding) addInputRef.current?.focus()
-  }, [adding])
 
   useEffect(() => {
     if (editingId !== null) editInputRef.current?.focus()
   }, [editingId])
-
-  const confirmAdd = async () => {
-    const name = newName.trim()
-    if (!name) return
-    try {
-      await onAdd({ name, tag_ids: newTagIds })
-      setNewName('')
-      setNewTagIds([])
-      setAdding(false)
-    } catch {
-      // leave form open so user can retry
-    }
-  }
-
-  const cancelAdd = () => {
-    setAdding(false)
-    setNewName('')
-    setNewTagIds([])
-  }
 
   const startEdit = (habit) => {
     setEditingId(habit.id)
@@ -80,16 +53,11 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     setEditingId(null)
   }
 
-  const toggleNewTag = (id) =>
-    setNewTagIds((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
-
   const visibleHabits = selectedTagId === null
     ? habits
     : habits.filter((h) => h.tags.some((t) => t.id === selectedTagId))
 
   const done = visibleHabits.filter((h) => h.completed_today).length
-
-  const hasTags = allTags.length > 0
 
   return (
     <div className="habits-page">
@@ -100,59 +68,9 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
             <span className="habits-page-progress">{done} / {visibleHabits.length} today</span>
           )}
         </div>
-        {!adding && (
-          <button className="btn-primary" onClick={() => setAdding(true)}>
-            + Add habit
-          </button>
-        )}
       </div>
 
-
-      {adding && (
-        <div className="habits-add-card">
-          <input
-            ref={addInputRef}
-            className="habits-add-input"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') confirmAdd()
-              if (e.key === 'Escape') cancelAdd()
-            }}
-            placeholder="Habit name..."
-          />
-          {hasTags && (
-            <div className="habits-add-tags">
-              <span className="habits-add-tags-label">Tags (optional):</span>
-              {allTags.map((tag) => (
-                <button
-                  type="button"
-                  key={tag.id}
-                  className={`habit-tag-pill${newTagIds.includes(tag.id) ? ' habit-tag-pill--active' : ''}`}
-                  style={
-                    newTagIds.includes(tag.id)
-                      ? { background: tag.color, borderColor: tag.color, color: '#fff' }
-                      : { borderColor: tag.color, color: tag.color }
-                  }
-                  onClick={() => toggleNewTag(tag.id)}
-                >
-                  {tag.name}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="habits-add-actions">
-            <button type="button" className="btn-primary" onClick={confirmAdd} disabled={!newName.trim()}>
-              Add
-            </button>
-            <button type="button" className="btn-secondary" onClick={cancelAdd}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {visibleHabits.length === 0 && !adding ? (
+      {visibleHabits.length === 0 ? (
         <div className="habits-empty">
           {selectedTagId !== null
             ? 'No habits with this tag.'

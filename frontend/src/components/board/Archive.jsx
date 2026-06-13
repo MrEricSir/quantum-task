@@ -1,7 +1,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import TodoCard from './TodoCard'
-import Collapsible from './Collapsible'
+import Collapsible from '../layout/Collapsible'
 import './Archive.css'
 
 export default function Archive({ todos, onEdit, onDelete, onToggle }) {
