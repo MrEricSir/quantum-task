@@ -46,6 +46,11 @@
   border-color: #3b82f6;
 }
 
+.form-group select:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .form-group input::placeholder,
 .form-group textarea::placeholder {
   color: #cbd5e1;

@@ -9,27 +9,41 @@ function formatSynced(date) {
   return `${diffMin} min ago`
 }
 
-function ItemCard({ item }) {
+function ItemCard({ item, onAddToBoard, isAdded }) {
   return (
-    <a
-      href={item.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="eng-item"
-    >
-      <span className={`eng-item-type eng-item-type--${item.item_type}`}>
-        {item.item_type === 'pr' ? 'PR' : 'Issue'}
-      </span>
-      <span className="eng-item-title">{item.title}</span>
-      <span className="eng-item-meta">{item.repo}#{item.number} ↗</span>
-    </a>
+    <div className="eng-item">
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="eng-item-link"
+      >
+        <span className={`eng-item-type eng-item-type--${item.item_type}`}>
+          {item.item_type === 'pr' ? 'PR' : 'Issue'}
+        </span>
+        <span className="eng-item-title">{item.title}</span>
+        <span className="eng-item-meta">{item.repo}#{item.number} ↗</span>
+      </a>
+      <button
+        type="button"
+        className={`eng-add-btn${isAdded ? ' eng-add-btn--added' : ''}`}
+        onClick={() => onAddToBoard(item)}
+        disabled={isAdded}
+        aria-label="Add to board"
+        title={isAdded ? 'Already on board' : 'Add to board'}
+      >
+        {isAdded ? '✓' : '+ Board'}
+      </button>
+    </div>
   )
 }
 
-export default function EngineeringPage({ items, lastSynced, syncing, onSync, onOpenSettings }) {
+export default function EngineeringPage({ items, todos = [], lastSynced, syncing, onSync, onOpenSettings, onAddToBoard }) {
   const prs    = items.filter((i) => i.item_type === 'pr')
   const issues = items.filter((i) => i.item_type === 'issue')
   const noConfig = items.length === 0 && !syncing
+
+  const isAdded = (item) => todos.some((t) => t.description === item.url)
 
   return (
     <div className="eng-page">
@@ -67,7 +81,7 @@ export default function EngineeringPage({ items, lastSynced, syncing, onSync, on
             <span className="eng-count">{prs.length}</span>
           </h3>
           <div className="eng-items">
-            {prs.map((item) => <ItemCard key={item.id} item={item} />)}
+            {prs.map((item) => <ItemCard key={item.id} item={item} onAddToBoard={onAddToBoard} isAdded={isAdded(item)} />)}
           </div>
         </section>
       )}
@@ -79,7 +93,7 @@ export default function EngineeringPage({ items, lastSynced, syncing, onSync, on
             <span className="eng-count">{issues.length}</span>
           </h3>
           <div className="eng-items">
-            {issues.map((item) => <ItemCard key={item.id} item={item} />)}
+            {issues.map((item) => <ItemCard key={item.id} item={item} onAddToBoard={onAddToBoard} isAdded={isAdded(item)} />)}
           </div>
         </section>
       )}

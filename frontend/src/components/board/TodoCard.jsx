@@ -25,6 +25,13 @@ function formatDate(iso) {
   })
 }
 
+function parseGitHubUrl(str) {
+  if (!str) return null
+  const m = str.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/(pull|issues?)\/(\d+)/)
+  if (!m) return null
+  return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
+}
+
 export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isMobile, isOverlay }) {
   const [expanded, setExpanded] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -96,9 +103,16 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
 
       {expanded && !isOverlay && (
         <div className="event-details">
-          {todo.description && (
-            <div className="event-detail-value">{todo.description}</div>
-          )}
+          {todo.description && (() => {
+            const gh = parseGitHubUrl(todo.description)
+            return gh ? (
+              <a href={gh.url} target="_blank" rel="noopener noreferrer" className="card-github-badge" onClick={(e) => e.stopPropagation()}>
+                {gh.repo} #{gh.number} ↗
+              </a>
+            ) : (
+              <div className="event-detail-value">{todo.description}</div>
+            )
+          })()}
           <div className="card-move-row">
             <span className="event-detail-label">Move to</span>
             <div className="card-move-buttons">

@@ -826,10 +826,21 @@ export default function App() {
         ) : isEngineeringPage ? (
           <EngineeringPage
             items={engineeringItems}
+            todos={todos}
             lastSynced={lastEngineeringSynced}
             syncing={engineeringSyncing}
             onSync={refreshEngineeringItems}
             onOpenSettings={() => setShowGithubSettings(true)}
+            onAddToBoard={async (item) => {
+              await handleAddTodo({
+                title: item.item_type === 'pr'
+                  ? `GitHub PR: ${item.title}`
+                  : `GitHub Issue: ${item.title}`,
+                description: item.url,
+                section: item.item_type === 'pr' ? 'today' : 'week',
+                tag_ids: [],
+              })
+            }}
           />
         ) : null}
       </main>

@@ -120,14 +120,48 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  text-decoration: none;
-  color: var(--color-text);
   transition: border-color 0.15s, background 0.15s;
 }
 
 .eng-item:hover {
   border-color: var(--color-accent);
   background: var(--color-surface-2);
+}
+
+.eng-item-link {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--color-text);
+  min-width: 0;
+}
+
+.eng-add-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1.5px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.eng-add-btn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.eng-add-btn--added {
+  border-color: #22c55e44;
+  color: #4ade80;
+  cursor: default;
 }
 
 .eng-item-type {

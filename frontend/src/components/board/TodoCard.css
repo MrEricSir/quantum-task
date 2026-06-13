@@ -90,6 +90,25 @@
   white-space: pre-wrap;
 }
 
+/* ── GitHub source badge ── */
+.card-github-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #58a6ff;
+  font-size: 12px;
+  font-family: monospace;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+
+.card-github-badge:hover {
+  border-color: #58a6ff;
+}
+
 /* ── Section badge ── */
 .card-section-badge {
   font-size: 11px;

@@ -479,6 +479,7 @@ test.describe('engineering page', () => {
     await expect(page.getByText('Assigned Issues')).toBeVisible()
     await expect(page.getByText('Fix login bug')).toBeVisible()
     await expect(page.getByText('Add dark mode')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Add to board' }).first()).toBeVisible()
   })
 })
 

@@ -10,6 +10,20 @@ export const ALL_SECTIONS = [
   { value: 'later', label: 'Stash' },
 ]
 
+// Compute which board section a scheduled date falls into
+function sectionFromScheduledAt(dateStr) {
+  if (!dateStr) return null
+  const d = new Date(dateStr)
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const diffDays = Math.round((dStart - todayStart) / (1000 * 60 * 60 * 24))
+  if (diffDays <= 0) return 'today'
+  if (diffDays <= 7) return 'week'
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) return 'month'
+  return 'later'
+}
+
 export function isoToLocal(iso) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -61,11 +75,17 @@ export default function CardForm({
       <div className="form-row">
         <div className="form-group">
           <label htmlFor={`${idPrefix}-section`}>Section</label>
-          <select id={`${idPrefix}-section`} value={section} onChange={(e) => setSection(e.target.value)}>
+          <select
+            id={`${idPrefix}-section`}
+            value={section}
+            onChange={(e) => setSection(e.target.value)}
+            disabled={!!scheduledAt}
+          >
             {ALL_SECTIONS.map(({ value, label }) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
+          {scheduledAt && <span className="form-hint">Set by scheduled date</span>}
         </div>
         <div className="form-group">
           <label htmlFor={`${idPrefix}-scheduled`}>Scheduled date &amp; time</label>
@@ -73,7 +93,11 @@ export default function CardForm({
             id={`${idPrefix}-scheduled`}
             type="datetime-local"
             value={scheduledAt}
-            onChange={(e) => setScheduledAt(e.target.value)}
+            onChange={(e) => {
+              setScheduledAt(e.target.value)
+              const computed = sectionFromScheduledAt(e.target.value)
+              if (computed) setSection(computed)
+            }}
           />
         </div>
       </div>
