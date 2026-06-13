@@ -74,6 +74,12 @@
   transition: background 0.15s, color 0.15s;
 }
 
+.form-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;

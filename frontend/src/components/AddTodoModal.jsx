@@ -5,12 +5,17 @@ import './AddTodoModal.css'
 
 // Section options for all card types. "none" = reference card (Cards page only).
 const ALL_SECTIONS = [
-  { value: 'none',  label: 'Reference (no section)' },
   { value: 'today', label: 'Today' },
   { value: 'week',  label: 'This Week' },
   { value: 'month', label: 'This Month' },
   { value: 'later', label: 'Later' },
+  { value: 'none',  label: 'Reference (no section)' },
 ]
+
+function formatDate(iso) {
+  if (!iso) return null
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 function isoToLocal(iso) {
   if (!iso) return ''
@@ -163,6 +168,10 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
               })}
             </div>
           </div>
+        )}
+
+        {isEdit && card?.created_at && (
+          <div className="form-hint">Added {formatDate(card.created_at)}</div>
         )}
 
         <div className="modal-footer">

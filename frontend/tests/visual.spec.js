@@ -150,7 +150,7 @@ test.describe('app shell', () => {
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
     // Sidebar nav (desktop) or mobile nav
-    for (const label of ['Today', 'Tasks', 'Habits', 'Cards', 'Engineering']) {
+    for (const label of ['Today', 'Board', 'Habits', 'Engineering']) {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
   })
@@ -195,7 +195,7 @@ test.describe('today page', () => {
 // ---------------------------------------------------------------------------
 test.describe('tasks board', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/tasks')
+    await page.goto('/board')
     await waitForApp(page)
   })
 
@@ -214,52 +214,36 @@ test.describe('tasks board', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Cards page
+// Reference column on /board
 // ---------------------------------------------------------------------------
 test.describe('cards page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/cards')
+    await page.goto('/board')
     await waitForApp(page)
   })
 
-  test('page heading and new-card button', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Cards' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /new card/i })).toBeVisible()
+  test('Reference column is visible', async ({ page }) => {
+    await expect(page.locator('.column-label', { hasText: 'Reference' })).toBeVisible()
   })
 
-  test('card rows are rendered', async ({ page }) => {
+  test('reference cards appear in the Reference column', async ({ page }) => {
     await expect(page.getByText('Shopping list')).toBeVisible()
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
 
-  test('card body is previewed in the list', async ({ page }) => {
-    await expect(page.getByText(/Milk/)).toBeVisible()
-    await expect(page.getByText(/Improve search/)).toBeVisible()
-  })
-
-  test('new card modal opens with title, description, section and Cancel/Add footer', async ({ page }) => {
-    await page.getByRole('button', { name: /new card/i }).click()
-    await expect(page.getByRole('heading', { name: /new card/i })).toBeVisible()
-    await expect(page.locator('#atm-title')).toBeVisible()
-    await expect(page.locator('#atm-desc')).toBeVisible()
-    await expect(page.locator('#atm-section')).toBeVisible()
-    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /add card/i })).toBeVisible()
-    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
-  })
-
-  test('clicking a card row opens editor with Cancel/Save footer', async ({ page }) => {
-    await page.locator('.note-row').first().click()
+  test('clicking a reference card opens editor with Cancel/Save footer', async ({ page }) => {
+    const card = page.locator('.event-card', { hasText: 'Shopping list' })
+    await card.click()
+    // Expanded view — click Edit to open modal
+    const editBtn = card.getByRole('button', { name: /^edit$/i })
+    await expect(editBtn).toBeVisible()
+    await editBtn.click()
     await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
     await expect(page.locator('#atm-title')).toBeVisible()
     await expect(page.locator('#atm-desc')).toBeVisible()
     await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /save changes/i })).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
-  })
-
-  test('card archive section is hidden when empty', async ({ page }) => {
-    await expect(page.locator('.notes-archive')).toHaveCount(0)
   })
 })
 
@@ -594,5 +578,58 @@ test.describe('offline banner', () => {
     await page.evaluate(() => window.dispatchEvent(new Event('offline')))
     await expect(page.locator('.offline-banner')).toBeVisible()
     await expect(page.locator('.app-header')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit modal — scheduled_at persistence
+// ---------------------------------------------------------------------------
+test.describe('edit modal scheduled_at', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('scheduled date is pre-filled when card has scheduled_at', async ({ page }) => {
+    // Card 1 "Daily Engineering Standup" has scheduled_at: '2026-06-03T09:00:00'
+    const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
+    await card.click()
+    const editBtn = card.getByRole('button', { name: /^edit$/i })
+    await expect(editBtn).toBeVisible()
+    await editBtn.click()
+    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
+    // The datetime-local input should show the pre-filled scheduled date
+    await expect(page.locator('#atm-scheduled')).toHaveValue('2026-06-03T09:00')
+  })
+
+  test('scheduled date persists after save (PUT returns updated card)', async ({ page }) => {
+    const updatedCard = {
+      id: 3, title: 'Call dentist', section: 'today', completed: false,
+      scheduled_at: '2026-06-01T10:00:00', description: null, position: 2, overdue_days: 2, tags: [],
+    }
+    // Mock PUT to return card with scheduled_at set
+    await page.route('**/api/cards/3', r => {
+      if (r.request().method() === 'PUT') return r.fulfill({ json: updatedCard })
+      return r.continue()
+    })
+
+    // Open edit modal for "Call dentist" (no scheduled_at initially)
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    const editBtn = card.getByRole('button', { name: /^edit$/i })
+    await editBtn.click()
+    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
+
+    // Set a scheduled date
+    await page.locator('#atm-scheduled').fill('2026-06-01T10:00')
+    await page.getByRole('button', { name: /save changes/i }).click()
+    await expect(page.getByRole('heading', { name: /edit card/i })).toHaveCount(0)
+
+    // Re-open the same card — state should now have scheduled_at from the PUT response
+    await card.click()
+    const editBtn2 = card.getByRole('button', { name: /^edit$/i })
+    await editBtn2.click()
+    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
+    await expect(page.locator('#atm-scheduled')).toHaveValue('2026-06-01T10:00')
   })
 })

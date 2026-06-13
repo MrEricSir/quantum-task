@@ -28,7 +28,6 @@ import { useNotifications } from './hooks/useNotifications'
 import DailyBriefing from './components/DailyBriefing'
 import HabitTracker from './components/HabitTracker'
 import HabitsPage from './components/HabitsPage'
-import CardsPage from './components/CardsPage'
 import TodayPage from './components/TodayPage'
 import Sidebar from './components/Sidebar'
 import MobileNav from './components/MobileNav'
@@ -37,18 +36,20 @@ import LoginPage from './components/LoginPage'
 import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
 import './App.css'
 
-export const SECTIONS = ['today', 'week', 'month', 'later']
+export const SECTIONS = ['today', 'week', 'month', 'later', 'none']
 export const SECTION_LABELS = {
   today: 'Today',
   week: 'This Week',
   month: 'This Month',
   later: 'Later',
+  none: 'Reference',
 }
 const SECTION_COLORS = {
   today: '#3b82f6',
   week: '#8b5cf6',
   month: '#f59e0b',
   later: '#6b7280',
+  none: '#14b8a6',
 }
 
 export default function App() {
@@ -89,20 +90,18 @@ export default function App() {
 
   const navigate = useNavigate()
   const location = useLocation()
-  const isTodayPage    = location.pathname === '/today'
-  const isHabitsPage   = location.pathname === '/habits'   || location.pathname.startsWith('/habits/tag/')
-  const isTasksPage    = location.pathname === '/tasks'    || location.pathname.startsWith('/tasks/tag/')
+  const isTodayPage       = location.pathname === '/today'
+  const isHabitsPage      = location.pathname === '/habits'      || location.pathname.startsWith('/habits/tag/')
+  const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
-  const isCardsPage       = location.pathname === '/cards'       || location.pathname.startsWith('/cards/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
-  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isTasksPage ? 'tasks' : isCalendarPage ? 'calendar' : isCardsPage ? 'cards' : isEngineeringPage ? 'engineering' : 'overview'
+  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : 'overview'
 
   const tagMatch =
     location.pathname.match(/^\/tag\/(\d+)$/)          ||
     location.pathname.match(/^\/habits\/tag\/(\d+)$/)   ||
-    location.pathname.match(/^\/tasks\/tag\/(\d+)$/)    ||
-    location.pathname.match(/^\/calendar\/tag\/(\d+)$/) ||
-    location.pathname.match(/^\/cards\/tag\/(\d+)$/)
+    location.pathname.match(/^\/board\/tag\/(\d+)$/)    ||
+    location.pathname.match(/^\/calendar\/tag\/(\d+)$/)
   const selectedTagId = tagMatch ? parseInt(tagMatch[1]) : null
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 640px)').matches)
 
@@ -172,6 +171,15 @@ export default function App() {
       })
       .catch(() => setAuthed(false))
   }, [])
+
+  // Redirect legacy routes to their new locations
+  useEffect(() => {
+    if (location.pathname === '/tasks' || location.pathname.startsWith('/tasks/tag/')) {
+      navigate(location.pathname.replace('/tasks', '/board'), { replace: true })
+    } else if (location.pathname === '/cards' || location.pathname.startsWith('/cards/tag/')) {
+      navigate(location.pathname.replace('/cards', '/board'), { replace: true })
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Remove the HTML splash screen once auth check resolves
   useEffect(() => {
@@ -246,7 +254,7 @@ export default function App() {
   }, [])
 
   const activeTodos = todos.filter((t) => !t.completed && !t.archived && t.section !== 'none')
-  const completedTodos = todos.filter((t) => t.completed && !t.archived && t.section !== 'none')
+  const completedTodos = todos.filter((t) => t.completed && !t.archived)
 
   const visibleCalendarEvents = selectedTagId === null
     ? calendarEvents
@@ -257,9 +265,18 @@ export default function App() {
     : activeTodos.filter((t) => (t.tags ?? []).some((tag) => tag.id === selectedTagId))
 
   const todosBySection = SECTIONS.reduce((acc, s) => {
-    acc[s] = visibleActiveTodos
-      .filter((t) => t.section === s)
-      .sort((a, b) => a.position - b.position)
+    if (s === 'none') {
+      // Reference cards are excluded from visibleActiveTodos (which feeds briefing/calendar)
+      // so we build this column directly from the full todos list
+      acc[s] = todos
+        .filter((t) => t.section === 'none' && !t.completed && !t.archived &&
+          (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))
+        .sort((a, b) => a.position - b.position)
+    } else {
+      acc[s] = visibleActiveTodos
+        .filter((t) => t.section === s)
+        .sort((a, b) => a.position - b.position)
+    }
     return acc
   }, {})
 
@@ -717,17 +734,62 @@ export default function App() {
             onArchive={handleArchiveHabit}
             onUnarchive={handleUnarchiveHabit}
           />
-        ) : isCardsPage ? (
-          <CardsPage
-            cards={todos.filter((t) => t.section === 'none' && !t.archived && (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))}
-            archivedCards={todos.filter((t) => t.section === 'none' && t.archived && (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))}
-            allTags={tags}
-            onAdd={handleAddCard}
-            onUpdate={handleUpdateCard}
-            onDelete={handleDeleteCard}
-            onArchive={handleArchiveCard}
-            onUnarchive={handleUnarchiveCard}
-          />
+        ) : isBoardPage ? (
+          <>
+            <div className="tasks-page-header">
+              <button className="notes-new-btn" onClick={() => { setEditingTodo(null); setShowModal(true) }}>
+                <PlusIcon /> New task
+              </button>
+            </div>
+
+            <div className="mobile-tabs">
+              {SECTIONS.map((s) => (
+                <button
+                  key={s}
+                  className={`mobile-tab ${activeSection === s ? 'mobile-tab--active' : ''}`}
+                  style={activeSection === s ? { borderBottomColor: SECTION_COLORS[s], color: SECTION_COLORS[s] } : {}}
+                  onClick={() => setActiveSection(s)}
+                >
+                  {SECTION_LABELS[s]}
+                  <span className="mobile-tab-count">{todosBySection[s].length}</span>
+                </button>
+              ))}
+            </div>
+
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCorners}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDragEnd={handleDragEnd}
+            >
+              <div className="board">
+                {SECTIONS.map((section) => (
+                  <Column
+                    key={section}
+                    section={section}
+                    label={SECTION_LABELS[section]}
+                    todos={todosBySection[section]}
+                    isActive={section === activeSection}
+                    isMobile={isMobile}
+                    onEdit={openEdit}
+                    onDelete={handleDeleteTodo}
+                    onToggle={handleToggle}
+                    onMove={handleMoveSection}
+                  />
+                ))}
+              </div>
+              <DragOverlay dropAnimation={null}>
+                {activeTodo ? <TodoCard todo={activeTodo} isOverlay /> : null}
+              </DragOverlay>
+            </DndContext>
+
+            <Archive
+              todos={completedTodos}
+              onDelete={handleDeleteTodo}
+              onToggle={handleToggle}
+            />
+          </>
         ) : isCalendarPage ? (
           <CalendarPage
             events={visibleCalendarEvents}
@@ -748,7 +810,6 @@ export default function App() {
           />
         ) : (
           <>
-          {!isTasksPage && (
             <DailyBriefing
               todos={visibleActiveTodos}
               calendarEvents={visibleCalendarEvents}
@@ -758,69 +819,53 @@ export default function App() {
               onWeather={setWeather}
               invalidationKey={briefingKey}
             />
-          )}
-          {!isTasksPage && (
             <HabitTracker
               habits={habits}
               onToggle={handleToggleHabit}
             />
-          )}
 
-          {isTasksPage && (
-            <div className="tasks-page-header">
-              <button className="notes-new-btn" onClick={() => { setEditingTodo(null); setShowModal(true) }}>
-                <PlusIcon /> New task
-              </button>
-            </div>
-          )}
-
-          <div className="mobile-tabs">
-            {SECTIONS.map((s) => (
-              <button
-                key={s}
-                className={`mobile-tab ${activeSection === s ? 'mobile-tab--active' : ''}`}
-                style={activeSection === s ? { borderBottomColor: SECTION_COLORS[s], color: SECTION_COLORS[s] } : {}}
-                onClick={() => setActiveSection(s)}
-              >
-                {SECTION_LABELS[s]}
-                <span className="mobile-tab-count">{todosBySection[s].length}</span>
-              </button>
-            ))}
-          </div>
-
-
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCorners}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={handleDragEnd}
-          >
-            <div className="board">
-              {SECTIONS.map((section) => (
-                <Column
-                  key={section}
-                  section={section}
-                  label={SECTION_LABELS[section]}
-                  todos={todosBySection[section]}
-                  isActive={section === activeSection}
-                  isMobile={isMobile}
-                  onEdit={openEdit}
-                  onDelete={handleDeleteTodo}
-                  onToggle={handleToggle}
-                  onMove={handleMoveSection}
-                />
+            <div className="mobile-tabs">
+              {SECTIONS.map((s) => (
+                <button
+                  key={s}
+                  className={`mobile-tab ${activeSection === s ? 'mobile-tab--active' : ''}`}
+                  style={activeSection === s ? { borderBottomColor: SECTION_COLORS[s], color: SECTION_COLORS[s] } : {}}
+                  onClick={() => setActiveSection(s)}
+                >
+                  {SECTION_LABELS[s]}
+                  <span className="mobile-tab-count">{todosBySection[s].length}</span>
+                </button>
               ))}
             </div>
 
-            <DragOverlay dropAnimation={null}>
-              {activeTodo ? (
-                <TodoCard todo={activeTodo} isOverlay />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCorners}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDragEnd={handleDragEnd}
+            >
+              <div className="board">
+                {SECTIONS.map((section) => (
+                  <Column
+                    key={section}
+                    section={section}
+                    label={SECTION_LABELS[section]}
+                    todos={todosBySection[section]}
+                    isActive={section === activeSection}
+                    isMobile={isMobile}
+                    onEdit={openEdit}
+                    onDelete={handleDeleteTodo}
+                    onToggle={handleToggle}
+                    onMove={handleMoveSection}
+                  />
+                ))}
+              </div>
+              <DragOverlay dropAnimation={null}>
+                {activeTodo ? <TodoCard todo={activeTodo} isOverlay /> : null}
+              </DragOverlay>
+            </DndContext>
 
-          {!isTasksPage && (
             <CalendarStrip
               events={visibleCalendarEvents}
               onRefresh={handleRefreshCalendar}
@@ -828,13 +873,12 @@ export default function App() {
               refreshing={calendarRefreshing}
               activeSection={activeSection}
             />
-          )}
 
-          <Archive
-            todos={completedTodos}
-            onDelete={handleDeleteTodo}
-            onToggle={handleToggle}
-          />
+            <Archive
+              todos={completedTodos}
+              onDelete={handleDeleteTodo}
+              onToggle={handleToggle}
+            />
           </>
         )}
       </main>

@@ -74,7 +74,7 @@ export default function CardsPage({ cards, archivedCards = [], allTags, onAdd, o
   return (
     <div className="notes-page">
       <div className="notes-header">
-        <h2 className="notes-title">Cards</h2>
+        <h2 className="notes-title">Reference</h2>
         <button className="notes-new-btn" onClick={openNew} type="button">
           <PlusIcon /> New card
         </button>

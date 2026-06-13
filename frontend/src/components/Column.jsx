@@ -8,6 +8,7 @@ const SECTION_COLORS = {
   week: '#8b5cf6',
   month: '#f59e0b',
   later: '#6b7280',
+  none: '#14b8a6',
 }
 
 export default function Column({ section, label, todos, isActive, isMobile, onEdit, onDelete, onToggle, onMove }) {

@@ -7,9 +7,9 @@ import ConfirmDialog from './ConfirmDialog'
 import './EventCard.css'
 import './TodoCard.css'
 
-const SECTIONS = ['today', 'week', 'month', 'later']
-const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later' }
-const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
+const SECTIONS = ['today', 'week', 'month', 'later', 'none']
+const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later', none: 'Reference' }
+const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280', none: '#14b8a6' }
 
 function formatScheduled(iso) {
   if (!iso) return null
@@ -32,7 +32,8 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: todo.id, disabled: !!isOverlay || !!isMobile })
 
-  const overdueDays = isOverlay ? 0 : (todo.overdue_days ?? 0)
+  // Only flag as overdue if the card has an explicit scheduled date
+  const overdueDays = isOverlay ? 0 : (todo.scheduled_at ? (todo.overdue_days ?? 0) : 0)
   const accentColor = overdueDays > 0 ? '#f59e0b' : (SECTION_COLORS[todo.section] ?? '#6b7280')
   const style = isOverlay
     ? { boxShadow: 'var(--shadow-lg)', opacity: 1, borderLeftColor: accentColor }
@@ -96,24 +97,8 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
       {expanded && !isOverlay && (
         <div className="event-details">
           {todo.description && (
-            <div className="event-detail-row">
-              <span className="event-detail-label">Description</span>
-              <span className="event-detail-value">{todo.description}</span>
-            </div>
+            <div className="event-detail-value">{todo.description}</div>
           )}
-          <div className="event-detail-row">
-            <span className="event-detail-label">Section</span>
-            <span
-              className="card-section-badge"
-              style={{ background: SECTION_COLORS[todo.section] }}
-            >
-              {SECTION_LABELS[todo.section]}
-            </span>
-          </div>
-          <div className="event-detail-row">
-            <span className="event-detail-label">Added</span>
-            <span className="event-detail-value">{formatDate(todo.created_at)}</span>
-          </div>
           <div className="card-move-row">
             <span className="event-detail-label">Move to</span>
             <div className="card-move-buttons">
