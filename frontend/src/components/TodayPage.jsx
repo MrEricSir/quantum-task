@@ -136,6 +136,48 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           invalidationKey={briefingKey}
         />
 
+        {habits.length > 0 && (
+          <section className="today-section">
+            <SectionHeader
+              title="Habits"
+              status={habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`}
+              open={habitsOpen}
+              onToggle={() => setHabitsOpen((v) => !v)}
+              toggleable={habitsAllDone}
+            />
+            <CollapseBody open={habitsOpen}>
+              <div className="today-habits">
+                {habits.map((habit) => (
+                  <div
+                    key={habit.id}
+                    className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="today-habit-check"
+                      onClick={() => onToggleHabit(habit)}
+                      aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
+                    >
+                      {habit.completed_today && <CheckIcon width={11} height={11} />}
+                    </button>
+                    <span className="today-habit-name">{habit.name}</span>
+                    {habit.tags.length > 0 && (
+                      <div className="today-habit-dots">
+                        {habit.tags.map((tag) => (
+                          <span key={tag.id} className="today-habit-dot" style={{ background: tag.color }} title={tag.name} />
+                        ))}
+                      </div>
+                    )}
+                    {habit.streak > 0 && (
+                      <span className="today-habit-streak">{habit.streak}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapseBody>
+          </section>
+        )}
+
         {hasSchedule && (
           <section className="today-section">
             <SectionHeader
@@ -211,48 +253,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
             </div>
           </CollapseBody>
         </section>
-
-        {habits.length > 0 && (
-          <section className="today-section">
-            <SectionHeader
-              title="Habits"
-              status={habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`}
-              open={habitsOpen}
-              onToggle={() => setHabitsOpen((v) => !v)}
-              toggleable={habitsAllDone}
-            />
-            <CollapseBody open={habitsOpen}>
-              <div className="today-habits">
-                {habits.map((habit) => (
-                  <div
-                    key={habit.id}
-                    className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="today-habit-check"
-                      onClick={() => onToggleHabit(habit)}
-                      aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
-                    >
-                      {habit.completed_today && <CheckIcon width={11} height={11} />}
-                    </button>
-                    <span className="today-habit-name">{habit.name}</span>
-                    {habit.tags.length > 0 && (
-                      <div className="today-habit-dots">
-                        {habit.tags.map((tag) => (
-                          <span key={tag.id} className="today-habit-dot" style={{ background: tag.color }} title={tag.name} />
-                        ))}
-                      </div>
-                    )}
-                    {habit.streak > 0 && (
-                      <span className="today-habit-streak">{habit.streak}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CollapseBody>
-          </section>
-        )}
       </div>
     </DndContext>
   )

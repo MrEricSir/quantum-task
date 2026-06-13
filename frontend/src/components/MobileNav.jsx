@@ -1,9 +1,8 @@
-import { SunIcon, DashboardIcon, CalendarIcon, LoopIcon, TableIcon, CommitIcon } from '@radix-ui/react-icons'
+import { SunIcon, CalendarIcon, LoopIcon, TableIcon, CommitIcon } from '@radix-ui/react-icons'
 import './MobileNav.css'
 
 const NAV_ITEMS = [
   { page: 'today',       label: 'Today',       Icon: SunIcon       },
-  { page: 'overview',    label: 'Overview',    Icon: DashboardIcon },
   { page: 'board',       label: 'Board',       Icon: TableIcon     },
   { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon  },
   { page: 'habits',      label: 'Habits',      Icon: LoopIcon      },

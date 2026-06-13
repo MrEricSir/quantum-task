@@ -7,9 +7,9 @@ import ConfirmDialog from './ConfirmDialog'
 import './EventCard.css'
 import './TodoCard.css'
 
-const SECTIONS = ['today', 'week', 'month', 'later', 'none']
-const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later', none: 'Reference' }
-const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280', none: '#14b8a6' }
+const SECTIONS = ['today', 'week', 'month', 'later']
+const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Someday' }
+const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
 
 function formatScheduled(iso) {
   if (!iso) return null
@@ -115,7 +115,6 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
             </div>
           </div>
           <div className="card-detail-actions">
-            <button className="card-action-delete" onClick={handleDelete}>Delete</button>
             <button className="card-action-edit" onClick={handleEdit}>Edit</button>
           </div>
         </div>

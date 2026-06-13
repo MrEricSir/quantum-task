@@ -25,8 +25,6 @@ import CalendarPage from './components/CalendarPage'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon, PlusIcon } from '@radix-ui/react-icons'
 import { useNotifications } from './hooks/useNotifications'
-import DailyBriefing from './components/DailyBriefing'
-import HabitTracker from './components/HabitTracker'
 import HabitsPage from './components/HabitsPage'
 import TodayPage from './components/TodayPage'
 import Sidebar from './components/Sidebar'
@@ -36,20 +34,18 @@ import LoginPage from './components/LoginPage'
 import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
 import './App.css'
 
-export const SECTIONS = ['today', 'week', 'month', 'later', 'none']
+export const SECTIONS = ['today', 'week', 'month', 'later']
 export const SECTION_LABELS = {
   today: 'Today',
   week: 'This Week',
   month: 'This Month',
-  later: 'Later',
-  none: 'Reference',
+  later: 'Someday',
 }
 const SECTION_COLORS = {
   today: '#3b82f6',
   week: '#8b5cf6',
   month: '#f59e0b',
   later: '#6b7280',
-  none: '#14b8a6',
 }
 
 export default function App() {
@@ -90,15 +86,15 @@ export default function App() {
 
   const navigate = useNavigate()
   const location = useLocation()
-  const isTodayPage       = location.pathname === '/today'
+  const isTodayPage       = location.pathname === '/today'       || location.pathname.startsWith('/today/tag/')
   const isHabitsPage      = location.pathname === '/habits'      || location.pathname.startsWith('/habits/tag/')
   const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
-  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : 'overview'
+  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : 'today'
 
   const tagMatch =
-    location.pathname.match(/^\/tag\/(\d+)$/)          ||
+    location.pathname.match(/^\/today\/tag\/(\d+)$/)    ||
     location.pathname.match(/^\/habits\/tag\/(\d+)$/)   ||
     location.pathname.match(/^\/board\/tag\/(\d+)$/)    ||
     location.pathname.match(/^\/calendar\/tag\/(\d+)$/)
@@ -178,6 +174,8 @@ export default function App() {
       navigate(location.pathname.replace('/tasks', '/board'), { replace: true })
     } else if (location.pathname === '/cards' || location.pathname.startsWith('/cards/tag/')) {
       navigate(location.pathname.replace('/cards', '/board'), { replace: true })
+    } else if (location.pathname === '/overview' || location.pathname.startsWith('/tag/')) {
+      navigate('/board', { replace: true })
     }
   }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -265,11 +263,10 @@ export default function App() {
     : activeTodos.filter((t) => (t.tags ?? []).some((tag) => tag.id === selectedTagId))
 
   const todosBySection = SECTIONS.reduce((acc, s) => {
-    if (s === 'none') {
-      // Reference cards are excluded from visibleActiveTodos (which feeds briefing/calendar)
-      // so we build this column directly from the full todos list
+    if (s === 'later') {
+      // "Someday" column shows both 'later' and legacy 'none' (reference) cards
       acc[s] = todos
-        .filter((t) => t.section === 'none' && !t.completed && !t.archived &&
+        .filter((t) => (t.section === 'later' || t.section === 'none') && !t.completed && !t.archived &&
           (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))
         .sort((a, b) => a.position - b.position)
     } else {
@@ -293,12 +290,17 @@ export default function App() {
     const dragged = current.find((t) => t.id === active.id)
     if (!dragged) return
 
+    // Don't do optimistic section changes for archive cards (completed)
+    if (dragged.completed) return
+
     const activeSection = dragged.section
+    // Treat 'none' and 'later' as the same section for drag purposes
+    const normalizeSection = (s) => (s === 'none' ? 'later' : s)
     const overSection = SECTIONS.includes(String(over.id))
       ? String(over.id)
-      : current.find((t) => t.id === over.id)?.section
+      : normalizeSection(current.find((t) => t.id === over.id)?.section)
 
-    if (!overSection || activeSection === overSection) return
+    if (!overSection || normalizeSection(activeSection) === overSection) return
 
     setTodos((prev) =>
       prev.map((t) => (t.id === active.id ? { ...t, section: overSection } : t))
@@ -314,17 +316,38 @@ export default function App() {
     const dragged = current.find((t) => t.id === active.id)
     if (!dragged) return
 
+    const overCard = current.find((t) => t.id === over.id)
+
+    // Archive drop: board card → archive (mark complete)
+    if (!dragged.completed && (over.id === 'archive' || overCard?.completed === true)) {
+      handleUpdateTodo(dragged.id, { completed: true })
+      invalidateBriefing()
+      return
+    }
+
+    // Archive drag-out: archive card → board section (mark incomplete)
+    if (dragged.completed) {
+      const overSection = SECTIONS.includes(String(over.id))
+        ? String(over.id)
+        : (overCard && !overCard.completed ? overCard.section : null)
+      if (overSection) {
+        handleUpdateTodo(dragged.id, { completed: false, section: overSection })
+        invalidateBriefing()
+      }
+      return
+    }
+
+    // Normal board-to-board reordering
     const section = dragged.section
     const sectionTodos = current
-      .filter((t) => t.section === section)
+      .filter((t) => (section === 'later' ? (t.section === 'later' || t.section === 'none') : t.section === section))
       .sort((a, b) => a.position - b.position)
 
     let reordered = sectionTodos
 
     // Reorder within section if dropped on a sibling card
     if (!SECTIONS.includes(String(over.id))) {
-      const overTodo = current.find((t) => t.id === over.id)
-      if (overTodo?.section === section) {
+      if (overCard && (overCard.section === section || (section === 'later' && overCard.section === 'none'))) {
         const fromIdx = sectionTodos.findIndex((t) => t.id === active.id)
         const toIdx = sectionTodos.findIndex((t) => t.id === over.id)
         if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
@@ -335,7 +358,9 @@ export default function App() {
 
     const updatedSection = reordered.map((t, i) => ({ ...t, position: i }))
     const newTodos = [
-      ...current.filter((t) => t.section !== section),
+      ...current.filter((t) => section === 'later'
+        ? (t.section !== 'later' && t.section !== 'none')
+        : t.section !== section),
       ...updatedSection,
     ]
 
@@ -343,7 +368,7 @@ export default function App() {
     reorderTodos(
       updatedSection.map(({ id, section, position }) => ({ id, section, position }))
     )
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddTodo = async (data) => {
     const created = await createTodo(data)
@@ -548,7 +573,7 @@ export default function App() {
   }
 
   const handleAddCard = async (data) => {
-    const created = await handleAddTodo({ ...data, section: data.section ?? 'none' })
+    const created = await handleAddTodo({ ...data, section: data.section ?? 'later' })
     return created
   }
 
@@ -569,10 +594,9 @@ export default function App() {
   }
 
   const handlePageNavigate = (page, tagId) => {
-    if (page === 'today')       return navigate('/today')
+    if (page === 'today')       return navigate(tagId ? `/today/tag/${tagId}` : '/today')
     if (page === 'engineering') return navigate('/engineering')
     if (page === 'habits')      return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
-    if (page === 'overview')    return navigate(tagId ? `/tag/${tagId}` : '/overview')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 
@@ -698,21 +722,19 @@ export default function App() {
         />
 
       <main className="board-wrapper">
-        {!isTodayPage && (
-          <TagFilterBar
-            tags={tags}
-            selectedTagId={selectedTagId}
-            page={currentPage}
-            onNavigate={handlePageNavigate}
-          />
-        )}
+        <TagFilterBar
+          tags={tags}
+          selectedTagId={selectedTagId}
+          page={currentPage}
+          onNavigate={handlePageNavigate}
+        />
         {loading ? (
           <div className="loading">Loading...</div>
         ) : isTodayPage ? (
           <TodayPage
-            todos={todos}
-            calendarEvents={calendarEvents}
-            habits={habits}
+            todos={selectedTagId ? todos.filter((t) => (t.tags ?? []).some((tg) => tg.id === selectedTagId)) : todos}
+            calendarEvents={visibleCalendarEvents}
+            habits={selectedTagId ? habits.filter((h) => (h.tags ?? []).some((tg) => tg.id === selectedTagId)) : habits}
             onToggle={handleToggle}
             onToggleHabit={handleToggleHabit}
             onEdit={openEdit}
@@ -782,13 +804,20 @@ export default function App() {
               <DragOverlay dropAnimation={null}>
                 {activeTodo ? <TodoCard todo={activeTodo} isOverlay /> : null}
               </DragOverlay>
+              <CalendarStrip
+                events={visibleCalendarEvents}
+                onRefresh={handleRefreshCalendar}
+                lastRefreshed={lastRefreshed}
+                refreshing={calendarRefreshing}
+                activeSection={activeSection}
+              />
+              <Archive
+                todos={completedTodos}
+                onEdit={openEdit}
+                onDelete={handleDeleteTodo}
+                onToggle={handleToggle}
+              />
             </DndContext>
-
-            <Archive
-              todos={completedTodos}
-              onDelete={handleDeleteTodo}
-              onToggle={handleToggle}
-            />
           </>
         ) : isCalendarPage ? (
           <CalendarPage
@@ -808,79 +837,7 @@ export default function App() {
             onSync={refreshEngineeringItems}
             onOpenSettings={() => setShowGithubSettings(true)}
           />
-        ) : (
-          <>
-            <DailyBriefing
-              todos={visibleActiveTodos}
-              calendarEvents={visibleCalendarEvents}
-              habits={habits}
-              tagId={selectedTagId}
-              ready={!loading}
-              onWeather={setWeather}
-              invalidationKey={briefingKey}
-            />
-            <HabitTracker
-              habits={habits}
-              onToggle={handleToggleHabit}
-            />
-
-            <div className="mobile-tabs">
-              {SECTIONS.map((s) => (
-                <button
-                  key={s}
-                  className={`mobile-tab ${activeSection === s ? 'mobile-tab--active' : ''}`}
-                  style={activeSection === s ? { borderBottomColor: SECTION_COLORS[s], color: SECTION_COLORS[s] } : {}}
-                  onClick={() => setActiveSection(s)}
-                >
-                  {SECTION_LABELS[s]}
-                  <span className="mobile-tab-count">{todosBySection[s].length}</span>
-                </button>
-              ))}
-            </div>
-
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCorners}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDragEnd={handleDragEnd}
-            >
-              <div className="board">
-                {SECTIONS.map((section) => (
-                  <Column
-                    key={section}
-                    section={section}
-                    label={SECTION_LABELS[section]}
-                    todos={todosBySection[section]}
-                    isActive={section === activeSection}
-                    isMobile={isMobile}
-                    onEdit={openEdit}
-                    onDelete={handleDeleteTodo}
-                    onToggle={handleToggle}
-                    onMove={handleMoveSection}
-                  />
-                ))}
-              </div>
-              <DragOverlay dropAnimation={null}>
-                {activeTodo ? <TodoCard todo={activeTodo} isOverlay /> : null}
-              </DragOverlay>
-            </DndContext>
-
-            <CalendarStrip
-              events={visibleCalendarEvents}
-              onRefresh={handleRefreshCalendar}
-              lastRefreshed={lastRefreshed}
-              refreshing={calendarRefreshing}
-              activeSection={activeSection}
-            />
-
-            <Archive
-              todos={completedTodos}
-              onDelete={handleDeleteTodo}
-              onToggle={handleToggle}
-            />
-          </>
-        )}
+        ) : null}
       </main>
       </div>{/* app-body */}
 

@@ -150,7 +150,7 @@ test.describe('app shell', () => {
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
     // Sidebar nav (desktop) or mobile nav
-    for (const label of ['Today', 'Board', 'Habits', 'Engineering']) {
+    for (const label of ['Today', 'Board', 'Calendar', 'Habits', 'Engineering']) {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
   })
@@ -174,19 +174,19 @@ test.describe('today page', () => {
     await expect(page.getByText('A productive day ahead.')).toBeVisible()
   })
 
+  test('habits section appears before schedule', async ({ page }) => {
+    await expect(page.getByText('Morning meditation')).toBeVisible()
+    await expect(page.getByText('Evening walk')).toBeVisible()
+  })
+
   test('schedule section with mocked tasks and event', async ({ page }) => {
     await expect(page.getByText('Daily Engineering Standup')).toBeVisible()
     await expect(page.getByText('Product Review')).toBeVisible()
   })
 
-  test('tasks section', async ({ page }) => {
+  test('tasks section with unscheduled today items', async ({ page }) => {
     await expect(page.getByText('Review pull requests')).toBeVisible()
     await expect(page.getByText('Call dentist')).toBeVisible()
-  })
-
-  test('habits section', async ({ page }) => {
-    await expect(page.getByText('Morning meditation')).toBeVisible()
-    await expect(page.getByText('Evening walk')).toBeVisible()
   })
 })
 
@@ -200,7 +200,7 @@ test.describe('tasks board', () => {
   })
 
   test('board columns are visible', async ({ page }) => {
-    for (const col of ['Today', 'This Week', 'This Month', 'Later']) {
+    for (const col of ['Today', 'This Week', 'This Month', 'Someday']) {
       await expect(page.locator('.column-label', { hasText: col })).toBeVisible()
     }
   })
@@ -214,7 +214,7 @@ test.describe('tasks board', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Reference column on /board
+// Someday column on /board
 // ---------------------------------------------------------------------------
 test.describe('cards page', () => {
   test.beforeEach(async ({ page }) => {
@@ -222,16 +222,16 @@ test.describe('cards page', () => {
     await waitForApp(page)
   })
 
-  test('Reference column is visible', async ({ page }) => {
-    await expect(page.locator('.column-label', { hasText: 'Reference' })).toBeVisible()
+  test('Someday column is visible', async ({ page }) => {
+    await expect(page.locator('.column-label', { hasText: 'Someday' })).toBeVisible()
   })
 
-  test('reference cards appear in the Reference column', async ({ page }) => {
+  test('cards with section=none appear in the Someday column', async ({ page }) => {
     await expect(page.getByText('Shopping list')).toBeVisible()
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
 
-  test('clicking a reference card opens editor with Cancel/Save footer', async ({ page }) => {
+  test('clicking a card opens editor with Cancel/Save footer', async ({ page }) => {
     const card = page.locator('.event-card', { hasText: 'Shopping list' })
     await card.click()
     // Expanded view — click Edit to open modal
@@ -515,7 +515,7 @@ test.describe('recurring calendar events', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.route('**/api/calendar-events', r => r.fulfill({ json: RECURRING_EVENTS }))
-    await page.goto('/overview')
+    await page.goto('/board')
     await waitForApp(page)
   })
 

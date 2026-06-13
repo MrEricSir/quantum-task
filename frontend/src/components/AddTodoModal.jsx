@@ -3,13 +3,11 @@ import * as Dialog from '@radix-ui/react-dialog'
 import Modal from './Modal'
 import './AddTodoModal.css'
 
-// Section options for all card types. "none" = reference card (Cards page only).
 const ALL_SECTIONS = [
   { value: 'today', label: 'Today' },
   { value: 'week',  label: 'This Week' },
   { value: 'month', label: 'This Month' },
-  { value: 'later', label: 'Later' },
-  { value: 'none',  label: 'Reference (no section)' },
+  { value: 'later', label: 'Someday' },
 ]
 
 function formatDate(iso) {
@@ -32,7 +30,9 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
 
   const [title, setTitle] = useState(card?.title ?? '')
   const [description, setDescription] = useState(card?.description ?? '')
-  const [section, setSection] = useState(card?.section ?? defaultSection)
+  const [section, setSection] = useState(
+    card?.section === 'none' ? 'later' : (card?.section ?? defaultSection)
+  )
   const [scheduledAt, setScheduledAt] = useState(
     card?.scheduled_at ? isoToLocal(card.scheduled_at) : ''
   )
@@ -43,8 +43,6 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const isReference = section === 'none'
-
   const toggleTag = (id) => {
     setSelectedTagIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -53,20 +51,16 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    // Title is optional for reference cards — derive from first line of description if blank
-    const resolvedTitle = title.trim()
-      || description.split('\n')[0].trim().slice(0, 120)
-      || ''
-    if (!resolvedTitle) { setError('Title or description is required.'); return }
+    const resolvedTitle = title.trim() || ''
+    if (!resolvedTitle) { setError('Title is required.'); return }
     setSaving(true)
     try {
       await onSave({
         title: resolvedTitle,
         description: description.trim() || null,
         section,
-        // Scheduled date and recurrence only apply to board cards
-        scheduled_at: isReference ? null : (scheduledAt || null),
-        recurrence_rule: isReference ? null : (recurrenceRule || null),
+        scheduled_at: scheduledAt || null,
+        recurrence_rule: recurrenceRule || null,
         tag_ids: selectedTagIds,
       })
     } catch {
@@ -87,8 +81,8 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
             type="text"
             value={title}
             onChange={(e) => { setTitle(e.target.value); setError('') }}
-            placeholder={isReference ? 'Optional' : 'What needs to be done?'}
-            autoFocus={!isReference}
+            placeholder="What needs to be done?"
+            autoFocus
           />
           {error && <span className="form-error">{error}</span>}
         </div>
@@ -99,9 +93,8 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
             id="atm-desc"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder={isReference ? 'Card content…' : 'Optional details…'}
-            rows={isReference ? 8 : 3}
-            autoFocus={isReference}
+            placeholder="Optional details…"
+            rows={3}
           />
         </div>
 
@@ -115,35 +108,31 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
             </select>
           </div>
 
-          {!isReference && (
-            <div className="form-group">
-              <label htmlFor="atm-scheduled">Scheduled date &amp; time</label>
-              <input
-                id="atm-scheduled"
-                type="datetime-local"
-                value={scheduledAt}
-                onChange={(e) => setScheduledAt(e.target.value)}
-              />
-            </div>
-          )}
+          <div className="form-group">
+            <label htmlFor="atm-scheduled">Scheduled date &amp; time</label>
+            <input
+              id="atm-scheduled"
+              type="datetime-local"
+              value={scheduledAt}
+              onChange={(e) => setScheduledAt(e.target.value)}
+            />
+          </div>
         </div>
 
-        {!isReference && (
-          <div className="form-group">
-            <label htmlFor="atm-recurrence">Repeats</label>
-            <select
-              id="atm-recurrence"
-              value={recurrenceRule}
-              onChange={(e) => setRecurrenceRule(e.target.value)}
-            >
-              <option value="">Does not repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-            </select>
-          </div>
-        )}
+        <div className="form-group">
+          <label htmlFor="atm-recurrence">Repeats</label>
+          <select
+            id="atm-recurrence"
+            value={recurrenceRule}
+            onChange={(e) => setRecurrenceRule(e.target.value)}
+          >
+            <option value="">Does not repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
 
         {allTags.length > 0 && (
           <div className="form-group">

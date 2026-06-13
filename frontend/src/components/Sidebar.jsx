@@ -1,9 +1,8 @@
-import { DashboardIcon, CalendarIcon, LoopIcon, SunIcon, TableIcon, CommitIcon } from '@radix-ui/react-icons'
+import { CalendarIcon, LoopIcon, SunIcon, TableIcon, CommitIcon } from '@radix-ui/react-icons'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
   { page: 'today',       label: 'Today',       Icon: SunIcon       },
-  { page: 'overview',    label: 'Overview',    Icon: DashboardIcon },
   { page: 'board',       label: 'Board',       Icon: TableIcon     },
   { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon  },
   { page: 'habits',      label: 'Habits',      Icon: LoopIcon      },
@@ -11,7 +10,7 @@ const NAV_ITEMS = [
 ]
 
 export default function Sidebar({ tags, selectedTagId, page, onNavigate }) {
-  const showTags = tags.length > 0 && page !== 'today'
+  const showTags = tags.length > 0
 
   return (
     <aside className="sidebar">
