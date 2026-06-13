@@ -8,7 +8,7 @@ import './EventCard.css'
 import './TodoCard.css'
 
 const SECTIONS = ['today', 'week', 'month', 'later']
-const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Someday' }
+const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Stash' }
 const SECTION_COLORS = { today: 'var(--color-today)', week: 'var(--color-week)', month: 'var(--color-month)', later: 'var(--color-later)' }
 
 function formatScheduled(iso) {

@@ -39,7 +39,7 @@ export const SECTION_LABELS = {
   today: 'Today',
   week: 'This Week',
   month: 'This Month',
-  later: 'Someday',
+  later: 'Stash',
 }
 const SECTION_COLORS = {
   today: 'var(--color-today)',
@@ -264,7 +264,7 @@ export default function App() {
 
   const todosBySection = SECTIONS.reduce((acc, s) => {
     if (s === 'later') {
-      // "Someday" column shows both 'later' and legacy 'none' (reference) cards
+      // "Stash" column shows both 'later' and legacy 'none' (reference) cards
       acc[s] = todos
         .filter((t) => (t.section === 'later' || t.section === 'none') && !t.completed && !t.archived &&
           (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))

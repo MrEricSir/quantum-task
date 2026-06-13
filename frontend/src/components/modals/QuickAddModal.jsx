@@ -2,27 +2,8 @@ import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { parseBulkTodos } from '../../api'
 import Modal from './Modal'
+import CardForm, { isoToLocal } from './CardForm'
 import './QuickAddModal.css'
-
-function isoToLocal(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const pad = (n) => String(n).padStart(2, '0')
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  )
-}
-
-// All valid sections: board columns + "none" (reference card, shown on Cards page only)
-const ALL_SECTIONS = ['none', 'today', 'week', 'month', 'later']
-const ALL_SECTION_LABELS = {
-  none: 'Reference (no section)',
-  today: 'Today',
-  week: 'This Week',
-  month: 'This Month',
-  later: 'Later',
-}
 
 const TYPE_LABELS = { task: 'Task', habit: 'Habit' }
 
@@ -39,6 +20,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const [description, setDescription] = useState('')
   const [section, setSection] = useState('later')
   const [scheduledAt, setScheduledAt] = useState('')
+  const [recurrenceRule, setRecurrenceRule] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState([])
   const [clarificationQuestion, setClarificationQuestion] = useState('')
   const [saving, setSaving] = useState(false)
@@ -64,8 +46,10 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         setDetectedType(result.type ?? 'task')
         setTitle(result.title ?? '')
         setDescription(result.description ?? '')
-        setSection(result.section ?? 'later')
+        // Map 'none' → 'later' (Stash) to align with edit modal behaviour
+        setSection(result.section === 'none' ? 'later' : (result.section ?? 'later'))
         setScheduledAt(result.scheduled_at ? isoToLocal(result.scheduled_at) : '')
+        setRecurrenceRule(result.recurrence_rule ?? '')
         setSelectedTagIds(tagIds)
         setClarificationQuestion(result.clarification_question ?? '')
         setStep('confirm')
@@ -84,10 +68,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     title: title.trim(),
     description: description.trim() || null,
     section,
-    // scheduled_at only applies to board cards, not reference cards
-    scheduled_at: section !== 'none' ? (scheduledAt || null) : null,
+    scheduled_at: scheduledAt || null,
+    recurrence_rule: recurrenceRule || null,
     tag_ids: selectedTagIds,
-    // raw_input preserved verbatim for debugging LLM parse results
     raw_input: text,
   })
 
@@ -113,8 +96,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     setDetectedType(item.type ?? 'task')
     setTitle(item.title ?? '')
     setDescription(item.description ?? '')
-    setSection(item.section ?? 'later')
+    setSection(item.section === 'none' ? 'later' : (item.section ?? 'later'))
     setScheduledAt(item.scheduled_at ? isoToLocal(item.scheduled_at) : '')
+    setRecurrenceRule(item.recurrence_rule ?? '')
     setSelectedTagIds(item._tag_ids ?? (item.suggested_tags ?? [])
       .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
       .filter(Boolean))
@@ -130,6 +114,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
       description,
       section,
       scheduled_at: scheduledAt || null,
+      recurrence_rule: recurrenceRule || null,
       _tag_ids: selectedTagIds,
     } : it))
     setStep('bulk-confirm')
@@ -149,8 +134,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           await onSaveTask({
             title: item.title,
             description: item.description || null,
-            section: item.section ?? 'later',
-            scheduled_at: item.section !== 'none' ? (item.scheduled_at || null) : null,
+            section: item.section === 'none' ? 'later' : (item.section ?? 'later'),
+            scheduled_at: item.scheduled_at || null,
+            recurrence_rule: item.recurrence_rule || null,
             tag_ids: tagIds,
             raw_input: text,
           })
@@ -165,51 +151,24 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
 
   const confirmDisabled = saving || !title.trim()
 
-  // Shared fields rendered in both the confirm and bulk-edit screens
   const renderCardFields = (idPrefix) => (
-    <>
-      <div className="form-group">
-        <label htmlFor={`${idPrefix}-title`}>Title</label>
-        <input
-          id={`${idPrefix}-title`}
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          autoFocus={detectedType === 'task'}
-        />
-      </div>
-      <div className="form-group">
-        <label htmlFor={`${idPrefix}-desc`}>Description</label>
-        <textarea
-          id={`${idPrefix}-desc`}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          placeholder="Optional"
-        />
-      </div>
-      <div className="form-row">
-        <div className="form-group">
-          <label htmlFor={`${idPrefix}-section`}>Section</label>
-          <select id={`${idPrefix}-section`} value={section} onChange={(e) => setSection(e.target.value)}>
-            {ALL_SECTIONS.map((s) => (
-              <option key={s} value={s}>{ALL_SECTION_LABELS[s]}</option>
-            ))}
-          </select>
-        </div>
-        {section !== 'none' && (
-          <div className="form-group">
-            <label htmlFor={`${idPrefix}-scheduled`}>Scheduled</label>
-            <input
-              id={`${idPrefix}-scheduled`}
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-            />
-          </div>
-        )}
-      </div>
-    </>
+    <CardForm
+      idPrefix={idPrefix}
+      title={title}
+      setTitle={setTitle}
+      description={description}
+      setDescription={setDescription}
+      section={section}
+      setSection={setSection}
+      scheduledAt={scheduledAt}
+      setScheduledAt={setScheduledAt}
+      recurrenceRule={recurrenceRule}
+      setRecurrenceRule={setRecurrenceRule}
+      allTags={allTags}
+      selectedTagIds={selectedTagIds}
+      onToggleTag={toggleTag}
+      autoFocus={detectedType === 'task'}
+    />
   )
 
   return (
@@ -219,7 +178,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         <>
           <Dialog.Title asChild><h2>Quick Add</h2></Dialog.Title>
           <p className="quick-hint">
-            Describe a task, habit, or reference item in plain language. Put multiple items on separate lines to add them all at once.
+            Describe a task, habit, or stash item in plain language. Put multiple items on separate lines to add them all at once.
           </p>
           <textarea
             className="quick-textarea"
@@ -303,24 +262,6 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
             </div>
           )}
 
-          {allTags.length > 0 && (
-            <div className="form-group">
-              <label>Tags</label>
-              <div className="tag-toggles">
-                {allTags.map((tag) => {
-                  const on = selectedTagIds.includes(tag.id)
-                  return (
-                    <button key={tag.id} type="button"
-                      className={`tag-toggle ${on ? 'tag-toggle--on' : ''}`}
-                      style={on ? { background: tag.color, borderColor: tag.color, color: '#fff' } : { borderColor: tag.color, color: tag.color }}
-                      onClick={() => toggleTag(tag.id)}
-                    >{tag.name}</button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
           <div className="modal-footer">
             <button className="btn-cancel" onClick={() => setStep('bulk-confirm')}>Back</button>
             <button className="btn-save" onClick={saveBulkEdit} disabled={!title.trim()}>
@@ -369,31 +310,6 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
                 onChange={(e) => setTitle(e.target.value)}
                 autoFocus
               />
-            </div>
-          )}
-
-          {allTags.length > 0 && (
-            <div className="form-group">
-              <label>Tags</label>
-              <div className="tag-toggles">
-                {allTags.map((tag) => {
-                  const on = selectedTagIds.includes(tag.id)
-                  return (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      className={`tag-toggle ${on ? 'tag-toggle--on' : ''}`}
-                      style={on
-                        ? { background: tag.color, borderColor: tag.color, color: '#fff' }
-                        : { borderColor: tag.color, color: tag.color }
-                      }
-                      onClick={() => toggleTag(tag.id)}
-                    >
-                      {tag.name}
-                    </button>
-                  )
-                })}
-              </div>
             </div>
           )}
 

@@ -184,9 +184,13 @@ test.describe('today page', () => {
     await expect(page.getByText('Product Review')).toBeVisible()
   })
 
-  test('tasks section with unscheduled today items', async ({ page }) => {
+  test('unscheduled today items appear in schedule section', async ({ page }) => {
     await expect(page.getByText('Review pull requests')).toBeVisible()
     await expect(page.getByText('Call dentist')).toBeVisible()
+  })
+
+  test('stash section shows section=later items', async ({ page }) => {
+    await expect(page.getByText('Read that article')).toBeVisible()
   })
 })
 
@@ -200,7 +204,7 @@ test.describe('tasks board', () => {
   })
 
   test('board columns are visible', async ({ page }) => {
-    for (const col of ['Today', 'This Week', 'This Month', 'Someday']) {
+    for (const col of ['Today', 'This Week', 'This Month', 'Stash']) {
       await expect(page.locator('.column-label', { hasText: col })).toBeVisible()
     }
   })
@@ -214,7 +218,7 @@ test.describe('tasks board', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Someday column on /board
+// Stash column on /board
 // ---------------------------------------------------------------------------
 test.describe('cards page', () => {
   test.beforeEach(async ({ page }) => {
@@ -222,11 +226,11 @@ test.describe('cards page', () => {
     await waitForApp(page)
   })
 
-  test('Someday column is visible', async ({ page }) => {
-    await expect(page.locator('.column-label', { hasText: 'Someday' })).toBeVisible()
+  test('Stash column is visible', async ({ page }) => {
+    await expect(page.locator('.column-label', { hasText: 'Stash' })).toBeVisible()
   })
 
-  test('cards with section=none appear in the Someday column', async ({ page }) => {
+  test('cards with section=none appear in the Stash column', async ({ page }) => {
     await expect(page.getByText('Shopping list')).toBeVisible()
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })

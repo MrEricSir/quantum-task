@@ -44,11 +44,10 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
   const allRelevant  = [...overdueTodos, ...todayTodos]
 
-  // Split into timed (goes in Schedule) and untimed (goes in Tasks)
+  // Timed tasks go in Schedule with events; untimed tasks appended below in Schedule
   const timedTasks   = allRelevant.filter((t) => t.scheduled_at)
   const untimedTasks = allRelevant.filter((t) => !t.scheduled_at)
 
-  // Sort untimed: overdue first, then by position
   const sortedUntimedTasks = untimedTasks.slice().sort((a, b) => {
     const aOverdue = a.overdue_days ?? 0
     const bOverdue = b.overdue_days ?? 0
@@ -59,7 +58,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
   const todayEvents = calendarEvents.filter((e) => e.section === 'today')
 
   // Merge timed tasks + calendar events, sort chronologically
-  // All-day events (no specific time) sort to top
   const scheduleItems = [
     ...todayEvents.map((e) => ({ type: 'event', data: e, time: e.all_day ? null : new Date(e.start) })),
     ...timedTasks.map((t) => ({ type: 'task', data: t, time: new Date(t.scheduled_at) })),
@@ -70,10 +68,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     return a.time - b.time
   })
 
-  const hasSchedule = scheduleItems.length > 0
+  // Stash: section='later' or 'none', not completed, not archived
+  const stashTodos = todos
+    .filter((t) => (t.section === 'later' || t.section === 'none') && !t.completed && !t.archived)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 
-  const completedTodayCount = todos.filter((t) => t.completed && t.section === 'today').length
-  const untimedAllDone = completedTodayCount > 0 && untimedTasks.length === 0 && timedTasks.length === 0
+  const hasScheduleOrTasks = scheduleItems.length > 0 || sortedUntimedTasks.length > 0
 
   const habitsDone    = habits.filter((h) => h.completed_today).length
   const habitsPending = habits.length - habitsDone
@@ -81,20 +81,19 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
 
   const catchUpCount  = todos.filter((t) => !t.completed && t.section === 'week').length
 
-  const overdueTimedCount   = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
-  const overdueUntimedCount = untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
+  const overdueScheduleCount = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
+                             + untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
 
   const allClear = scheduleItems.length === 0 && untimedTasks.length === 0 && habitsPending === 0
 
-  const [untimedOpen, setUuntimedOpen] = useState(!untimedAllDone)
-  const [habitsOpen,  setHabitsOpen]   = useState(!habitsAllDone)
+  const [habitsOpen, setHabitsOpen] = useState(!habitsAllDone)
+  const [stashOpen,  setStashOpen]  = useState(true)
 
-  useEffect(() => { if (habitsAllDone)  setHabitsOpen(false)  }, [habitsAllDone])
-  useEffect(() => { if (untimedAllDone) setUuntimedOpen(false) }, [untimedAllDone])
+  useEffect(() => { if (habitsAllDone) setHabitsOpen(false) }, [habitsAllDone])
 
   const scheduleStatus = (() => {
     const evCount   = todayEvents.length
-    const taskCount = timedTasks.length
+    const taskCount = timedTasks.length + untimedTasks.length
     if (!evCount && !taskCount) return ''
     const parts = []
     if (evCount)   parts.push(`${evCount} event${evCount !== 1 ? 's' : ''}`)
@@ -178,11 +177,11 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           </section>
         )}
 
-        {hasSchedule && (
+        {hasScheduleOrTasks && (
           <section className="today-section">
             <SectionHeader
               title="Schedule"
-              badge={overdueTimedCount > 0 ? `${overdueTimedCount} overdue` : null}
+              badge={overdueScheduleCount > 0 ? `${overdueScheduleCount} overdue` : null}
               status={scheduleStatus}
               open
               toggleable={false}
@@ -203,54 +202,52 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                   />
                 )
               )}
+              {sortedUntimedTasks.map((todo) => (
+                <TodoCard
+                  key={todo.id}
+                  todo={todo}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onToggle={onToggle}
+                  onMove={onMove}
+                  isMobile
+                />
+              ))}
             </div>
+            {catchUpCount > 0 && (
+              <div className="today-catchup">
+                {catchUpCount} more task{catchUpCount !== 1 ? 's' : ''} in This Week
+              </div>
+            )}
           </section>
         )}
 
         <section className="today-section">
           <SectionHeader
-            title="Tasks"
-            badge={overdueUntimedCount > 0 ? `${overdueUntimedCount} overdue` : null}
-            status={
-              untimedAllDone
-                ? 'All done'
-                : untimedTasks.length === 0
-                  ? 'Nothing yet'
-                  : `${untimedTasks.length} remaining`
-            }
-            open={untimedOpen}
-            onToggle={() => setUuntimedOpen((v) => !v)}
-            toggleable={untimedAllDone}
+            title="Stash"
+            status={stashTodos.length === 0 ? 'Empty' : `${stashTodos.length}`}
+            open={stashOpen}
+            onToggle={() => setStashOpen((v) => !v)}
+            toggleable
           />
-          <CollapseBody open={untimedOpen}>
-            <div>
-              {sortedUntimedTasks.length === 0 ? (
-                <div className="today-empty">
-                  {untimedAllDone ? 'All tasks complete.' : 'No unscheduled tasks for today.'}
-                </div>
-              ) : (
-                <>
-                  <div className="today-cards">
-                    {sortedUntimedTasks.map((todo) => (
-                      <TodoCard
-                        key={todo.id}
-                        todo={todo}
-                        onEdit={onEdit}
-                        onDelete={onDelete}
-                        onToggle={onToggle}
-                        onMove={onMove}
-                        isMobile
-                      />
-                    ))}
-                  </div>
-                  {catchUpCount > 0 && (
-                    <div className="today-catchup">
-                      {catchUpCount} more task{catchUpCount !== 1 ? 's' : ''} in This Week
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+          <CollapseBody open={stashOpen}>
+            {stashTodos.length === 0 ? (
+              <div className="today-empty">Nothing in your stash.</div>
+            ) : (
+              <div className="today-cards">
+                {stashTodos.map((todo) => (
+                  <TodoCard
+                    key={todo.id}
+                    todo={todo}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    onToggle={onToggle}
+                    onMove={onMove}
+                    isMobile
+                  />
+                ))}
+              </div>
+            )}
           </CollapseBody>
         </section>
       </div>
