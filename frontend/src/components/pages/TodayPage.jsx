@@ -55,7 +55,15 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     return (a.position ?? 0) - (b.position ?? 0)
   })
 
-  const todayEvents = calendarEvents.filter((e) => e.section === 'today')
+  const todayKey = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  const todayEvents = calendarEvents.filter((e) => {
+    const d = new Date(e.start)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    return key === todayKey
+  })
 
   // Merge timed tasks + calendar events, sort chronologically
   const scheduleItems = [
