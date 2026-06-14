@@ -282,6 +282,11 @@ class _LoginBody(BaseModel):
     password: str
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/api/auth/check")
 def auth_check(request: Request):
     if not AUTH_PASSWORD:
