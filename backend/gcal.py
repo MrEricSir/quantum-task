@@ -51,7 +51,7 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
 
     Each dict: id, title, description, start (datetime), end (datetime|None), all_day (bool)
     """
-    response = requests.get(ical_url, timeout=15)
+    response = requests.get(ical_url, timeout=15, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
     response.raise_for_status()
 
     cal = icalendar.Calendar.from_ical(response.content)
