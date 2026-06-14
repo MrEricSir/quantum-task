@@ -86,7 +86,7 @@ export default function SearchModal({ onClose, onEdit }) {
             <input
               ref={inputRef}
               className="search-input"
-              placeholder="Search tasks…"
+              placeholder="Search..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}

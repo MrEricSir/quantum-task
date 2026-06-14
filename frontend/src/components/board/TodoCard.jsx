@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import * as Checkbox from '@radix-ui/react-checkbox'
@@ -35,6 +35,13 @@ function parseGitHubUrl(str) {
 export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isMobile, isOverlay }) {
   const [expanded, setExpanded] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+
+  useEffect(() => {
+    if (!expanded) return
+    const handler = (e) => { if (e.key === 'Escape') setExpanded(false) }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [expanded])
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: todo.id, disabled: !!isOverlay || !!isMobile })

@@ -511,6 +511,68 @@ test.describe('sidebar upcoming events', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Keyboard shortcuts
+// ---------------------------------------------------------------------------
+test.describe('keyboard shortcuts', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('n opens quick add modal', async ({ page }) => {
+    await page.keyboard.press('n')
+    await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
+  })
+
+  test('/ opens search modal', async ({ page }) => {
+    await page.keyboard.press('/')
+    await expect(page.getByRole('dialog')).toBeVisible()
+  })
+
+  test('t navigates to today page', async ({ page }) => {
+    await page.keyboard.press('t')
+    await expect(page).toHaveURL(/\/today/)
+  })
+
+  test('b navigates to board page', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.keyboard.press('b')
+    await expect(page).toHaveURL(/\/board/)
+  })
+
+  test('h navigates to habits page', async ({ page }) => {
+    await page.keyboard.press('h')
+    await expect(page).toHaveURL(/\/habits/)
+  })
+
+  test('c navigates to calendar page', async ({ page }) => {
+    await page.keyboard.press('c')
+    await expect(page).toHaveURL(/\/calendar/)
+  })
+
+  test('e navigates to engineering page', async ({ page }) => {
+    await page.keyboard.press('e')
+    await expect(page).toHaveURL(/\/engineering/)
+  })
+
+  test('? opens keyboard shortcuts modal', async ({ page }) => {
+    await page.keyboard.press('?')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible()
+    await expect(page.getByRole('dialog').locator('kbd').first()).toBeVisible()
+  })
+
+  test('shortcuts do not fire when a modal is open', async ({ page }) => {
+    await page.keyboard.press('n')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    // quick-add textarea is autofocused; pressing n again should type, not open another modal
+    await page.keyboard.press('n')
+    await expect(page.getByRole('dialog')).toHaveCount(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Offline banner
 // ---------------------------------------------------------------------------
 test.describe('offline banner', () => {

@@ -18,6 +18,7 @@ import TagFilterBar from './components/layout/TagFilterBar'
 import AddTodoModal from './components/modals/AddTodoModal'
 import QuickAddModal from './components/modals/QuickAddModal'
 import SearchModal from './components/modals/SearchModal'
+import KeyboardShortcutsModal from './components/modals/KeyboardShortcutsModal'
 import TagManagerModal from './components/modals/TagManagerModal'
 import CalendarSettings from './components/modals/CalendarSettings'
 import GithubSettings from './components/modals/GithubSettings'
@@ -62,6 +63,7 @@ export default function App() {
   const [showTagManager, setShowTagManager] = useState(false)
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
   const [showGithubSettings, setShowGithubSettings] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
   const [calendarEvents, setCalendarEvents] = useState([])
   const [lastRefreshed, setLastRefreshed] = useState(null)
   const [calendarRefreshing, setCalendarRefreshing] = useState(false)
@@ -115,14 +117,26 @@ export default function App() {
     return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline) }
   }, [])
 
+  const shortcutsRef = useRef([])
+  shortcutsRef.current = [
+    { key: 'n', label: 'New card',          group: 'action', action: ()  => setShowQuickAdd(true) },
+    { key: '/', label: 'Search',            group: 'action', action: (e) => { e.preventDefault(); setShowSearch(true) } },
+    { key: '?', label: 'Keyboard shortcuts',group: 'action', action: ()  => setShowShortcuts(true) },
+    { key: 't', label: 'Today',             group: 'nav',    action: ()  => navigate('/today') },
+    { key: 'b', label: 'Board',             group: 'nav',    action: ()  => navigate('/board') },
+    { key: 'h', label: 'Habits',            group: 'nav',    action: ()  => navigate('/habits') },
+    { key: 'c', label: 'Calendar',          group: 'nav',    action: ()  => navigate('/calendar') },
+    { key: 'e', label: 'Engineering',       group: 'nav',    action: ()  => navigate('/engineering') },
+  ]
+
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        const tag = document.activeElement?.tagName
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-        e.preventDefault()
-        setShowSearch(true)
-      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (document.querySelector('[role="dialog"]')) return
+      const shortcut = shortcutsRef.current.find((s) => s.key === e.key)
+      if (shortcut) shortcut.action(e)
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
@@ -695,6 +709,9 @@ export default function App() {
                     <span>&#128276; Notifications</span>
                     <span className={`notif-toggle ${notifPermission === 'granted' && notifEnabled ? 'notif-toggle--on' : ''}`} />
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowShortcuts(true)}>
+                    &#9000; Keyboard shortcuts
+                  </DropdownMenu.Item>
                   <DropdownMenu.Separator className="settings-dropdown-divider" />
                   <DropdownMenu.Item
                     className="settings-dropdown-item"
@@ -890,6 +907,12 @@ export default function App() {
           onEdit={(todo) => openEdit(todo)}
         />
       )}
+
+      <KeyboardShortcutsModal
+        open={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+        shortcuts={shortcutsRef.current}
+      />
 
       {showQuickAdd && (
         <QuickAddModal
