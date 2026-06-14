@@ -55,14 +55,14 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     return (a.position ?? 0) - (b.position ?? 0)
   })
 
-  const todayKey = (() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })()
+  const today = new Date()
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const todayEvents = calendarEvents.filter((e) => {
+    // All-day events have a date-only start string; parse directly to avoid JS
+    // treating "YYYY-MM-DD" as UTC midnight (which shifts the date in US timezones).
+    if (e.all_day) return e.start.slice(0, 10) === todayKey
     const d = new Date(e.start)
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    return key === todayKey
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === todayKey
   })
 
   // Merge timed tasks + calendar events, sort chronologically

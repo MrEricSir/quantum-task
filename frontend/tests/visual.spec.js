@@ -507,13 +507,14 @@ test.describe('recurring calendar events', () => {
       start: '2026-06-05T14:00:00', end: '2026-06-05T15:00:00', all_day: false,
     },
     // "Monthly All-hands" appears twice in month section → grouped
+    // Dates must be > 7 days from the frozen date (2026-06-03) to land in "month"
     {
       id: 'r5', title: 'Monthly All-hands', section: 'month',
-      start: '2026-06-10T10:00:00', end: '2026-06-10T11:00:00', all_day: false,
+      start: '2026-06-11T10:00:00', end: '2026-06-11T11:00:00', all_day: false,
     },
     {
       id: 'r6', title: 'Monthly All-hands', section: 'month',
-      start: '2026-06-24T10:00:00', end: '2026-06-24T11:00:00', all_day: false,
+      start: '2026-06-25T10:00:00', end: '2026-06-25T11:00:00', all_day: false,
     },
   ]
 

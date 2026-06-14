@@ -4,6 +4,27 @@ import './CalendarStrip.css'
 
 const SECTIONS = ['today', 'week', 'month', 'later']
 
+// Compute the event's local-timezone date string ("YYYY-MM-DD").
+// All-day events have a date-only start string — parse it directly rather than
+// via new Date() which treats bare YYYY-MM-DD as UTC midnight and shifts the
+// date backwards in behind-UTC timezones.  Timed events carry full UTC datetimes
+// that new Date() correctly converts to local time.
+function localDateStr(event) {
+  if (event.all_day) return event.start.slice(0, 10)
+  const d = new Date(event.start)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function localSection(event) {
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const evStr = localDateStr(event)
+  if (evStr === todayStr) return 'today'
+  const diffDays = Math.round((new Date(evStr) - new Date(todayStr)) / 86400000)
+  if (diffDays <= 7) return 'week'
+  return 'month'
+}
+
 function formatLastUpdated(date) {
   if (!date) return null
   const diffMin = Math.floor((Date.now() - date.getTime()) / 60000)
@@ -62,7 +83,7 @@ function RecurringEventCard({ events }) {
 
 export default function CalendarStrip({ events, onRefresh, lastRefreshed, refreshing, activeSection }) {
   const bySection = SECTIONS.reduce((acc, s) => {
-    acc[s] = events.filter((e) => e.section === s)
+    acc[s] = events.filter((e) => localSection(e) === s)
     return acc
   }, {})
 
