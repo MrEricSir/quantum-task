@@ -4,12 +4,12 @@ import { MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { searchTodos } from '../../api'
 import './SearchModal.css'
 
-const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later' }
-const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
+const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later', none: 'Card' }
+const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280', none: '#374151' }
 
-export default function SearchModal({ onClose, onEdit }) {
+export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabit }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
+  const [cardResults, setCardResults] = useState([])
   const [loading, setLoading] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const activeIndexRef = useRef(-1)
@@ -29,16 +29,25 @@ export default function SearchModal({ onClose, onEdit }) {
     inputRef.current?.focus()
   }, [])
 
+  const habitResults = query.trim()
+    ? habits.filter((h) => !h.archived && h.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : []
+
+  const results = [
+    ...cardResults.map((r) => ({ ...r, _type: 'card' })),
+    ...habitResults.map((h) => ({ ...h, _type: 'habit' })),
+  ]
+
   useEffect(() => {
     clearTimeout(debounceRef.current)
-    if (!query.trim()) { setResults([]); return }
+    if (!query.trim()) { setCardResults([]); return }
     debounceRef.current = setTimeout(async () => {
       setLoading(true)
       try {
         const data = await searchTodos(query.trim())
-        setResults(data)
+        setCardResults(data)
       } catch {
-        setResults([])
+        setCardResults([])
       } finally {
         setLoading(false)
       }
@@ -46,7 +55,7 @@ export default function SearchModal({ onClose, onEdit }) {
   }, [query])
 
   // Reset selection when results change
-  useEffect(() => { updateActiveIndex(-1) }, [results]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { updateActiveIndex(-1) }, [cardResults, habitResults.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll active item into view
   useEffect(() => {
@@ -55,9 +64,13 @@ export default function SearchModal({ onClose, onEdit }) {
     items[activeIndex]?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex])
 
-  const handleSelect = (todo) => {
-    onClose()
-    onEdit(todo)
+  const handleSelect = (result) => {
+    if (result._type === 'habit') {
+      onSelectHabit?.(result)
+    } else {
+      onClose()
+      onEdit(result)
+    }
   }
 
   const handleKeyDown = (e) => {
@@ -97,32 +110,36 @@ export default function SearchModal({ onClose, onEdit }) {
 
           {results.length > 0 && (
             <div className="search-results" ref={listRef}>
-              {results.map((todo, i) => (
+              {results.map((result, i) => (
                 <button
-                  key={todo.id}
+                  key={`${result._type}-${result.id}`}
                   className={[
                     'search-result',
-                    todo.completed ? 'search-result--done' : '',
+                    result.completed ? 'search-result--done' : '',
                     i === activeIndex ? 'search-result--active' : '',
                   ].filter(Boolean).join(' ')}
-                  onClick={() => handleSelect(todo)}
+                  onClick={() => handleSelect(result)}
                   onMouseEnter={() => updateActiveIndex(i)}
                 >
                   <div className="search-result-main">
-                    <span
-                      className="search-result-section"
-                      style={{ background: SECTION_COLORS[todo.section] }}
-                    >
-                      {SECTION_LABELS[todo.section]}
-                    </span>
-                    <span className="search-result-title">{todo.title}</span>
+                    {result._type === 'habit' ? (
+                      <span className="search-result-section" style={{ background: '#7c3aed' }}>Habit</span>
+                    ) : (
+                      <span
+                        className="search-result-section"
+                        style={{ background: SECTION_COLORS[result.section] ?? '#6b7280' }}
+                      >
+                        {SECTION_LABELS[result.section] ?? 'Card'}
+                      </span>
+                    )}
+                    <span className="search-result-title">{result._type === 'habit' ? result.name : result.title}</span>
                   </div>
-                  {todo.description && (
-                    <span className="search-result-desc">{todo.description}</span>
+                  {result._type === 'card' && result.description && (
+                    <span className="search-result-desc">{result.description}</span>
                   )}
-                  {(todo.tags ?? []).length > 0 && (
+                  {(result.tags ?? []).length > 0 && (
                     <div className="search-result-tags">
-                      {todo.tags.map((tag) => (
+                      {result.tags.map((tag) => (
                         <span
                           key={tag.id}
                           className="search-result-tag"

@@ -905,6 +905,8 @@ export default function App() {
         <SearchModal
           onClose={() => setShowSearch(false)}
           onEdit={(todo) => openEdit(todo)}
+          habits={habits}
+          onSelectHabit={() => { setShowSearch(false); navigate('/habits') }}
         />
       )}
 

@@ -1298,6 +1298,7 @@ def search_cards(q: str = Query(default="", min_length=1), db: Session = Depends
     return (
         db.query(models.Todo)
         .filter(
+            models.Todo.archived == False,  # noqa: E712
             or_(
                 models.Todo.title.ilike(pattern),
                 models.Todo.description.ilike(pattern),
