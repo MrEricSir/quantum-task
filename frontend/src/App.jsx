@@ -12,7 +12,6 @@ import { arrayMove } from '@dnd-kit/sortable'
 import Column from './components/board/Column'
 import TodoCard from './components/board/TodoCard'
 import Archive from './components/board/Archive'
-import CalendarStrip from './components/board/CalendarStrip'
 import Sidebar from './components/layout/Sidebar'
 import MobileNav from './components/layout/MobileNav'
 import TagFilterBar from './components/layout/TagFilterBar'
@@ -719,6 +718,7 @@ export default function App() {
           selectedTagId={selectedTagId}
           page={currentPage}
           onNavigate={handlePageNavigate}
+          calendarEvents={calendarEvents}
         />
 
       <main className="board-wrapper">
@@ -798,13 +798,6 @@ export default function App() {
               <DragOverlay dropAnimation={null}>
                 {activeTodo ? <TodoCard todo={activeTodo} isOverlay /> : null}
               </DragOverlay>
-              <CalendarStrip
-                events={visibleCalendarEvents}
-                onRefresh={handleRefreshCalendar}
-                lastRefreshed={lastRefreshed}
-                refreshing={calendarRefreshing}
-                activeSection={activeSection}
-              />
               <Archive
                 todos={completedTodos}
                 onEdit={openEdit}

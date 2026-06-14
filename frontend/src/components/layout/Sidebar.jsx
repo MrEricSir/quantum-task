@@ -9,8 +9,45 @@ const NAV_ITEMS = [
   { page: 'engineering', label: 'Engineering', Icon: CommitIcon    },
 ]
 
-export default function Sidebar({ tags, selectedTagId, page, onNavigate }) {
+function localDateKey(event) {
+  if (event.all_day) return event.start.slice(0, 10)
+  const d = new Date(event.start)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function todayKey() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function formatEventTime(event) {
+  const today = todayKey()
+  const eventDay = localDateKey(event)
+  const isToday = eventDay === today
+
+  if (event.all_day) {
+    const label = isToday ? 'Today' : new Date(eventDay + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    return `${label} · All day`
+  }
+
+  const d = new Date(event.start)
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  if (isToday) return `Today · ${time}`
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ` · ${time}`
+}
+
+export default function Sidebar({ tags, selectedTagId, page, onNavigate, calendarEvents = [] }) {
   const showTags = tags.length > 0
+
+  const today = todayKey()
+  const upcomingEvents = calendarEvents
+    .filter(e => localDateKey(e) >= today)
+    .sort((a, b) => {
+      const aMs = a.all_day ? new Date(a.start.slice(0, 10) + 'T00:00:00').getTime() : new Date(a.start).getTime()
+      const bMs = b.all_day ? new Date(b.start.slice(0, 10) + 'T00:00:00').getTime() : new Date(b.start).getTime()
+      return aMs - bMs
+    })
+    .slice(0, 8)
 
   return (
     <aside className="sidebar">
@@ -44,6 +81,26 @@ export default function Sidebar({ tags, selectedTagId, page, onNavigate }) {
           </nav>
         </>
       )}
+
+      <div className="sidebar-section-label">Upcoming</div>
+      <div className="sidebar-upcoming">
+        {upcomingEvents.length === 0 ? (
+          <div className="sidebar-upcoming-empty">No upcoming events</div>
+        ) : (
+          upcomingEvents.map((event) => (
+            <div key={event.id} className="sidebar-upcoming-event">
+              <span
+                className="sidebar-upcoming-dot"
+                style={{ background: event.tag_color ?? 'var(--text-muted)' }}
+              />
+              <div className="sidebar-upcoming-body">
+                <span className="sidebar-upcoming-title">{event.title}</span>
+                <span className="sidebar-upcoming-time">{formatEventTime(event)}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </aside>
   )
 }
