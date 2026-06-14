@@ -1000,8 +1000,11 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     with SessionLocal() as _obs_db:
         observations = _compute_observations(_obs_db, today_dt)
         eng_items = _obs_db.query(models.EngineeringItem).filter_by(state="open").all()
-    eng_prs    = [i for i in eng_items if i.item_type == "pr"]
-    eng_issues = [i for i in eng_items if i.item_type == "issue"]
+    # Exclude engineering items already added to the board as cards (matched by URL
+    # stored in the card's description) to avoid double-mentioning them in the briefing.
+    on_board = {t.description for t in req.todos if t.description}
+    eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
+    eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
     today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs)
     week_ctx  = _build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
