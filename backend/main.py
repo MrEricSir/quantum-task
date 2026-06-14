@@ -605,6 +605,20 @@ def _fmt_time(dt: datetime, utc_offset_minutes: int = 0) -> str:
     return dt.strftime("%I:%M %p").lstrip("0")
 
 
+def _event_local_date(e, utc_offset_minutes: int) -> date:
+    """Return the calendar event's date in the client's local timezone.
+
+    All-day events carry a naive midnight datetime (serialised from a date
+    object); treat them as already in local time so no offset is applied.
+    Timed events carry a UTC-aware datetime; subtract the JS getTimezoneOffset
+    value (positive = behind UTC, e.g. PDT = +420) to get local time.
+    """
+    if e.all_day:
+        return e.start.date() if hasattr(e.start, "date") else e.start
+    local_dt = e.start.replace(tzinfo=None) - timedelta(minutes=utc_offset_minutes)
+    return local_dt.date()
+
+
 _WMO_EMOJI = {
     0: "☀️",
     1: "🌤️",  2: "⛅",  3: "☁️",
@@ -769,7 +783,7 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
     recur_groups: dict[tuple, list] = {}
     for e in cal_events:
         start = e.start
-        day = start.date() if hasattr(start, "date") else start
+        day = _event_local_date(e, utc_offset_minutes)
         if day <= today:
             continue
         time_key = "all_day" if e.all_day else _fmt_time(start, utc_offset_minutes)
@@ -782,7 +796,7 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
 
     for e in cal_events:
         start = e.start
-        day = start.date() if hasattr(start, "date") else start
+        day = _event_local_date(e, utc_offset_minutes)
         if day <= today:
             continue  # today's events belong in the Today briefing
         time_key = "all_day" if e.all_day else _fmt_time(start, utc_offset_minutes)
@@ -943,11 +957,13 @@ def _cache_set(section: str, content_hash: str, text: str, weather_json: str | N
 @app.post("/api/briefing/stream")
 def stream_briefing(request: Request, req: schemas.BriefingRequest):
     today_dt = _local_date(request)
+    tz_offset = req.utc_offset_minutes or 0
 
     today_todos  = [t for t in req.todos if t.section == "today"]
-    today_events = [e for e in req.calendar_events if e.section == "today"]
+    today_events = [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt]
     week_todos   = [t for t in req.todos if t.section == "week"]
-    week_events  = [e for e in req.calendar_events if e.section == "week"]
+    week_events  = [e for e in req.calendar_events
+                    if today_dt < _event_local_date(e, tz_offset) <= today_dt + timedelta(days=7)]
 
     today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None)
     week_h  = _week_hash(week_todos, week_events)
@@ -986,7 +1002,6 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
         eng_items = _obs_db.query(models.EngineeringItem).filter_by(state="open").all()
     eng_prs    = [i for i in eng_items if i.item_type == "pr"]
     eng_issues = [i for i in eng_items if i.item_type == "issue"]
-    tz_offset = req.utc_offset_minutes or 0
     today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs)
     week_ctx  = _build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
