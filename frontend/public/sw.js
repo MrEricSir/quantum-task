@@ -1,3 +1,31 @@
+const CACHE = 'qt-shell-v1'
+
+self.addEventListener('install', (event) => {
+  // Cache the app shell so the app loads when offline
+  event.waitUntil(caches.open(CACHE).then((c) => c.add('/')))
+  self.skipWaiting()
+})
+
+self.addEventListener('activate', (event) => {
+  // Remove any old cache versions
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+    )
+  )
+  self.clients.claim()
+})
+
+self.addEventListener('fetch', (event) => {
+  // For navigation requests (loading the SPA), serve the cached shell when offline
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match('/'))
+    )
+  }
+  // API calls and static assets: network only — no stale data risk
+})
+
 self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {}
   event.waitUntil(

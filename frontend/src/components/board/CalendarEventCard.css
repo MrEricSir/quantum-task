@@ -17,3 +17,19 @@
   text-decoration: underline;
   word-break: break-word;
 }
+
+.event-open-btn {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.12s, background 0.12s;
+  line-height: 1;
+}
+
+.event-open-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}

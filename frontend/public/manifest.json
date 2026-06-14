@@ -1,0 +1,23 @@
+{
+  "name": "Quantum Task",
+  "short_name": "QuantumTask",
+  "description": "Personal productivity — tasks, habits, calendar, and daily briefing",
+  "start_url": "/today",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07040f",
+  "theme_color": "#07040f",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

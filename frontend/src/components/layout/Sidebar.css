@@ -96,6 +96,12 @@
   background: rgba(139, 92, 246, 0.08);
 }
 
+a.sidebar-upcoming-event {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
 .sidebar-upcoming-dot {
   width: 7px;
   height: 7px;

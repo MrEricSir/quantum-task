@@ -5,11 +5,42 @@ No authentication required. Uses Google Calendar's
 "Secret address in iCal format" (or any public iCal URL).
 """
 
+import base64
+import re
+import urllib.parse
 from datetime import date, datetime, time as dt_time, timezone
 
 import requests
 import icalendar
 import recurring_ical_events
+
+_GCAL_ICAL_URL_RE = re.compile(r'calendar\.google\.com/calendar/ical/([^/]+)/')
+
+
+def _parse_google_calendar_id(ical_url: str) -> str | None:
+    m = _GCAL_ICAL_URL_RE.search(ical_url)
+    if not m:
+        return None
+    return urllib.parse.unquote(m.group(1))
+
+
+def _shorten_calendar_id(calendar_id: str) -> str:
+    """Google encodes personal Gmail calendars as {user}@m in eid strings."""
+    if calendar_id.endswith("@gmail.com"):
+        return calendar_id[: -len("@gmail.com")] + "@m"
+    return calendar_id
+
+
+def _google_calendar_event_url(uid: str, start_dt: datetime, ical_url: str, ev=None) -> str | None:
+    if not uid.endswith("@google.com"):
+        return None
+    calendar_id = _parse_google_calendar_id(ical_url)
+    if not calendar_id:
+        return None
+    calendar_id = _shorten_calendar_id(calendar_id)
+    uid_base = uid.replace("@google.com", "")
+    eid = base64.b64encode(f"{uid_base} {calendar_id}".encode()).decode().rstrip("=")
+    return f"https://calendar.google.com/calendar/u/0/r/event?action=VIEW&eid={eid}"
 
 
 def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
@@ -65,13 +96,16 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
 
         uid = str(ev.get("UID", ""))
         sequence = int(ev.get("SEQUENCE", 0))
+        description = str(ev.get("DESCRIPTION", "")) or None
+        url = str(ev.get("URL", "")) or _google_calendar_event_url(uid, start_dt, ical_url, ev)
         events.append({
             "id": uid or start_dt.isoformat(),
             "uid": uid,
             "sequence": sequence,
             "title": str(ev.get("SUMMARY", "(No title)")),
-            "description": str(ev.get("DESCRIPTION", "")) or None,
+            "description": description,
             "location": str(ev.get("LOCATION", "")) or None,
+            "url": url,
             "start": start_dt,
             "end": end_dt,
             "all_day": all_day,

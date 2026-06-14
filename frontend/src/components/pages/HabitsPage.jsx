@@ -36,7 +36,9 @@ function HabitsArchive({ habits, onUnarchive, onDelete }) {
 export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive }) {
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
+  const [poppingId, setPoppingId] = useState(null)
   const editInputRef = useRef(null)
+  const popTimer = useRef(null)
 
   useEffect(() => {
     if (editingId !== null) editInputRef.current?.focus()
@@ -82,8 +84,13 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
               <button
                 type="button"
-                className="habit-card-check"
-                onClick={() => onToggle(habit)}
+                className={`habit-card-check${poppingId === habit.id ? ' habit-card-check--pop' : ''}`}
+                onClick={() => {
+                  setPoppingId(habit.id)
+                  clearTimeout(popTimer.current)
+                  popTimer.current = setTimeout(() => setPoppingId(null), 350)
+                  onToggle(habit)
+                }}
                 aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
               >
                 {habit.completed_today ? <CheckIcon width={13} height={13} /> : null}

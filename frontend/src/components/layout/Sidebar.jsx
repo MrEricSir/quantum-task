@@ -87,18 +87,24 @@ export default function Sidebar({ tags, selectedTagId, page, onNavigate, calenda
         {upcomingEvents.length === 0 ? (
           <div className="sidebar-upcoming-empty">No upcoming events</div>
         ) : (
-          upcomingEvents.map((event) => (
-            <div key={event.id} className="sidebar-upcoming-event">
-              <span
-                className="sidebar-upcoming-dot"
-                style={{ background: event.tag_color ?? 'var(--text-muted)' }}
-              />
-              <div className="sidebar-upcoming-body">
-                <span className="sidebar-upcoming-title">{event.title}</span>
-                <span className="sidebar-upcoming-time">{formatEventTime(event)}</span>
-              </div>
-            </div>
-          ))
+          upcomingEvents.map((event) => {
+            const Tag = event.url ? 'a' : 'div'
+            const linkProps = event.url
+              ? { href: event.url, target: '_blank', rel: 'noopener noreferrer' }
+              : {}
+            return (
+              <Tag key={event.id} className="sidebar-upcoming-event" {...linkProps}>
+                <span
+                  className="sidebar-upcoming-dot"
+                  style={{ background: event.tag_color ?? 'var(--text-muted)' }}
+                />
+                <div className="sidebar-upcoming-body">
+                  <span className="sidebar-upcoming-title">{event.title}</span>
+                  <span className="sidebar-upcoming-time">{formatEventTime(event)}</span>
+                </div>
+              </Tag>
+            )
+          })
         )}
       </div>
     </aside>

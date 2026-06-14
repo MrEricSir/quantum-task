@@ -62,6 +62,18 @@ export default function CalendarEventCard({ event }) {
       <div className="event-header">
         <span className="event-icon"><CalendarIcon /></span>
         <span className="event-title">{event.title}</span>
+        {event.url && (
+          <a
+            href={event.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="event-open-btn"
+            onClick={(e) => e.stopPropagation()}
+            title="Open in calendar"
+          >
+            ↗
+          </a>
+        )}
         <span className="event-chevron">{expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}</span>
       </div>
 

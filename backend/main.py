@@ -493,6 +493,7 @@ def get_calendar_events(request: Request, db: Session = Depends(get_db)):
                     title=ev["title"],
                     description=ev.get("description"),
                     location=ev.get("location"),
+                    url=ev.get("url"),
                     start=ev["start"],
                     end=ev.get("end"),
                     all_day=ev["all_day"],

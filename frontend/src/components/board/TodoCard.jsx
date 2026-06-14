@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import * as Checkbox from '@radix-ui/react-checkbox'
@@ -35,6 +35,8 @@ function parseGitHubUrl(str) {
 export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isMobile, isOverlay }) {
   const [expanded, setExpanded] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [popping, setPopping] = useState(false)
+  const popTimer = useRef(null)
 
   useEffect(() => {
     if (!expanded) return
@@ -53,7 +55,12 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
     ? { boxShadow: 'var(--shadow-lg)', opacity: 1, borderLeftColor: accentColor }
     : { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1, borderLeftColor: accentColor }
 
-  const handleToggle = (e) => { e.stopPropagation(); onToggle?.(todo) }
+  const handleCheckboxClick = (e) => {
+    e.stopPropagation()
+    setPopping(true)
+    clearTimeout(popTimer.current)
+    popTimer.current = setTimeout(() => setPopping(false), 350)
+  }
   const handleEdit   = (e) => { e.stopPropagation(); setExpanded(false); onEdit?.(todo) }
   const handleDelete = (e) => { e.stopPropagation(); setShowConfirm(true) }
   const handleMove   = (e, section) => { e.stopPropagation(); setExpanded(false); onMove?.(todo.id, section) }
@@ -75,10 +82,10 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
     >
       <div className="event-header">
         <Checkbox.Root
-          className="card-check"
+          className={`card-check${popping ? ' card-check--pop' : ''}`}
           checked={todo.completed}
           onCheckedChange={() => onToggle?.(todo)}
-          onClick={(e) => e.stopPropagation()}
+          onClick={handleCheckboxClick}
           title={todo.completed ? 'Mark incomplete' : 'Mark complete'}
           aria-label="toggle complete"
         >
