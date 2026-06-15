@@ -4,6 +4,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@radix-ui/react-icons
 import TodoCard from '../board/TodoCard'
 import CalendarEventCard from '../board/CalendarEventCard'
 import DailyBriefing from '../shared/DailyBriefing'
+import DailyPlan from '../shared/DailyPlan'
 import { CollapseBody } from '../layout/Collapsible'
 import './TodayPage.css'
 
@@ -141,6 +142,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           todayOnly
           onWeather={onWeather}
           invalidationKey={briefingKey}
+        />
+
+        <DailyPlan
+          todos={activeTodos}
+          calendarEvents={todayEvents}
+          habits={habits}
         />
 
         {habits.length > 0 && (

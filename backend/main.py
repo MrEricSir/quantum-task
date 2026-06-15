@@ -13,6 +13,7 @@ from datetime import datetime, timezone, date, timedelta, time as dt_time
 
 import hashlib
 import json
+import re
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -1074,6 +1075,154 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ── Daily Plan ────────────────────────────────────────────────────────────────
+
+def _fmt_time_24h(dt: datetime, utc_offset_minutes: int = 0) -> str:
+    """Return local time as HH:MM (24h) for use in LLM prompts."""
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None) - timedelta(minutes=utc_offset_minutes)
+    return dt.strftime("%H:%M")
+
+
+_TIME_12H_RE = re.compile(
+    r'^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(AM|PM)$', re.IGNORECASE
+)
+_TIME_24H_RE = re.compile(r'^(\d{1,2}):(\d{2})(?::\d{2})?$')
+
+
+def _normalize_plan_time(t) -> str | None:
+    """Normalise whatever the LLM returns as a time value to 'HH:MM' (24h).
+
+    Handles: 'HH:MM', 'H:MM', 'HH:MM:SS', 'H:MM AM/PM', 'H AM/PM'.
+    Returns None for null / unparseable values.
+    """
+    if not t:
+        return None
+    t = str(t).strip()
+
+    # 12-hour: "9:00 AM", "2:30 PM", "9 AM", "12 PM"
+    m = _TIME_12H_RE.match(t)
+    if m:
+        h = int(m.group(1))
+        mins = m.group(2) or "00"
+        period = m.group(3).upper()
+        if period == "PM" and h != 12:
+            h += 12
+        elif period == "AM" and h == 12:
+            h = 0
+        return f"{h:02d}:{mins}"
+
+    # 24-hour: "9:00", "14:30", "14:00:00"
+    m = _TIME_24H_RE.match(t)
+    if m:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+    return None
+
+
+_DAILY_PLAN_SYSTEM = """\
+You are a smart daily scheduler. Given the current local time, fixed calendar events, \
+and flexible tasks/habits, produce a realistic time-blocked plan for the rest of the day.
+
+Return ONLY a valid JSON object: {"blocks": [...]}
+
+Each block has these fields:
+  time     - "HH:MM" 24h local time when the block starts, or null if it can't fit today
+  duration - integer minutes
+  title    - exact name from the input (never paraphrase)
+  type     - one of: "event" | "task" | "habit" | "break"
+  fixed    - true for calendar events, false for everything else
+  note     - one short phrase (3-5 words) of rationale, or null
+
+Scheduling rules:
+1. Calendar events AND tasks with a fixed start time are FIXED — the block's time must equal their stated start time exactly. Never shift them earlier or later.
+2. Estimate durations realistically: 15 min for quick tasks, 30-60 min typical, longer for complex work.
+3. Fill gaps between fixed items with unscheduled tasks, starting from the current time.
+4. Add a 10-min break block after 90+ consecutive minutes of focused work.
+5. Tasks that cannot fit today should appear at the end with time=null.
+6. Never invent tasks, events, or content not in the input.
+"""
+
+
+def _build_daily_plan_context(
+    today_dt, today_events: list, today_todos: list, pending_habits: list, tz_offset: int
+) -> str:
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    lines = [
+        f"Current local time: {now_local.strftime('%H:%M')}",
+        f"Date: {today_dt.strftime('%A, %B %d, %Y')}",
+    ]
+
+    if today_events:
+        lines.append("\nCalendar events (FIXED — do not move):")
+        for e in today_events:
+            if e.all_day:
+                lines.append(f"  - {e.title} (all day)")
+            else:
+                start_s = _fmt_time_24h(e.start, tz_offset)
+                end_s = _fmt_time_24h(e.end, tz_offset) if e.end else None
+                range_s = f"{start_s}–{end_s}" if end_s else start_s
+                lines.append(f"  - {e.title} at {range_s}")
+
+    timed_todos   = [t for t in today_todos if t.scheduled_at]
+    untimed_todos = [t for t in today_todos if not t.scheduled_at]
+
+    if timed_todos:
+        lines.append("\nTasks with a fixed start time (treat exactly like calendar events — do not shift):")
+        for t in timed_todos:
+            lines.append(f"  - {t.title} starts at {_fmt_time_24h(t.scheduled_at, tz_offset)}")
+
+    if untimed_todos:
+        lines.append("\nUnscheduled tasks (find the best available slot):")
+        for t in untimed_todos:
+            lines.append(f"  - {t.title}")
+
+    if pending_habits:
+        lines.append("\nHabits still to complete today:")
+        for h in pending_habits:
+            lines.append(f"  - {h.name}")
+
+    return "\n".join(lines)
+
+
+@app.post("/api/daily-plan")
+def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
+    today_dt = _local_date(request)
+    tz_offset = req.utc_offset_minutes or 0
+
+    today_todos = [t for t in req.todos if t.section == "today" and not t.completed]
+    today_events = sorted(
+        [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt],
+        key=lambda e: e.start,
+    )
+    pending_habits = [h for h in req.habits if not h.completed_today]
+
+    if not today_todos and not today_events and not pending_habits:
+        return {"blocks": []}
+
+    context = _build_daily_plan_context(
+        today_dt, today_events, today_todos, pending_habits, tz_offset
+    )
+
+    try:
+        response = llm_client().chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _DAILY_PLAN_SYSTEM},
+                {"role": "user",   "content": context},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        blocks = result.get("blocks", [])
+        for block in blocks:
+            block["time"] = _normalize_plan_time(block.get("time"))
+        return {"blocks": blocks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Tags ─────────────────────────────────────────────────────────────────────
