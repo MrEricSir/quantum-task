@@ -26,12 +26,13 @@ import TodayPage from './components/pages/TodayPage'
 import HabitsPage from './components/pages/HabitsPage'
 import CalendarPage from './components/pages/CalendarPage'
 import EngineeringPage from './components/pages/EngineeringPage'
+import WorkshopPage from './components/pages/WorkshopPage'
 import LoginPage from './components/pages/LoginPage'
 import QueueIndicator from './components/shared/QueueIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { useNotifications } from './hooks/useNotifications'
-import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems } from './api'
+import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems, updateJob } from './api'
 import './App.css'
 
 export const SECTIONS = ['today', 'week', 'month', 'later']
@@ -92,7 +93,8 @@ export default function App() {
   const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
-  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : 'today'
+  const isWorkshopPage    = location.pathname === '/workshop'
+  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isWorkshopPage ? 'workshop' : 'today'
 
   const tagMatch =
     location.pathname.match(/^\/today\/tag\/(\d+)$/)    ||
@@ -127,6 +129,7 @@ export default function App() {
     { key: 'h', label: 'Habits',            group: 'nav',    action: ()  => navigate('/habits') },
     { key: 'c', label: 'Calendar',          group: 'nav',    action: ()  => navigate('/calendar') },
     { key: 'e', label: 'Engineering',       group: 'nav',    action: ()  => navigate('/engineering') },
+    { key: 'w', label: 'Workshop',          group: 'nav',    action: ()  => navigate('/workshop') },
   ]
 
   useEffect(() => {
@@ -609,12 +612,22 @@ export default function App() {
   const handlePageNavigate = (page, tagId) => {
     if (page === 'today')       return navigate(tagId ? `/today/tag/${tagId}` : '/today')
     if (page === 'engineering') return navigate('/engineering')
+    if (page === 'workshop')    return navigate('/workshop')
     if (page === 'habits')      return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 
+  const [defaultSection, setDefaultSection] = useState('today')
+
   const openEdit = (todo) => {
+    setDefaultSection(todo?.section ?? 'today')
     setEditingTodo(todo)
+    setShowModal(true)
+  }
+
+  const openNewCard = (section = 'today') => {
+    setDefaultSection(section)
+    setEditingTodo(null)
     setShowModal(true)
   }
 
@@ -809,6 +822,7 @@ export default function App() {
                     onDelete={handleDeleteTodo}
                     onToggle={handleToggle}
                     onMove={handleMoveSection}
+                    onAdd={section === 'later' ? () => openNewCard('none') : undefined}
                   />
                 ))}
               </div>
@@ -832,6 +846,12 @@ export default function App() {
             onRefresh={handleRefreshCalendar}
             lastRefreshed={lastRefreshed}
             refreshing={calendarRefreshing}
+          />
+        ) : isWorkshopPage ? (
+          <WorkshopPage
+            todos={todos.filter(t => !t.archived && !t.completed)}
+            tags={tags}
+            onAddCard={handleAddCard}
           />
         ) : isEngineeringPage ? (
           <EngineeringPage
@@ -864,6 +884,7 @@ export default function App() {
       {showModal && (
         <AddTodoModal
           card={editingTodo}
+          defaultSection={defaultSection}
           allTags={tags}
           onClose={closeModal}
           onSave={handleModalSave}

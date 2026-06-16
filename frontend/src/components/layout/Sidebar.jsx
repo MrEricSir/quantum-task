@@ -1,12 +1,13 @@
-import { CalendarIcon, LoopIcon, SunIcon, TableIcon, CommitIcon } from '@radix-ui/react-icons'
+import { CalendarIcon, LoopIcon, SunIcon, TableIcon, CommitIcon, LightningBoltIcon } from '@radix-ui/react-icons'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
-  { page: 'today',       label: 'Today',       Icon: SunIcon       },
-  { page: 'board',       label: 'Board',       Icon: TableIcon     },
-  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon  },
-  { page: 'habits',      label: 'Habits',      Icon: LoopIcon      },
-  { page: 'engineering', label: 'Engineering', Icon: CommitIcon    },
+  { page: 'today',       label: 'Today',       Icon: SunIcon           },
+  { page: 'board',       label: 'Board',       Icon: TableIcon         },
+  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon      },
+  { page: 'habits',      label: 'Habits',      Icon: LoopIcon          },
+  { page: 'engineering', label: 'Engineering', Icon: CommitIcon        },
+  { page: 'workshop',    label: 'Workshop',    Icon: LightningBoltIcon },
 ]
 
 function localDateKey(event) {

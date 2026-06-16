@@ -25,6 +25,24 @@
   border-bottom: 1px solid var(--border);
 }
 
+.column-add-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.column-add-btn:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
 .column-dot {
   width: 9px;
   height: 9px;

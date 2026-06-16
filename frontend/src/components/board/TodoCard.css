@@ -100,6 +100,10 @@
 /* ── Todo-specific detail values ── */
 .event-detail-value {
   white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* ── GitHub source badge ── */
@@ -155,6 +159,24 @@
 
 .card-action-edit:hover {
   background: #2563eb;
+}
+
+.card-action-assist {
+  background: none;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  color: #a78bfa;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.card-action-assist:hover {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: #a78bfa;
 }
 
 /* ── Move section (mobile only) ── */

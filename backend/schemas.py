@@ -160,6 +160,57 @@ class Note(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JobSource(BaseModel):
+    type: Literal["card", "text", "tag"]
+    card_id: Optional[int] = None
+    card_title: Optional[str] = None  # cached title for display if card is later deleted
+    tag_id: Optional[int] = None
+    tag_name: Optional[str] = None    # cached tag name for display
+    tag_color: Optional[str] = None   # cached tag color for display
+    content: Optional[str] = None     # for type="text"
+
+
+class JobCreate(BaseModel):
+    title: Optional[str] = None
+    prompt: str = ""
+    input_sources: List[JobSource] = []
+
+
+class JobUpdate(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    input_sources: Optional[List[JobSource]] = None
+    last_output: Optional[str] = None
+    output_card_id: Optional[int] = None
+
+
+class Job(BaseModel):
+    id: int
+    title: Optional[str] = None
+    prompt: str
+    input_sources: List[JobSource]
+    last_output: Optional[str] = None
+    output_card_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator('input_sources', mode='before')
+    @classmethod
+    def parse_input_sources(cls, v):
+        if isinstance(v, str):
+            import json as _json
+            return _json.loads(v) if v else []
+        return v or []
+
+    model_config = {"from_attributes": True}
+
+
+class AssistRequest(BaseModel):
+    task_title: str
+    task_description: Optional[str] = None
+    context: str  # user-pasted content: emails, messages, documents, etc.
+
+
 class BriefingRequest(BaseModel):
     todos: List['Todo'] = []
     calendar_events: List[CalendarEvent] = []

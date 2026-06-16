@@ -10,7 +10,7 @@ const SECTION_COLORS = {
   later: 'var(--color-later)',
 }
 
-export default function Column({ section, label, todos, isActive, isMobile, onEdit, onDelete, onToggle, onMove }) {
+export default function Column({ section, label, todos, isActive, isMobile, onEdit, onDelete, onToggle, onMove, onAdd }) {
   const { setNodeRef, isOver } = useDroppable({ id: section })
   const { active } = useDndContext()
 
@@ -20,6 +20,9 @@ export default function Column({ section, label, todos, isActive, isMobile, onEd
         <span className="column-dot" style={{ background: SECTION_COLORS[section] }} />
         <span className="column-label">{label}</span>
         <span className="column-count">{todos.length}</span>
+        {section === 'later' && onAdd && (
+          <button className="column-add-btn" onClick={onAdd} title="New reference card">+</button>
+        )}
       </div>
 
       <SortableContext items={todos.map((t) => t.id)} strategy={verticalListSortingStrategy}>

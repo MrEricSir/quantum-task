@@ -8,6 +8,7 @@ export const ALL_SECTIONS = [
   { value: 'week',  label: 'This Week' },
   { value: 'month', label: 'This Month' },
   { value: 'later', label: 'Stash' },
+  { value: 'none',  label: 'Reference card' },
 ]
 
 // Compute which board section a scheduled date falls into

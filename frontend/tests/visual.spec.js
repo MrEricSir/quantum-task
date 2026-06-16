@@ -657,6 +657,78 @@ test.describe('offline banner', () => {
 // ---------------------------------------------------------------------------
 // Edit modal — scheduled_at persistence
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Workshop page
+// ---------------------------------------------------------------------------
+test.describe('workshop page', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/jobs', r => {
+      if (r.request().method() === 'GET') return r.fulfill({ json: [] })
+      // POST → return a new job
+      return r.fulfill({ json: {
+        id: 1, title: null, prompt: '', input_sources: [],
+        last_output: null, output_card_id: null,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }})
+    })
+    await page.goto('/workshop')
+    await waitForApp(page)
+  })
+
+  test('Workshop nav item is visible in sidebar', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /workshop/i }).first()).toBeVisible()
+  })
+
+  test('"New Job" button is visible', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /new job/i })).toBeVisible()
+  })
+
+  test('empty state shown when no jobs exist', async ({ page }) => {
+    await expect(page.getByText(/select a job or create a new one/i)).toBeVisible()
+  })
+
+  test('clicking "New Job" shows compose area', async ({ page }) => {
+    await page.route('**/api/jobs/1', r => r.fulfill({ json: {
+      id: 1, title: null, prompt: '', input_sources: [],
+      last_output: null, output_card_id: null,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }}))
+    await page.getByRole('button', { name: /new job/i }).click()
+    await expect(page.getByPlaceholder(/job title/i)).toBeVisible()
+    await expect(page.getByPlaceholder(/paste additional context/i)).toBeVisible()
+    await expect(page.locator('#ws-prompt')).toBeVisible()
+    await expect(page.getByRole('button', { name: /run/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Assistant modal
+// ---------------------------------------------------------------------------
+test.describe('assistant modal', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('"Assistant" button is visible when a card is expanded', async ({ page }) => {
+    const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
+    await card.click()
+    await expect(card.getByRole('button', { name: /assistant/i })).toBeVisible()
+  })
+
+  test('Assistant modal opens when button is clicked', async ({ page }) => {
+    const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assistant' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /generate/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit modal — scheduled_at persistence
+// ---------------------------------------------------------------------------
 test.describe('edit modal scheduled_at', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/board')

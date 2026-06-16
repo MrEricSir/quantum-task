@@ -14,9 +14,7 @@ export default function AddTodoModal({ card, defaultSection = 'today', allTags =
 
   const [title, setTitle] = useState(card?.title ?? '')
   const [description, setDescription] = useState(card?.description ?? '')
-  const [section, setSection] = useState(
-    card?.section === 'none' ? 'later' : (card?.section ?? defaultSection)
-  )
+  const [section, setSection] = useState(card?.section ?? defaultSection)
   const [scheduledAt, setScheduledAt] = useState(
     card?.scheduled_at ? isoToLocal(card.scheduled_at) : ''
   )

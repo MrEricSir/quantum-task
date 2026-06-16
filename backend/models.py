@@ -143,6 +143,21 @@ class EngineeringItem(Base):
     synced_at   = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+class Job(Base):
+    """A saved AI job: prompt + typed input sources, re-runnable, output saved."""
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=True)
+    prompt = Column(String, nullable=False, default="")
+    # JSON array of {type, card_id?, card_title?, content?}
+    input_sources = Column(String, nullable=False, default="[]")
+    last_output = Column(String, nullable=True)
+    output_card_id = Column(Integer, ForeignKey("todos.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class BriefingCache(Base):
     """One row per section ('today' or 'week'), keyed on section+content hash.
 

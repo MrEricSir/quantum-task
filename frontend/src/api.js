@@ -294,6 +294,37 @@ export async function fetchEngineeringItems() {
   return res.json()
 }
 
+export async function fetchJobs() {
+  const res = await apiFetch('/api/jobs')
+  if (!res.ok) throw new Error('Failed to fetch jobs')
+  return res.json()
+}
+
+export async function createJob(data) {
+  const res = await apiFetch('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to create job')
+  return res.json()
+}
+
+export async function updateJob(id, data) {
+  const res = await apiFetch(`/api/jobs/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to update job')
+  return res.json()
+}
+
+export async function deleteJob(id) {
+  const res = await apiFetch(`/api/jobs/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete job')
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

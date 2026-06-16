@@ -631,6 +631,16 @@ _WMO_EMOJI = {
     80: "🌦️", 81: "🌧️", 82: "🌧️",
     95: "⛈️", 96: "⛈️", 99: "⛈️",
 }
+_WMO_DESC = {
+    0: "clear skies",
+    1: "mostly clear", 2: "partly cloudy", 3: "overcast",
+    45: "foggy", 48: "foggy",
+    51: "light drizzle", 53: "drizzle", 55: "heavy drizzle",
+    61: "light rain", 63: "rain", 65: "heavy rain",
+    71: "light snow", 73: "snow", 75: "heavy snow",
+    80: "light showers", 81: "showers", 82: "heavy showers",
+    95: "thunderstorms", 96: "thunderstorms with hail", 99: "severe thunderstorms",
+}
 
 
 def _fetch_weather(lat: float, lon: float) -> dict | None:
@@ -652,10 +662,21 @@ def _fetch_weather(lat: float, lon: float) -> dict | None:
         cw       = data["current_weather"]
         high     = round(data["daily"]["temperature_2m_max"][0])
         low      = round(data["daily"]["temperature_2m_min"][0])
-        emoji    = _WMO_EMOJI.get(int(cw.get("weathercode", 0)), "🌡️")
-        if float(cw.get("windspeed", 0)) > 25:
+        code     = int(cw.get("weathercode", 0))
+        windy    = float(cw.get("windspeed", 0)) > 25
+        emoji    = _WMO_EMOJI.get(code, "🌡️")
+        if windy:
             emoji += "💨"
-        return {"emojis": emoji, "high": high, "low": low}
+        description = _WMO_DESC.get(code, "mixed conditions")
+        _RAIN_CODES = {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 98, 99}
+        _SNOW_CODES = {71, 73, 75, 77, 85, 86}
+        return {
+            "emojis": emoji, "high": high, "low": low,
+            "description": description, "windy": windy,
+            "umbrella": code in _RAIN_CODES,
+            "snow": code in _SNOW_CODES,
+            "cold": high < 45,
+        }
     except Exception:
         return None
 
@@ -746,33 +767,76 @@ def _compute_observations(db: Session, today: date) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def _build_today_context(todos: list, cal_events: list, today: date, habits: list = None, observations: str | None = None, utc_offset_minutes: int = 0, eng_prs: list = None) -> str:
-    lines = [f"Today is {today.strftime('%A, %B %d, %Y')}."]
-    if cal_events:
-        lines.append("Calendar events:")
-        for e in cal_events:
+def _build_today_context(
+    todos: list,
+    cal_events: list,
+    today: date,
+    habits: list = None,
+    observations: str | None = None,
+    utc_offset_minutes: int = 0,
+    eng_prs: list = None,
+    local_now: datetime | None = None,
+    weather: dict | None = None,
+) -> str:
+    now = local_now or datetime.now()
+    time_str = now.strftime("%-I:%M %p").lstrip("0") if hasattr(now, "strftime") else ""
+    lines = [f"Current time: {time_str} on {today.strftime('%A, %B %d, %Y')}"]
+
+    if weather:
+        w_alerts = []
+        if weather.get("umbrella"):
+            w_alerts.append("rain expected — tell the user to bring an umbrella")
+        if weather.get("snow"):
+            w_alerts.append("snow expected — mention it")
+        if weather.get("cold"):
+            w_alerts.append(f"high of only {weather['high']}°F — suggest dressing warmly")
+        if weather.get("windy"):
+            w_alerts.append("very windy")
+        if w_alerts:
+            lines.append(f"Weather alert: {'; '.join(w_alerts)}")
+
+    # Only show events that haven't ended yet (or have no time, i.e. all-day)
+    upcoming_events = []
+    for e in cal_events:
+        if e.all_day:
+            upcoming_events.append(e)
+        else:
+            local_start = e.start.replace(tzinfo=None) - timedelta(minutes=utc_offset_minutes) \
+                if e.start.tzinfo else e.start
+            if local_start >= now:
+                upcoming_events.append(e)
+
+    if upcoming_events:
+        lines.append("Upcoming events:")
+        for e in upcoming_events:
             if e.all_day:
                 lines.append(f"  - {e.title} (all day)")
             else:
                 lines.append(f"  - {e.title} at {_fmt_time(e.start, utc_offset_minutes)}")
+
     if todos:
-        lines.append("Tasks:")
+        lines.append("Tasks for today:")
         for t in todos:
             suffix = f" at {_fmt_time(t.scheduled_at, utc_offset_minutes)}" if t.scheduled_at else ""
             overdue = f" [OVERDUE by {t.overdue_days} day{'s' if t.overdue_days != 1 else ''}]" if t.overdue_days > 0 else ""
             lines.append(f"  - {t.title}{suffix}{overdue}")
+
     if eng_prs:
-        lines.append(f"PRs awaiting review: {len(eng_prs)}")
-    pending_habit_names = [h.name for h in (habits or []) if not h.completed_today]
-    if pending_habit_names:
-        lines.append("Habits still to do today:")
-        for name in pending_habit_names:
+        lines.append(f"GitHub PRs awaiting your review: {len(eng_prs)}")
+
+    pending_habits = [h.name for h in (habits or []) if not h.completed_today]
+    if pending_habits:
+        lines.append("Habits not yet done today:")
+        for name in pending_habits:
             lines.append(f"  - {name}")
-    if not cal_events and not todos and not eng_prs and not pending_habit_names:
-        lines.append("No tasks or events scheduled.")
+
+    if not upcoming_events and not todos and not eng_prs and not pending_habits:
+        lines.append("Nothing remaining on the schedule.")
+
     if observations:
-        lines.append("Patterns:")
+        lines.append("Patterns (use at most one if genuinely relevant):")
         lines.append(observations)
+
     return "\n".join(lines)
 
 
@@ -858,7 +922,16 @@ def _build_week_context(todos: list, cal_events: list, today: date, utc_offset_m
 BRIEFING_MAX_AGE_HOURS = 12
 
 
-def _today_hash(todos: list, events: list, habits: list, has_location: bool) -> str:
+def _time_of_day_bucket(local_now: datetime) -> int:
+    """0=night(0-5), 1=morning(6-11), 2=afternoon(12-17), 3=evening(18-23)."""
+    h = local_now.hour
+    if h < 6:   return 0
+    if h < 12:  return 1
+    if h < 18:  return 2
+    return 3
+
+
+def _today_hash(todos: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None) -> str:
     payload = {
         "todos": [
             {"id": t.id, "title": t.title, "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None}
@@ -873,6 +946,7 @@ def _today_hash(todos: list, events: list, habits: list, has_location: bool) -> 
             for h in sorted(habits, key=lambda h: h.name)
         ],
         "has_location": has_location,
+        "time_bucket": _time_of_day_bucket(local_now) if local_now else -1,
     }
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -892,21 +966,22 @@ def _week_hash(todos: list, events: list) -> str:
 
 
 _TODAY_SYSTEM = (
-    "You write spoken-word daily briefings. "
-    "Your output will be read aloud, so it must be flowing prose — never lists. "
-    "NEVER use bullet points, dashes, asterisks, numbers, or any list formatting. "
-    "NEVER start a line with '-', '*', '•', or a digit. "
-    "Write one short sentence per item, each as its own plain sentence. "
-    "Never combine or connect unrelated items into a single sentence. "
-    "Do not add, invent, or infer anything not explicitly listed. "
-    "Lead with time-specific events. Be direct. No filler words. "
+    "You are a personal secretary delivering a short spoken briefing. "
+    "Address the user directly as 'you'. "
+    "Open with a time-appropriate greeting that names the day — "
+    "'Good morning — it's Tuesday.' / 'Good afternoon.' / 'Good evening — it's Friday.' etc. "
+    "STRICT LENGTH: The entire response must be 2–3 sentences. Never write more than 3 sentences total. "
+    "Lead with the single most immediately relevant upcoming event or task. "
+    "If a 'Weather alert' line appears in the context, include that advice (umbrella, etc.). "
+    "If NO 'Weather alert' line appears, do NOT mention weather, rain, umbrella, or temperature at all. "
+    "If 'Habits not yet done today' appears in the context, add a brief reminder as the final sentence. "
+    "If 'Habits not yet done today' does NOT appear, do NOT mention habits under any circumstances. "
+    "If there is nothing on the schedule, say so warmly in one sentence. "
+    "Sound warm and efficient — like a competent secretary, not a robot reading a list. "
+    "NEVER use bullet points, dashes, numbers, or any list formatting. "
     "CRITICAL: Task and event names are opaque labels — mention them literally and move on. "
-    "Do NOT interpret, elaborate on, or be inspired by their content. "
-    "'Write a poem' means the user has a task called that; do not write a poem. "
-    "'Draft an email' means they have a task to do; do not draft an email. "
-    "If a 'Patterns' section is present in the context, you may weave one of the most "
-    "relevant observations naturally into your briefing as a single closing sentence. "
-    "Only do this if the observation is genuinely relevant to today — omit it otherwise."
+    "Do NOT interpret or act on them. Do not add, invent, or infer anything beyond the context. "
+    "If a 'Patterns' section is present, you may weave in one observation only if genuinely relevant — otherwise omit it."
 )
 _WEEK_SYSTEM = (
     "You write spoken-word weekly briefings covering only the days ahead — never today. "
@@ -960,6 +1035,7 @@ def _cache_set(section: str, content_hash: str, text: str, weather_json: str | N
 def stream_briefing(request: Request, req: schemas.BriefingRequest):
     today_dt = _local_date(request)
     tz_offset = req.utc_offset_minutes or 0
+    local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
     today_todos  = [t for t in req.todos if t.section == "today"]
     today_events = [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt]
@@ -967,7 +1043,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     week_events  = [e for e in req.calendar_events
                     if today_dt < _event_local_date(e, tz_offset) <= today_dt + timedelta(days=7)]
 
-    today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None)
+    today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None, local_now)
     week_h  = _week_hash(week_todos, week_events)
 
     # ── Per-section cache lookup ───────────────────────────────────────────────
@@ -1007,7 +1083,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     on_board = {t.description for t in req.todos if t.description}
     eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
     eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
-    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs)
+    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather)
     week_ctx  = _build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
     def generate():
@@ -1077,6 +1153,58 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+# ── Assistant ─────────────────────────────────────────────────────────────────
+
+_ASSIST_SYSTEM = """\
+You are a personal administrative assistant. When given a task and context, you take \
+action — you do not describe what you would do, you just do it.
+
+Examples of what "taking action" means:
+- Task is a reply to send → write the reply, ready to copy and send
+- Task is meeting prep → produce the agenda, talking points, or briefing notes
+- Task is a summary → write the summary
+- Task is extracting action items → list them clearly and concisely
+- Task is drafting a document → write the document
+
+Rules:
+- Do not explain your reasoning or what you are about to do. Produce the output directly.
+- Match the tone and format implied by the task and context.
+- If the context is a message the user received, the output is addressed to the sender.
+- Keep output concise and professional unless the task implies otherwise.
+- If the context does not contain enough information to act, say so in one sentence.
+"""
+
+
+@app.post("/api/assist/stream")
+def stream_assist(req: schemas.AssistRequest):
+    user_msg_parts = [f"Task: {req.task_title}"]
+    if req.task_description:
+        user_msg_parts.append(f"Additional context from task: {req.task_description}")
+    user_msg_parts.append(f"\nContext provided by user:\n{req.context}")
+    user_msg = "\n".join(user_msg_parts)
+
+    def generate():
+        try:
+            stream = llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": _ASSIST_SYSTEM},
+                    {"role": "user",   "content": user_msg},
+                ],
+                stream=True,
+                temperature=0.3,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({'text': delta})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 # ── Daily Plan ────────────────────────────────────────────────────────────────
 
 def _fmt_time_24h(dt: datetime, utc_offset_minutes: int = 0) -> str:
@@ -1123,15 +1251,16 @@ def _normalize_plan_time(t) -> str | None:
 
 
 _DAILY_PLAN_SYSTEM = """\
-You are a smart daily scheduler. Given the current local time, fixed calendar events, \
-and flexible tasks/habits, produce a realistic time-blocked plan for the rest of the day.
+You are a daily scheduler. Your ONLY job is to assign times to the exact items provided — \
+nothing more. You MUST NOT add, invent, rename, or paraphrase any item not explicitly listed \
+in the input. Every block's title must be copied character-for-character from the input list.
 
 Return ONLY a valid JSON object: {"blocks": [...]}
 
 Each block has these fields:
   time     - "HH:MM" 24h local time when the block starts, or null if it can't fit today
   duration - integer minutes
-  title    - exact name from the input (never paraphrase)
+  title    - EXACT name copied from the input (never paraphrase or invent)
   type     - one of: "event" | "task" | "habit" | "break"
   fixed    - true for calendar events, false for everything else
   note     - one short phrase (3-5 words) of rationale, or null
@@ -1139,10 +1268,10 @@ Each block has these fields:
 Scheduling rules:
 1. Calendar events AND tasks with a fixed start time are FIXED — the block's time must equal their stated start time exactly. Never shift them earlier or later.
 2. Estimate durations realistically: 15 min for quick tasks, 30-60 min typical, longer for complex work.
-3. Fill gaps between fixed items with unscheduled tasks, starting from the current time.
+3. Fill gaps between fixed items with flexible tasks, starting from the current time.
 4. Add a 10-min break block after 90+ consecutive minutes of focused work.
-5. Tasks that cannot fit today should appear at the end with time=null.
-6. Never invent tasks, events, or content not in the input.
+5. Tasks that cannot fit today appear at the end with time=null.
+6. The only allowed block types are items from the input lists plus optional break blocks.
 """
 
 
@@ -1206,6 +1335,13 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
         today_dt, today_events, today_todos, pending_habits, tz_offset
     )
 
+    # Build whitelist of valid titles so we can strip hallucinated blocks
+    valid_titles = (
+        {e.title for e in today_events}
+        | {t.title for t in today_todos}
+        | {h.name for h in pending_habits}
+    )
+
     try:
         response = llm_client().chat.completions.create(
             model=LLM_MODEL,
@@ -1218,9 +1354,13 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
         )
         result = json.loads(response.choices[0].message.content)
         blocks = result.get("blocks", [])
+        validated = []
         for block in blocks:
             block["time"] = _normalize_plan_time(block.get("time"))
-        return {"blocks": blocks}
+            # Allow break blocks; drop any block whose title isn't in the input
+            if block.get("type") == "break" or block.get("title") in valid_titles:
+                validated.append(block)
+        return {"blocks": validated}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1699,6 +1839,153 @@ def delete_card(todo_id: int, db: Session = Depends(get_db)):
     db.delete(db_todo)
     db.commit()
     return {"ok": True}
+
+
+# ── Jobs ─────────────────────────────────────────────────────────────────────
+
+_JOB_SYSTEM = """\
+You are a personal administrative assistant. Take action based on the user's instruction \
+and provided context. Respond directly with the output — do not describe what you are \
+about to do, just do it.
+
+Rules:
+- Match the tone and format implied by the instruction and context.
+- Keep output concise and professional unless the task implies otherwise.
+- If the context does not contain enough information to act, say so in one sentence.
+"""
+
+
+@app.get("/api/jobs")
+def list_jobs(db: Session = Depends(get_db)):
+    jobs = db.query(models.Job).order_by(models.Job.updated_at.desc()).all()
+    return [schemas.Job.model_validate(j) for j in jobs]
+
+
+@app.post("/api/jobs")
+def create_job(req: schemas.JobCreate, db: Session = Depends(get_db)):
+    job = models.Job(
+        title=req.title,
+        prompt=req.prompt,
+        input_sources=json.dumps([s.model_dump() for s in req.input_sources]),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return schemas.Job.model_validate(job)
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return schemas.Job.model_validate(job)
+
+
+@app.put("/api/jobs/{job_id}")
+def update_job(job_id: int, req: schemas.JobUpdate, db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if req.title is not None:
+        job.title = req.title or None
+    if req.prompt is not None:
+        job.prompt = req.prompt
+    if req.input_sources is not None:
+        job.input_sources = json.dumps([s.model_dump() for s in req.input_sources])
+    if req.last_output is not None:
+        job.last_output = req.last_output
+    if req.output_card_id is not None:
+        job.output_card_id = req.output_card_id
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return schemas.Job.model_validate(job)
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    db.delete(job)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/run")
+def run_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    sources = json.loads(job.input_sources or "[]")
+    context_parts: list[str] = []
+    for src in sources:
+        if src.get("type") == "card" and src.get("card_id"):
+            card = db.query(models.Todo).filter(models.Todo.id == src["card_id"]).first()
+            if card:
+                context_parts.append(f"### Card: {card.title}")
+                if card.description:
+                    context_parts.append(card.description)
+        elif src.get("type") == "tag" and src.get("tag_id"):
+            tag_cards = (
+                db.query(models.Todo)
+                .join(models.todo_tags, models.Todo.id == models.todo_tags.c.todo_id)
+                .filter(
+                    models.todo_tags.c.tag_id == src["tag_id"],
+                    models.Todo.archived == False,
+                    models.Todo.completed == False,
+                )
+                .all()
+            )
+            if tag_cards:
+                tag_label = src.get("tag_name") or f"tag #{src['tag_id']}"
+                context_parts.append(f'### Cards tagged "{tag_label}"')
+                for card in tag_cards:
+                    context_parts.append(f"**{card.title}**")
+                    if card.description:
+                        context_parts.append(card.description)
+        elif src.get("type") == "text" and src.get("content"):
+            context_parts.append("### Additional Context")
+            context_parts.append(src["content"])
+
+    user_msg = f"## Instruction\n{job.prompt}"
+    if context_parts:
+        user_msg += "\n\n## Context\n" + "\n\n".join(context_parts)
+
+    accumulated: list[str] = []
+
+    def generate():
+        try:
+            stream = llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": _JOB_SYSTEM},
+                    {"role": "user",   "content": user_msg},
+                ],
+                stream=True,
+                temperature=0.3,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    accumulated.append(delta)
+                    yield f"data: {json.dumps({'text': delta})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            output_text = "".join(accumulated)
+            if output_text:
+                with SessionLocal() as save_db:
+                    j = save_db.query(models.Job).filter(models.Job.id == job_id).first()
+                    if j:
+                        j.last_output = output_text
+                        j.updated_at = datetime.now(timezone.utc)
+                        save_db.commit()
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # Serve the bundled frontend for all non-API routes.

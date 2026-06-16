@@ -4,6 +4,7 @@ import { CSS } from '@dnd-kit/utilities'
 import * as Checkbox from '@radix-ui/react-checkbox'
 import { CheckIcon, ChevronUpIcon, ChevronDownIcon } from '@radix-ui/react-icons'
 import ConfirmDialog from '../modals/ConfirmDialog'
+import AssistModal from '../modals/AssistModal'
 import './EventCard.css'
 import './TodoCard.css'
 
@@ -35,6 +36,7 @@ function parseGitHubUrl(str) {
 export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isMobile, isOverlay }) {
   const [expanded, setExpanded] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [showAssist, setShowAssist] = useState(false)
   const [popping, setPopping] = useState(false)
   const popTimer = useRef(null)
 
@@ -144,6 +146,13 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
           </div>
           <div className="card-detail-actions">
             <button className="card-action-edit" onClick={handleEdit}>Edit</button>
+            <button
+              className="card-action-assist"
+              onClick={(e) => { e.stopPropagation(); setShowAssist(true) }}
+              title="AI Assistant"
+            >
+              ✦ Assistant
+            </button>
           </div>
         </div>
       )}
@@ -164,6 +173,12 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
         description={`"${todo.title}" will be permanently deleted.`}
         onConfirm={() => { setShowConfirm(false); onDelete?.(todo.id) }}
         onCancel={() => setShowConfirm(false)}
+      />
+
+      <AssistModal
+        open={showAssist}
+        onClose={() => setShowAssist(false)}
+        task={todo}
       />
     </div>
   )
