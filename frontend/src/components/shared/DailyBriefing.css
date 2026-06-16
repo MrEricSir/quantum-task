@@ -89,6 +89,35 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Listen / Stop button ── */
+.briefing-listen {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 15px;
+  padding: 10px 10px 10px 12px;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+.briefing-listen:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.briefing-listen--active {
+  color: var(--color-today);
+}
+
+.briefing-listen--active:hover {
+  color: var(--color-today);
+}
+
 /* ── Refresh button ── */
 .briefing-refresh {
   background: none;

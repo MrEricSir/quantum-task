@@ -869,6 +869,7 @@ export default function App() {
                 description: item.url,
                 section: item.item_type === 'pr' ? 'today' : 'week',
                 tag_ids: [],
+                external_id: item.external_id,
               })
             }}
           />

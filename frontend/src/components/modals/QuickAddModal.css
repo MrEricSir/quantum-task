@@ -68,6 +68,51 @@
   line-height: 1.6;
 }
 
+/* ── Voice input ── */
+.quick-input-wrap {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.quick-input-wrap .quick-textarea {
+  margin-bottom: 0;
+  padding-right: 44px; /* room for mic button */
+}
+
+.quick-mic-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.quick-mic-btn:hover {
+  background: rgba(139, 92, 246, 0.2);
+  color: #c4b5fd;
+}
+
+.quick-mic-btn--listening {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+  50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
 .quick-textarea {
   width: 100%;
   padding: 10px 12px;

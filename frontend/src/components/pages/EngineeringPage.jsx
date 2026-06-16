@@ -43,7 +43,9 @@ export default function EngineeringPage({ items, todos = [], lastSynced, syncing
   const issues = items.filter((i) => i.item_type === 'issue')
   const noConfig = items.length === 0 && !syncing
 
-  const isAdded = (item) => todos.some((t) => t.description === item.url)
+  const isAdded = (item) => todos.some(
+    (t) => (t.external_id && t.external_id === item.external_id) || t.description === item.url
+  )
 
   return (
     <div className="eng-page">

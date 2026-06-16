@@ -1,11 +1,12 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
-import { UpdateIcon, ExclamationTriangleIcon } from '@radix-ui/react-icons'
+import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon } from '@radix-ui/react-icons'
 import './DailyBriefing.css'
 
 export default function DailyBriefing({ todos, calendarEvents, habits = [], tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
   const [sections, setSections] = useState({ today: '', week: '' })
   const [status, setStatus] = useState('idle') // idle | loading | done | error
   const [error, setError] = useState('')
+  const [speaking, setSpeaking] = useState(false)
   const abortRef = useRef(null)
   const todosRef = useRef(todos)
   const calEventsRef = useRef(calendarEvents)
@@ -121,7 +122,10 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   useEffect(() => {
     if (!ready) return
     generate()
-    return () => abortRef.current?.abort()
+    return () => {
+      abortRef.current?.abort()
+      window.speechSynthesis.cancel()
+    }
   }, [tagId, ready]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh with debounce when upstream data changes (new tasks, calendar
@@ -142,13 +146,28 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   function cleanBriefingText(text) {
     if (!text) return text
     let s = text
-    // Collapse newlines to spaces (model uses them as sentence separators)
     s = s.replace(/\n+/g, ' ')
-    // Strip bullet markers: "- item", "* item", "• item"
     s = s.replace(/\s*[*\-•]\s+/g, ' ')
-    // Collapse multiple spaces
     s = s.replace(/  +/g, ' ')
     return s.trim()
+  }
+
+  const handleSpeak = () => {
+    if (speaking) {
+      window.speechSynthesis.cancel()
+      setSpeaking(false)
+      return
+    }
+    const text = [sections.today, sections.week]
+      .map(cleanBriefingText)
+      .filter(Boolean)
+      .join(' ')
+    if (!text) return
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.onend = () => setSpeaking(false)
+    utterance.onerror = () => setSpeaking(false)
+    setSpeaking(true)
+    window.speechSynthesis.speak(utterance)
   }
 
   if (status === 'idle') return null
@@ -185,10 +204,19 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
           </div>
         )}
       </div>
+      {status === 'done' && (
+        <button
+          className={`briefing-listen${speaking ? ' briefing-listen--active' : ''}`}
+          onClick={handleSpeak}
+          title={speaking ? 'Stop' : 'Listen'}
+        >
+          {speaking ? <StopIcon /> : <SpeakerLoudIcon />}
+        </button>
+      )}
       {(status === 'done' || (status === 'loading' && hasContent)) && (
         <button
           className="briefing-refresh"
-          onClick={() => generate(true)}
+          onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); generate(true) }}
           disabled={status === 'loading'}
           title="Regenerate"
         >

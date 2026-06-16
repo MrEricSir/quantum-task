@@ -142,13 +142,21 @@ def sync(db: Session) -> dict:
             ))
             created += 1
 
-    # Close items no longer in the open set
+    # Close items no longer in the open set; auto-archive linked cards
     tracked_open = db.query(models.EngineeringItem).filter_by(state="open").all()
     for eng_item in tracked_open:
         if eng_item.external_id not in open_items:
             eng_item.state = "closed"
             eng_item.synced_at = now
             closed += 1
+            # Archive any cards linked to this item via external_id
+            linked_cards = db.query(models.Todo).filter_by(
+                external_id=eng_item.external_id, archived=False
+            ).all()
+            for card in linked_cards:
+                card.archived = True
+                card.archived_at = now
+                card.updated_at = now
 
     db.commit()
     return {"created": created, "closed": closed, "skipped": skipped, "error": None}

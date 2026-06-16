@@ -1,9 +1,22 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { parseBulkTodos } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
 import './QuickAddModal.css'
+
+const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)
+
+function MicIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <line x1="12" y1="19" x2="12" y2="22" />
+      <line x1="9" y1="22" x2="15" y2="22" />
+    </svg>
+  )
+}
 
 const TYPE_LABELS = { task: 'Task', habit: 'Habit' }
 
@@ -25,12 +38,45 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const [clarificationQuestion, setClarificationQuestion] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // ── Voice input ──
+  const [listening, setListening] = useState(false)
+  const recognitionRef = useRef(null)
+
   // ── Bulk confirm step ──
   const [bulkItems, setBulkItems] = useState([])
   const [editingBulkIdx, setEditingBulkIdx] = useState(null)
 
   const toggleTag = (id) =>
     setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+
+  const handleMic = () => {
+    if (listening) {
+      recognitionRef.current?.stop()
+      return
+    }
+    const recognition = new SR()
+    recognition.lang = 'en-US'
+    recognition.interimResults = true
+    recognition.continuous = false
+    recognitionRef.current = recognition
+
+    let finalTranscript = ''
+    recognition.onstart = () => setListening(true)
+    recognition.onresult = (e) => {
+      let interim = ''
+      for (const result of e.results) {
+        if (result.isFinal) finalTranscript += result[0].transcript
+        else interim += result[0].transcript
+      }
+      setText(finalTranscript + interim)
+    }
+    recognition.onend = () => {
+      setListening(false)
+      if (finalTranscript.trim()) setText(finalTranscript.trim())
+    }
+    recognition.onerror = () => setListening(false)
+    recognition.start()
+  }
 
   const handleParse = async () => {
     if (!text.trim()) return
@@ -180,15 +226,28 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           <p className="quick-hint">
             Describe a task, habit, or stash item in plain language. Put multiple items on separate lines to add them all at once.
           </p>
-          <textarea
-            className="quick-textarea"
-            placeholder={"dentist appointment tomorrow at 10am\nmeditate every morning\nshopping list: milk, eggs, bread"}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleParse() }}
-            autoFocus
-            rows={4}
-          />
+          <div className="quick-input-wrap">
+            <textarea
+              className="quick-textarea"
+              placeholder={"dentist appointment tomorrow at 10am\nmeditate every morning\nshopping list: milk, eggs, bread"}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleParse() }}
+              autoFocus
+              rows={4}
+            />
+            {SR && (
+              <button
+                type="button"
+                className={`quick-mic-btn${listening ? ' quick-mic-btn--listening' : ''}`}
+                onClick={handleMic}
+                title={listening ? 'Stop recording' : 'Dictate'}
+                aria-label={listening ? 'Stop recording' : 'Dictate task'}
+              >
+                <MicIcon />
+              </button>
+            )}
+          </div>
           {parseError && (
             <p className="quick-parse-error">{parseError}</p>
           )}
