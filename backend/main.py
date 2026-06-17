@@ -777,23 +777,36 @@ def _build_today_context(
     eng_prs: list = None,
     local_now: datetime | None = None,
     weather: dict | None = None,
+    all_cal_events: list = None,
 ) -> str:
     now = local_now or datetime.now()
     time_str = now.strftime("%-I:%M %p").lstrip("0") if hasattr(now, "strftime") else ""
     lines = [f"Current time: {time_str} on {today.strftime('%A, %B %d, %Y')}"]
 
     if weather:
-        w_alerts = []
+        # Always include basic conditions so the LLM has context
+        w_line = f"Weather: {weather['description']}, high {weather['high']}°F / low {weather['low']}°F"
+        w_actions = []
         if weather.get("umbrella"):
-            w_alerts.append("rain expected — tell the user to bring an umbrella")
+            w_actions.append("rain — advise bringing an umbrella")
         if weather.get("snow"):
-            w_alerts.append("snow expected — mention it")
+            w_actions.append("snow — mention it")
         if weather.get("cold"):
-            w_alerts.append(f"high of only {weather['high']}°F — suggest dressing warmly")
+            w_actions.append(f"cold — advise dressing warmly")
         if weather.get("windy"):
-            w_alerts.append("very windy")
-        if w_alerts:
-            lines.append(f"Weather alert: {'; '.join(w_alerts)}")
+            w_actions.append("very windy — worth mentioning")
+        if w_actions:
+            w_line += f". Action: {'; '.join(w_actions)}"
+        lines.append(w_line)
+
+    # Detect which event titles are recurring (appear on 2+ days across the full calendar)
+    recurring_titles: set[str] = set()
+    if all_cal_events:
+        title_days: dict[str, set] = {}
+        for e in all_cal_events:
+            day = _event_local_date(e, utc_offset_minutes)
+            title_days.setdefault(e.title, set()).add(day)
+        recurring_titles = {t for t, days in title_days.items() if len(days) >= 2}
 
     # Only show events that haven't ended yet (or have no time, i.e. all-day)
     upcoming_events = []
@@ -809,10 +822,11 @@ def _build_today_context(
     if upcoming_events:
         lines.append("Upcoming events:")
         for e in upcoming_events:
+            recurring_tag = " (recurring)" if e.title in recurring_titles else ""
             if e.all_day:
-                lines.append(f"  - {e.title} (all day)")
+                lines.append(f"  - {e.title} (all day){recurring_tag}")
             else:
-                lines.append(f"  - {e.title} at {_fmt_time(e.start, utc_offset_minutes)}")
+                lines.append(f"  - {e.title} at {_fmt_time(e.start, utc_offset_minutes)}{recurring_tag}")
 
     if todos:
         lines.append("Tasks for today:")
@@ -971,9 +985,11 @@ _TODAY_SYSTEM = (
     "Open with a time-appropriate greeting that names the day — "
     "'Good morning — it's Tuesday.' / 'Good afternoon.' / 'Good evening — it's Friday.' etc. "
     "STRICT LENGTH: The entire response must be 2–3 sentences. Never write more than 3 sentences total. "
-    "Lead with the single most immediately relevant upcoming event or task. "
-    "If a 'Weather alert' line appears in the context, include that advice (umbrella, etc.). "
-    "If NO 'Weather alert' line appears, do NOT mention weather, rain, umbrella, or temperature at all. "
+    "If the context includes a Weather line, mention it naturally — work in actionable advice "
+    "(umbrella, dress warmly, etc.) only if an 'Action:' note is present for that condition. "
+    "For events: prioritise events NOT marked '(recurring)' — those are one-off and need attention. "
+    "Skip recurring events unless there is nothing else to mention. "
+    "Lead with the single most immediately relevant non-recurring event or task. "
     "If 'Habits not yet done today' appears in the context, add a brief reminder as the final sentence. "
     "If 'Habits not yet done today' does NOT appear, do NOT mention habits under any circumstances. "
     "If there is nothing on the schedule, say so warmly in one sentence. "
@@ -1083,7 +1099,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     on_board = {t.description for t in req.todos if t.description}
     eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
     eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
-    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather)
+    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events)
     week_ctx  = _build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
     def generate():
@@ -1723,6 +1739,11 @@ def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depend
                 date_hint = raw_title
             parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=date_hint)
             parsed = resolve_dates(parsed, text=date_hint, today=today)
+            # Promote source_text to description when it carries more context than
+            # the title alone (e.g. "dentist for annual cleaning" → keeps the detail)
+            if (parsed.source_text and not parsed.description
+                    and parsed.source_text.lower().strip() != parsed.title.lower().strip()):
+                parsed.description = parsed.source_text
             items.append(parsed)
         return schemas.BulkParseResponse(items=items)
     except Exception as e:

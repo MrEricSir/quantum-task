@@ -87,6 +87,7 @@ IMPORTANT — MULTIPLE ITEMS:
 - EXCEPTION: if the input is clearly a shopping/grocery list — e.g. "buy X, Y, and Z" \
 with 3+ items, or a store name followed by food items on separate lines — group ALL of \
 them into ONE item with type="task", section="none", and each item on its own line in description.
+- For each item, include "source_text": the verbatim fragment of the user's input that this item was parsed from (copy the exact words, do not paraphrase).
 Return ONLY valid JSON: {{"items": [<ParsedTodo>, ...]}} — no prose, no explanation.\
 """
 

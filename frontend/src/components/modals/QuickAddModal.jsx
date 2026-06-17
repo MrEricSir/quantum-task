@@ -45,6 +45,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   // ── Bulk confirm step ──
   const [bulkItems, setBulkItems] = useState([])
   const [editingBulkIdx, setEditingBulkIdx] = useState(null)
+  const [splittingIdx, setSplittingIdx] = useState(null)
+  const [splitText, setSplitText] = useState('')
+  const [reparseLoading, setReparseLoading] = useState(false)
 
   const toggleTag = (id) =>
     setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
@@ -166,6 +169,49 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     setStep('bulk-confirm')
   }
 
+  const handleMerge = async (idx) => {
+    const visible = bulkItems.filter((i) => !i._removed)
+    const a = visible[idx]
+    const b = visible[idx + 1]
+    const combined = [a.source_text || a.title, b.source_text || b.title].filter(Boolean).join(' ')
+    setReparseLoading(true)
+    try {
+      const { items: reparsed } = await parseBulkTodos(combined)
+      const newItems = reparsed.map((item, i) => ({ ...item, _key: Date.now() + i }))
+      setBulkItems((prev) => {
+        const aIdx = prev.indexOf(a)
+        const bIdx = prev.indexOf(b)
+        const next = prev.filter((_, i) => i !== aIdx && i !== bIdx)
+        next.splice(aIdx, 0, ...newItems)
+        return next
+      })
+    } finally {
+      setReparseLoading(false)
+    }
+  }
+
+  const handleSplitStart = (item) => {
+    setSplitText(item.source_text || item.title || '')
+    setSplittingIdx(bulkItems.indexOf(item))
+  }
+
+  const handleSplitSubmit = async () => {
+    if (!splitText.trim()) { setSplittingIdx(null); return }
+    setReparseLoading(true)
+    try {
+      const { items: reparsed } = await parseBulkTodos(splitText)
+      const newItems = reparsed.map((item, i) => ({ ...item, _key: Date.now() + i }))
+      setBulkItems((prev) => {
+        const next = [...prev]
+        next.splice(splittingIdx, 1, ...newItems)
+        return next
+      })
+      setSplittingIdx(null)
+    } finally {
+      setReparseLoading(false)
+    }
+  }
+
   const handleBulkConfirm = async () => {
     setSaving(true)
     for (const item of bulkItems) {
@@ -260,41 +306,91 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         </>
       )}
 
-      {step === 'bulk-confirm' && (
-        <>
-          <Dialog.Title asChild><h2>Add {bulkItems.filter((i) => !i._removed).length} Items</h2></Dialog.Title>
-          <div className="quick-bulk-list">
-            {bulkItems.map((item, idx) => (
-              !item._removed && (
-                <div key={item._key} className="quick-bulk-item" onClick={() => enterBulkEdit(idx)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && enterBulkEdit(idx)}>
-                  <span className={`quick-bulk-type-badge quick-bulk-type-badge--${item.type}`}>
-                    {TYPE_LABELS[item.type] ?? 'Task'}
-                  </span>
-                  <span className="quick-bulk-title">{item.title}</span>
-                  <button
-                    type="button"
-                    className="quick-bulk-remove"
-                    onClick={(e) => { e.stopPropagation(); setBulkItems((prev) =>
-                      prev.map((it, i) => i === idx ? { ...it, _removed: true } : it)
-                    )}}
-                    aria-label="Remove"
-                  >✕</button>
+      {step === 'bulk-confirm' && (() => {
+        const visible = bulkItems.filter((i) => !i._removed)
+        return (
+          <>
+            <Dialog.Title asChild><h2>Add {visible.length} Item{visible.length !== 1 ? 's' : ''}</h2></Dialog.Title>
+            <div className="quick-bulk-list">
+              {visible.map((item, visIdx) => (
+                <div key={item._key}>
+                  {splittingIdx === bulkItems.indexOf(item) ? (
+                    <div className="quick-split-editor">
+                      <p className="quick-split-hint">Edit the text and add line breaks to split into multiple items.</p>
+                      <textarea
+                        className="quick-textarea"
+                        rows={3}
+                        value={splitText}
+                        onChange={(e) => setSplitText(e.target.value)}
+                        autoFocus
+                      />
+                      <div className="quick-split-actions">
+                        <button className="btn-cancel" onClick={() => setSplittingIdx(null)}>Cancel</button>
+                        <button className="btn-save" onClick={handleSplitSubmit} disabled={reparseLoading || !splitText.trim()}>
+                          {reparseLoading ? 'Parsing…' : 'Re-parse'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className="quick-bulk-item"
+                      onClick={() => enterBulkEdit(bulkItems.indexOf(item))}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => e.key === 'Enter' && enterBulkEdit(bulkItems.indexOf(item))}
+                    >
+                      <span className={`quick-bulk-type-badge quick-bulk-type-badge--${item.type}`}>
+                        {TYPE_LABELS[item.type] ?? 'Task'}
+                      </span>
+                      <div className="quick-bulk-body">
+                        <span className="quick-bulk-title">{item.title}</span>
+                        {item.source_text && (
+                          <span className="quick-bulk-source">"{item.source_text}"</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="quick-bulk-action"
+                        onClick={(e) => { e.stopPropagation(); handleSplitStart(item) }}
+                        title="Split"
+                        aria-label="Split item"
+                      >⌥</button>
+                      <button
+                        type="button"
+                        className="quick-bulk-remove"
+                        onClick={(e) => { e.stopPropagation(); setBulkItems((prev) =>
+                          prev.map((it) => it._key === item._key ? { ...it, _removed: true } : it)
+                        )}}
+                        aria-label="Remove"
+                      >✕</button>
+                    </div>
+                  )}
+                  {visIdx < visible.length - 1 && (
+                    <button
+                      className="quick-merge-btn"
+                      onClick={() => handleMerge(visIdx)}
+                      disabled={reparseLoading}
+                      title="Merge with next item"
+                    >
+                      merge ↕
+                    </button>
+                  )}
                 </div>
-              )
-            ))}
-          </div>
-          <div className="modal-footer">
-            <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
-            <button
-              className="btn-save"
-              onClick={handleBulkConfirm}
-              disabled={saving || bulkItems.every((i) => i._removed)}
-            >
-              {saving ? 'Saving…' : 'Add All'}
-            </button>
-          </div>
-        </>
-      )}
+              ))}
+            </div>
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
+              <button
+                className="btn-save"
+                onClick={handleBulkConfirm}
+                disabled={saving || visible.length === 0}
+              >
+                {saving ? 'Saving…' : 'Add All'}
+              </button>
+            </div>
+          </>
+        )
+      })()}
 
       {step === 'bulk-edit' && (
         <>

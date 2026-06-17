@@ -71,7 +71,9 @@ class ParsedTodo(BaseModel):
     recurrence_rule: Optional[Literal["daily", "weekly", "monthly", "yearly"]] = None
     clarification_question: Optional[str] = None
 
-    @field_validator('scheduled_at', 'description', mode='before')
+    source_text: Optional[str] = None  # verbatim fragment from the original input
+
+    @field_validator('scheduled_at', 'description', 'source_text', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
         return None if v == '' else v
