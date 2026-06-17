@@ -53,9 +53,19 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
   // Only flag as overdue if the card has an explicit scheduled date
   const overdueDays = isOverlay ? 0 : (todo.scheduled_at ? (todo.overdue_days ?? 0) : 0)
   const accentColor = overdueDays > 0 ? '#f59e0b' : (SECTION_COLORS[todo.section] ?? '#6b7280')
+  if (isDragging && !isOverlay) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={{ transform: CSS.Transform.toString(transform), transition }}
+        className="column-empty"
+      >Drop here</div>
+    )
+  }
+
   const style = isOverlay
     ? { boxShadow: 'var(--shadow-lg)', opacity: 1, borderLeftColor: accentColor }
-    : { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1, borderLeftColor: accentColor }
+    : { transform: CSS.Transform.toString(transform), transition, borderLeftColor: accentColor }
 
   const handleCheckboxClick = (e) => {
     e.stopPropagation()

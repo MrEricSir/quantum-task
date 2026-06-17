@@ -822,7 +822,7 @@ export default function App() {
                     onDelete={handleDeleteTodo}
                     onToggle={handleToggle}
                     onMove={handleMoveSection}
-                    onAdd={section === 'later' ? () => openNewCard('none') : undefined}
+                    onAdd={() => openNewCard(section)}
                   />
                 ))}
               </div>

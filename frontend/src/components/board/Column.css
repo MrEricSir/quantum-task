@@ -26,20 +26,24 @@
 }
 
 .column-add-btn {
-  margin-left: auto;
+  width: 100%;
   background: none;
   border: none;
+  border-top: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 18px;
-  line-height: 1;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
   cursor: pointer;
-  padding: 0 2px;
-  opacity: 0.6;
-  transition: opacity 0.15s, color 0.15s;
+  padding: 10px 16px;
+  text-align: center;
+  transition: background 0.15s, color 0.15s;
+  border-radius: 0 0 var(--radius) var(--radius);
+  flex-shrink: 0;
 }
 
 .column-add-btn:hover {
-  opacity: 1;
+  background: rgba(255, 255, 255, 0.04);
   color: var(--text);
 }
 
@@ -75,7 +79,6 @@
 }
 
 .column-empty {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,8 +86,7 @@
   color: var(--text-muted);
   border: 1.5px dashed var(--border);
   border-radius: 8px;
-  min-height: 80px;
-  margin-top: 4px;
+  height: 60px;
   opacity: 0.7;
 }
 

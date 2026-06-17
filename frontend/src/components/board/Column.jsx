@@ -20,9 +20,6 @@ export default function Column({ section, label, todos, isActive, isMobile, onEd
         <span className="column-dot" style={{ background: SECTION_COLORS[section] }} />
         <span className="column-label">{label}</span>
         <span className="column-count">{todos.length}</span>
-        {section === 'later' && onAdd && (
-          <button className="column-add-btn" onClick={onAdd} title="New reference card">+</button>
-        )}
       </div>
 
       <SortableContext items={todos.map((t) => t.id)} strategy={verticalListSortingStrategy}>
@@ -38,13 +35,17 @@ export default function Column({ section, label, todos, isActive, isMobile, onEd
               onMove={onMove}
             />
           ))}
-          {todos.length === 0 && (
-            <div className="column-empty">
-              {active ? 'Drop here' : 'Nothing here'}
-            </div>
+          {todos.length === 0 && active && (
+            <div className="column-empty">Drop here</div>
           )}
         </div>
       </SortableContext>
+
+      {onAdd && (
+        <button className="column-add-btn" onClick={onAdd}>
+          + Add card
+        </button>
+      )}
     </div>
   )
 }
