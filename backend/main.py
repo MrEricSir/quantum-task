@@ -503,6 +503,7 @@ def get_calendar_events(request: Request, db: Session = Depends(get_db)):
                     tag_name=tag.name if tag else None,
                     tag_color=tag.color if tag else None,
                     feed_name=m.name or None,
+                    is_ooo=ev.get("is_ooo", False),
                 )
 
                 uid = ev.get("uid", "")
@@ -809,6 +810,7 @@ def _build_today_context(
         recurring_titles = {t for t, days in title_days.items() if len(days) >= 2}
 
     # Only show events that haven't ended yet (or have no time, i.e. all-day)
+    # OOO events are pre-filtered by the caller and never appear here.
     upcoming_events = []
     for e in cal_events:
         if e.all_day:
@@ -1054,10 +1056,10 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
     today_todos  = [t for t in req.todos if t.section == "today"]
-    today_events = [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt]
+    today_events = [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt and not e.is_ooo]
     week_todos   = [t for t in req.todos if t.section == "week"]
     week_events  = [e for e in req.calendar_events
-                    if today_dt < _event_local_date(e, tz_offset) <= today_dt + timedelta(days=7)]
+                    if today_dt < _event_local_date(e, tz_offset) <= today_dt + timedelta(days=7) and not e.is_ooo]
 
     today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None, local_now)
     week_h  = _week_hash(week_todos, week_events)
@@ -1339,7 +1341,7 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
 
     today_todos = [t for t in req.todos if t.section == "today" and not t.completed]
     today_events = sorted(
-        [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt],
+        [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt and not e.is_ooo],
         key=lambda e: e.start,
     )
     pending_habits = [h for h in req.habits if not h.completed_today]

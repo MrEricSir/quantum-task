@@ -16,6 +16,11 @@ import recurring_ical_events
 
 _GCAL_ICAL_URL_RE = re.compile(r'calendar\.google\.com/calendar/ical/([^/]+)/')
 
+_OOO_TITLE_RE = re.compile(
+    r'\b(out\s+of\s+office|OOO|PTO|vacation|annual\s+leave|day\s+off|time\s+off|on\s+leave)\b',
+    re.I,
+)
+
 
 def _parse_google_calendar_id(ical_url: str) -> str | None:
     m = _GCAL_ICAL_URL_RE.search(ical_url)
@@ -98,17 +103,28 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
         sequence = int(ev.get("SEQUENCE", 0))
         description = str(ev.get("DESCRIPTION", "")) or None
         url = str(ev.get("URL", "")) or _google_calendar_event_url(uid, start_dt, ical_url, ev)
+        title = str(ev.get("SUMMARY", "(No title)"))
+
+        # Detect Out-of-Office events via Outlook busy status or title patterns
+        busystatus = str(ev.get("X-MICROSOFT-CDO-BUSYSTATUS", "")).upper()
+        is_ooo = (
+            busystatus == "OOF"
+            or bool(_OOO_TITLE_RE.search(title))
+            or title.strip().lower() == "busy"
+        )
+
         events.append({
             "id": uid or start_dt.isoformat(),
             "uid": uid,
             "sequence": sequence,
-            "title": str(ev.get("SUMMARY", "(No title)")),
+            "title": title,
             "description": description,
             "location": str(ev.get("LOCATION", "")) or None,
             "url": url,
             "start": start_dt,
             "end": end_dt,
             "all_day": all_day,
+            "is_ooo": is_ooo,
         })
 
     return events

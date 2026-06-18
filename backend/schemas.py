@@ -134,6 +134,7 @@ class CalendarEvent(BaseModel):
     tag_name: Optional[str] = None
     tag_color: Optional[str] = None
     feed_name: Optional[str] = None
+    is_ooo: bool = False
 
 
 class NoteCreate(BaseModel):
