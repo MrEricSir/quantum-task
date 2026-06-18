@@ -134,7 +134,7 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
     if (!mountedRef.current) { mountedRef.current = true; return }
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      generateRef.current(true)
+      generateRef.current(false)
       debounceRef.current = null
     }, 10_000)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
@@ -180,49 +180,48 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
     </div>
   )
 
-  if (status === 'loading' && !hasContent) return (
-    <div className="briefing" ref={containerRef}>
-      <div className="briefing-sections">
-        <span className="briefing-spinner" />
-      </div>
-    </div>
-  )
-
   return (
     <div className="briefing" ref={containerRef}>
       <div className="briefing-sections">
-        {sections.today && (
-          <div className="briefing-row">
-            <span className="briefing-label">Today</span>
-            <span className="briefing-text">{cleanBriefingText(sections.today)}</span>
-          </div>
-        )}
-        {sections.week && !todayOnly && (
-          <div className="briefing-row">
-            <span className="briefing-label">This week</span>
-            <span className="briefing-text">{cleanBriefingText(sections.week)}</span>
-          </div>
-        )}
+        {status === 'loading' && !hasContent
+          ? <span className="briefing-spinner" />
+          : <>
+              {sections.today && (
+                <div className="briefing-row">
+                  <span className="briefing-label">Today</span>
+                  <span className="briefing-text">{cleanBriefingText(sections.today)}</span>
+                </div>
+              )}
+              {sections.week && !todayOnly && (
+                <div className="briefing-row">
+                  <span className="briefing-label">This week</span>
+                  <span className="briefing-text">{cleanBriefingText(sections.week)}</span>
+                </div>
+              )}
+            </>
+        }
       </div>
-      {status === 'done' && (
+      <div className="briefing-actions">
         <button
           className={`briefing-listen${speaking ? ' briefing-listen--active' : ''}`}
+          style={{ visibility: status === 'done' ? 'visible' : 'hidden' }}
           onClick={handleSpeak}
           title={speaking ? 'Stop' : 'Listen'}
+          tabIndex={status === 'done' ? 0 : -1}
         >
           {speaking ? <StopIcon /> : <SpeakerLoudIcon />}
         </button>
-      )}
-      {(status === 'done' || (status === 'loading' && hasContent)) && (
         <button
           className="briefing-refresh"
+          style={{ visibility: hasContent ? 'visible' : 'hidden' }}
           onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); generate(true) }}
           disabled={status === 'loading'}
           title="Regenerate"
+          tabIndex={hasContent ? 0 : -1}
         >
           {status === 'loading' ? <span className="briefing-spin" /> : <UpdateIcon />}
         </button>
-      )}
+      </div>
     </div>
   )
 }

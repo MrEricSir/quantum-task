@@ -89,6 +89,15 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Action button column ── */
+.briefing-actions {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+}
+
 /* ── Listen / Stop button ── */
 .briefing-listen {
   background: none;
@@ -96,13 +105,13 @@
   cursor: pointer;
   color: var(--text-muted);
   font-size: 15px;
-  padding: 10px 10px 10px 12px;
-  flex-shrink: 0;
+  padding: 0 12px;
+  flex: 1;
   transition: color 0.15s, background 0.15s;
   line-height: 1;
-  align-self: stretch;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 
 .briefing-listen:hover {
@@ -122,16 +131,17 @@
 .briefing-refresh {
   background: none;
   border: none;
+  border-top: 1px solid var(--border);
   cursor: pointer;
   color: var(--text-muted);
   font-size: 15px;
-  padding: 10px 12px;
-  flex-shrink: 0;
+  padding: 0 12px;
+  flex: 1;
   transition: color 0.15s, background 0.15s;
   line-height: 1;
-  align-self: stretch;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 
 .briefing-refresh:hover:not(:disabled) {
@@ -163,7 +173,6 @@
   }
 
   .briefing-refresh {
-    padding: 10px 10px;
     font-size: 18px;
   }
 }
