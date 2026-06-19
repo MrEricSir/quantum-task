@@ -150,7 +150,7 @@ def sync(db: Session) -> dict:
             eng_item.synced_at = now
             closed += 1
             # Archive any cards linked to this item via external_id
-            linked_cards = db.query(models.Todo).filter_by(
+            linked_cards = db.query(models.Card).filter_by(
                 external_id=eng_item.external_id, archived=False
             ).all()
             for card in linked_cards:

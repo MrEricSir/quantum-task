@@ -32,7 +32,18 @@ import QueueIndicator from './components/shared/QueueIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { useNotifications } from './hooks/useNotifications'
-import { fetchTodos, fetchTags, createTodo, updateTodo, deleteTodo, reorderTodos, addTagToTodo, removeTagFromTodo, createTag, updateTag, deleteTag, replaceTag, parseTodo, fetchCalendarEvents, fetchHabits, createHabit, updateHabit, deleteHabit, checkHabit, uncheckHabit, checkAuth, logout, fetchArchivedHabits, archiveHabit, unarchiveHabit, syncEngineering, fetchEngineeringItems, updateJob } from './api'
+import { useCards } from './hooks/useCards'
+import { useHabits } from './hooks/useHabits'
+import { useCalendar } from './hooks/useCalendar'
+import {
+  fetchTags,
+  fetchCards,
+  reorderCards,
+  createTag, updateTag, deleteTag, replaceTag,
+  parseCard,
+  checkAuth, logout,
+  syncEngineering, fetchEngineeringItems,
+} from './api'
 import './App.css'
 
 export const SECTIONS = ['today', 'week', 'month', 'later']
@@ -53,11 +64,10 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [authed, setAuthed] = useState(null)   // null=checking, true/false
   const [authEnabled, setAuthEnabled] = useState(false)
-  const [todos, setTodos] = useState([])
   const [tags, setTags] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [tagsLoading, setTagsLoading] = useState(true)
   const [briefingKey, setBriefingKey] = useState(0)
-  const invalidateBriefing = () => setBriefingKey((k) => k + 1)
+  const invalidateBriefing = useCallback(() => setBriefingKey((k) => k + 1), [])
   const [showModal, setShowModal] = useState(false)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
@@ -65,18 +75,32 @@ export default function App() {
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
   const [showGithubSettings, setShowGithubSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [calendarEvents, setCalendarEvents] = useState([])
-  const [lastRefreshed, setLastRefreshed] = useState(null)
-  const [calendarRefreshing, setCalendarRefreshing] = useState(false)
   const [editingTodo, setEditingTodo] = useState(null)
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
   const [weather, setWeather] = useState(null)
-  const [habits, setHabits] = useState([])
-  const [archivedHabits, setArchivedHabits] = useState([])
   const [engineeringItems, setEngineeringItems] = useState([])
   const [lastEngineeringSynced, setLastEngineeringSynced] = useState(null)
   const [engineeringSyncing, setEngineeringSyncing] = useState(false)
+
+  const {
+    todos, setTodos, loading: cardsLoading, todosRef,
+    handleAddTodo, handleUpdateTodo, handleDeleteTodo, handleToggle,
+    handleAddTag, handleRemoveTag, handleAddCard, handleUpdateCard,
+    handleDeleteCard, handleArchiveCard, handleUnarchiveCard,
+  } = useCards({ authed, tags, invalidateBriefing })
+
+  const {
+    habits, archivedHabits,
+    handleAddHabit, handleUpdateHabit, handleDeleteHabit,
+    handleArchiveHabit, handleUnarchiveHabit, handleToggleHabit,
+  } = useHabits({ authed, invalidateBriefing })
+
+  const {
+    calendarEvents, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
+  } = useCalendar({ authed, invalidateBriefing })
+
+  const loading = cardsLoading || tagsLoading
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
     todos,
@@ -144,6 +168,7 @@ export default function App() {
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [])
+
   const pendingToResume = useRef([])
   const [parseQueue, setParseQueue] = useState(() => {
     try {
@@ -165,8 +190,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('parseQueue', JSON.stringify(parseQueue))
   }, [parseQueue])
-  const todosRef = useRef(todos)
-  todosRef.current = todos
+
   const tagsRef = useRef(tags)
   tagsRef.current = tags
 
@@ -228,44 +252,25 @@ export default function App() {
       })
   }, [])
 
-  // Sync on login
+  // Sync engineering on login, then poll every 15 minutes
   useEffect(() => {
     if (!authed) return
     refreshEngineeringItems()
   }, [authed]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll every 15 minutes (same as calendar)
   useEffect(() => {
     const id = setInterval(refreshEngineeringItems, 15 * 60 * 1000)
     return () => clearInterval(id)
   }, [refreshEngineeringItems])
 
+  // Fetch tags on login
   useEffect(() => {
     if (!authed) return
-    Promise.all([fetchTodos(), fetchTags(), fetchHabits()])
-      .then(([todosData, tagsData, habitsData]) => {
-        setTodos(todosData)
-        setTags(tagsData)
-        setHabits(habitsData)
-      })
-      .finally(() => setLoading(false))
-
-    fetchCalendarEvents()
-      .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
+    fetchTags()
+      .then(setTags)
       .catch(() => {})
-
-    fetchArchivedHabits().then(setArchivedHabits).catch(() => {})
+      .finally(() => setTagsLoading(false))
   }, [authed])
-
-  // Poll for calendar updates every 15 minutes
-  useEffect(() => {
-    const id = setInterval(() => {
-      fetchCalendarEvents()
-        .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
-        .catch(() => {})
-    }, 15 * 60 * 1000)
-    return () => clearInterval(id)
-  }, [])
 
   const activeTodos = todos.filter((t) => !t.completed && !t.archived && t.section !== 'none')
   const completedTodos = todos.filter((t) => t.completed && !t.archived)
@@ -381,42 +386,10 @@ export default function App() {
     ]
 
     setTodos(newTodos)
-    reorderTodos(
+    reorderCards(
       updatedSection.map(({ id, section, position }) => ({ id, section, position }))
     )
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleAddTodo = async (data) => {
-    const created = await createTodo(data)
-    setTodos((prev) => [...prev, created])
-    invalidateBriefing()
-  }
-
-  const handleUpdateTodo = async (id, data) => {
-    const updated = await updateTodo(id, data)
-    setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)))
-  }
-
-  const handleDeleteTodo = async (id) => {
-    await deleteTodo(id)
-    setTodos((prev) => prev.filter((t) => t.id !== id))
-  }
-
-  const handleToggle = async (todo) => {
-    await handleUpdateTodo(todo.id, { completed: !todo.completed })
-    invalidateBriefing()
-  }
-
-  const handleAddTag = async (todoId, tagId) => {
-    await addTagToTodo(todoId, tagId)
-    const tag = tags.find((t) => t.id === tagId)
-    if (!tag) return
-    setTodos((prev) =>
-      prev.map((t) =>
-        t.id === todoId ? { ...t, tags: [...(t.tags ?? []), tag] } : t
-      )
-    )
-  }
 
   const handleCreateTag = async (data) => {
     const created = await createTag(data)
@@ -457,70 +430,8 @@ export default function App() {
     )
   }
 
-  const handleAddHabit = async (data) => {
-    const habit = await createHabit(data)
-    setHabits((prev) => [...prev, habit])
-  }
-
-  const handleUpdateHabit = async (id, data) => {
-    const updated = await updateHabit(id, data)
-    setHabits((prev) => prev.map((h) => (h.id === id ? updated : h)))
-  }
-
-  const handleDeleteHabit = async (id) => {
-    setHabits((prev) => prev.filter((h) => h.id !== id))
-    setArchivedHabits((prev) => prev.filter((h) => h.id !== id))
-    await deleteHabit(id)
-  }
-
-  const handleArchiveHabit = async (id) => {
-    await archiveHabit(id)
-    const habit = habits.find((h) => h.id === id)
-    setHabits((prev) => prev.filter((h) => h.id !== id))
-    if (habit) setArchivedHabits((prev) => [...prev, { ...habit, archived: true }])
-  }
-
-  const handleUnarchiveHabit = async (id) => {
-    await unarchiveHabit(id)
-    const habit = archivedHabits.find((h) => h.id === id)
-    setArchivedHabits((prev) => prev.filter((h) => h.id !== id))
-    if (habit) setHabits((prev) => [...prev, { ...habit, archived: false }])
-  }
-
-  const handleToggleHabit = async (habit) => {
-    const wasChecked = habit.completed_today
-    setHabits((prev) =>
-      prev.map((h) =>
-        h.id === habit.id
-          ? { ...h, completed_today: !wasChecked, streak: !wasChecked ? h.streak + 1 : Math.max(0, h.streak - 1) }
-          : h
-      )
-    )
-    try {
-      if (wasChecked) {
-        await uncheckHabit(habit.id)
-      } else {
-        await checkHabit(habit.id)
-      }
-      const updated = await fetchHabits()
-      setHabits(updated)
-      invalidateBriefing()
-    } catch {
-      setHabits((prev) => prev.map((h) => (h.id === habit.id ? habit : h)))
-    }
-  }
-
-  const handleRemoveTag = async (todoId, tagId) => {
-    await removeTagFromTodo(todoId, tagId)
-    setTodos((prev) =>
-      prev.map((t) =>
-        t.id === todoId ? { ...t, tags: (t.tags ?? []).filter((tg) => tg.id !== tagId) } : t
-      )
-    )
-  }
-
   const processQueueItem = (id, text) => {
-    parseTodo(text)
+    parseCard(text)
       .then(async (result) => {
         const tagIds = (result.suggested_tags ?? [])
           .map((name) => tagsRef.current.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
@@ -569,44 +480,9 @@ export default function App() {
     setParseQueue((prev) => prev.filter((i) => i.status === 'pending'))
   }
 
-  const handleRefreshCalendar = async () => {
-    setCalendarRefreshing(true)
-    try {
-      const events = await fetchCalendarEvents()
-      setCalendarEvents(events)
-      setLastRefreshed(new Date())
-      invalidateBriefing()
-    } catch {
-      // ignore
-    } finally {
-      setCalendarRefreshing(false)
-    }
-  }
-
   const handleMoveSection = async (todoId, newSection) => {
     await handleUpdateTodo(todoId, { section: newSection })
     setActiveSection(newSection)
-  }
-
-  const handleAddCard = async (data) => {
-    const created = await handleAddTodo({ ...data, section: data.section ?? 'later' })
-    return created
-  }
-
-  const handleUpdateCard = async (id, data) => {
-    return handleUpdateTodo(id, data)
-  }
-
-  const handleDeleteCard = async (id) => {
-    return handleDeleteTodo(id)
-  }
-
-  const handleArchiveCard = async (id) => {
-    return handleUpdateTodo(id, { archived: true })
-  }
-
-  const handleUnarchiveCard = async (id) => {
-    return handleUpdateTodo(id, { archived: false })
   }
 
   const handlePageNavigate = (page, tagId) => {
@@ -907,7 +783,7 @@ export default function App() {
       {showGithubSettings && (
         <GithubSettings
           onClose={() => setShowGithubSettings(false)}
-          onSynced={() => fetchTodos().then(setTodos).catch(() => {})}
+          onSynced={() => fetchCards().then(setTodos).catch(() => {})}
         />
       )}
 

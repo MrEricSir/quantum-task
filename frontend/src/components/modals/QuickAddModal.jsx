@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { parseBulkTodos } from '../../api'
+import { parseBulkCards } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
 import './QuickAddModal.css'
@@ -86,7 +86,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     setParsing(true)
     setParseError('')
     try {
-      const { items } = await parseBulkTodos(text.trim())
+      const { items } = await parseBulkCards(text.trim())
       if (items.length === 1) {
         const result = items[0]
         const tagIds = (result.suggested_tags ?? [])
@@ -176,7 +176,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     const combined = [a.source_text || a.title, b.source_text || b.title].filter(Boolean).join(' ')
     setReparseLoading(true)
     try {
-      const { items: reparsed } = await parseBulkTodos(combined)
+      const { items: reparsed } = await parseBulkCards(combined)
       const newItems = reparsed.map((item, i) => ({ ...item, _key: Date.now() + i }))
       setBulkItems((prev) => {
         const aIdx = prev.indexOf(a)
@@ -199,7 +199,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     if (!splitText.trim()) { setSplittingIdx(null); return }
     setReparseLoading(true)
     try {
-      const { items: reparsed } = await parseBulkTodos(splitText)
+      const { items: reparsed } = await parseBulkCards(splitText)
       const newItems = reparsed.map((item, i) => ({ ...item, _key: Date.now() + i }))
       setBulkItems((prev) => {
         const next = [...prev]

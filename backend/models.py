@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 from database import Base
 
 
-todo_tags = Table(
-    "todo_tags",
+card_tags = Table(
+    "card_tags",
     Base.metadata,
-    Column("todo_id", Integer, ForeignKey("todos.id", ondelete="CASCADE"), primary_key=True),
+    Column("card_id", Integer, ForeignKey("cards.id", ondelete="CASCADE"), primary_key=True),
     Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
 )
 
@@ -20,8 +20,8 @@ class Tag(Base):
     color = Column(String, nullable=False, default="#6b7280")
 
 
-class Todo(Base):
-    __tablename__ = "todos"
+class Card(Base):
+    __tablename__ = "cards"
 
     id = Column(Integer, primary_key=True, index=True)
     # title: headline shown everywhere — required for all cards
@@ -48,7 +48,7 @@ class Todo(Base):
     updated_at = Column(DateTime, nullable=True)
     archived = Column(Boolean, default=False)
     archived_at = Column(DateTime, nullable=True)
-    tags = relationship("Tag", secondary="todo_tags", lazy="joined")
+    tags = relationship("Tag", secondary="card_tags", lazy="joined")
 
 
 class CalendarMapping(Base):
@@ -88,6 +88,8 @@ class HabitCompletion(Base):
     date = Column(String, nullable=False)  # YYYY-MM-DD
 
 
+# Legacy — migrated to cards (section="none") via notes_migrated_v1 AppSetting flag.
+# Table kept in DB; model kept read-only for historical reference.
 note_tags = Table(
     "note_tags",
     Base.metadata,
@@ -153,7 +155,7 @@ class Job(Base):
     # JSON array of {type, card_id?, card_title?, content?}
     input_sources = Column(String, nullable=False, default="[]")
     last_output = Column(String, nullable=True)
-    output_card_id = Column(Integer, ForeignKey("todos.id", ondelete="SET NULL"), nullable=True)
+    output_card_id = Column(Integer, ForeignKey("cards.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

@@ -55,54 +55,62 @@ export async function deleteTag(id) {
   if (!res.ok) throw new Error('Failed to delete tag')
 }
 
-export async function addTagToTodo(todoId, tagId) {
-  const res = await apiFetch(`${BASE}/${todoId}/tags/${tagId}`, { method: 'POST' })
+export async function addTagToCard(cardId, tagId) {
+  const res = await apiFetch(`${BASE}/${cardId}/tags/${tagId}`, { method: 'POST' })
   if (!res.ok) throw new Error('Failed to add tag')
 }
 
-export async function removeTagFromTodo(todoId, tagId) {
-  const res = await apiFetch(`${BASE}/${todoId}/tags/${tagId}`, { method: 'DELETE' })
+export async function removeTagFromCard(cardId, tagId) {
+  const res = await apiFetch(`${BASE}/${cardId}/tags/${tagId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to remove tag')
 }
 
-export async function fetchTodos() {
+export async function fetchCards() {
   const res = await apiFetch(BASE)
-  if (!res.ok) throw new Error('Failed to fetch todos')
+  if (!res.ok) throw new Error('Failed to fetch cards')
   return res.json()
 }
 
-export async function searchTodos(q) {
+export async function searchCards(q) {
   const res = await apiFetch(`${BASE}/search?q=${encodeURIComponent(q)}`)
   if (!res.ok) throw new Error('Failed to search')
   return res.json()
 }
 
-export async function createTodo(data) {
+export async function createCard(data) {
   const res = await apiFetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error('Failed to create todo')
+  if (!res.ok) throw new Error('Failed to create card')
   return res.json()
 }
 
-export async function updateTodo(id, data) {
+export async function updateCard(id, data) {
   const res = await apiFetch(`${BASE}/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error('Failed to update todo')
+  if (!res.ok) throw new Error('Failed to update card')
   return res.json()
 }
 
-export async function deleteTodo(id) {
+export async function deleteCard(id) {
   const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to delete todo')
+  if (!res.ok) throw new Error('Failed to delete card')
 }
 
-export async function parseTodo(text) {
+export async function archiveCard(id) {
+  return updateCard(id, { archived: true })
+}
+
+export async function unarchiveCard(id) {
+  return updateCard(id, { archived: false })
+}
+
+export async function parseCard(text) {
   const res = await apiFetch(`${BASE}/parse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -115,7 +123,7 @@ export async function parseTodo(text) {
   return res.json()
 }
 
-export async function parseBulkTodos(text) {
+export async function parseBulkCards(text) {
   const res = await apiFetch(`${BASE}/parse-bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -126,6 +134,16 @@ export async function parseBulkTodos(text) {
     throw new Error(err.detail || 'Failed to parse')
   }
   return res.json()
+}
+
+export async function reorderCards(updates) {
+  // updates: [{ id, section, position }, ...]
+  const res = await apiFetch(`${BASE}/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!res.ok) throw new Error('Failed to reorder cards')
 }
 
 export async function fetchCalendarMappings() {
@@ -215,55 +233,6 @@ export async function checkHabit(id) {
 export async function uncheckHabit(id) {
   const res = await apiFetch(`/api/habits/${id}/check`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to uncheck habit')
-}
-
-export async function fetchCards() {
-  const res = await apiFetch(BASE)
-  if (!res.ok) throw new Error('Failed to fetch cards')
-  return res.json()
-}
-
-export async function createCard(data) {
-  const res = await apiFetch(BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throw new Error('Failed to create card')
-  return res.json()
-}
-
-export async function updateCard(id, data) {
-  const res = await apiFetch(`${BASE}/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throw new Error('Failed to update card')
-  return res.json()
-}
-
-export async function deleteCard(id) {
-  const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to delete card')
-}
-
-export async function archiveCard(id) {
-  return updateCard(id, { archived: true })
-}
-
-export async function unarchiveCard(id) {
-  return updateCard(id, { archived: false })
-}
-
-export async function reorderTodos(updates) {
-  // updates: [{ id, section, position }, ...]
-  const res = await apiFetch(`${BASE}/reorder`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(updates),
-  })
-  if (!res.ok) throw new Error('Failed to reorder todos')
 }
 
 export async function fetchEngineeringConfig() {

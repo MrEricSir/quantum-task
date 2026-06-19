@@ -25,11 +25,10 @@ class TagReplacement(BaseModel):
     new_tag_id: int
 
 
-class TodoCreate(BaseModel):
+class CardCreate(BaseModel):
     title: str
     # description: optional context — for reference cards (section="none") this is the full text content
     description: Optional[str] = None
-    body: Optional[str] = None  # legacy field — ignored in new code
     section: str = "today"
     scheduled_at: Optional[datetime] = None
     tag_ids: List[int] = []
@@ -38,11 +37,10 @@ class TodoCreate(BaseModel):
     external_id: Optional[str] = None
 
 
-class TodoUpdate(BaseModel):
+class CardUpdate(BaseModel):
     title: Optional[str] = None
-    # description: see TodoCreate — same semantics
+    # description: see CardCreate — same semantics
     description: Optional[str] = None
-    body: Optional[str] = None  # legacy field — ignored in new code
     section: Optional[str] = None
     scheduled_at: Optional[datetime] = None
     completed: Optional[bool] = None
@@ -61,7 +59,7 @@ class ParsedTodo(BaseModel):
     type: Literal["task", "habit"] = "task"
     title: str
     # description: optional short context from the user's input
-    #   board tasks: shown in the detail modal as extra context
+    #   board cards: shown in the detail modal as extra context
     #   reference cards (section="none"): serves as the card's text content
     description: Optional[str] = None
     # section: "none" = reference card (Cards page only), otherwise board column
@@ -215,7 +213,7 @@ class AssistRequest(BaseModel):
 
 
 class BriefingRequest(BaseModel):
-    todos: List['Todo'] = []
+    todos: List['Card'] = []
     calendar_events: List[CalendarEvent] = []
     habits: List[HabitBriefingItem] = []
     lat: Optional[float] = None
@@ -239,13 +237,13 @@ class EngineeringItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class TodoReorderItem(BaseModel):
+class CardReorderItem(BaseModel):
     id: int
     section: str
     position: int
 
 
-class Todo(BaseModel):
+class Card(BaseModel):
     id: int
     title: str
     description: Optional[str]

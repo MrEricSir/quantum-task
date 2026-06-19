@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { MagnifyingGlassIcon } from '@radix-ui/react-icons'
-import { searchTodos } from '../../api'
+import { searchCards } from '../../api'
 import './SearchModal.css'
 
 const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later', none: 'Card' }
@@ -44,7 +44,7 @@ export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabi
     debounceRef.current = setTimeout(async () => {
       setLoading(true)
       try {
-        const data = await searchTodos(query.trim())
+        const data = await searchCards(query.trim())
         setCardResults(data)
       } catch {
         setCardResults([])
