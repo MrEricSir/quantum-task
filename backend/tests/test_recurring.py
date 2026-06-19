@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from main import _build_week_context
+from routers.briefing import _build_week_context
 
 
 TODAY = date(2026, 6, 3)

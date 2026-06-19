@@ -19,7 +19,8 @@ import gcal
 import models
 import schemas
 from database import Base
-from main import app, get_db
+from main import app
+from deps import get_db
 
 # ── In-memory test database ──────────────────────────────────────────────────
 # StaticPool forces all connections to reuse one in-memory SQLite database,

@@ -15,7 +15,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import models
-from main import app, get_db
+from main import app
+from deps import get_db
 
 # ── In-memory test database ──────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ def today_text(events: list[dict]) -> str | None:
 class TestBriefingHallucinationGuard:
     def test_no_content_skips_llm(self, client):
         """No todos, no events, no habits → static message without calling the LLM."""
-        with patch("main.llm_client") as mock_llm:
+        with patch("routers.briefing.llm_client") as mock_llm:
             res = post_briefing(client)
 
         assert res.status_code == 200
@@ -95,7 +96,7 @@ class TestBriefingHallucinationGuard:
             {"name": "Meditate", "completed_today": True},
             {"name": "Exercise", "completed_today": True},
         ]
-        with patch("main.llm_client") as mock_llm:
+        with patch("routers.briefing.llm_client") as mock_llm:
             res = post_briefing(client, habits=habits)
 
         assert res.status_code == 200
@@ -110,7 +111,7 @@ class TestBriefingHallucinationGuard:
         ]
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter([])
-        with patch("main.llm_client", return_value=mock_client):
+        with patch("routers.briefing.llm_client", return_value=mock_client):
             res = post_briefing(client, habits=habits)
 
         assert res.status_code == 200
@@ -131,7 +132,7 @@ class TestBriefingHallucinationGuard:
             return iter([])
 
         mock_client.chat.completions.create.side_effect = capture
-        with patch("main.llm_client", return_value=mock_client):
+        with patch("routers.briefing.llm_client", return_value=mock_client):
             post_briefing(client, habits=habits)
 
         user_msg = next(m["content"] for m in captured_context["messages"] if m["role"] == "user")

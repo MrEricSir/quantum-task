@@ -27,7 +27,11 @@ from sqlalchemy.pool import StaticPool
 
 import models
 from database import Base
-from main import app, get_db, _local_date, _section_for_date, _fmt_time, _compute_streak
+from main import app
+from deps import get_db, local_date as _local_date
+from routers.cards import _section_for_date
+from routers.briefing import _fmt_time
+from routers.habits import _compute_streak
 
 # ── In-memory test database ───────────────────────────────────────────────────
 
