@@ -84,12 +84,16 @@ class BulkParseResponse(BaseModel):
 class HabitCreate(BaseModel):
     name: str
     tag_ids: List[int] = []
+    withings_metric: Optional[str] = None   # 'steps' | 'fat_ratio'
+    withings_goal: Optional[float] = None
 
 
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
     tag_ids: Optional[List[int]] = None
     archived: Optional[bool] = None
+    withings_metric: Optional[str] = None
+    withings_goal: Optional[float] = None
 
 
 class Habit(BaseModel):
@@ -102,8 +106,27 @@ class Habit(BaseModel):
     completed_today: bool = False
     streak: int = 0
     recent_completions: List[bool] = []
+    withings_metric: Optional[str] = None
+    withings_goal: Optional[float] = None
 
     model_config = {"from_attributes": True}
+
+
+class WithingsStatus(BaseModel):
+    connected: bool
+    last_synced: Optional[str] = None  # ISO datetime string
+
+
+class WithingsMeasurementOut(BaseModel):
+    date: str
+    metric: str
+    value: float
+
+
+class WithingsHealthData(BaseModel):
+    measurements: List[WithingsMeasurementOut]
+    # habit_id (as str) → list of completion date strings
+    habit_completions: dict
 
 
 class HabitBriefingItem(BaseModel):

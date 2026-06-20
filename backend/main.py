@@ -2,6 +2,13 @@ import asyncio
 import hmac as _hmac
 import os
 from contextlib import asynccontextmanager
+
+# Load .env for local development (no-op in production where env vars are injected)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
@@ -19,7 +26,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing
+from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -35,6 +42,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             not path.startswith("/api/")
             or path.startswith("/api/auth/")
             or path == "/api/calendar/export.ics"
+            or path == "/api/withings/callback"
         ):
             return await call_next(request)
         token = request.cookies.get("session", "")
@@ -238,6 +246,7 @@ app.include_router(habits.router)
 app.include_router(calendar.router)
 app.include_router(cards.router)
 app.include_router(briefing.router)
+app.include_router(withings.router)
 
 # Serve bundled frontend for all non-API routes (must be last)
 _static_dir = os.path.join(os.path.dirname(__file__), "static")

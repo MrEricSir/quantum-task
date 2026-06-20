@@ -127,6 +127,21 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                   </div>
                 )}
 
+                {habit.withings_metric && (
+                  <div className="habit-card-withings">
+                    <span className="habit-card-withings-badge">
+                      {habit.withings_metric === 'steps' ? '👟' : '⚖️'}
+                      {' '}
+                      {habit.withings_metric === 'steps'
+                        ? `${habit.withings_goal != null ? Math.round(habit.withings_goal).toLocaleString() + ' steps' : 'steps'}`
+                        : `body fat${habit.withings_goal != null ? ' ≤ ' + habit.withings_goal.toFixed(1) + '%' : ''}`}
+                    </span>
+                    {habit.withings_metric === 'steps' && (
+                      <span className="habit-card-withings-auto">auto</span>
+                    )}
+                  </div>
+                )}
+
                 {habit.recent_completions?.length > 0 && (
                   <div className="habit-card-history">
                     <div className="habit-dots">

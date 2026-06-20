@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Table, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Table, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from database import Base
@@ -76,6 +76,8 @@ class Habit(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     archived = Column(Boolean, default=False)
     archived_at = Column(DateTime, nullable=True)
+    withings_metric = Column(String, nullable=True)   # 'steps' | 'fat_ratio' | None
+    withings_goal = Column(Float, nullable=True)       # target value (steps count or % body fat)
     tags = relationship("Tag", secondary="habit_tags", lazy="joined")
 
 
@@ -86,6 +88,18 @@ class HabitCompletion(Base):
     id = Column(Integer, primary_key=True, index=True)
     habit_id = Column(Integer, ForeignKey("habits.id", ondelete="CASCADE"), nullable=False)
     date = Column(String, nullable=False)  # YYYY-MM-DD
+
+
+class WithingsMeasurement(Base):
+    """One row per (date, metric) — upserted on each sync."""
+    __tablename__ = "withings_measurements"
+    __table_args__ = (UniqueConstraint("date", "metric", name="uq_withings_date_metric"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(String, nullable=False)    # YYYY-MM-DD
+    metric = Column(String, nullable=False)  # 'steps' | 'fat_ratio'
+    value = Column(Float, nullable=False)
+    synced_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 # Legacy — migrated to cards (section="none") via notes_migrated_v1 AppSetting flag.

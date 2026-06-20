@@ -294,6 +294,37 @@ export async function deleteJob(id) {
   if (!res.ok) throw new Error('Failed to delete job')
 }
 
+// ── Withings ──────────────────────────────────────────────────────────────────
+
+export async function fetchWithingsStatus() {
+  const res = await apiFetch('/api/withings/status')
+  if (!res.ok) throw new Error('Failed to fetch Withings status')
+  return res.json()
+}
+
+export async function fetchWithingsAuthUrl() {
+  const res = await apiFetch('/api/withings/auth-url')
+  if (!res.ok) throw new Error('Failed to get Withings auth URL')
+  return res.json()
+}
+
+export async function syncWithings() {
+  const res = await apiFetch('/api/withings/sync', { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to sync Withings')
+  return res.json()
+}
+
+export async function disconnectWithings() {
+  const res = await apiFetch('/api/withings/disconnect', { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to disconnect Withings')
+}
+
+export async function fetchWithingsHealthData(days = 90) {
+  const res = await apiFetch(`/api/withings/health-data?days=${days}`)
+  if (!res.ok) throw new Error('Failed to fetch Withings health data')
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

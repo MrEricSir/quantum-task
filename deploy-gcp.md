@@ -87,6 +87,9 @@ After `gcp-setup` finishes, add these to your GitHub repository under
 |---|---|---|
 | Secret | `GCP_SA_KEY` | Contents of `.github-actions-sa-key.json` |
 | Secret | `AUTH_PASSWORD` | Your login password (if auth is enabled) |
+| Secret | `WITHINGS_CLIENT_ID` | Withings OAuth client ID (if using health tracking) |
+| Secret | `WITHINGS_SECRET` | Withings OAuth client secret (if using health tracking) |
+| Secret | `WITHINGS_CALLBACK_URI` | `https://YOUR_CLOUD_RUN_URL/api/withings/callback` |
 | Variable | `GCP_PROJECT_ID` | Your GCP project ID |
 
 The key file is gitignored and stays on your machine only.
@@ -94,6 +97,11 @@ The key file is gitignored and stays on your machine only.
 > **LLM settings are not stored as GitHub secrets.** They are baked into the
 > Cloud Run service during `gcp-setup` and persist across deployments. To
 > change providers later, update `.gcp-config` and run `./dev.sh gcp-update-env`.
+
+> **Withings callback URI:** Register both `http://localhost:8000/api/withings/callback`
+> (for local dev) and your production Cloud Run URL in the Withings developer console
+> under your app's allowed redirect URIs. Use the `WITHINGS_CALLBACK_URI` env var /
+> GitHub secret to select which one each environment uses.
 
 ---
 

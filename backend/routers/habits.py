@@ -50,6 +50,8 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         completed_today=completed_today,
         streak=_compute_streak(db, habit.id, today),
         recent_completions=recent_completions,
+        withings_metric=habit.withings_metric,
+        withings_goal=habit.withings_goal,
     )
 
 
@@ -68,7 +70,11 @@ def get_habits(request: Request, archived: bool = False, db: Session = Depends(g
 @router.post("/api/habits", response_model=schemas.Habit, status_code=201)
 def create_habit(request: Request, habit: schemas.HabitCreate, db: Session = Depends(get_db)):
     today = local_date(request)
-    db_habit = models.Habit(name=habit.name)
+    db_habit = models.Habit(
+        name=habit.name,
+        withings_metric=habit.withings_metric,
+        withings_goal=habit.withings_goal,
+    )
     if habit.tag_ids:
         db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(habit.tag_ids)).all()
     db.add(db_habit)
@@ -90,6 +96,10 @@ def update_habit(request: Request, habit_id: int, habit: schemas.HabitUpdate, db
     if habit.archived is not None:
         db_habit.archived = habit.archived
         db_habit.archived_at = datetime.now(timezone.utc) if habit.archived else None
+    if "withings_metric" in habit.model_fields_set:
+        db_habit.withings_metric = habit.withings_metric
+    if "withings_goal" in habit.model_fields_set:
+        db_habit.withings_goal = habit.withings_goal
     db.commit()
     db.refresh(db_habit)
     return _habit_out(db, db_habit, today)
