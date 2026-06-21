@@ -8,7 +8,142 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.health-page-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── Range toggle ── */
+
+.health-range-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.health-range-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.health-range-btn:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+}
+
+.health-range-btn--active {
+  background: var(--border);
+  color: var(--text);
+  cursor: default;
+}
+
+/* ── Today hero ── */
+
+.health-hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.health-hero-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.health-hero-stats {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+
+.health-hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 80px;
+}
+
+.health-hero-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.health-hero-metric {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.health-hero-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.health-hero-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 60px;
+  max-width: 100px;
+}
+
+.health-hero-bar-fill {
+  height: 100%;
+  background: var(--color-today, #3b82f6);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.health-hero-bar-fill--met {
+  background: #22c55e;
+}
+
+.health-hero-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.health-hero-delta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.health-hero-delta--good {
+  color: #22c55e;
+}
+
+.health-hero-goal {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  opacity: 0.7;
 }
 
 .health-page-title {
@@ -76,50 +211,6 @@
   margin-left: auto;
 }
 
-.health-unit-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  overflow: hidden;
-}
-
-.health-unit-btn {
-  padding: 2px 8px;
-  font-size: 11px;
-  font-family: inherit;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  line-height: 1.6;
-}
-
-.health-unit-btn--active {
-  background: var(--border);
-  color: var(--text);
-  cursor: default;
-}
-
-.health-habits-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.health-habit-badge {
-  font-size: 12px;
-  color: var(--text);
-  background: var(--surface-raised, rgba(139,92,246,0.12));
-  border: 1px solid rgba(139,92,246,0.3);
-  border-radius: 12px;
-  padding: 3px 10px;
-}
-
-.health-habit-badge-auto {
-  color: #22c55e;
-  font-size: 11px;
-}
 
 /* ── SVG chart ── */
 

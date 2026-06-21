@@ -742,6 +742,7 @@ export default function App() {
             onDelete={handleDeleteHabit}
             onArchive={handleArchiveHabit}
             onUnarchive={handleUnarchiveHabit}
+            isImperial={isImperial}
           />
         ) : isBoardPage ? (
           <>

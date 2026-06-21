@@ -79,30 +79,74 @@ function MetricProgress({ habit, todayMetrics, isImperial }) {
   return null
 }
 
-// Standalone metric row for metrics not tied to a habit (e.g. a weight goal without a weight habit)
-function StandaloneMetricRow({ metric, value, goal, isImperial }) {
+// Mini sparkline for 30-day metric trends
+function MiniSparkline({ values, goal }) {
+  if (values.length < 2) return null
+  const W = 80; const H = 24; const PX = 2; const PY = 3
+  const iW = W - PX * 2; const iH = H - PY * 2
+  const allV = goal != null ? [...values, goal] : values
+  const minV = Math.min(...allV); const maxV = Math.max(...allV)
+  const rng = maxV - minV || 1
+  const sx = (i) => PX + (i / (values.length - 1)) * iW
+  const sy = (v) => PY + iH - ((v - minV) / rng) * iH
+  const pts = values.map((v, i) => `${sx(i)},${sy(v)}`).join(' ')
+  const area = [`${sx(0)},${H}`, ...values.map((v, i) => `${sx(i)},${sy(v)}`), `${sx(values.length - 1)},${H}`].join(' ')
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flexShrink: 0, display: 'block' }}>
+      <polygon points={area} fill="rgba(139,92,246,0.1)" />
+      <polyline points={pts} fill="none" stroke="rgba(139,92,246,0.55)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      {goal != null && (
+        <line x1={PX} x2={W - PX} y1={sy(goal)} y2={sy(goal)} stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 2" />
+      )}
+    </svg>
+  )
+}
+
+// Standalone metric row for metrics not tied to a habit — shows 30-day sparkline trend
+function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
   const toDisp = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
   const labels = { weight: 'Weight', fat_ratio: 'Body Fat' }
   const label = labels[metric] ?? metric
+  const unit = metric === 'weight' ? (isImperial ? 'lbs' : 'kg') : '%'
 
-  let display
-  if (metric === 'fat_ratio') {
-    if (value != null && goal != null) display = `${value.toFixed(1)}% / ≤${goal.toFixed(1)}%`
-    else if (value != null) display = `${value.toFixed(1)}%`
-    else display = `Goal: ≤${goal.toFixed(1)}%`
-  } else if (metric === 'weight') {
-    const unit = isImperial ? 'lbs' : 'kg'
-    if (value != null && goal != null) display = `${toDisp(value).toFixed(1)} ${unit} / ≤${toDisp(goal).toFixed(1)} ${unit}`
-    else if (value != null) display = `${toDisp(value).toFixed(1)} ${unit}`
-    else display = `Goal: ≤${toDisp(goal).toFixed(1)} ${unit}`
-  } else {
-    display = value != null ? String(value) : `Goal: ${goal}`
+  // Last 30 data points for this metric, converted to display units
+  const history = measurements.filter(m => m.metric === metric).slice(-30)
+  const dispValues = history.map(m => metric === 'weight' ? toDisp(m.value) : m.value)
+  const dispGoal = goal != null ? (metric === 'weight' ? toDisp(goal) : goal) : null
+
+  // Most recent reading and how old it is
+  const recent = history.length > 0 ? history[history.length - 1] : null
+  const recentDisp = recent != null ? (metric === 'weight' ? toDisp(recent.value) : recent.value) : null
+
+  let dateStr = ''
+  if (recent) {
+    const now = new Date()
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
+    const yest = new Date(now); yest.setDate(now.getDate()-1)
+    const yestKey = `${yest.getFullYear()}-${String(yest.getMonth()+1).padStart(2,'0')}-${String(yest.getDate()).padStart(2,'0')}`
+    if (recent.date !== todayKey) {
+      dateStr = recent.date === yestKey ? 'yesterday'
+        : new Date(recent.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    }
   }
+
+  if (!recent && dispGoal == null) return null
 
   return (
     <div className="today-habit today-habit--standalone-metric">
       <span className="today-habit-name">{label}</span>
-      <span className="today-habit-metric today-habit-metric--text">{display}</span>
+      <span className="today-standalone-value">
+        {recentDisp != null && (
+          <span className="today-standalone-reading">
+            {recentDisp.toFixed(1)}{metric === 'fat_ratio' ? '%' : ` ${unit}`}
+            {dateStr && <span className="today-standalone-date"> · {dateStr}</span>}
+          </span>
+        )}
+        {dispGoal != null && (
+          <span className="today-standalone-goal">goal ≤ {dispGoal.toFixed(1)}{metric === 'fat_ratio' ? '%' : ` ${unit}`}</span>
+        )}
+      </span>
+      {dispValues.length >= 2 && <MiniSparkline values={dispValues} goal={dispGoal} />}
     </div>
   )
 }
@@ -162,12 +206,18 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     return result
   })()
 
-  // Standalone health metrics: weight/fat_ratio with a value or goal, but no linked habit
+  // Standalone health metrics: weight/fat_ratio with any historical data or a goal, but no linked habit
+  const allMeasurements = healthData?.measurements ?? []
   const linkedMetrics = new Set(habits.map(h => h.withings_metric).filter(Boolean))
   const standaloneMetrics = ['weight', 'fat_ratio'].filter(metric => {
     if (linkedMetrics.has(metric)) return false  // handled by a habit's MetricProgress
-    return todayMetrics[metric] != null || healthGoals?.[metric] != null
+    return allMeasurements.some(m => m.metric === metric) || healthGoals?.[metric] != null
   })
+
+  const hasHealthOrHabits = habits.length > 0 || standaloneMetrics.length > 0
+  const sectionTitle = habits.length > 0 && standaloneMetrics.length > 0
+    ? 'Health & Habits'
+    : habits.length > 0 ? 'Habits' : 'Health'
 
   const habitsDone    = habits.filter((h) => h.completed_today).length
   const habitsPending = habits.length - habitsDone
@@ -235,11 +285,11 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           habits={habits}
         />
 
-        {habits.length > 0 && (
+        {hasHealthOrHabits && (
           <section className="today-section">
             <SectionHeader
-              title="Habits"
-              status={habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`}
+              title={sectionTitle}
+              status={habits.length > 0 ? (habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`) : ''}
               open={habitsOpen}
               onToggle={() => setHabitsOpen((v) => !v)}
               toggleable={habitsAllDone}
@@ -256,7 +306,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                       className="today-habit-check"
                       onClick={habit.withings_metric ? undefined : () => onToggleHabit(habit)}
                       disabled={!!habit.withings_metric}
-                      title={habit.withings_metric ? 'Auto-checked by health sync' : undefined}
+                      title={habit.withings_metric ? 'Synced automatically from Withings' : undefined}
                       aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
                     >
                       {habit.completed_today && <CheckIcon width={11} height={11} />}
@@ -275,25 +325,17 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     )}
                   </div>
                 ))}
+                {standaloneMetrics.map(metric => (
+                  <StandaloneMetricRow
+                    key={metric}
+                    metric={metric}
+                    goal={healthGoals?.[metric] ?? null}
+                    isImperial={isImperial}
+                    measurements={allMeasurements}
+                  />
+                ))}
               </div>
             </CollapseBody>
-          </section>
-        )}
-
-        {standaloneMetrics.length > 0 && (
-          <section className="today-section">
-            <SectionHeader title="Health" open toggleable={false} />
-            <div className="today-habits">
-              {standaloneMetrics.map(metric => (
-                <StandaloneMetricRow
-                  key={metric}
-                  metric={metric}
-                  value={todayMetrics[metric] ?? null}
-                  goal={healthGoals?.[metric] ?? null}
-                  isImperial={isImperial}
-                />
-              ))}
-            </div>
           </section>
         )}
 

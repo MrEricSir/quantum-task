@@ -363,6 +363,22 @@
   align-items: center;
   gap: 6px;
   margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  opacity: 0.9;
+  transition: opacity 0.15s;
+}
+
+.habit-card-withings:hover {
+  opacity: 1;
+}
+
+.habit-card-withings:hover .habit-card-withings-badge {
+  border-color: rgba(139, 92, 246, 0.5);
 }
 
 .habit-card-withings-badge {

@@ -277,3 +277,30 @@
 .today-habit--done .today-habit-metric-fill {
   background: #22c55e;
 }
+
+/* ── Standalone health metric rows (weight / body fat) ── */
+.today-standalone-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.today-standalone-reading {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.today-standalone-date {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.today-standalone-goal {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
