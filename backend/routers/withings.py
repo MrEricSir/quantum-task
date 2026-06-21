@@ -39,7 +39,7 @@ WITHINGS_CALLBACK_URI = os.getenv(
 )
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
-METRICS = {"steps", "fat_ratio"}
+METRICS = {"steps", "fat_ratio", "weight"}
 
 
 # ── Credential helpers ────────────────────────────────────────────────────────
@@ -100,27 +100,31 @@ def _upsert_measurement(db: Session, date_str: str, metric: str, value: float) -
         ))
 
 
-def _auto_check_step_habits(db: Session, today: date) -> None:
-    """Auto-complete any step-linked habits whose goal was met today."""
-    today_str = today.isoformat()
-    row = db.query(models.WithingsMeasurement).filter_by(
-        date=today_str, metric="steps"
-    ).first()
-    if not row:
-        return
+def _auto_check_habits(db: Session, today: date) -> None:
+    """Auto-complete habits whose Withings goal was met today.
 
-    step_habits = (
-        db.query(models.Habit)
-        .filter(
-            models.Habit.withings_metric == "steps",
-            models.Habit.withings_goal.isnot(None),
-            models.Habit.archived == False,  # noqa: E712
+    Steps: goal met when value >= goal.
+    Fat ratio / weight: goal met when value <= goal (lower is better).
+    """
+    today_str = today.isoformat()
+    for metric in METRICS:
+        row = db.query(models.WithingsMeasurement).filter_by(
+            date=today_str, metric=metric
+        ).first()
+        if not row:
+            continue
+        linked = (
+            db.query(models.Habit)
+            .filter(
+                models.Habit.withings_metric == metric,
+                models.Habit.withings_goal.isnot(None),
+                models.Habit.archived == False,  # noqa: E712
+            )
+            .all()
         )
-        .all()
-    )
-    for habit in step_habits:
-        if row.value >= habit.withings_goal:
-            if not db.query(models.HabitCompletion).filter_by(
+        for habit in linked:
+            met = (row.value >= habit.withings_goal) if metric == "steps" else (row.value <= habit.withings_goal)
+            if met and not db.query(models.HabitCompletion).filter_by(
                 habit_id=habit.id, date=today_str
             ).first():
                 db.add(models.HabitCompletion(habit_id=habit.id, date=today_str))
@@ -155,7 +159,7 @@ def do_sync(db: Session) -> dict:
 
     today = date.today()
     start = today - timedelta(days=89)
-    synced = {"steps": 0, "fat_ratio": 0}
+    synced = {"steps": 0, "fat_ratio": 0, "weight": 0}
 
     # ── Steps (activity) ──────────────────────────────────────────────────────
     try:
@@ -172,26 +176,28 @@ def do_sync(db: Session) -> dict:
     except Exception as exc:
         print(f"[withings] activity sync error: {exc}", flush=True)
 
-    # ── Body fat % (measurements) ─────────────────────────────────────────────
+    # ── Body measurements (fat ratio + weight) ────────────────────────────────
     try:
         body = _withings_get(creds_data, "measure", {
             "action": "getmeas",
-            "meastype": 6,  # FAT_RATIO
             "startdate": int(datetime.combine(start, datetime.min.time()).timestamp()),
             "enddate": int(datetime.combine(today, datetime.min.time()).timestamp()),
         })
         for group in body.get("measuregrps", []):
             grp_date = date.fromtimestamp(group["date"]).isoformat()
             for measure in group.get("measures", []):
+                raw = measure["value"] * (10 ** measure["unit"])
                 if measure.get("type") == 6:  # FAT_RATIO
-                    value = measure["value"] * (10 ** measure["unit"])
-                    _upsert_measurement(db, grp_date, "fat_ratio", round(value, 2))
+                    _upsert_measurement(db, grp_date, "fat_ratio", round(raw, 2))
                     synced["fat_ratio"] += 1
+                elif measure.get("type") == 1:  # WEIGHT (kg)
+                    _upsert_measurement(db, grp_date, "weight", round(raw, 2))
+                    synced["weight"] += 1
     except Exception as exc:
         print(f"[withings] measurements sync error: {exc}", flush=True)
 
     db.commit()
-    _auto_check_step_habits(db, today)
+    _auto_check_habits(db, today)
     db.commit()
 
     db.merge(models.AppSetting(
@@ -281,6 +287,38 @@ def withings_callback(code: str, db: Session = Depends(get_db)):
 def withings_sync(db: Session = Depends(get_db)):
     """Manually trigger a Withings data sync."""
     return do_sync(db)
+
+
+_GOALS_KEY = "withings_health_goals"
+_ALL_METRICS = ("steps", "fat_ratio", "weight")
+
+
+def _load_goals(db: Session) -> dict:
+    row = db.query(models.AppSetting).filter_by(key=_GOALS_KEY).first()
+    if not row:
+        return {m: None for m in _ALL_METRICS}
+    try:
+        data = json.loads(row.value)
+        return {m: data.get(m) for m in _ALL_METRICS}
+    except Exception:
+        return {m: None for m in _ALL_METRICS}
+
+
+@router.get("/api/withings/goals")
+def withings_get_goals(db: Session = Depends(get_db)):
+    return _load_goals(db)
+
+
+@router.patch("/api/withings/goals")
+def withings_set_goals(payload: dict, db: Session = Depends(get_db)):
+    goals = _load_goals(db)
+    for metric in _ALL_METRICS:
+        if metric in payload:
+            val = payload[metric]
+            goals[metric] = float(val) if val is not None else None
+    db.merge(models.AppSetting(key=_GOALS_KEY, value=json.dumps(goals)))
+    db.commit()
+    return goals
 
 
 @router.delete("/api/withings/disconnect")

@@ -33,9 +33,27 @@ function HabitsArchive({ habits, onUnarchive, onDelete }) {
   )
 }
 
+const METRIC_OPTIONS = [
+  { value: '', label: 'No metric' },
+  { value: 'steps', label: '👟 Steps' },
+  { value: 'fat_ratio', label: '⚖️ Body Fat %' },
+  { value: 'weight', label: '🏋️ Weight (kg)' },
+]
+
+const METRIC_GOAL_PLACEHOLDER = { steps: '10000', fat_ratio: '20.0', weight: '75.0' }
+
+function metricBadgeText(metric, goal) {
+  if (metric === 'steps') return goal != null ? `${Math.round(goal).toLocaleString()} steps` : 'steps'
+  if (metric === 'fat_ratio') return `body fat${goal != null ? ' ≤ ' + goal.toFixed(1) + '%' : ''}`
+  if (metric === 'weight') return `weight${goal != null ? ' ≤ ' + goal.toFixed(1) + ' kg' : ''}`
+  return metric
+}
+
 export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive }) {
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
+  const [editMetric, setEditMetric] = useState('')
+  const [editGoal, setEditGoal] = useState('')
   const [poppingId, setPoppingId] = useState(null)
   const editInputRef = useRef(null)
   const popTimer = useRef(null)
@@ -47,11 +65,19 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
   const startEdit = (habit) => {
     setEditingId(habit.id)
     setEditName(habit.name)
+    setEditMetric(habit.withings_metric || '')
+    setEditGoal(habit.withings_goal != null ? String(habit.withings_goal) : '')
   }
 
   const confirmEdit = async () => {
     const name = editName.trim()
-    if (name) await onUpdate(editingId, { name })
+    if (name) {
+      await onUpdate(editingId, {
+        name,
+        withings_metric: editMetric || null,
+        withings_goal: editMetric && editGoal !== '' ? parseFloat(editGoal) : null,
+      })
+    }
     setEditingId(null)
   }
 
@@ -85,12 +111,14 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
               <button
                 type="button"
                 className={`habit-card-check${poppingId === habit.id ? ' habit-card-check--pop' : ''}`}
-                onClick={() => {
+                onClick={habit.withings_metric ? undefined : () => {
                   setPoppingId(habit.id)
                   clearTimeout(popTimer.current)
                   popTimer.current = setTimeout(() => setPoppingId(null), 350)
                   onToggle(habit)
                 }}
+                disabled={!!habit.withings_metric}
+                title={habit.withings_metric ? 'Auto-checked by health sync' : undefined}
                 aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
               >
                 {habit.completed_today ? <CheckIcon width={13} height={13} /> : null}
@@ -98,22 +126,45 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
 
               <div className="habit-card-body">
                 {editingId === habit.id ? (
-                  <input
-                    ref={editInputRef}
-                    className="habit-card-edit-input"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') confirmEdit()
-                      if (e.key === 'Escape') setEditingId(null)
-                    }}
-                    onBlur={confirmEdit}
-                  />
+                  <div className="habit-card-edit-form">
+                    <input
+                      ref={editInputRef}
+                      className="habit-card-edit-input"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null) }}
+                      placeholder="Habit name"
+                    />
+                    <div className="habit-card-edit-metric-row">
+                      <select
+                        className="habit-card-edit-select"
+                        value={editMetric}
+                        onChange={(e) => { setEditMetric(e.target.value); setEditGoal('') }}
+                      >
+                        {METRIC_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      {editMetric && (
+                        <input
+                          type="number"
+                          className="habit-card-edit-goal"
+                          value={editGoal}
+                          onChange={(e) => setEditGoal(e.target.value)}
+                          placeholder={METRIC_GOAL_PLACEHOLDER[editMetric] || 'Goal'}
+                          min="0"
+                          step={editMetric === 'steps' ? '500' : '0.1'}
+                        />
+                      )}
+                    </div>
+                    <div className="habit-card-edit-actions">
+                      <button className="habit-card-edit-save" onClick={confirmEdit}>Save</button>
+                      <button className="habit-card-edit-cancel" onClick={() => setEditingId(null)}>Cancel</button>
+                    </div>
+                  </div>
                 ) : (
                   <span className="habit-card-name">{habit.name}</span>
                 )}
 
-                {habit.tags.length > 0 && (
+                {editingId !== habit.id && habit.tags.length > 0 && (
                   <div className="habit-card-tags">
                     {habit.tags.map((tag) => (
                       <span
@@ -127,18 +178,14 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                   </div>
                 )}
 
-                {habit.withings_metric && (
+                {editingId !== habit.id && habit.withings_metric && (
                   <div className="habit-card-withings">
                     <span className="habit-card-withings-badge">
-                      {habit.withings_metric === 'steps' ? '👟' : '⚖️'}
+                      {METRIC_OPTIONS.find(o => o.value === habit.withings_metric)?.label.split(' ')[0] || '📊'}
                       {' '}
-                      {habit.withings_metric === 'steps'
-                        ? `${habit.withings_goal != null ? Math.round(habit.withings_goal).toLocaleString() + ' steps' : 'steps'}`
-                        : `body fat${habit.withings_goal != null ? ' ≤ ' + habit.withings_goal.toFixed(1) + '%' : ''}`}
+                      {metricBadgeText(habit.withings_metric, habit.withings_goal)}
                     </span>
-                    {habit.withings_metric === 'steps' && (
-                      <span className="habit-card-withings-auto">auto</span>
-                    )}
+                    <span className="habit-card-withings-auto">auto</span>
                   </div>
                 )}
 

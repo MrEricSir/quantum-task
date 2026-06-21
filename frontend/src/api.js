@@ -325,6 +325,22 @@ export async function fetchWithingsHealthData(days = 90) {
   return res.json()
 }
 
+export async function fetchWithingsGoals() {
+  const res = await apiFetch('/api/withings/goals')
+  if (!res.ok) throw new Error('Failed to fetch Withings goals')
+  return res.json()
+}
+
+export async function saveWithingsGoals(goals) {
+  const res = await apiFetch('/api/withings/goals', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(goals),
+  })
+  if (!res.ok) throw new Error('Failed to save Withings goals')
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

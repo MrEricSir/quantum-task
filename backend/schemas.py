@@ -56,7 +56,8 @@ class ParseRequest(BaseModel):
 
 class ParsedTodo(BaseModel):
     # type: "task" = completable item; "habit" = ongoing recurring behaviour
-    type: Literal["task", "habit"] = "task"
+    #       "goal" = update a standalone health goal (not a habit or task)
+    type: Literal["task", "habit", "goal"] = "task"
     title: str
     # description: optional short context from the user's input
     #   board cards: shown in the detail modal as extra context
@@ -70,6 +71,10 @@ class ParsedTodo(BaseModel):
     clarification_question: Optional[str] = None
 
     source_text: Optional[str] = None  # verbatim fragment from the original input
+
+    # Only populated when type="habit" and the input mentions a Withings health metric
+    withings_metric: Optional[str] = None   # 'steps' | 'fat_ratio' | 'weight'
+    withings_goal: Optional[float] = None   # numeric goal; steps ≥ goal, others ≤ goal
 
     @field_validator('scheduled_at', 'description', 'source_text', mode='before')
     @classmethod

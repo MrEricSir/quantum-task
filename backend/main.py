@@ -216,12 +216,29 @@ async def _push_scheduler() -> None:
             print(f"[push] scheduler error: {e}")
 
 
+async def _withings_scheduler() -> None:
+    """Sync Withings data every 2 hours if credentials are stored."""
+    await asyncio.sleep(7200)  # don't run immediately on startup
+    while True:
+        try:
+            from routers.withings import do_sync
+            with SessionLocal() as db:
+                row = db.query(models.AppSetting).filter_by(key="withings_credentials").first()
+                if row:
+                    do_sync(db)
+        except Exception as e:
+            print(f"[withings] scheduler error: {e}")
+        await asyncio.sleep(7200)
+
+
 @asynccontextmanager
 async def lifespan(app):
     _run_startup_migrations()
     task = asyncio.create_task(_push_scheduler())
+    wtask = asyncio.create_task(_withings_scheduler())
     yield
     task.cancel()
+    wtask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

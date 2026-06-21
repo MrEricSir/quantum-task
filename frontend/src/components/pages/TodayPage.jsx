@@ -39,7 +39,41 @@ function SectionHeader({ title, badge, status, open, onToggle, toggleable = fals
   )
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0 }) {
+function MetricProgress({ habit, todayMetrics }) {
+  const metric = habit.withings_metric
+  const goal = habit.withings_goal
+  if (!metric || !todayMetrics) return null
+  const value = todayMetrics[metric]
+  if (value == null) return null
+
+  if (metric === 'steps' && goal != null) {
+    const pct = Math.min(100, Math.round((value / goal) * 100))
+    return (
+      <span className="today-habit-metric">
+        <span className="today-habit-metric-text">
+          {Math.round(value).toLocaleString()} / {Math.round(goal).toLocaleString()}
+        </span>
+        <span className="today-habit-metric-bar">
+          <span className="today-habit-metric-fill" style={{ width: `${pct}%` }} />
+        </span>
+      </span>
+    )
+  }
+
+  if (metric === 'fat_ratio') {
+    const label = goal != null ? `${value.toFixed(1)}% / ≤${goal.toFixed(1)}%` : `${value.toFixed(1)}%`
+    return <span className="today-habit-metric today-habit-metric--text">{label}</span>
+  }
+
+  if (metric === 'weight') {
+    const label = goal != null ? `${value.toFixed(1)} kg / ≤${goal.toFixed(1)} kg` : `${value.toFixed(1)} kg`
+    return <span className="today-habit-metric today-habit-metric--text">{label}</span>
+  }
+
+  return null
+}
+
+export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0, healthData }) {
   const activeTodos = todos.filter((t) => !t.completed)
   const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
@@ -83,6 +117,16 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 
   const hasScheduleOrTasks = scheduleItems.length > 0 || sortedUntimedTasks.length > 0
+
+  // Build a map of metric → today's value from healthData
+  const todayMetrics = (() => {
+    const measurements = healthData?.measurements ?? []
+    const result = {}
+    for (const m of measurements) {
+      if (m.date === todayKey) result[m.metric] = m.value
+    }
+    return result
+  })()
 
   const habitsDone    = habits.filter((h) => h.completed_today).length
   const habitsPending = habits.length - habitsDone
@@ -169,12 +213,15 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     <button
                       type="button"
                       className="today-habit-check"
-                      onClick={() => onToggleHabit(habit)}
+                      onClick={habit.withings_metric ? undefined : () => onToggleHabit(habit)}
+                      disabled={!!habit.withings_metric}
+                      title={habit.withings_metric ? 'Auto-checked by health sync' : undefined}
                       aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
                     >
                       {habit.completed_today && <CheckIcon width={11} height={11} />}
                     </button>
                     <span className="today-habit-name">{habit.name}</span>
+                    <MetricProgress habit={habit} todayMetrics={todayMetrics} />
                     {habit.tags.length > 0 && (
                       <div className="today-habit-dots">
                         {habit.tags.map((tag) => (

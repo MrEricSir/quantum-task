@@ -195,6 +195,13 @@
   border-color: #7c3aed;
 }
 
+.today-habit-check:disabled {
+  cursor: default;
+}
+.today-habit-check:disabled:hover {
+  border-color: var(--border);
+}
+
 .today-habit-name {
   flex: 1;
   font-size: 13px;
@@ -228,4 +235,45 @@
   .today-page {
     max-width: 100%;
   }
+}
+
+.today-habit-metric {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.today-habit-metric--text {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.today-habit-metric-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.today-habit-metric-bar {
+  width: 48px;
+  height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.today-habit-metric-fill {
+  display: block;
+  height: 100%;
+  background: #7c3aed;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.today-habit--done .today-habit-metric-fill {
+  background: #22c55e;
 }

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchWithingsStatus, fetchWithingsHealthData, syncWithings, disconnectWithings } from '../api'
+import { fetchWithingsStatus, fetchWithingsHealthData, syncWithings, disconnectWithings, fetchWithingsGoals, saveWithingsGoals } from '../api'
 
 export function useWithings({ authed }) {
   const [status, setStatus] = useState(null)      // { connected, last_synced }
   const [healthData, setHealthData] = useState(null) // { measurements, habit_completions }
+  const [healthGoals, setHealthGoals] = useState(null) // { steps, fat_ratio, weight }
   const [syncing, setSyncing] = useState(false)
 
   const loadStatus = useCallback(() => {
@@ -14,11 +15,16 @@ export function useWithings({ authed }) {
     fetchWithingsHealthData(90).then(setHealthData).catch(() => {})
   }, [])
 
+  const loadHealthGoals = useCallback(() => {
+    fetchWithingsGoals().then(setHealthGoals).catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (!authed) return
     loadStatus()
     loadHealthData()
-  }, [authed, loadStatus, loadHealthData])
+    loadHealthGoals()
+  }, [authed, loadStatus, loadHealthData, loadHealthGoals])
 
   // Receive notification from the OAuth callback tab
   useEffect(() => {
@@ -32,6 +38,12 @@ export function useWithings({ authed }) {
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [loadStatus, loadHealthData])
+
+  const handleSaveGoals = async (goals) => {
+    const updated = await saveWithingsGoals(goals)
+    setHealthGoals(updated)
+    return updated
+  }
 
   const handleSync = async () => {
     setSyncing(true)
@@ -52,5 +64,5 @@ export function useWithings({ authed }) {
     setHealthData(null)
   }
 
-  return { status, healthData, syncing, handleSync, handleDisconnect, loadStatus, loadHealthData }
+  return { status, healthData, healthGoals, syncing, handleSync, handleDisconnect, handleSaveGoals, loadStatus, loadHealthData }
 }

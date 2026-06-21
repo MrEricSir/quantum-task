@@ -107,9 +107,11 @@ export default function App() {
   const {
     status: withingsStatus,
     healthData,
+    healthGoals,
     syncing: withinsSyncing,
     handleSync: handleWithingsSync,
     handleDisconnect: handleWithingsDisconnect,
+    handleSaveGoals: handleSaveWithingsGoals,
     loadStatus: reloadWithingsStatus,
     loadHealthData: reloadWithingsHealthData,
   } = useWithings({ authed })
@@ -778,6 +780,7 @@ export default function App() {
           <HealthPage
             habits={habits}
             healthData={healthData}
+            healthGoals={healthGoals}
             withingsConnected={withingsStatus?.connected ?? false}
             onOpenSettings={() => setShowWithingsSettings(true)}
           />
@@ -849,8 +852,10 @@ export default function App() {
         <WithingsSettings
           status={withingsStatus}
           syncing={withinsSyncing}
+          healthGoals={healthGoals}
           onSync={handleWithingsSync}
           onDisconnect={handleWithingsDisconnect}
+          onSaveGoals={handleSaveWithingsGoals}
           onClose={() => setShowWithingsSettings(false)}
         />
       )}
@@ -888,6 +893,7 @@ export default function App() {
           onClose={() => setShowQuickAdd(false)}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
+          onSaveGoals={handleSaveWithingsGoals}
         />
       )}
 

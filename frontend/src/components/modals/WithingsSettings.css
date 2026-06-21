@@ -75,3 +75,124 @@
   color: #ef4444;
   border-color: #ef4444;
 }
+
+/* ── Standalone health goals ── */
+.withings-goals-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+}
+
+.withings-goals-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.withings-goals-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.withings-goals-edit-btn {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-decoration: underline;
+}
+
+.withings-goals-edit-btn:hover {
+  color: var(--text);
+}
+
+.withings-goals-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+
+.withings-goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.withings-goals-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.withings-goals-label {
+  color: var(--text-muted);
+}
+
+.withings-goals-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.withings-goals-unset {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.withings-goals-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.withings-goals-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.withings-goals-edit-label {
+  width: 90px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.withings-goals-edit-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.withings-goals-edit-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.withings-goals-edit-unit {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.withings-goals-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
