@@ -39,7 +39,9 @@ function SectionHeader({ title, badge, status, open, onToggle, toggleable = fals
   )
 }
 
-function MetricProgress({ habit, todayMetrics }) {
+const KG_TO_LBS = 2.20462
+
+function MetricProgress({ habit, todayMetrics, isImperial }) {
   const metric = habit.withings_metric
   const goal = habit.withings_goal
   if (!metric || !todayMetrics) return null
@@ -66,14 +68,46 @@ function MetricProgress({ habit, todayMetrics }) {
   }
 
   if (metric === 'weight') {
-    const label = goal != null ? `${value.toFixed(1)} kg / ≤${goal.toFixed(1)} kg` : `${value.toFixed(1)} kg`
+    const toDisp = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
+    const unit = isImperial ? 'lbs' : 'kg'
+    const label = goal != null
+      ? `${toDisp(value).toFixed(1)} ${unit} / ≤${toDisp(goal).toFixed(1)} ${unit}`
+      : `${toDisp(value).toFixed(1)} ${unit}`
     return <span className="today-habit-metric today-habit-metric--text">{label}</span>
   }
 
   return null
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0, healthData }) {
+// Standalone metric row for metrics not tied to a habit (e.g. a weight goal without a weight habit)
+function StandaloneMetricRow({ metric, value, goal, isImperial }) {
+  const toDisp = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
+  const labels = { weight: 'Weight', fat_ratio: 'Body Fat' }
+  const label = labels[metric] ?? metric
+
+  let display
+  if (metric === 'fat_ratio') {
+    if (value != null && goal != null) display = `${value.toFixed(1)}% / ≤${goal.toFixed(1)}%`
+    else if (value != null) display = `${value.toFixed(1)}%`
+    else display = `Goal: ≤${goal.toFixed(1)}%`
+  } else if (metric === 'weight') {
+    const unit = isImperial ? 'lbs' : 'kg'
+    if (value != null && goal != null) display = `${toDisp(value).toFixed(1)} ${unit} / ≤${toDisp(goal).toFixed(1)} ${unit}`
+    else if (value != null) display = `${toDisp(value).toFixed(1)} ${unit}`
+    else display = `Goal: ≤${toDisp(goal).toFixed(1)} ${unit}`
+  } else {
+    display = value != null ? String(value) : `Goal: ${goal}`
+  }
+
+  return (
+    <div className="today-habit today-habit--standalone-metric">
+      <span className="today-habit-name">{label}</span>
+      <span className="today-habit-metric today-habit-metric--text">{display}</span>
+    </div>
+  )
+}
+
+export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false }) {
   const activeTodos = todos.filter((t) => !t.completed)
   const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
@@ -127,6 +161,13 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     }
     return result
   })()
+
+  // Standalone health metrics: weight/fat_ratio with a value or goal, but no linked habit
+  const linkedMetrics = new Set(habits.map(h => h.withings_metric).filter(Boolean))
+  const standaloneMetrics = ['weight', 'fat_ratio'].filter(metric => {
+    if (linkedMetrics.has(metric)) return false  // handled by a habit's MetricProgress
+    return todayMetrics[metric] != null || healthGoals?.[metric] != null
+  })
 
   const habitsDone    = habits.filter((h) => h.completed_today).length
   const habitsPending = habits.length - habitsDone
@@ -221,7 +262,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                       {habit.completed_today && <CheckIcon width={11} height={11} />}
                     </button>
                     <span className="today-habit-name">{habit.name}</span>
-                    <MetricProgress habit={habit} todayMetrics={todayMetrics} />
+                    <MetricProgress habit={habit} todayMetrics={todayMetrics} isImperial={isImperial} />
                     {habit.tags.length > 0 && (
                       <div className="today-habit-dots">
                         {habit.tags.map((tag) => (
@@ -236,6 +277,23 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                 ))}
               </div>
             </CollapseBody>
+          </section>
+        )}
+
+        {standaloneMetrics.length > 0 && (
+          <section className="today-section">
+            <SectionHeader title="Health" open toggleable={false} />
+            <div className="today-habits">
+              {standaloneMetrics.map(metric => (
+                <StandaloneMetricRow
+                  key={metric}
+                  metric={metric}
+                  value={todayMetrics[metric] ?? null}
+                  goal={healthGoals?.[metric] ?? null}
+                  isImperial={isImperial}
+                />
+              ))}
+            </div>
           </section>
         )}
 

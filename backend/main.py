@@ -160,6 +160,14 @@ def _run_startup_migrations():
     with SessionLocal() as db:
         push_lib.ensure_vapid_keys(db)
 
+    # Populate habit_streak_days for all habits (one-time, guarded by flag)
+    with SessionLocal() as db:
+        if not db.query(models.AppSetting).filter_by(key="streak_days_v1").first():
+            from streak import recompute_all_habits
+            recompute_all_habits(db)
+            db.add(models.AppSetting(key="streak_days_v1", value="1"))
+            db.commit()
+
 
 # ── Push notification scheduler ───────────────────────────────────────────────
 

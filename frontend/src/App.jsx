@@ -116,6 +116,24 @@ export default function App() {
     loadHealthData: reloadWithingsHealthData,
   } = useWithings({ authed })
 
+  const [isImperial, setIsImperial] = useState(() => localStorage.getItem('health-unit') === 'imperial')
+  const toggleUnit = () => setIsImperial(v => {
+    const next = !v
+    localStorage.setItem('health-unit', next ? 'imperial' : 'metric')
+    return next
+  })
+
+  // When a quick-add "steps goal" is detected, update or create a steps habit
+  // rather than saving a standalone health goal (steps = streak-tracked habit only).
+  const handleSaveStepGoal = async (stepGoal) => {
+    const existing = habits.find(h => h.withings_metric === 'steps' && !h.archived)
+    if (existing) {
+      await handleUpdateHabit(existing.id, { withings_goal: stepGoal })
+    } else {
+      await handleAddHabit({ name: 'Daily Steps', withings_metric: 'steps', withings_goal: stepGoal, tag_ids: [] })
+    }
+  }
+
   const loading = cardsLoading || tagsLoading
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
@@ -633,6 +651,13 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
                     &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="settings-dropdown-item settings-dropdown-notif"
+                    onSelect={(e) => { e.preventDefault(); toggleUnit() }}
+                  >
+                    <span>&#9878;&#65039; Units: {isImperial ? 'lbs' : 'kg'}</span>
+                    <span className={`notif-toggle ${isImperial ? 'notif-toggle--on' : ''}`} />
+                  </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
                     &#127991; Tags
                   </DropdownMenu.Item>
@@ -701,6 +726,9 @@ export default function App() {
             onMove={handleMoveSection}
             onWeather={setWeather}
             briefingKey={briefingKey}
+            healthData={healthData}
+            healthGoals={healthGoals}
+            isImperial={isImperial}
           />
         ) : isHabitsPage ? (
           <HabitsPage
@@ -783,6 +811,8 @@ export default function App() {
             healthGoals={healthGoals}
             withingsConnected={withingsStatus?.connected ?? false}
             onOpenSettings={() => setShowWithingsSettings(true)}
+            isImperial={isImperial}
+            onToggleUnit={toggleUnit}
           />
         ) : isWorkshopPage ? (
           <WorkshopPage
@@ -857,6 +887,7 @@ export default function App() {
           onDisconnect={handleWithingsDisconnect}
           onSaveGoals={handleSaveWithingsGoals}
           onClose={() => setShowWithingsSettings(false)}
+          isImperial={isImperial}
         />
       )}
 
@@ -894,6 +925,8 @@ export default function App() {
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
           onSaveGoals={handleSaveWithingsGoals}
+          onSaveStepGoal={handleSaveStepGoal}
+          isImperial={isImperial}
         />
       )}
 

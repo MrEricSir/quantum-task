@@ -90,6 +90,18 @@ class HabitCompletion(Base):
     date = Column(String, nullable=False)  # YYYY-MM-DD
 
 
+class HabitStreakDay(Base):
+    """Materialised streak counts — one row per (habit, completed date).
+    Only completed days are stored; absence == not completed that day.
+    streak = number of consecutive completed days up to and including this date.
+    """
+    __tablename__ = "habit_streak_days"
+
+    habit_id = Column(Integer, ForeignKey("habits.id", ondelete="CASCADE"), primary_key=True)
+    date     = Column(String, primary_key=True)   # YYYY-MM-DD
+    streak   = Column(Integer, nullable=False)
+
+
 class WithingsMeasurement(Base):
     """One row per (date, metric) — upserted on each sync."""
     __tablename__ = "withings_measurements"

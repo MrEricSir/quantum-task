@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -213,15 +212,7 @@ function HabitBadges({ habits, formatGoal, auto = false }) {
 
 const KG_TO_LBS = 2.20462
 
-export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, onOpenSettings }) {
-  const [isImperial, setIsImperial] = useState(() => localStorage.getItem('health-unit') === 'imperial')
-
-  const toggleUnit = () => setIsImperial(v => {
-    const next = !v
-    localStorage.setItem('health-unit', next ? 'imperial' : 'metric')
-    return next
-  })
-
+export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, onOpenSettings, isImperial = false, onToggleUnit }) {
   const toDisplay = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
   const weightUnit = isImperial ? ' lbs' : ' kg'
 
@@ -303,8 +294,8 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
         <div className="health-section-header">
           <h3 className="health-section-title">Weight</h3>
           <div className="health-unit-toggle">
-            <button className={`health-unit-btn${!isImperial ? ' health-unit-btn--active' : ''}`} onClick={() => isImperial && toggleUnit()}>kg</button>
-            <button className={`health-unit-btn${isImperial ? ' health-unit-btn--active' : ''}`} onClick={() => !isImperial && toggleUnit()}>lbs</button>
+            <button className={`health-unit-btn${!isImperial ? ' health-unit-btn--active' : ''}`} onClick={() => isImperial && onToggleUnit?.()}>kg</button>
+            <button className={`health-unit-btn${isImperial ? ' health-unit-btn--active' : ''}`} onClick={() => !isImperial && onToggleUnit?.()}>lbs</button>
           </div>
           {primaryWeightGoal != null && (
             <span className="health-section-goal">Goal: ≤ {toDisplay(primaryWeightGoal).toFixed(1)}{weightUnit}</span>

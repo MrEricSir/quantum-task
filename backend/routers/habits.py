@@ -1,54 +1,43 @@
 from datetime import date, datetime, timedelta, timezone
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 
 import models
 import schemas
 from deps import get_db, local_date
+from streak import recompute_from, get_current_streak
 
 router = APIRouter()
 
 
-def _compute_streak(db: Session, habit_id: int, today: date) -> int:
-    today_done = db.query(models.HabitCompletion).filter_by(
-        habit_id=habit_id, date=today.isoformat()
-    ).first() is not None
-
-    streak = 0
-    check = today if today_done else today - timedelta(days=1)
-    while True:
-        done = db.query(models.HabitCompletion).filter_by(
-            habit_id=habit_id, date=check.isoformat()
-        ).first()
-        if done:
-            streak += 1
-            check -= timedelta(days=1)
-        else:
-            break
-    return streak
-
-
 def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
     today_str = today.isoformat()
-    completed_today = db.query(models.HabitCompletion).filter_by(
-        habit_id=habit.id, date=today_str
-    ).first() is not None
+    week_start = (today - timedelta(days=6)).isoformat()
+
+    # Single query for the last 7 days of streak data (completed days only).
+    week_entries = {
+        e.date
+        for e in db.query(models.HabitStreakDay).filter(
+            models.HabitStreakDay.habit_id == habit.id,
+            models.HabitStreakDay.date >= week_start,
+            models.HabitStreakDay.date <= today_str,
+        ).all()
+    }
     recent_completions = [
-        db.query(models.HabitCompletion).filter_by(
-            habit_id=habit.id, date=(today - timedelta(days=6 - i)).isoformat()
-        ).first() is not None
+        (today - timedelta(days=6 - i)).isoformat() in week_entries
         for i in range(7)
     ]
+
     return schemas.Habit(
         id=habit.id,
         name=habit.name,
         created_at=habit.created_at,
         tags=list(habit.tags),
-        completed_today=completed_today,
-        streak=_compute_streak(db, habit.id, today),
+        completed_today=today_str in week_entries,
+        streak=get_current_streak(db, habit.id, today),
         recent_completions=recent_completions,
         withings_metric=habit.withings_metric,
         withings_goal=habit.withings_goal,
@@ -105,6 +94,24 @@ def update_habit(request: Request, habit_id: int, habit: schemas.HabitUpdate, db
     return _habit_out(db, db_habit, today)
 
 
+@router.get("/api/habits/{habit_id}/streak-days", response_model=List[schemas.HabitStreakDayOut])
+def get_streak_days(
+    habit_id: int,
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.HabitStreakDay).filter(
+        models.HabitStreakDay.habit_id == habit_id
+    )
+    if from_date:
+        query = query.filter(models.HabitStreakDay.date >= from_date)
+    if to_date:
+        query = query.filter(models.HabitStreakDay.date <= to_date)
+    rows = query.order_by(models.HabitStreakDay.date).all()
+    return [schemas.HabitStreakDayOut(date=r.date, streak=r.streak) for r in rows]
+
+
 @router.delete("/api/habits/{habit_id}")
 def delete_habit(habit_id: int, db: Session = Depends(get_db)):
     db_habit = db.query(models.Habit).filter(models.Habit.id == habit_id).first()
@@ -117,18 +124,24 @@ def delete_habit(habit_id: int, db: Session = Depends(get_db)):
 
 @router.post("/api/habits/{habit_id}/check")
 def check_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
-    today_str = local_date(request).isoformat()
+    today = local_date(request)
+    today_str = today.isoformat()
     if not db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first():
         db.add(models.HabitCompletion(habit_id=habit_id, date=today_str))
+        db.flush()
+        recompute_from(db, habit_id, today)
         db.commit()
     return {"ok": True}
 
 
 @router.delete("/api/habits/{habit_id}/check")
 def uncheck_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
-    today_str = local_date(request).isoformat()
+    today = local_date(request)
+    today_str = today.isoformat()
     row = db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first()
     if row:
         db.delete(row)
+        db.flush()
+        recompute_from(db, habit_id, today)
         db.commit()
     return {"ok": True}

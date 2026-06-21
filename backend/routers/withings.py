@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from deps import get_db
+from streak import recompute_from
 
 router = APIRouter()
 
@@ -128,6 +129,8 @@ def _auto_check_habits(db: Session, today: date) -> None:
                 habit_id=habit.id, date=today_str
             ).first():
                 db.add(models.HabitCompletion(habit_id=habit.id, date=today_str))
+                db.flush()
+                recompute_from(db, habit.id, today)
 
 
 def _withings_get(creds_data: dict, path: str, params: dict) -> dict:

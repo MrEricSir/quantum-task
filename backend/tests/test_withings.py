@@ -300,3 +300,130 @@ class TestHealthMetricDetection:
         result = plugin.post_process(parsed, text="walk daily")
         assert result.withings_metric == "steps"
         assert result.withings_goal == 8_000
+
+
+# ── Streak computation ────────────────────────────────────────────────────────
+
+from streak import recompute_from, recompute_all, get_current_streak
+
+
+def _add_completions(db, habit_id: int, *date_strs: str) -> None:
+    for d in date_strs:
+        db.add(models.HabitCompletion(habit_id=habit_id, date=d))
+    db.flush()
+
+
+def _streak_entry(db, habit_id: int, date_str: str):
+    return db.query(models.HabitStreakDay).filter_by(
+        habit_id=habit_id, date=date_str
+    ).first()
+
+
+class TestStreakComputation:
+
+    # ── recompute_from basics ─────────────────────────────────────────────────
+
+    def test_single_completion(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        today = date(2026, 6, 20)
+        _add_completions(db, h.id, "2026-06-20")
+        recompute_from(db, h.id, today)
+        e = _streak_entry(db, h.id, "2026-06-20")
+        assert e is not None and e.streak == 1
+
+    def test_consecutive_days_build_streak(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        today = date(2026, 6, 20)
+        _add_completions(db, h.id, "2026-06-18", "2026-06-19", "2026-06-20")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        assert _streak_entry(db, h.id, "2026-06-18").streak == 1
+        assert _streak_entry(db, h.id, "2026-06-19").streak == 2
+        assert _streak_entry(db, h.id, "2026-06-20").streak == 3
+
+    def test_gap_resets_streak(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        # Complete Jun 18 and Jun 20 but NOT Jun 19
+        _add_completions(db, h.id, "2026-06-18", "2026-06-20")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        assert _streak_entry(db, h.id, "2026-06-18").streak == 1
+        assert _streak_entry(db, h.id, "2026-06-19") is None  # not completed
+        assert _streak_entry(db, h.id, "2026-06-20").streak == 1  # reset after gap
+
+    def test_only_completed_days_stored(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        _add_completions(db, h.id, "2026-06-18", "2026-06-20")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        all_entries = db.query(models.HabitStreakDay).filter_by(habit_id=h.id).all()
+        dates = {e.date for e in all_entries}
+        assert dates == {"2026-06-18", "2026-06-20"}
+
+    def test_seeds_streak_from_prior_entry(self, db):
+        """recompute_from continues an existing streak correctly."""
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        # Bootstrap Jun 18-19 first
+        _add_completions(db, h.id, "2026-06-18", "2026-06-19")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        assert _streak_entry(db, h.id, "2026-06-19").streak == 2
+
+        # Now add Jun 20 and recompute only from Jun 20
+        _add_completions(db, h.id, "2026-06-20")
+        recompute_from(db, h.id, date(2026, 6, 20))
+        assert _streak_entry(db, h.id, "2026-06-20").streak == 3  # continues from 2
+
+    def test_retroactive_edit_propagates_forward(self, db):
+        """Inserting a completion in the past and recomputing from that date
+        correctly updates all subsequent entries."""
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        _add_completions(db, h.id, "2026-06-18", "2026-06-20")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        # Gap day Jun 19 means Jun 20 streak==1
+        assert _streak_entry(db, h.id, "2026-06-20").streak == 1
+
+        # Fill the gap retroactively
+        _add_completions(db, h.id, "2026-06-19")
+        recompute_from(db, h.id, date(2026, 6, 19))
+        assert _streak_entry(db, h.id, "2026-06-19").streak == 2
+        assert _streak_entry(db, h.id, "2026-06-20").streak == 3
+
+    # ── recompute_all ─────────────────────────────────────────────────────────
+
+    def test_recompute_all_full_rebuild(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        _add_completions(db, h.id, "2026-06-18", "2026-06-19", "2026-06-20")
+        recompute_all(db, h.id)
+        db.flush()
+        assert _streak_entry(db, h.id, "2026-06-18").streak == 1
+        assert _streak_entry(db, h.id, "2026-06-20").streak == 3
+
+    def test_recompute_all_no_completions(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        recompute_all(db, h.id)  # should not raise
+        db.flush()
+        assert db.query(models.HabitStreakDay).filter_by(habit_id=h.id).count() == 0
+
+    # ── get_current_streak ────────────────────────────────────────────────────
+
+    def test_get_streak_when_completed_today(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        today = date(2026, 6, 20)
+        _add_completions(db, h.id, "2026-06-18", "2026-06-19", "2026-06-20")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        assert get_current_streak(db, h.id, today) == 3
+
+    def test_get_streak_not_completed_today_uses_yesterday(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        _add_completions(db, h.id, "2026-06-18", "2026-06-19")
+        recompute_from(db, h.id, date(2026, 6, 18))
+        # Today (Jun 20) not completed — streak still alive via yesterday
+        assert get_current_streak(db, h.id, date(2026, 6, 20)) == 2
+
+    def test_get_streak_zero_when_no_history(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        assert get_current_streak(db, h.id, date(2026, 6, 20)) == 0
+
+    def test_get_streak_zero_after_two_day_gap(self, db):
+        h = models.Habit(name="Walk"); db.add(h); db.flush()
+        _add_completions(db, h.id, "2026-06-17", "2026-06-18")
+        recompute_from(db, h.id, date(2026, 6, 17))
+        # Two days later (Jun 20) — yesterday (Jun 19) has no entry
+        assert get_current_streak(db, h.id, date(2026, 6, 20)) == 0

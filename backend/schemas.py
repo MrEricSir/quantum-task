@@ -134,6 +134,11 @@ class WithingsHealthData(BaseModel):
     habit_completions: dict
 
 
+class HabitStreakDayOut(BaseModel):
+    date: str
+    streak: int
+
+
 class HabitBriefingItem(BaseModel):
     name: str
     completed_today: bool

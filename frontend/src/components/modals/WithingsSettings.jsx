@@ -10,13 +10,15 @@ function fmt(isoStr) {
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+const KG_TO_LBS = 2.20462
+
+// Steps is tracked as a streak habit only — not a standalone goal.
 const GOAL_FIELDS = [
-  { metric: 'steps',     label: 'Steps',        unit: 'steps / day', placeholder: '10000', step: '500',  min: '0' },
-  { metric: 'weight',    label: 'Weight',        unit: 'kg',          placeholder: '75.0',  step: '0.5', min: '0' },
-  { metric: 'fat_ratio', label: 'Body Fat %',    unit: '%',           placeholder: '20.0',  step: '0.1', min: '0' },
+  { metric: 'weight',    label: 'Weight',     step: '0.5', min: '0' },
+  { metric: 'fat_ratio', label: 'Body Fat %', unit: '%',   placeholder: '20.0', step: '0.1', min: '0' },
 ]
 
-export default function WithingsSettings({ status, onSync, onDisconnect, onSaveGoals, syncing, healthGoals, onClose }) {
+export default function WithingsSettings({ status, onSync, onDisconnect, onSaveGoals, syncing, healthGoals, onClose, isImperial = false }) {
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
   const [goalDraft, setGoalDraft] = useState(null)  // null = not editing; dict when editing
@@ -45,9 +47,11 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
   const lastSynced = fmt(status?.last_synced)
 
   const startEditGoals = () => {
+    const weightKg = healthGoals?.weight
     setGoalDraft({
-      steps:     healthGoals?.steps     != null ? String(healthGoals.steps)     : '',
-      weight:    healthGoals?.weight    != null ? String(healthGoals.weight)    : '',
+      weight:    weightKg != null
+        ? String(isImperial ? Math.round(weightKg * KG_TO_LBS * 10) / 10 : weightKg)
+        : '',
       fat_ratio: healthGoals?.fat_ratio != null ? String(healthGoals.fat_ratio) : '',
     })
   }
@@ -58,7 +62,12 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
       const payload = {}
       for (const { metric } of GOAL_FIELDS) {
         const raw = goalDraft[metric]
-        payload[metric] = raw !== '' ? parseFloat(raw) : null
+        if (raw === '') {
+          payload[metric] = null
+        } else {
+          const val = parseFloat(raw)
+          payload[metric] = metric === 'weight' && isImperial ? Math.round(val / KG_TO_LBS * 10) / 10 : val
+        }
       }
       await onSaveGoals(payload)
       setGoalDraft(null)
@@ -106,14 +115,18 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
         </p>
         {goalDraft === null ? (
           <div className="withings-goals-list">
-            {GOAL_FIELDS.map(({ metric, label, unit }) => {
-              const val = healthGoals?.[metric]
+            {GOAL_FIELDS.map(({ metric, label }) => {
+              const rawVal = healthGoals?.[metric]
+              const displayVal = metric === 'weight' && rawVal != null
+                ? (isImperial ? Math.round(rawVal * KG_TO_LBS * 10) / 10 : rawVal)
+                : rawVal
+              const unit = metric === 'weight' ? (isImperial ? 'lbs' : 'kg') : '%'
               return (
                 <div key={metric} className="withings-goals-row">
                   <span className="withings-goals-label">{label}</span>
                   <span className="withings-goals-value">
-                    {val != null
-                      ? (metric === 'steps' ? Math.round(val).toLocaleString() : val.toFixed(1)) + ' ' + unit
+                    {displayVal != null
+                      ? displayVal.toFixed(1) + ' ' + unit
                       : <span className="withings-goals-unset">not set</span>}
                   </span>
                 </div>
@@ -122,7 +135,10 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
           </div>
         ) : (
           <div className="withings-goals-edit">
-            {GOAL_FIELDS.map(({ metric, label, unit, placeholder, step, min }) => (
+            {GOAL_FIELDS.map(({ metric, label, step, min }) => {
+              const unit = metric === 'weight' ? (isImperial ? 'lbs' : 'kg') : '%'
+              const placeholder = metric === 'weight' ? (isImperial ? '165.0' : '75.0') : '20.0'
+              return (
               <div key={metric} className="withings-goals-edit-row">
                 <label className="withings-goals-edit-label">{label}</label>
                 <div className="withings-goals-edit-input-wrap">
@@ -138,7 +154,7 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
                   <span className="withings-goals-edit-unit">{unit}</span>
                 </div>
               </div>
-            ))}
+            )})}
             <div className="withings-goals-edit-actions">
               <button className="btn-cancel" onClick={() => setGoalDraft(null)}>Cancel</button>
               <button className="btn-save" onClick={handleSaveGoals} disabled={goalSaving}>

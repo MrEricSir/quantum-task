@@ -22,15 +22,20 @@ const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal' }
 
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
 
-function formatGoalDisplay(metric, goal) {
+const KG_TO_LBS = 2.20462
+
+function formatGoalDisplay(metric, goal, isImperial) {
   if (goal == null) return '—'
   if (metric === 'steps') return `${Math.round(goal).toLocaleString()} steps / day`
   if (metric === 'fat_ratio') return `≤ ${Number(goal).toFixed(1)}%`
-  if (metric === 'weight') return `≤ ${Number(goal).toFixed(1)} kg`
+  if (metric === 'weight') {
+    const val = isImperial ? Math.round(goal * KG_TO_LBS * 10) / 10 : goal
+    return `≤ ${val.toFixed(1)} ${isImperial ? 'lbs' : 'kg'}`
+  }
   return String(goal)
 }
 
-export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals }) {
+export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, isImperial = false }) {
   // ── Input step ──
   const [text, setText] = useState('')
   const [parsing, setParsing] = useState(false)
@@ -140,7 +145,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const handleConfirm = async () => {
     setSaving(true)
     try {
-      if (detectedType === 'goal' && withingsMetric) {
+      if (detectedType === 'goal' && withingsMetric === 'steps') {
+        await onSaveStepGoal(withingsGoal)
+      } else if (detectedType === 'goal' && withingsMetric) {
         await onSaveGoals({ [withingsMetric]: withingsGoal })
       } else if (detectedType === 'habit') {
         await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
@@ -240,7 +247,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
         .filter(Boolean)
       try {
-        if (item.type === 'goal' && item.withings_metric) {
+        if (item.type === 'goal' && item.withings_metric === 'steps') {
+          await onSaveStepGoal(item.withings_goal)
+        } else if (item.type === 'goal' && item.withings_metric) {
           await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
         } else if (item.type === 'habit') {
           await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
@@ -497,7 +506,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           {detectedType === 'goal' && (
             <div className="quick-goal-preview">
               <div className="quick-goal-metric">{METRIC_LABELS[withingsMetric] ?? withingsMetric}</div>
-              <div className="quick-goal-value">{formatGoalDisplay(withingsMetric, withingsGoal)}</div>
+              <div className="quick-goal-value">{formatGoalDisplay(withingsMetric, withingsGoal, isImperial)}</div>
             </div>
           )}
 
