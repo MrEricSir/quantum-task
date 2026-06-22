@@ -27,7 +27,9 @@ import HabitsPage from './components/pages/HabitsPage'
 import CalendarPage from './components/pages/CalendarPage'
 import EngineeringPage from './components/pages/EngineeringPage'
 import WorkshopPage from './components/pages/WorkshopPage'
+import HealthPage from './components/pages/HealthPage'
 import LoginPage from './components/pages/LoginPage'
+import WithingsSettings from './components/modals/WithingsSettings'
 import QueueIndicator from './components/shared/QueueIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
@@ -35,6 +37,7 @@ import { useNotifications } from './hooks/useNotifications'
 import { useCards } from './hooks/useCards'
 import { useHabits } from './hooks/useHabits'
 import { useCalendar } from './hooks/useCalendar'
+import { useWithings } from './hooks/useWithings'
 import {
   fetchTags,
   fetchCards,
@@ -74,6 +77,7 @@ export default function App() {
   const [showTagManager, setShowTagManager] = useState(false)
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
   const [showGithubSettings, setShowGithubSettings] = useState(false)
+  const [showWithingsSettings, setShowWithingsSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [editingTodo, setEditingTodo] = useState(null)
   const [activeTodo, setActiveTodo] = useState(null)
@@ -100,6 +104,36 @@ export default function App() {
     calendarEvents, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
   } = useCalendar({ authed, invalidateBriefing })
 
+  const {
+    status: withingsStatus,
+    healthData,
+    healthGoals,
+    syncing: withinsSyncing,
+    handleSync: handleWithingsSync,
+    handleDisconnect: handleWithingsDisconnect,
+    handleSaveGoals: handleSaveWithingsGoals,
+    loadStatus: reloadWithingsStatus,
+    loadHealthData: reloadWithingsHealthData,
+  } = useWithings({ authed })
+
+  const [isImperial, setIsImperial] = useState(() => localStorage.getItem('health-unit') === 'imperial')
+  const toggleUnit = () => setIsImperial(v => {
+    const next = !v
+    localStorage.setItem('health-unit', next ? 'imperial' : 'metric')
+    return next
+  })
+
+  // When a quick-add "steps goal" is detected, update or create a steps habit
+  // rather than saving a standalone health goal (steps = streak-tracked habit only).
+  const handleSaveStepGoal = async (stepGoal) => {
+    const existing = habits.find(h => h.withings_metric === 'steps' && !h.archived)
+    if (existing) {
+      await handleUpdateHabit(existing.id, { withings_goal: stepGoal })
+    } else {
+      await handleAddHabit({ name: 'Daily Steps', withings_metric: 'steps', withings_goal: stepGoal, tag_ids: [] })
+    }
+  }
+
   const loading = cardsLoading || tagsLoading
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
@@ -118,7 +152,8 @@ export default function App() {
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
   const isWorkshopPage    = location.pathname === '/workshop'
-  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isWorkshopPage ? 'workshop' : 'today'
+  const isHealthPage      = location.pathname === '/health'
+  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isWorkshopPage ? 'workshop' : isHealthPage ? 'health' : 'today'
 
   const tagMatch =
     location.pathname.match(/^\/today\/tag\/(\d+)$/)    ||
@@ -154,6 +189,7 @@ export default function App() {
     { key: 'c', label: 'Calendar',          group: 'nav',    action: ()  => navigate('/calendar') },
     { key: 'e', label: 'Engineering',       group: 'nav',    action: ()  => navigate('/engineering') },
     { key: 'w', label: 'Workshop',          group: 'nav',    action: ()  => navigate('/workshop') },
+    { key: 'H', label: 'Health',            group: 'nav',    action: ()  => navigate('/health') },
   ]
 
   useEffect(() => {
@@ -207,6 +243,37 @@ export default function App() {
       })
       .catch(() => setAuthed(false))
   }, [])
+
+  // Handle Withings OAuth callback redirect (?withings=connected|error lands in the new tab)
+  useEffect(() => {
+    if (!isHealthPage) return
+    const params = new URLSearchParams(location.search)
+    const result = params.get('withings')
+    if (result === 'connected') {
+      if (window.opener) {
+        try {
+          window.opener.postMessage({ type: 'withings-connected' }, window.location.origin)
+        } catch {
+          // opener may be inaccessible; fall through
+        }
+        window.close()
+      } else {
+        reloadWithingsStatus()
+        reloadWithingsHealthData()
+      }
+      navigate('/health', { replace: true })
+    } else if (result === 'error') {
+      const msg = params.get('msg') || 'Unknown error'
+      if (window.opener) {
+        try {
+          window.opener.postMessage({ type: 'withings-error', msg }, window.location.origin)
+        } catch { /* ignore */ }
+        window.close()
+      } else {
+        navigate('/health', { replace: true })
+      }
+    }
+  }, [isHealthPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redirect legacy routes to their new locations
   useEffect(() => {
@@ -489,6 +556,7 @@ export default function App() {
     if (page === 'today')       return navigate(tagId ? `/today/tag/${tagId}` : '/today')
     if (page === 'engineering') return navigate('/engineering')
     if (page === 'workshop')    return navigate('/workshop')
+    if (page === 'health')      return navigate('/health')
     if (page === 'habits')      return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
@@ -580,6 +648,16 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowGithubSettings(true)}>
                     &#128279; Engineering (GitHub)
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
+                    &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="settings-dropdown-item settings-dropdown-notif"
+                    onSelect={(e) => { e.preventDefault(); toggleUnit() }}
+                  >
+                    <span>&#9878;&#65039; Units: {isImperial ? 'lbs' : 'kg'}</span>
+                    <span className={`notif-toggle ${isImperial ? 'notif-toggle--on' : ''}`} />
+                  </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
                     &#127991; Tags
                   </DropdownMenu.Item>
@@ -648,6 +726,9 @@ export default function App() {
             onMove={handleMoveSection}
             onWeather={setWeather}
             briefingKey={briefingKey}
+            healthData={healthData}
+            healthGoals={healthGoals}
+            isImperial={isImperial}
           />
         ) : isHabitsPage ? (
           <HabitsPage
@@ -661,6 +742,7 @@ export default function App() {
             onDelete={handleDeleteHabit}
             onArchive={handleArchiveHabit}
             onUnarchive={handleUnarchiveHabit}
+            isImperial={isImperial}
           />
         ) : isBoardPage ? (
           <>
@@ -722,6 +804,16 @@ export default function App() {
             onRefresh={handleRefreshCalendar}
             lastRefreshed={lastRefreshed}
             refreshing={calendarRefreshing}
+          />
+        ) : isHealthPage ? (
+          <HealthPage
+            habits={habits}
+            healthData={healthData}
+            healthGoals={healthGoals}
+            withingsConnected={withingsStatus?.connected ?? false}
+            onOpenSettings={() => setShowWithingsSettings(true)}
+            isImperial={isImperial}
+            onToggleUnit={toggleUnit}
           />
         ) : isWorkshopPage ? (
           <WorkshopPage
@@ -787,6 +879,19 @@ export default function App() {
         />
       )}
 
+      {showWithingsSettings && (
+        <WithingsSettings
+          status={withingsStatus}
+          syncing={withinsSyncing}
+          healthGoals={healthGoals}
+          onSync={handleWithingsSync}
+          onDisconnect={handleWithingsDisconnect}
+          onSaveGoals={handleSaveWithingsGoals}
+          onClose={() => setShowWithingsSettings(false)}
+          isImperial={isImperial}
+        />
+      )}
+
       {showTagManager && (
         <TagManagerModal
           tags={tags}
@@ -820,6 +925,9 @@ export default function App() {
           onClose={() => setShowQuickAdd(false)}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
+          onSaveGoals={handleSaveWithingsGoals}
+          onSaveStepGoal={handleSaveStepGoal}
+          isImperial={isImperial}
         />
       )}
 

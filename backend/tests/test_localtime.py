@@ -8,7 +8,6 @@ code path honours the header:
   • _local_date() helper — header parsing + fallback
   • _section_for_date() — pure section assignment helper
   • _fmt_time() — time formatting for briefing context
-  • _compute_streak() — streak anchored to local date
   • Habit check / uncheck — completion stored against local date
   • GET /api/habits — completed_today and streak respect local date
   • GET /api/calendar-events — section assignment uses local date
@@ -31,7 +30,7 @@ from main import app
 from deps import get_db, local_date as _local_date
 from routers.cards import _section_for_date
 from routers.briefing import _fmt_time
-from routers.habits import _compute_streak
+from streak import recompute_from
 
 # ── In-memory test database ───────────────────────────────────────────────────
 
@@ -260,6 +259,8 @@ class TestStreakComputation:
             ).first():
                 db.add(models.HabitCompletion(habit_id=habit_id, date=date_str))
                 db.commit()
+            recompute_from(db, habit_id, date.fromisoformat(date_str))
+            db.commit()
 
     def test_no_completions_streak_is_zero(self, client):
         hid = self._create_habit(client)

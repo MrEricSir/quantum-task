@@ -21,6 +21,7 @@ setup() {
 
   echo "    Installing Python dependencies..."
   venv/bin/pip install --upgrade pip -q
+  venv/bin/pip install --no-deps "withings-api>=2.4.0" -q
   venv/bin/pip install -r requirements.txt
 
   echo ""
@@ -292,7 +293,8 @@ DATABASE_URL=sqlite:////app/data/todos.db,\
 LLM_BASE_URL=$LLM_BASE_URL,\
 LLM_API_KEY=$LLM_API_KEY,\
 LLM_MODEL=$LLM_MODEL,\
-AUTH_PASSWORD=$AUTH_PASSWORD" \
+AUTH_PASSWORD=$AUTH_PASSWORD,\
+TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
     --project "$GCP_PROJECT_ID" \
     --quiet
 
@@ -382,7 +384,8 @@ gcp_update_env() {
 LLM_BASE_URL=$LLM_BASE_URL,\
 LLM_API_KEY=$LLM_API_KEY,\
 LLM_MODEL=$LLM_MODEL,\
-AUTH_PASSWORD=$AUTH_PASSWORD" \
+AUTH_PASSWORD=$AUTH_PASSWORD,\
+TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
     --quiet
   echo "    Done."
 }

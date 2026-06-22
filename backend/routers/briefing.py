@@ -15,6 +15,7 @@ import models
 import schemas
 from database import SessionLocal
 from deps import get_db, llm_client, LLM_MODEL, local_date
+from health_context import build_health_context
 
 router = APIRouter()
 
@@ -186,6 +187,7 @@ def _build_today_context(
     local_now: datetime | None = None,
     weather: dict | None = None,
     all_cal_events: list = None,
+    health_context: str | None = None,
 ) -> str:
     now = local_now or datetime.now()
     time_str = now.strftime("%-I:%M %p").lstrip("0") if hasattr(now, "strftime") else ""
@@ -252,6 +254,9 @@ def _build_today_context(
 
     if not upcoming_events and not todos and not eng_prs and not pending_habits:
         lines.append("Nothing remaining on the schedule.")
+
+    if health_context:
+        lines.append(health_context)
 
     if observations:
         lines.append("Patterns (use at most one if genuinely relevant):")
@@ -348,7 +353,7 @@ def _time_of_day_bucket(local_now: datetime) -> int:
     return 3
 
 
-def _today_hash(todos: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None) -> str:
+def _today_hash(todos: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None, steps_today: int | None = None) -> str:
     payload = {
         "todos": [
             {"id": t.id, "title": t.title, "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None}
@@ -364,6 +369,7 @@ def _today_hash(todos: list, events: list, habits: list, has_location: bool, loc
         ],
         "has_location": has_location,
         "time_bucket": _time_of_day_bucket(local_now) if local_now else -1,
+        "steps_today": steps_today,
     }
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -425,6 +431,9 @@ _TODAY_SYSTEM = (
     "Lead with the single most immediately relevant non-recurring event or task. "
     "If 'Habits not yet done today' appears in the context, add a brief reminder as the final sentence. "
     "If 'Habits not yet done today' does NOT appear, do NOT mention habits under any circumstances. "
+    "If a 'Health data' section is present: mention steps progress only if it is below 60% of goal "
+    "and there is a plausible opportunity to act on it (morning or afternoon) — weave it in naturally, "
+    "never as a separate bullet. Never read out weight or body fat in the briefing. "
     "If there is nothing on the schedule, say so warmly in one sentence. "
     "Sound warm and efficient — like a competent secretary, not a robot reading a list. "
     "NEVER use bullet points, dashes, numbers, or any list formatting. "
@@ -465,7 +474,11 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     week_events  = [e for e in req.calendar_events
                     if today_dt < _event_local_date(e, tz_offset) <= today_dt + timedelta(days=7) and not e.is_ooo]
 
-    today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None, local_now)
+    with SessionLocal() as _pre_db:
+        _health_data, _health_ctx = build_health_context(_pre_db, today_dt)
+    _steps_today = int(_health_data["today"].get("steps", 0)) or None
+
+    today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None, local_now, _steps_today)
     week_h  = _week_hash(week_todos, week_events)
 
     cached_today = cached_weather = cached_week = None
@@ -501,7 +514,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     on_board = {t.description for t in req.todos if t.description}
     eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
     eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
-    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events)
+    today_ctx = _build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events, health_context=_health_ctx)
     week_ctx  = _build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
     def generate():
@@ -658,9 +671,8 @@ def _normalize_plan_time(t) -> str | None:
 
 
 _DAILY_PLAN_SYSTEM = """\
-You are a daily scheduler. Your ONLY job is to assign times to the exact items provided — \
-nothing more. You MUST NOT add, invent, rename, or paraphrase any item not explicitly listed \
-in the input. Every block's title must be copied character-for-character from the input list.
+You are a daily scheduler. Your ONLY job is to assign times to the items provided — \
+nothing more. Every block's title must be copied character-for-character from the input list.
 
 Return ONLY a valid JSON object: {"blocks": [...]}
 
@@ -668,7 +680,7 @@ Each block has these fields:
   time     - "HH:MM" 24h local time when the block starts, or null if it can't fit today
   duration - integer minutes
   title    - EXACT name copied from the input (never paraphrase or invent)
-  type     - one of: "event" | "task" | "habit" | "break"
+  type     - one of: "event" | "task" | "habit" | "walk" | "break"
   fixed    - true for calendar events, false for everything else
   note     - one short phrase (3-5 words) of rationale, or null
 
@@ -678,12 +690,15 @@ Scheduling rules:
 3. Fill gaps between fixed items with flexible tasks, starting from the current time.
 4. Add a 10-min break block after 90+ consecutive minutes of focused work.
 5. Tasks that cannot fit today appear at the end with time=null.
-6. The only allowed block types are items from the input lists plus optional break blocks.
+6. The only allowed block types are items from the input lists plus optional break and walk blocks.
+7. If a "Health data" section shows steps below 60% of goal, add ONE "Walk" block (20-30 min) \
+in an open afternoon slot. Only add it if a genuinely free slot exists — never displace fixed items.
 """
 
 
 def _build_daily_plan_context(
-    today_dt, today_events: list, today_todos: list, pending_habits: list, tz_offset: int
+    today_dt, today_events: list, today_todos: list, pending_habits: list, tz_offset: int,
+    health_context: str | None = None,
 ) -> str:
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
     lines = [
@@ -720,6 +735,10 @@ def _build_daily_plan_context(
         for h in pending_habits:
             lines.append(f"  - {h.name}")
 
+    if health_context:
+        lines.append("")
+        lines.append(health_context)
+
     return "\n".join(lines)
 
 
@@ -738,8 +757,19 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
     if not today_todos and not today_events and not pending_habits:
         return {"blocks": []}
 
+    with SessionLocal() as _hdb:
+        health_data, health_ctx = build_health_context(_hdb, today_dt)
+
+    # Allow the AI to add a Walk block when steps are well below goal
+    steps_today = health_data["today"].get("steps")
+    steps_goal = health_data["goals"].get("steps")
+    walk_eligible = (
+        steps_today is not None and steps_goal is not None and steps_today < steps_goal * 0.6
+    )
+
     context = _build_daily_plan_context(
-        today_dt, today_events, today_todos, pending_habits, tz_offset
+        today_dt, today_events, today_todos, pending_habits, tz_offset,
+        health_context=health_ctx,
     )
 
     valid_titles = (
@@ -747,6 +777,8 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
         | {t.title for t in today_todos}
         | {h.name for h in pending_habits}
     )
+    if walk_eligible:
+        valid_titles.add("Walk")
 
     try:
         response = llm_client().chat.completions.create(

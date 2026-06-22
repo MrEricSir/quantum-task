@@ -123,6 +123,13 @@
   border-color: #a78bfa;
 }
 
+.habit-card-check:disabled {
+  cursor: default;
+}
+.habit-card-check:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
 .habit-card--done .habit-card-check {
   background: #7c3aed;
   border-color: #7c3aed;
@@ -347,4 +354,119 @@
   .habit-card-streak {
     display: none;
   }
+}
+
+/* ── Withings metric badge ── */
+
+.habit-card-withings {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  opacity: 0.9;
+  transition: opacity 0.15s;
+}
+
+.habit-card-withings:hover {
+  opacity: 1;
+}
+
+.habit-card-withings:hover .habit-card-withings-badge {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.habit-card-withings-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+.habit-card-withings-auto {
+  font-size: 10px;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 10px;
+  padding: 2px 7px;
+}
+
+.habit-card-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.habit-card-edit-metric-row {
+  display: flex;
+  gap: 6px;
+}
+
+.habit-card-edit-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  outline: none;
+  cursor: pointer;
+}
+
+.habit-card-edit-select option {
+  background: var(--container-bg, #1a1a2e);
+}
+
+.habit-card-edit-goal {
+  width: 90px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.habit-card-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.habit-card-edit-save {
+  padding: 3px 12px;
+  border-radius: 5px;
+  border: none;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.habit-card-edit-save:hover {
+  background: #6d28d9;
+}
+
+.habit-card-edit-cancel {
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
 }

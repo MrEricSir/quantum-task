@@ -2,6 +2,13 @@ import asyncio
 import hmac as _hmac
 import os
 from contextlib import asynccontextmanager
+
+# Load .env for local development (no-op in production where env vars are injected)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
@@ -19,7 +26,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing
+from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -35,6 +42,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             not path.startswith("/api/")
             or path.startswith("/api/auth/")
             or path == "/api/calendar/export.ics"
+            or path == "/api/withings/callback"
         ):
             return await call_next(request)
         token = request.cookies.get("session", "")
@@ -152,6 +160,14 @@ def _run_startup_migrations():
     with SessionLocal() as db:
         push_lib.ensure_vapid_keys(db)
 
+    # Populate habit_streak_days for all habits (one-time, guarded by flag)
+    with SessionLocal() as db:
+        if not db.query(models.AppSetting).filter_by(key="streak_days_v1").first():
+            from streak import recompute_all_habits
+            recompute_all_habits(db)
+            db.add(models.AppSetting(key="streak_days_v1", value="1"))
+            db.commit()
+
 
 # ── Push notification scheduler ───────────────────────────────────────────────
 
@@ -208,12 +224,29 @@ async def _push_scheduler() -> None:
             print(f"[push] scheduler error: {e}")
 
 
+async def _withings_scheduler() -> None:
+    """Sync Withings data every 2 hours if credentials are stored."""
+    await asyncio.sleep(7200)  # don't run immediately on startup
+    while True:
+        try:
+            from routers.withings import do_sync
+            with SessionLocal() as db:
+                row = db.query(models.AppSetting).filter_by(key="withings_credentials").first()
+                if row:
+                    do_sync(db)
+        except Exception as e:
+            print(f"[withings] scheduler error: {e}")
+        await asyncio.sleep(7200)
+
+
 @asynccontextmanager
 async def lifespan(app):
     _run_startup_migrations()
     task = asyncio.create_task(_push_scheduler())
+    wtask = asyncio.create_task(_withings_scheduler())
     yield
     task.cancel()
+    wtask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -238,6 +271,8 @@ app.include_router(habits.router)
 app.include_router(calendar.router)
 app.include_router(cards.router)
 app.include_router(briefing.router)
+app.include_router(withings.router)
+app.include_router(search.router)
 
 # Serve bundled frontend for all non-API routes (must be last)
 _static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -56,7 +56,8 @@ class ParseRequest(BaseModel):
 
 class ParsedTodo(BaseModel):
     # type: "task" = completable item; "habit" = ongoing recurring behaviour
-    type: Literal["task", "habit"] = "task"
+    #       "goal" = update a standalone health goal (not a habit or task)
+    type: Literal["task", "habit", "goal"] = "task"
     title: str
     # description: optional short context from the user's input
     #   board cards: shown in the detail modal as extra context
@@ -71,6 +72,10 @@ class ParsedTodo(BaseModel):
 
     source_text: Optional[str] = None  # verbatim fragment from the original input
 
+    # Only populated when type="habit" and the input mentions a Withings health metric
+    withings_metric: Optional[str] = None   # 'steps' | 'fat_ratio' | 'weight'
+    withings_goal: Optional[float] = None   # numeric goal; steps ≥ goal, others ≤ goal
+
     @field_validator('scheduled_at', 'description', 'source_text', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
@@ -84,12 +89,16 @@ class BulkParseResponse(BaseModel):
 class HabitCreate(BaseModel):
     name: str
     tag_ids: List[int] = []
+    withings_metric: Optional[str] = None   # 'steps' | 'fat_ratio'
+    withings_goal: Optional[float] = None
 
 
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
     tag_ids: Optional[List[int]] = None
     archived: Optional[bool] = None
+    withings_metric: Optional[str] = None
+    withings_goal: Optional[float] = None
 
 
 class Habit(BaseModel):
@@ -102,8 +111,32 @@ class Habit(BaseModel):
     completed_today: bool = False
     streak: int = 0
     recent_completions: List[bool] = []
+    withings_metric: Optional[str] = None
+    withings_goal: Optional[float] = None
 
     model_config = {"from_attributes": True}
+
+
+class WithingsStatus(BaseModel):
+    connected: bool
+    last_synced: Optional[str] = None  # ISO datetime string
+
+
+class WithingsMeasurementOut(BaseModel):
+    date: str
+    metric: str
+    value: float
+
+
+class WithingsHealthData(BaseModel):
+    measurements: List[WithingsMeasurementOut]
+    # habit_id (as str) → list of completion date strings
+    habit_completions: dict
+
+
+class HabitStreakDayOut(BaseModel):
+    date: str
+    streak: int
 
 
 class HabitBriefingItem(BaseModel):
@@ -161,14 +194,26 @@ class Note(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JobSearchResult(BaseModel):
+    title: str = ""
+    url: str = ""
+    content: str = ""
+
+
 class JobSource(BaseModel):
-    type: Literal["card", "text", "tag"]
+    type: Literal["card", "text", "tag", "search", "url"]
     card_id: Optional[int] = None
     card_title: Optional[str] = None  # cached title for display if card is later deleted
     tag_id: Optional[int] = None
     tag_name: Optional[str] = None    # cached tag name for display
     tag_color: Optional[str] = None   # cached tag color for display
-    content: Optional[str] = None     # for type="text"
+    content: Optional[str] = None     # for type="text" and type="url"
+    # type="search"
+    query: Optional[str] = None
+    results: Optional[List[JobSearchResult]] = None
+    # type="url"
+    url: Optional[str] = None
+    title: Optional[str] = None       # cached page title for display
 
 
 class JobCreate(BaseModel):

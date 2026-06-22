@@ -10,14 +10,22 @@ function sourcesToParts(inputSources) {
     .filter(s => s.type === 'tag')
     .map(s => ({ tag_id: s.tag_id, tag_name: s.tag_name, tag_color: s.tag_color }))
   const text = (inputSources ?? []).find(s => s.type === 'text')?.content ?? ''
-  return { cards, tagSources, text }
+  const searches = (inputSources ?? [])
+    .filter(s => s.type === 'search')
+    .map(s => ({ query: s.query, results: s.results || [] }))
+  const urls = (inputSources ?? [])
+    .filter(s => s.type === 'url')
+    .map(s => ({ url: s.url, title: s.title, content: s.content }))
+  return { cards, tagSources, text, searches, urls }
 }
 
-function buildSources(cards, tagSources, text) {
+function buildSources(cards, tagSources, text, searchSources = [], urlSources = []) {
   return [
     ...tagSources.map(t => ({ type: 'tag', tag_id: t.tag_id, tag_name: t.tag_name, tag_color: t.tag_color })),
     ...cards.map(c => ({ type: 'card', card_id: c.card_id, card_title: c.card_title })),
     ...(text.trim() ? [{ type: 'text', content: text.trim() }] : []),
+    ...searchSources.map(s => ({ type: 'search', query: s.query, results: s.results })),
+    ...urlSources.map(s => ({ type: 'url', url: s.url, title: s.title, content: s.content })),
   ]
 }
 
@@ -29,12 +37,24 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
   const [cardSources, setCardSources] = useState([])
   const [tagSources, setTagSources] = useState([])
   const [textContent, setTextContent] = useState('')
+  const [searchSources, setSearchSources] = useState([])
+  const [urlSources, setUrlSources] = useState([])
   const [output, setOutput] = useState('')
   const [status, setStatus] = useState('idle')
   const [copied, setCopied] = useState(false)
   const [savedAsCard, setSavedAsCard] = useState(false)
   const [cardSearch, setCardSearch] = useState('')
-  const [showPicker, setShowPicker] = useState(false)   // 'card' | 'tag' | false
+  const [showPicker, setShowPicker] = useState(false)   // 'card' | 'tag' | 'search' | 'url' | false
+
+  // Search picker state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchPickerResults, setSearchPickerResults] = useState([])
+  const [searchPickerStatus, setSearchPickerStatus] = useState('idle') // idle|loading|done|error
+
+  // URL fetch picker state
+  const [urlInput, setUrlInput] = useState('')
+  const [urlFetchStatus, setUrlFetchStatus] = useState('idle') // idle|loading|error
+
   const abortRef = useRef(null)
   const outputRef = useRef(null)
   const pickerRef = useRef(null)
@@ -50,10 +70,12 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     if (!job) return
     setTitle(job.title || '')
     setPrompt(job.prompt || '')
-    const { cards, tagSources: tags_, text } = sourcesToParts(job.input_sources)
+    const { cards, tagSources: tags_, text, searches, urls } = sourcesToParts(job.input_sources)
     setCardSources(cards)
     setTagSources(tags_)
     setTextContent(text)
+    setSearchSources(searches)
+    setUrlSources(urls)
     setOutput(job.last_output || '')
     setStatus(job.last_output ? 'done' : 'idle')
     setCopied(false)
@@ -64,7 +86,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight
   }, [output])
 
-  // Close card picker on outside click
+  // Close picker on outside click
   useEffect(() => {
     if (!showPicker) return
     const handler = (e) => {
@@ -79,7 +101,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     const updated = await updateJob(selectedId, {
       title: title || null,
       prompt,
-      input_sources: buildSources(cardSources, tagSources, textContent),
+      input_sources: buildSources(cardSources, tagSources, textContent, searchSources, urlSources),
       ...overrides,
     })
     setJobs(prev => prev.map(j => j.id === selectedId ? updated : j))
@@ -93,6 +115,10 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     setSelectedId(job.id)
     setOutput('')
     setStatus('idle')
+    setSearchSources([])
+    setUrlSources([])
+    setSearchQuery('')
+    setUrlInput('')
   }
 
   const handleSelectJob = (id) => {
@@ -120,7 +146,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     setCardSearch('')
     setShowPicker(false)
     if (selectedId) {
-      updateJob(selectedId, { input_sources: buildSources(newCards, tagSources, textContent) })
+      updateJob(selectedId, { input_sources: buildSources(newCards, tagSources, textContent, searchSources, urlSources) })
         .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
         .catch(() => {})
     }
@@ -130,7 +156,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     const newCards = cardSources.filter(s => s.card_id !== cardId)
     setCardSources(newCards)
     if (selectedId) {
-      updateJob(selectedId, { input_sources: buildSources(newCards, tagSources, textContent) })
+      updateJob(selectedId, { input_sources: buildSources(newCards, tagSources, textContent, searchSources, urlSources) })
         .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
         .catch(() => {})
     }
@@ -142,7 +168,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     setTagSources(newTags)
     setShowPicker(false)
     if (selectedId) {
-      updateJob(selectedId, { input_sources: buildSources(cardSources, newTags, textContent) })
+      updateJob(selectedId, { input_sources: buildSources(cardSources, newTags, textContent, searchSources, urlSources) })
         .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
         .catch(() => {})
     }
@@ -152,7 +178,89 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     const newTags = tagSources.filter(s => s.tag_id !== tagId)
     setTagSources(newTags)
     if (selectedId) {
-      updateJob(selectedId, { input_sources: buildSources(cardSources, newTags, textContent) })
+      updateJob(selectedId, { input_sources: buildSources(cardSources, newTags, textContent, searchSources, urlSources) })
+        .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
+        .catch(() => {})
+    }
+  }
+
+  const handleWebSearch = async () => {
+    if (!searchQuery.trim() || searchPickerStatus === 'loading') return
+    setSearchPickerStatus('loading')
+    setSearchPickerResults([])
+    try {
+      const res = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery.trim() }),
+      })
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      setSearchPickerResults(data.results || [])
+      setSearchPickerStatus('done')
+    } catch {
+      setSearchPickerStatus('error')
+    }
+  }
+
+  const handleAddSearchResults = () => {
+    if (!searchPickerResults.length) return
+    const newSearch = { query: searchQuery.trim(), results: searchPickerResults }
+    const newSearches = [...searchSources, newSearch]
+    setSearchSources(newSearches)
+    setSearchQuery('')
+    setSearchPickerResults([])
+    setSearchPickerStatus('idle')
+    setShowPicker(false)
+    if (selectedId) {
+      updateJob(selectedId, { input_sources: buildSources(cardSources, tagSources, textContent, newSearches, urlSources) })
+        .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
+        .catch(() => {})
+    }
+  }
+
+  const handleRemoveSearch = (idx) => {
+    const newSearches = searchSources.filter((_, i) => i !== idx)
+    setSearchSources(newSearches)
+    if (selectedId) {
+      updateJob(selectedId, { input_sources: buildSources(cardSources, tagSources, textContent, newSearches, urlSources) })
+        .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
+        .catch(() => {})
+    }
+  }
+
+  const handleFetchUrl = async () => {
+    if (!urlInput.trim() || urlFetchStatus === 'loading') return
+    setUrlFetchStatus('loading')
+    try {
+      const res = await fetch('/api/fetch-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.trim() }),
+      })
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      const newUrl = { url: urlInput.trim(), title: data.title, content: data.content }
+      const newUrls = [...urlSources, newUrl]
+      setUrlSources(newUrls)
+      setUrlInput('')
+      setUrlFetchStatus('idle')
+      setShowPicker(false)
+      if (selectedId) {
+        updateJob(selectedId, { input_sources: buildSources(cardSources, tagSources, textContent, searchSources, newUrls) })
+          .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
+          .catch(() => {})
+      }
+    } catch {
+      setUrlFetchStatus('error')
+    }
+  }
+
+  const handleRemoveUrl = (idx) => {
+    const newUrls = urlSources.filter((_, i) => i !== idx)
+    setUrlSources(newUrls)
+    if (selectedId) {
+      updateJob(selectedId, { input_sources: buildSources(cardSources, tagSources, textContent, searchSources, newUrls) })
         .then(updated => setJobs(prev => prev.map(j => j.id === selectedId ? updated : j)))
         .catch(() => {})
     }
@@ -236,7 +344,10 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     )
     .slice(0, 8)
 
-  const canRun = !!prompt.trim() && (tagSources.length > 0 || cardSources.length > 0 || !!textContent.trim())
+  const canRun = !!prompt.trim() && (
+    tagSources.length > 0 || cardSources.length > 0 || !!textContent.trim() ||
+    searchSources.length > 0 || urlSources.length > 0
+  )
   const selectedJob = jobs.find(j => j.id === selectedId)
 
   return (
@@ -299,6 +410,28 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
                   >×</button>
                 </span>
               ))}
+              {searchSources.map((s, i) => (
+                <span key={i} className="workshop-chip workshop-chip--search">
+                  <span className="workshop-chip-icon">🔍</span>
+                  {s.query}
+                  <button
+                    className="workshop-chip-remove"
+                    onClick={() => handleRemoveSearch(i)}
+                    aria-label={`Remove search "${s.query}"`}
+                  >×</button>
+                </span>
+              ))}
+              {urlSources.map((s, i) => (
+                <span key={i} className="workshop-chip workshop-chip--url">
+                  <span className="workshop-chip-icon">🔗</span>
+                  {s.title || s.url}
+                  <button
+                    className="workshop-chip-remove"
+                    onClick={() => handleRemoveUrl(i)}
+                    aria-label={`Remove URL "${s.url}"`}
+                  >×</button>
+                </span>
+              ))}
               <div className="workshop-picker-wrap" ref={pickerRef}>
                 <button
                   className="workshop-add-card-btn"
@@ -311,6 +444,18 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
                   onClick={() => { setCardSearch(''); setShowPicker(v => v === 'card' ? false : 'card') }}
                 >
                   + Add card
+                </button>
+                <button
+                  className="workshop-add-card-btn"
+                  onClick={() => { setSearchQuery(''); setSearchPickerResults([]); setSearchPickerStatus('idle'); setShowPicker(v => v === 'search' ? false : 'search') }}
+                >
+                  + Search web
+                </button>
+                <button
+                  className="workshop-add-card-btn"
+                  onClick={() => { setUrlInput(''); setUrlFetchStatus('idle'); setShowPicker(v => v === 'url' ? false : 'url') }}
+                >
+                  + Fetch URL
                 </button>
                 {showPicker === 'tag' && (
                   <div className="workshop-picker">
@@ -352,6 +497,70 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
                         </button>
                       ))}
                     </div>
+                  </div>
+                )}
+                {showPicker === 'search' && (
+                  <div className="workshop-picker workshop-picker--wide">
+                    <div className="workshop-picker-input-row">
+                      <input
+                        className="workshop-picker-search workshop-picker-search--inline"
+                        placeholder="Search the web…"
+                        value={searchQuery}
+                        onChange={e => { setSearchQuery(e.target.value); setSearchPickerStatus('idle') }}
+                        onKeyDown={e => e.key === 'Enter' && handleWebSearch()}
+                        autoFocus
+                      />
+                      <button
+                        className="workshop-picker-action-btn"
+                        onClick={handleWebSearch}
+                        disabled={!searchQuery.trim() || searchPickerStatus === 'loading'}
+                      >
+                        {searchPickerStatus === 'loading' ? '…' : 'Search'}
+                      </button>
+                    </div>
+                    {searchPickerStatus === 'error' && (
+                      <div className="workshop-picker-empty">Search failed. Check TAVILY_API_KEY.</div>
+                    )}
+                    {searchPickerStatus === 'done' && searchPickerResults.length === 0 && (
+                      <div className="workshop-picker-empty">No results found.</div>
+                    )}
+                    {searchPickerStatus === 'done' && searchPickerResults.length > 0 && (
+                      <div className="workshop-picker-list">
+                        <button className="workshop-picker-item workshop-picker-item--add-all" onClick={handleAddSearchResults}>
+                          Add all {searchPickerResults.length} results
+                        </button>
+                        {searchPickerResults.map((r, i) => (
+                          <div key={i} className="workshop-picker-search-result">
+                            <div className="workshop-picker-search-result-title">{r.title}</div>
+                            <div className="workshop-picker-search-result-url">{r.url}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {showPicker === 'url' && (
+                  <div className="workshop-picker workshop-picker--wide">
+                    <div className="workshop-picker-input-row">
+                      <input
+                        className="workshop-picker-search workshop-picker-search--inline"
+                        placeholder="https://…"
+                        value={urlInput}
+                        onChange={e => { setUrlInput(e.target.value); setUrlFetchStatus('idle') }}
+                        onKeyDown={e => e.key === 'Enter' && handleFetchUrl()}
+                        autoFocus
+                      />
+                      <button
+                        className="workshop-picker-action-btn"
+                        onClick={handleFetchUrl}
+                        disabled={!urlInput.trim() || urlFetchStatus === 'loading'}
+                      >
+                        {urlFetchStatus === 'loading' ? '…' : 'Fetch'}
+                      </button>
+                    </div>
+                    {urlFetchStatus === 'error' && (
+                      <div className="workshop-picker-empty">Could not fetch URL.</div>
+                    )}
                   </div>
                 )}
               </div>

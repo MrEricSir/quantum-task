@@ -39,7 +39,119 @@ function SectionHeader({ title, badge, status, open, onToggle, toggleable = fals
   )
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0 }) {
+const KG_TO_LBS = 2.20462
+
+function MetricProgress({ habit, todayMetrics, isImperial }) {
+  const metric = habit.withings_metric
+  const goal = habit.withings_goal
+  if (!metric || !todayMetrics) return null
+  const value = todayMetrics[metric]
+  if (value == null) return null
+
+  if (metric === 'steps' && goal != null) {
+    const pct = Math.min(100, Math.round((value / goal) * 100))
+    return (
+      <span className="today-habit-metric">
+        <span className="today-habit-metric-text">
+          {Math.round(value).toLocaleString()} / {Math.round(goal).toLocaleString()}
+        </span>
+        <span className="today-habit-metric-bar">
+          <span className="today-habit-metric-fill" style={{ width: `${pct}%` }} />
+        </span>
+      </span>
+    )
+  }
+
+  if (metric === 'fat_ratio') {
+    const label = goal != null ? `${value.toFixed(1)}% / ≤${goal.toFixed(1)}%` : `${value.toFixed(1)}%`
+    return <span className="today-habit-metric today-habit-metric--text">{label}</span>
+  }
+
+  if (metric === 'weight') {
+    const toDisp = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
+    const unit = isImperial ? 'lbs' : 'kg'
+    const label = goal != null
+      ? `${toDisp(value).toFixed(1)} ${unit} / ≤${toDisp(goal).toFixed(1)} ${unit}`
+      : `${toDisp(value).toFixed(1)} ${unit}`
+    return <span className="today-habit-metric today-habit-metric--text">{label}</span>
+  }
+
+  return null
+}
+
+// Mini sparkline for 30-day metric trends
+function MiniSparkline({ values, goal }) {
+  if (values.length < 2) return null
+  const W = 80; const H = 24; const PX = 2; const PY = 3
+  const iW = W - PX * 2; const iH = H - PY * 2
+  const allV = goal != null ? [...values, goal] : values
+  const minV = Math.min(...allV); const maxV = Math.max(...allV)
+  const rng = maxV - minV || 1
+  const sx = (i) => PX + (i / (values.length - 1)) * iW
+  const sy = (v) => PY + iH - ((v - minV) / rng) * iH
+  const pts = values.map((v, i) => `${sx(i)},${sy(v)}`).join(' ')
+  const area = [`${sx(0)},${H}`, ...values.map((v, i) => `${sx(i)},${sy(v)}`), `${sx(values.length - 1)},${H}`].join(' ')
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flexShrink: 0, display: 'block' }}>
+      <polygon points={area} fill="rgba(139,92,246,0.1)" />
+      <polyline points={pts} fill="none" stroke="rgba(139,92,246,0.55)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      {goal != null && (
+        <line x1={PX} x2={W - PX} y1={sy(goal)} y2={sy(goal)} stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 2" />
+      )}
+    </svg>
+  )
+}
+
+// Standalone metric row for metrics not tied to a habit — shows 30-day sparkline trend
+function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
+  const toDisp = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
+  const labels = { weight: 'Weight', fat_ratio: 'Body Fat' }
+  const label = labels[metric] ?? metric
+  const unit = metric === 'weight' ? (isImperial ? 'lbs' : 'kg') : '%'
+
+  // Last 30 data points for this metric, converted to display units
+  const history = measurements.filter(m => m.metric === metric).slice(-30)
+  const dispValues = history.map(m => metric === 'weight' ? toDisp(m.value) : m.value)
+  const dispGoal = goal != null ? (metric === 'weight' ? toDisp(goal) : goal) : null
+
+  // Most recent reading and how old it is
+  const recent = history.length > 0 ? history[history.length - 1] : null
+  const recentDisp = recent != null ? (metric === 'weight' ? toDisp(recent.value) : recent.value) : null
+
+  let dateStr = ''
+  if (recent) {
+    const now = new Date()
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
+    const yest = new Date(now); yest.setDate(now.getDate()-1)
+    const yestKey = `${yest.getFullYear()}-${String(yest.getMonth()+1).padStart(2,'0')}-${String(yest.getDate()).padStart(2,'0')}`
+    if (recent.date !== todayKey) {
+      dateStr = recent.date === yestKey ? 'yesterday'
+        : new Date(recent.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    }
+  }
+
+  if (!recent && dispGoal == null) return null
+
+  return (
+    <div className="today-habit today-habit--standalone-metric">
+      <span className="today-habit-name">{label}</span>
+      <span className="today-standalone-value">
+        {recentDisp != null && (
+          <span className="today-standalone-reading">
+            {recentDisp.toFixed(1)}{metric === 'fat_ratio' ? '%' : ` ${unit}`}
+            {dateStr && <span className="today-standalone-date"> · {dateStr}</span>}
+          </span>
+        )}
+        {dispGoal != null && (
+          <span className="today-standalone-goal">goal ≤ {dispGoal.toFixed(1)}{metric === 'fat_ratio' ? '%' : ` ${unit}`}</span>
+        )}
+      </span>
+      {dispValues.length >= 2 && <MiniSparkline values={dispValues} goal={dispGoal} />}
+    </div>
+  )
+}
+
+export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false }) {
   const activeTodos = todos.filter((t) => !t.completed)
   const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
@@ -83,6 +195,29 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 
   const hasScheduleOrTasks = scheduleItems.length > 0 || sortedUntimedTasks.length > 0
+
+  // Build a map of metric → today's value from healthData
+  const todayMetrics = (() => {
+    const measurements = healthData?.measurements ?? []
+    const result = {}
+    for (const m of measurements) {
+      if (m.date === todayKey) result[m.metric] = m.value
+    }
+    return result
+  })()
+
+  // Standalone health metrics: weight/fat_ratio with any historical data or a goal, but no linked habit
+  const allMeasurements = healthData?.measurements ?? []
+  const linkedMetrics = new Set(habits.map(h => h.withings_metric).filter(Boolean))
+  const standaloneMetrics = ['weight', 'fat_ratio'].filter(metric => {
+    if (linkedMetrics.has(metric)) return false  // handled by a habit's MetricProgress
+    return allMeasurements.some(m => m.metric === metric) || healthGoals?.[metric] != null
+  })
+
+  const hasHealthOrHabits = habits.length > 0 || standaloneMetrics.length > 0
+  const sectionTitle = habits.length > 0 && standaloneMetrics.length > 0
+    ? 'Health & Habits'
+    : habits.length > 0 ? 'Habits' : 'Health'
 
   const habitsDone    = habits.filter((h) => h.completed_today).length
   const habitsPending = habits.length - habitsDone
@@ -150,11 +285,11 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           habits={habits}
         />
 
-        {habits.length > 0 && (
+        {hasHealthOrHabits && (
           <section className="today-section">
             <SectionHeader
-              title="Habits"
-              status={habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`}
+              title={sectionTitle}
+              status={habits.length > 0 ? (habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`) : ''}
               open={habitsOpen}
               onToggle={() => setHabitsOpen((v) => !v)}
               toggleable={habitsAllDone}
@@ -169,12 +304,15 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     <button
                       type="button"
                       className="today-habit-check"
-                      onClick={() => onToggleHabit(habit)}
+                      onClick={habit.withings_metric ? undefined : () => onToggleHabit(habit)}
+                      disabled={!!habit.withings_metric}
+                      title={habit.withings_metric ? 'Synced automatically from Withings' : undefined}
                       aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
                     >
                       {habit.completed_today && <CheckIcon width={11} height={11} />}
                     </button>
                     <span className="today-habit-name">{habit.name}</span>
+                    <MetricProgress habit={habit} todayMetrics={todayMetrics} isImperial={isImperial} />
                     {habit.tags.length > 0 && (
                       <div className="today-habit-dots">
                         {habit.tags.map((tag) => (
@@ -186,6 +324,15 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                       <span className="today-habit-streak">{habit.streak}</span>
                     )}
                   </div>
+                ))}
+                {standaloneMetrics.map(metric => (
+                  <StandaloneMetricRow
+                    key={metric}
+                    metric={metric}
+                    goal={healthGoals?.[metric] ?? null}
+                    isImperial={isImperial}
+                    measurements={allMeasurements}
+                  />
                 ))}
               </div>
             </CollapseBody>

@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from deps import get_db, llm_client, LLM_MODEL
+from health_context import build_health_context
 
 router = APIRouter()
 
@@ -118,8 +120,51 @@ def run_job(job_id: int, db: Session = Depends(get_db)):
         elif src.get("type") == "text" and src.get("content"):
             context_parts.append("### Additional Context")
             context_parts.append(src["content"])
+        elif src.get("type") == "search" and src.get("query"):
+            results = src.get("results") or []
+            if results:
+                context_parts.append(f'### Web search: "{src["query"]}"')
+                for r in results:
+                    context_parts.append(f'**{r["title"]}** ({r["url"]})')
+                    if r.get("content"):
+                        context_parts.append(r["content"])
+        elif src.get("type") == "url" and src.get("url"):
+            context_parts.append(f'### Web page: {src.get("title") or src["url"]}')
+            context_parts.append(f'Source: {src["url"]}')
+            if src.get("content"):
+                context_parts.append(src["content"])
+
+    # Build a "user background" preamble so the AI has full context without manual input
+    today = date.today()
+    today_str = today.isoformat()
+    background_parts: list[str] = []
+
+    _, health_ctx = build_health_context(db, today)
+    if health_ctx:
+        background_parts.append(health_ctx)
+
+    all_habits = db.query(models.Habit).filter(models.Habit.archived == False).all()  # noqa: E712
+    completed_habit_ids = {
+        c.habit_id for c in db.query(models.HabitCompletion)
+        .filter(models.HabitCompletion.date == today_str).all()
+    }
+    pending_habits = [h.name for h in all_habits if h.id not in completed_habit_ids]
+    done_habits    = [h.name for h in all_habits if h.id in completed_habit_ids]
+    if pending_habits:
+        background_parts.append("Habits pending today: " + ", ".join(pending_habits))
+    if done_habits:
+        background_parts.append("Habits completed today: " + ", ".join(done_habits))
+
+    active_count = db.query(models.Card).filter(
+        models.Card.completed == False,  # noqa: E712
+        models.Card.archived == False,
+        models.Card.section != "none",
+    ).count()
+    background_parts.append(f"Active tasks on board: {active_count}")
 
     user_msg = f"## Instruction\n{job.prompt}"
+    if background_parts:
+        user_msg = "## User context (today)\n" + "\n".join(background_parts) + "\n\n" + user_msg
     if context_parts:
         user_msg += "\n\n## Context\n" + "\n\n".join(context_parts)
 

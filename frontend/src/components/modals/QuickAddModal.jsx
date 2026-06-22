@@ -18,9 +18,24 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit' }
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal' }
 
-export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit }) {
+const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
+
+const KG_TO_LBS = 2.20462
+
+function formatGoalDisplay(metric, goal, isImperial) {
+  if (goal == null) return '—'
+  if (metric === 'steps') return `${Math.round(goal).toLocaleString()} steps / day`
+  if (metric === 'fat_ratio') return `≤ ${Number(goal).toFixed(1)}%`
+  if (metric === 'weight') {
+    const val = isImperial ? Math.round(goal * KG_TO_LBS * 10) / 10 : goal
+    return `≤ ${val.toFixed(1)} ${isImperial ? 'lbs' : 'kg'}`
+  }
+  return String(goal)
+}
+
+export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, isImperial = false }) {
   // ── Input step ──
   const [text, setText] = useState('')
   const [parsing, setParsing] = useState(false)
@@ -36,6 +51,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const [recurrenceRule, setRecurrenceRule] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState([])
   const [clarificationQuestion, setClarificationQuestion] = useState('')
+  const [withingsMetric, setWithingsMetric] = useState(null)
+  const [withingsGoal, setWithingsGoal] = useState(null)
   const [saving, setSaving] = useState(false)
 
   // ── Voice input ──
@@ -101,6 +118,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         setRecurrenceRule(result.recurrence_rule ?? '')
         setSelectedTagIds(tagIds)
         setClarificationQuestion(result.clarification_question ?? '')
+        setWithingsMetric(result.withings_metric ?? null)
+        setWithingsGoal(result.withings_goal ?? null)
         setStep('confirm')
       } else {
         setBulkItems(items.map((item, i) => ({ ...item, _key: i })))
@@ -126,8 +145,12 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const handleConfirm = async () => {
     setSaving(true)
     try {
-      if (detectedType === 'habit') {
-        await onSaveHabit({ name: title, tag_ids: selectedTagIds })
+      if (detectedType === 'goal' && withingsMetric === 'steps') {
+        await onSaveStepGoal(withingsGoal)
+      } else if (detectedType === 'goal' && withingsMetric) {
+        await onSaveGoals({ [withingsMetric]: withingsGoal })
+      } else if (detectedType === 'habit') {
+        await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else {
         await onSaveTask(buildCardPayload())
       }
@@ -151,6 +174,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     setSelectedTagIds(item._tag_ids ?? (item.suggested_tags ?? [])
       .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
       .filter(Boolean))
+    setWithingsMetric(item.withings_metric ?? null)
+    setWithingsGoal(item.withings_goal ?? null)
     setClarificationQuestion('')
     setStep('bulk-edit')
   }
@@ -165,6 +190,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
       scheduled_at: scheduledAt || null,
       recurrence_rule: recurrenceRule || null,
       _tag_ids: selectedTagIds,
+      withings_metric: withingsMetric || null,
+      withings_goal: withingsGoal ?? null,
     } : it))
     setStep('bulk-confirm')
   }
@@ -220,8 +247,12 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
         .filter(Boolean)
       try {
-        if (item.type === 'habit') {
-          await onSaveHabit({ name: item.title, tag_ids: tagIds })
+        if (item.type === 'goal' && item.withings_metric === 'steps') {
+          await onSaveStepGoal(item.withings_goal)
+        } else if (item.type === 'goal' && item.withings_metric) {
+          await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
+        } else if (item.type === 'habit') {
+          await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
         } else {
           await onSaveTask({
             title: item.title,
@@ -241,7 +272,11 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     onClose()
   }
 
-  const confirmDisabled = saving || !title.trim()
+  const confirmDisabled = saving || (
+    detectedType === 'goal'
+      ? (!withingsMetric || withingsGoal == null)
+      : !title.trim()
+  )
 
   const renderCardFields = (idPrefix) => (
     <CardForm
@@ -440,12 +475,12 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           <div className="quick-type-row">
             <span className="quick-type-label">Detected as</span>
             <div className="quick-type-tabs">
-              {['task', 'habit'].map((t) => (
+              {(detectedType === 'goal' ? ['goal'] : ['task', 'habit']).map((t) => (
                 <button
                   key={t}
                   type="button"
                   className={`quick-type-tab${detectedType === t ? ' quick-type-tab--active' : ''}`}
-                  onClick={() => setDetectedType(t)}
+                  onClick={() => t !== 'goal' && setDetectedType(t)}
                 >
                   {TYPE_LABELS[t]}
                 </button>
@@ -468,10 +503,17 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
             </div>
           )}
 
+          {detectedType === 'goal' && (
+            <div className="quick-goal-preview">
+              <div className="quick-goal-metric">{METRIC_LABELS[withingsMetric] ?? withingsMetric}</div>
+              <div className="quick-goal-value">{formatGoalDisplay(withingsMetric, withingsGoal, isImperial)}</div>
+            </div>
+          )}
+
           <div className="modal-footer">
             <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
             <button className="btn-save" onClick={handleConfirm} disabled={confirmDisabled}>
-              {saving ? 'Saving…' : `Add ${TYPE_LABELS[detectedType]}`}
+              {saving ? 'Saving…' : detectedType === 'goal' ? 'Set Goal' : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
           </div>
         </>

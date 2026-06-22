@@ -10,6 +10,7 @@ A personal productivity dashboard with AI-powered quick add, calendar integratio
 - **AI**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
 - **Calendar**: iCal/ICS feed integration
 - **Weather**: Open-Meteo (no API key required)
+- **Health**: Withings API (step count, body fat %) — optional
 
 ## Prerequisites
 
@@ -141,6 +142,13 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - 7-day completion history shown as dots on each card
 - Streak counter
 - Archive habits instead of deleting them; restore from the archive at any time
+- Link habits to a Withings health goal (step count auto-completes when goal is met)
+
+### Health
+- Connect a Withings account (watch + smart scale) to sync step count and body fat %
+- Set a numeric goal per metric; step habits auto-check when the daily goal is synced
+- Charts showing steps (bar) and body fat % (line) over the past 90 days
+- Habit completion overlay on each chart to see how habits track with progress
 
 ### Notes
 - Plain-text quick capture — no markdown, no formatting
@@ -207,6 +215,31 @@ export LLM_MODEL="llama-3.1-8b-instant"
 | Variable | Default | Description |
 |---|---|---|
 | `AUTH_PASSWORD` | _(unset)_ | Login password — auth disabled if not set |
+
+### Workshop web search (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `TAVILY_API_KEY` | _(unset)_ | API key from [tavily.com](https://tavily.com) — enables the "+ Search web" input in the Workshop. Free tier available. |
+
+### Withings (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `WITHINGS_CLIENT_ID` | _(unset)_ | OAuth client ID from [developer.withings.com](https://developer.withings.com) |
+| `WITHINGS_SECRET` | _(unset)_ | OAuth client secret |
+| `WITHINGS_CALLBACK_URI` | `http://localhost:8000/api/withings/callback` | Redirect URI registered in the Withings developer console |
+
+Withings features are disabled if `WITHINGS_CLIENT_ID` is not set.
+
+**Local development callback:**
+Withings allows `http://localhost` redirect URIs. In your Withings developer app, register **two** allowed redirect URIs:
+- `http://localhost:8000/api/withings/callback` — for local development
+- `https://YOUR_CLOUD_RUN_URL/api/withings/callback` — for production
+
+The backend runs on port 8000 locally, so the OAuth redirect lands there directly, then immediately redirects your browser back to the frontend at `http://localhost:5173/health`. No tunnel needed.
+
+Set `WITHINGS_CALLBACK_URI` in your `.env` to `http://localhost:8000/api/withings/callback` for local use, and as a GitHub secret pointing to your deployed URL for CI/CD.
 
 **To benchmark Ollama models locally:**
 

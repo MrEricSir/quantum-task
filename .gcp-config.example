@@ -37,3 +37,11 @@ LLM_MODEL="gemini-2.0-flash"
 # Password for the single-user login gate (leave empty to disable auth)
 AUTH_PASSWORD="your-password"
 
+# ── Optional features ─────────────────────────────────────────────────────────
+# These are injected at deploy time via GitHub secrets, not baked in here.
+# If you run `./dev.sh gcp-update-env` and want to preserve them on the running
+# service, export them in your shell first:
+#
+#   export TAVILY_API_KEY="tvly-..."   # Workshop web search (free at tavily.com)
+#   ./dev.sh gcp-update-env
+

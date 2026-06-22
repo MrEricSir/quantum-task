@@ -36,12 +36,16 @@ Reference dates:
 {tags_section}
 
 Fields:
-  type          — "task" | "habit"
+  type          — "task" | "habit" | "goal"
                   task  = a discrete, completable item with a clear done state
                           (e.g. "send Bob the report", "dentist appointment", "buy groceries")
                   habit = something you do repeatedly on an ongoing, indefinite basis with
                           no specific end (e.g. "exercise every morning", "meditate daily",
                           "journal every night", "drink 8 glasses of water each day")
+                  goal  = setting or updating a health metric target, NOT a recurring habit
+                          Use when the input explicitly says "set/change/update my X goal to Y"
+                          or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
+                          Always set withings_metric and withings_goal when type="goal"
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
@@ -75,7 +79,17 @@ Fields:
                     "every month" / "monthly"                → "monthly" (section: "month")
                     "every year" / "yearly" / "annually"     → "yearly"  (section: "later")
                     null if no recurrence is mentioned
-                    When set, section must reflect the cadence above, not "later"\
+                    When set, section must reflect the cadence above, not "later"
+  withings_metric — ONLY for habits: "steps" | "fat_ratio" | "weight" | null
+                    Set when the habit explicitly mentions one of these health metrics.
+                    "steps" for step-count goals ("10,000 steps a day", "walk 5k steps")
+                    "fat_ratio" for body fat percentage ("body fat under 20%")
+                    "weight" for body weight ("weigh less than 75 kg")
+                    null for all other habits and all tasks
+  withings_goal   — ONLY for habits with withings_metric: numeric goal (float) or null
+                    steps: target steps per day (e.g. 10000)
+                    fat_ratio: max body fat % to stay at or below (e.g. 20.0)
+                    weight: max weight in kg to stay at or below (e.g. 75.0)\
 """
 
 
@@ -118,6 +132,34 @@ _TIME_WORDS: dict[str, dt_time] = {
     "afternoon": dt_time(14, 0),
     "evening":   dt_time(18, 0),
 }
+
+# ── Goal-setting detection ────────────────────────────────────────────────────
+# Matches explicit intent to SET or CHANGE a health goal (vs. creating a habit)
+_GOAL_SET_RE = re.compile(
+    r'\b(?:set|change|update)\b.{0,25}\bgoal\b'  # "set my weight goal"
+    r'|\bmy\b.{0,15}\bgoal\b\s+is\b'             # "my weight goal is 75"
+    r'|\bgoal\b\s*[:\=]',                         # "goal: 75 kg" / "goal = 10000"
+    re.I,
+)
+
+# ── Health metric detection regexes ───────────────────────────────────────────
+# Steps: "5,000 steps", "10k steps", "10,000 steps a day"
+_STEPS_K_RE  = re.compile(r'\b(\d+(?:\.\d+)?)\s*k\s*steps?\b', re.I)
+_STEPS_NUM_RE = re.compile(r'\b([\d,]+)\s*steps?\b', re.I)
+# Goal context: "step goal to 10,000" (number follows "step(s) goal")
+_STEPS_GOAL_RE = re.compile(r'\bsteps?\s+goal\b.{0,40}?([\d,]+)', re.I)
+
+# Body fat %: "body fat under 20%", "20% body fat", "fat ratio 20%"
+_FAT_RE = re.compile(
+    r'\bbody\s*fat\b[^%\d]*(\d+(?:\.\d+)?)\s*%'
+    r'|(\d+(?:\.\d+)?)\s*%\s*(?:body\s*)?fat\b'
+    r'|\bfat\s+ratio\b[^%\d]*(\d+(?:\.\d+)?)\s*%',
+    re.I,
+)
+
+# Weight: "75 kg", "165 lbs / pounds"
+_WEIGHT_KG_RE = re.compile(r'\b(\d+(?:\.\d+)?)\s*kg\b', re.I)
+_WEIGHT_LB_RE = re.compile(r'\b(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\b', re.I)
 
 
 def resolve_dates(parsed: Any, *, text: str, today: date) -> Any:
@@ -291,7 +333,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit"}
+    _VALID_TYPES = {"task", "habit", "goal"}
 
     def normalize_raw(self, raw: dict) -> dict:
         """
@@ -443,5 +485,46 @@ class BaseModelPlugin:
         # specific deadline — override with a section that matches the cadence.
         if parsed.recurrence_rule and parsed.section == "later":
             parsed.section = self._RECURRENCE_SECTION.get(parsed.recurrence_rule, "week")
+
+        # Deterministically detect Withings health metrics.
+        # Applies to habits and to goal-setting phrases (type may still be "task" from the LLM).
+        _detect_metric = parsed.type == "habit" or bool(_GOAL_SET_RE.search(lowered))
+
+        if _detect_metric and not parsed.withings_metric:
+            # Steps — try "Nk steps", then "N steps", then "step goal to N" (goal context)
+            km = _STEPS_K_RE.search(lowered)
+            if km:
+                parsed.withings_metric = "steps"
+                parsed.withings_goal = float(km.group(1)) * 1000
+            else:
+                sm = _STEPS_NUM_RE.search(lowered) or _STEPS_GOAL_RE.search(lowered)
+                if sm:
+                    parsed.withings_metric = "steps"
+                    parsed.withings_goal = float(sm.group(1).replace(",", ""))
+
+        if _detect_metric and not parsed.withings_metric:
+            # Body fat %
+            fm = _FAT_RE.search(lowered)
+            if fm:
+                goal_str = fm.group(1) or fm.group(2) or fm.group(3)
+                parsed.withings_metric = "fat_ratio"
+                parsed.withings_goal = float(goal_str)
+
+        if _detect_metric and not parsed.withings_metric:
+            # Weight — kg first, then lbs (converted)
+            wm = _WEIGHT_KG_RE.search(lowered)
+            if wm:
+                parsed.withings_metric = "weight"
+                parsed.withings_goal = float(wm.group(1))
+            else:
+                lm = _WEIGHT_LB_RE.search(lowered)
+                if lm:
+                    parsed.withings_metric = "weight"
+                    parsed.withings_goal = round(float(lm.group(1)) * 0.453592, 1)
+
+        # Override type to "goal" when the input is explicitly about setting a health target.
+        # This runs after metric detection so withings_metric is already populated.
+        if parsed.withings_metric and parsed.withings_goal is not None and _GOAL_SET_RE.search(lowered):
+            parsed.type = "goal"
 
         return parsed
