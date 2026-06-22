@@ -687,7 +687,7 @@ test.describe('workshop page', () => {
     await expect(page.getByText(/select a job or create a new one/i)).toBeVisible()
   })
 
-  test('clicking "New Job" shows compose area', async ({ page }) => {
+  test('clicking "New Job" shows compose area with all input buttons', async ({ page }) => {
     await page.route('**/api/jobs/1', r => r.fulfill({ json: {
       id: 1, title: null, prompt: '', input_sources: [],
       last_output: null, output_card_id: null,
@@ -698,6 +698,10 @@ test.describe('workshop page', () => {
     await expect(page.getByPlaceholder(/paste additional context/i)).toBeVisible()
     await expect(page.locator('#ws-prompt')).toBeVisible()
     await expect(page.getByRole('button', { name: /run/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /by tag/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /add card/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /search web/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /fetch url/i })).toBeVisible()
   })
 })
 

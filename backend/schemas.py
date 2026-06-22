@@ -194,14 +194,26 @@ class Note(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JobSearchResult(BaseModel):
+    title: str = ""
+    url: str = ""
+    content: str = ""
+
+
 class JobSource(BaseModel):
-    type: Literal["card", "text", "tag"]
+    type: Literal["card", "text", "tag", "search", "url"]
     card_id: Optional[int] = None
     card_title: Optional[str] = None  # cached title for display if card is later deleted
     tag_id: Optional[int] = None
     tag_name: Optional[str] = None    # cached tag name for display
     tag_color: Optional[str] = None   # cached tag color for display
-    content: Optional[str] = None     # for type="text"
+    content: Optional[str] = None     # for type="text" and type="url"
+    # type="search"
+    query: Optional[str] = None
+    results: Optional[List[JobSearchResult]] = None
+    # type="url"
+    url: Optional[str] = None
+    title: Optional[str] = None       # cached page title for display
 
 
 class JobCreate(BaseModel):
