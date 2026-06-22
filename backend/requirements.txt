@@ -9,5 +9,10 @@ icalendar>=5.0.0
 recurring-ical-events>=3.0.0
 pywebpush>=2.0.0
 alembic>=1.13.0
-withings-api>=2.4.0
+# withings-api requires pydantic<2 but works fine at runtime with pydantic v2.
+# Install with --no-deps to skip the version check; its non-pydantic deps below.
+# withings-api>=2.4.0  ← installed separately in CI/setup (see dev.sh / deploy.yml)
+arrow>=1.0.3
+requests-oauthlib>=1.2
+requests-oauth>=0.4.1
 python-dotenv>=1.0.0

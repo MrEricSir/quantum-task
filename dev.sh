@@ -21,6 +21,7 @@ setup() {
 
   echo "    Installing Python dependencies..."
   venv/bin/pip install --upgrade pip -q
+  venv/bin/pip install --no-deps "withings-api>=2.4.0" -q
   venv/bin/pip install -r requirements.txt
 
   echo ""

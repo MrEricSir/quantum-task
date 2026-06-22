@@ -33,6 +33,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install --no-deps "withings-api>=2.4.0"
           pip install -r backend/requirements.txt \
                       -r backend/requirements-dev.txt
 
