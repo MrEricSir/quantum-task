@@ -5,6 +5,7 @@ import * as Checkbox from '@radix-ui/react-checkbox'
 import { CheckIcon, ChevronUpIcon, ChevronDownIcon } from '@radix-ui/react-icons'
 import ConfirmDialog from '../modals/ConfirmDialog'
 import AssistModal from '../modals/AssistModal'
+import CardSheet from '../modals/CardSheet'
 import './EventCard.css'
 import './TodoCard.css'
 
@@ -33,8 +34,9 @@ function parseGitHubUrl(str) {
   return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
 }
 
-export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isMobile, isOverlay }) {
+export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags }) {
   const [expanded, setExpanded] = useState(false)
+  const [showSheet, setShowSheet] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [showAssist, setShowAssist] = useState(false)
   const [popping, setPopping] = useState(false)
@@ -89,7 +91,11 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
         isDragging ? 'event-card--dragging' : '',
         isOverlay ? 'event-card--overlay' : '',
       ].filter(Boolean).join(' ')}
-      onClick={() => !isOverlay && setExpanded((v) => !v)}
+      onClick={() => {
+        if (isOverlay) return
+        if (window.matchMedia('(max-width: 640px)').matches) setShowSheet(true)
+        else setExpanded((v) => !v)
+      }}
       {...(isOverlay ? {} : { ...attributes, ...listeners })}
     >
       <div className="event-header">
@@ -190,6 +196,19 @@ export default function TodoCard({ todo, onEdit, onDelete, onToggle, onMove, isM
         onClose={() => setShowAssist(false)}
         task={todo}
       />
+
+      {showSheet && (
+        <CardSheet
+          card={todo}
+          allTags={allTags ?? []}
+          onClose={() => setShowSheet(false)}
+          onSave={onSave}
+          onDelete={onDelete}
+          onArchive={onArchive}
+          onToggle={onToggle}
+          onMove={onMove}
+        />
+      )}
     </div>
   )
 }

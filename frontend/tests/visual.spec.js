@@ -532,26 +532,19 @@ test.describe('engineering page', () => {
 // ---------------------------------------------------------------------------
 // Sidebar upcoming events
 // ---------------------------------------------------------------------------
-test.describe('sidebar upcoming events', () => {
+test.describe('sidebar tags', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/board')
     await waitForApp(page)
   })
 
-  test('upcoming events section is visible in sidebar', async ({ page }) => {
-    await expect(page.locator('.sidebar-section-label', { hasText: 'Upcoming' })).toBeVisible()
+  test('tags section is visible in sidebar', async ({ page }) => {
+    await expect(page.locator('.sidebar-section-label', { hasText: 'Tags' })).toBeVisible()
   })
 
-  test('calendar events appear in sidebar', async ({ page }) => {
-    // CALENDAR_EVENTS includes 'Product Review' on 2026-06-03 (the frozen date)
-    await expect(page.locator('.sidebar-upcoming-title', { hasText: 'Product Review' })).toBeVisible()
-  })
-
-  test('shows empty state when no events', async ({ page }) => {
-    await page.route('**/api/calendar-events', r => r.fulfill({ json: [] }))
-    await page.goto('/board')
-    await waitForApp(page)
-    await expect(page.locator('.sidebar-upcoming-empty')).toBeVisible()
+  test('tag filter buttons are visible', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'work', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'personal', exact: true })).toBeVisible()
   })
 })
 
@@ -727,6 +720,90 @@ test.describe('assistant modal', () => {
     await expect(page.getByRole('dialog')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Assistant' })).toBeVisible()
     await expect(page.getByRole('button', { name: /generate/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mobile card sheet
+// ---------------------------------------------------------------------------
+test.describe('mobile card sheet', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('tapping a card opens the bottom sheet instead of expanding inline', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    // force:true bypasses dnd-kit's aria-disabled="true" (means "not draggable", not "not clickable")
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await expect(page.locator('.card-sheet')).toBeVisible()
+    // Inline expansion must NOT have happened
+    await expect(page.locator('.event-details')).toHaveCount(0)
+  })
+
+  test('sheet shows card title and view-mode action buttons', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    const sheet = page.locator('.card-sheet')
+    await expect(sheet.locator('.card-sheet-title', { hasText: 'Call dentist' })).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /mark complete/i })).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /^edit$/i })).toBeVisible()
+  })
+
+  test('sheet shows description text for a card that has one', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    // Shopping list is in the Stash section
+    await page.locator('.mobile-tab', { hasText: 'Stash' }).click()
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click({ force: true })
+    const sheet = page.locator('.card-sheet')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.getByText('Milk')).toBeVisible()
+  })
+
+  test('close button dismisses the sheet', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await expect(page.locator('.card-sheet')).toBeVisible()
+    await page.locator('.card-sheet').getByRole('button', { name: /close/i }).click()
+    await expect(page.locator('.card-sheet')).toHaveCount(0)
+  })
+
+  test('Edit button switches sheet to edit form', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await page.locator('.card-sheet').getByRole('button', { name: /^edit$/i }).click()
+    const sheet = page.locator('.card-sheet')
+    await expect(sheet.locator('.card-sheet-title', { hasText: 'Edit Card' })).toBeVisible()
+    await expect(sheet.locator('#cs-title')).toBeVisible()
+    await expect(sheet.locator('#cs-desc')).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /^save$/i })).toBeVisible()
+  })
+
+  test('description textarea is taller in the sheet edit form than in the standard modal', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await page.locator('.card-sheet').getByRole('button', { name: /^edit$/i }).click()
+    const textarea = page.locator('#cs-desc')
+    await expect(textarea).toBeVisible()
+    const box = await textarea.boundingBox()
+    // rows=3 default is ~72px; our override sets min-height: 160px
+    expect(box.height).toBeGreaterThan(120)
+  })
+
+  test('"Add card" button opens a new-card sheet instead of AddTodoModal', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.column-add-btn').first().click()
+    const sheet = page.locator('.card-sheet')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.locator('.card-sheet-title', { hasText: 'New Card' })).toBeVisible()
+    await expect(sheet.locator('#cs-title')).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /add card/i })).toBeVisible()
+    // The standard centered modal must NOT have opened
+    await expect(page.locator('.modal')).toHaveCount(0)
   })
 })
 

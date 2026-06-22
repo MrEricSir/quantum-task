@@ -10,7 +10,7 @@ const SECTION_COLORS = {
   later: 'var(--color-later)',
 }
 
-export default function Column({ section, label, todos, isActive, isMobile, onEdit, onDelete, onToggle, onMove, onAdd }) {
+export default function Column({ section, label, todos, isActive, isMobile, onEdit, onSave, onDelete, onArchive, onToggle, onMove, onAdd, allTags }) {
   const { setNodeRef, isOver } = useDroppable({ id: section })
   const { active } = useDndContext()
 
@@ -30,9 +30,12 @@ export default function Column({ section, label, todos, isActive, isMobile, onEd
               todo={todo}
               isMobile={isMobile}
               onEdit={onEdit}
+              onSave={onSave}
               onDelete={onDelete}
+              onArchive={onArchive}
               onToggle={onToggle}
               onMove={onMove}
+              allTags={allTags}
             />
           ))}
           {todos.length === 0 && active && (

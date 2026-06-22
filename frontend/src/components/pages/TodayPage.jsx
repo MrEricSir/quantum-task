@@ -151,7 +151,7 @@ function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
   )
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onDelete, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false }) {
+export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false, allTags = [] }) {
   const activeTodos = todos.filter((t) => !t.completed)
   const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
@@ -357,9 +357,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     key={`task-${item.data.id}`}
                     todo={item.data}
                     onEdit={onEdit}
+                    onSave={onSave}
                     onDelete={onDelete}
+                    onArchive={onArchive}
                     onToggle={onToggle}
                     onMove={onMove}
+                    allTags={allTags}
                     isMobile
                   />
                 )
@@ -369,9 +372,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                   key={todo.id}
                   todo={todo}
                   onEdit={onEdit}
+                  onSave={onSave}
                   onDelete={onDelete}
+                  onArchive={onArchive}
                   onToggle={onToggle}
                   onMove={onMove}
+                  allTags={allTags}
                   isMobile
                 />
               ))}
@@ -402,9 +408,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     key={todo.id}
                     todo={todo}
                     onEdit={onEdit}
+                    onSave={onSave}
                     onDelete={onDelete}
+                    onArchive={onArchive}
                     onToggle={onToggle}
                     onMove={onMove}
+                    allTags={allTags}
                     isMobile
                   />
                 ))}

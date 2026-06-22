@@ -69,67 +69,6 @@
   flex-shrink: 0;
 }
 
-/* ── Upcoming events ── */
-.sidebar-upcoming {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sidebar-upcoming-empty {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 4px 10px;
-  opacity: 0.6;
-}
-
-.sidebar-upcoming-event {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  transition: background 0.12s;
-}
-
-.sidebar-upcoming-event:hover {
-  background: rgba(139, 92, 246, 0.08);
-}
-
-a.sidebar-upcoming-event {
-  text-decoration: none;
-  color: inherit;
-  cursor: pointer;
-}
-
-.sidebar-upcoming-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  margin-top: 3px;
-}
-
-.sidebar-upcoming-body {
-  min-width: 0;
-}
-
-.sidebar-upcoming-title {
-  display: block;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-upcoming-time {
-  display: block;
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 1px;
-}
 
 /* Hidden on mobile — tag filter pills are used instead */
 @media (max-width: 640px) {

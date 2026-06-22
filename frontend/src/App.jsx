@@ -16,6 +16,7 @@ import Sidebar from './components/layout/Sidebar'
 import MobileNav from './components/layout/MobileNav'
 import TagFilterBar from './components/layout/TagFilterBar'
 import AddTodoModal from './components/modals/AddTodoModal'
+import CardSheet from './components/modals/CardSheet'
 import QuickAddModal from './components/modals/QuickAddModal'
 import SearchModal from './components/modals/SearchModal'
 import KeyboardShortcutsModal from './components/modals/KeyboardShortcutsModal'
@@ -562,6 +563,7 @@ export default function App() {
   }
 
   const [defaultSection, setDefaultSection] = useState('today')
+  const [showNewSheet, setShowNewSheet] = useState(false)
 
   const openEdit = (todo) => {
     setDefaultSection(todo?.section ?? 'today')
@@ -571,8 +573,12 @@ export default function App() {
 
   const openNewCard = (section = 'today') => {
     setDefaultSection(section)
-    setEditingTodo(null)
-    setShowModal(true)
+    if (window.matchMedia('(max-width: 640px)').matches) {
+      setShowNewSheet(true)
+    } else {
+      setEditingTodo(null)
+      setShowModal(true)
+    }
   }
 
   const closeModal = () => {
@@ -702,7 +708,6 @@ export default function App() {
           selectedTagId={selectedTagId}
           page={currentPage}
           onNavigate={handlePageNavigate}
-          calendarEvents={calendarEvents}
         />
 
       <main className="board-wrapper">
@@ -722,8 +727,11 @@ export default function App() {
             onToggle={handleToggle}
             onToggleHabit={handleToggleHabit}
             onEdit={openEdit}
+            onSave={handleUpdateTodo}
             onDelete={handleDeleteTodo}
+            onArchive={handleArchiveCard}
             onMove={handleMoveSection}
+            allTags={tags}
             onWeather={setWeather}
             briefingKey={briefingKey}
             healthData={healthData}
@@ -777,10 +785,13 @@ export default function App() {
                     isActive={section === activeSection}
                     isMobile={isMobile}
                     onEdit={openEdit}
+                    onSave={handleUpdateTodo}
                     onDelete={handleDeleteTodo}
+                    onArchive={handleArchiveCard}
                     onToggle={handleToggle}
                     onMove={handleMoveSection}
                     onAdd={() => openNewCard(section)}
+                    allTags={tags}
                   />
                 ))}
               </div>
@@ -859,6 +870,15 @@ export default function App() {
           onSave={handleModalSave}
           onDelete={editingTodo ? async () => { await handleDeleteTodo(editingTodo.id); closeModal() } : undefined}
           onArchive={editingTodo ? async () => { await handleArchiveCard(editingTodo.id); closeModal() } : undefined}
+        />
+      )}
+
+      {showNewSheet && (
+        <CardSheet
+          defaultSection={defaultSection}
+          allTags={tags}
+          onClose={() => setShowNewSheet(false)}
+          onCreate={handleAddTodo}
         />
       )}
 
