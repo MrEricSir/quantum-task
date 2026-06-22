@@ -90,6 +90,7 @@ After `gcp-setup` finishes, add these to your GitHub repository under
 | Secret | `WITHINGS_CLIENT_ID` | Withings OAuth client ID (if using health tracking) |
 | Secret | `WITHINGS_SECRET` | Withings OAuth client secret (if using health tracking) |
 | Secret | `WITHINGS_CALLBACK_URI` | `https://YOUR_CLOUD_RUN_URL/api/withings/callback` |
+| Secret | `TAVILY_API_KEY` | Tavily API key (if using Workshop web search — free tier at tavily.com) |
 | Variable | `GCP_PROJECT_ID` | Your GCP project ID |
 
 The key file is gitignored and stays on your machine only.

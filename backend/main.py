@@ -26,7 +26,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings
+from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -272,6 +272,7 @@ app.include_router(calendar.router)
 app.include_router(cards.router)
 app.include_router(briefing.router)
 app.include_router(withings.router)
+app.include_router(search.router)
 
 # Serve bundled frontend for all non-API routes (must be last)
 _static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -46,7 +46,7 @@ export default function DailyPlan({ todos, calendarEvents, habits }) {
         body: JSON.stringify({
           todos,
           calendar_events: calendarEvents,
-          habits: habits.map(({ name, completed_today }) => ({ name, completed_today })),
+          habits: habits.filter(h => !h.withings_metric).map(({ name, completed_today }) => ({ name, completed_today })),
           utc_offset_minutes: new Date().getTimezoneOffset(),
         }),
       })

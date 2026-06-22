@@ -216,6 +216,12 @@ export LLM_MODEL="llama-3.1-8b-instant"
 |---|---|---|
 | `AUTH_PASSWORD` | _(unset)_ | Login password — auth disabled if not set |
 
+### Workshop web search (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `TAVILY_API_KEY` | _(unset)_ | API key from [tavily.com](https://tavily.com) — enables the "+ Search web" input in the Workshop. Free tier available. |
+
 ### Withings (optional)
 
 | Variable | Default | Description |
