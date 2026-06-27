@@ -41,6 +41,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
   const [urlSources, setUrlSources] = useState([])
   const [output, setOutput] = useState('')
   const [status, setStatus] = useState('idle')
+  const [agentSteps, setAgentSteps] = useState([])  // {type, query, count}
   const [copied, setCopied] = useState(false)
   const [savedAsCard, setSavedAsCard] = useState(false)
   const [cardSearch, setCardSearch] = useState('')
@@ -275,6 +276,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     await saveJobState()
     setOutput('')
     setStatus('loading')
+    setAgentSteps([])
     setCopied(false)
     setSavedAsCard(false)
 
@@ -302,6 +304,59 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
           try {
             const parsed = JSON.parse(data)
             if (parsed.error) { setStatus('error'); setOutput(parsed.error); return }
+            if (parsed.text) { acc += parsed.text; setOutput(acc) }
+          } catch {}
+        }
+      }
+      setStatus('done')
+      setJobs(prev => prev.map(j =>
+        j.id === selectedId ? { ...j, last_output: acc, updated_at: new Date().toISOString() } : j
+      ))
+    } catch (err) {
+      if (err.name !== 'AbortError') { setStatus('error'); setOutput('Could not generate output.') }
+    }
+  }
+
+  const handleRunAgentic = async () => {
+    if (!prompt.trim() || !selectedId) return
+    if (abortRef.current) abortRef.current.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    await saveJobState()
+    setOutput('')
+    setAgentSteps([])
+    setStatus('loading')
+    setCopied(false)
+    setSavedAsCard(false)
+
+    try {
+      const res = await fetch(`/api/jobs/${selectedId}/run-agentic`, {
+        method: 'POST',
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error('Server error')
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = '', acc = ''
+
+      outer: while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop()
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') { setStatus('done'); break outer }
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.error) { setStatus('error'); setOutput(parsed.error); return }
+            if (parsed.step) {
+              setAgentSteps(prev => [...prev, parsed])
+            }
             if (parsed.text) { acc += parsed.text; setOutput(acc) }
           } catch {}
         }
@@ -348,6 +403,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     tagSources.length > 0 || cardSources.length > 0 || !!textContent.trim() ||
     searchSources.length > 0 || urlSources.length > 0
   )
+  const canResearch = !!prompt.trim()
   const selectedJob = jobs.find(j => j.id === selectedId)
 
   return (
@@ -599,14 +655,53 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
               onClick={handleRun}
               disabled={!canRun || status === 'loading'}
             >
-              {status === 'loading'
+              {status === 'loading' && agentSteps.length === 0
                 ? <><span className="workshop-spinner" /> Generating…</>
                 : '✦ Run'}
+            </button>
+            <button
+              className="workshop-run-btn workshop-run-btn--research"
+              onClick={handleRunAgentic}
+              disabled={!canResearch || status === 'loading'}
+              title="AI researches the web autonomously then synthesizes results"
+            >
+              {status === 'loading' && agentSteps.length > 0
+                ? <><span className="workshop-spinner" /> Researching…</>
+                : '✦ Research'}
             </button>
             <button className="workshop-delete-btn" onClick={handleDeleteJob}>
               Delete job
             </button>
           </div>
+
+          {/* Research log */}
+          {agentSteps.length > 0 && (
+            <div className="workshop-research-log">
+              {agentSteps.map((s, i) => {
+                if (s.step === 'planning') return (
+                  <div key={i} className="workshop-research-step workshop-research-step--planning">
+                    <span className="workshop-research-icon">✦</span> Planning search queries…
+                  </div>
+                )
+                if (s.step === 'searching') return (
+                  <div key={i} className="workshop-research-step workshop-research-step--searching">
+                    <span className="workshop-research-icon">🔍</span> Searching: <em>{s.query}</em>
+                  </div>
+                )
+                if (s.step === 'searched') return (
+                  <div key={i} className="workshop-research-step workshop-research-step--searched">
+                    <span className="workshop-research-icon">✓</span> Found {s.count} results for <em>{s.query}</em>
+                  </div>
+                )
+                if (s.step === 'synthesizing') return (
+                  <div key={i} className="workshop-research-step workshop-research-step--synthesizing">
+                    <span className="workshop-research-icon">✦</span> Synthesizing research…
+                  </div>
+                )
+                return null
+              })}
+            </div>
+          )}
 
           {/* Output */}
           {(output || status === 'loading') && (

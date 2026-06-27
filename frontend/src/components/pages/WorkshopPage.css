@@ -483,6 +483,55 @@
   border-color: rgba(239, 68, 68, 0.5);
 }
 
+.workshop-run-btn--research {
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  color: #c4b5fd;
+}
+
+.workshop-run-btn--research:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+/* ── Research log ── */
+.workshop-research-log {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.workshop-research-step {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.workshop-research-step em {
+  font-style: normal;
+  color: var(--text);
+}
+
+.workshop-research-step--planning,
+.workshop-research-step--synthesizing {
+  color: #c4b5fd;
+}
+
+.workshop-research-step--searched {
+  color: #86efac;
+}
+
+.workshop-research-icon {
+  flex-shrink: 0;
+  font-style: normal;
+}
+
 /* ── Output ── */
 .workshop-output-section {
   display: flex;
