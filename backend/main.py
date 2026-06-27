@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -274,7 +274,14 @@ app.include_router(briefing.router)
 app.include_router(withings.router)
 app.include_router(search.router)
 
-# Serve bundled frontend for all non-API routes (must be last)
+# Serve bundled frontend for all non-API routes (must be last).
+# Using an explicit catch-all route instead of StaticFiles mount to avoid
+# Starlette routing ambiguity where Mount("/") can shadow specific API routes.
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):
-    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="frontend")
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        file_path = os.path.join(_static_dir, full_path)
+        if full_path and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(_static_dir, "index.html"))
