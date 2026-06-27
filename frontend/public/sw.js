@@ -17,8 +17,11 @@ self.addEventListener('activate', (event) => {
 })
 
 self.addEventListener('fetch', (event) => {
-  // For navigation requests (loading the SPA), serve the cached shell when offline
+  // For navigation requests (loading the SPA), serve the cached shell when offline.
+  // Exclude /api/ paths so the browser handles redirects natively (e.g. OAuth callbacks).
   if (event.request.mode === 'navigate') {
+    const url = new URL(event.request.url)
+    if (url.pathname.startsWith('/api/')) return
     event.respondWith(
       fetch(event.request).catch(() => caches.match('/'))
     )
