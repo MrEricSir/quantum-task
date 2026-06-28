@@ -247,7 +247,7 @@ export default function App() {
 
   // Handle Withings OAuth callback redirect (?withings=connected|error lands in the new tab)
   useEffect(() => {
-    if (!isHealthPage) return
+    if (!isBoardPage) return
     const params = new URLSearchParams(location.search)
     const result = params.get('withings')
     if (result === 'connected') {
@@ -262,7 +262,7 @@ export default function App() {
         reloadWithingsStatus()
         reloadWithingsHealthData()
       }
-      navigate('/health', { replace: true })
+      navigate('/board', { replace: true })
     } else if (result === 'error') {
       const msg = params.get('msg') || 'Unknown error'
       if (window.opener) {
@@ -271,10 +271,10 @@ export default function App() {
         } catch { /* ignore */ }
         window.close()
       } else {
-        navigate('/health', { replace: true })
+        navigate('/board', { replace: true })
       }
     }
-  }, [isHealthPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isBoardPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redirect legacy routes to their new locations
   useEffect(() => {

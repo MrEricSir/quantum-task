@@ -282,8 +282,8 @@ def withings_callback(code: str, db: Session = Depends(get_db)):
     except Exception as exc:
         traceback.print_exc()
         print(f"[withings] callback error: {exc}")
-        return RedirectResponse(f"{ALLOWED_ORIGIN}/health?withings=error&msg={exc}")
-    return RedirectResponse(f"{ALLOWED_ORIGIN}/health?withings=connected")
+        return RedirectResponse(f"{ALLOWED_ORIGIN}/board?withings=error&msg={exc}")
+    return RedirectResponse(f"{ALLOWED_ORIGIN}/board?withings=connected")
 
 
 @router.post("/api/withings/sync")
