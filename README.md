@@ -1,6 +1,6 @@
 # Quantum Task
 
-A personal productivity dashboard with AI-powered quick add, calendar integration, habits tracking, notes, and a daily briefing.
+A personal productivity dashboard with AI-powered quick add, calendar integration, habits tracking, health data, a daily briefing, and an agentic research workshop.
 
 ## Stack
 
@@ -10,7 +10,7 @@ A personal productivity dashboard with AI-powered quick add, calendar integratio
 - **AI**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
 - **Calendar**: iCal/ICS feed integration
 - **Weather**: Open-Meteo (no API key required)
-- **Health**: Withings API (step count, body fat %) — optional
+- **Health**: Withings API (step count, body fat %, weight) — optional
 
 ## Prerequisites
 
@@ -102,14 +102,14 @@ cd frontend && npm run dev
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
-- `type` field (task / habit / note), habit recurrence, note/list detection
+- `type` field (task / habit), habit recurrence detection
 - Regression tests
 
 Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
 
 **Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
-- 34 Playwright tests verifying key elements are visible on each page
-- Covers: app shell, today page, tasks board, notes, habits, quick-add modal (input + confirm screen), settings modals
+- 41 Playwright tests verifying key elements are visible on each page
+- Covers: app shell, today page, tasks board, cards, habits, quick-add modal (input + confirm screen), settings modals, engineering, recurring calendar events, offline banner
 - All API calls are mocked; runs against a production build (`npm run build`)
 
 ## Features
@@ -126,15 +126,21 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Add tasks with optional description, scheduled date/time, and tags
 - Check off tasks as complete; completed tasks move to the Archive
 - Edit and delete tasks via the `⋯` card menu
+- Recurring tasks auto-spawn the next occurrence on completion
+
+### Cards (reference material)
+- A separate Cards page for reference material that doesn't belong on the task board
+- Cards have a title, body text, and tags — no due dates or completion state
+- Created via Quick Add ("add a note about X") or directly from the Cards page
+- Searchable alongside tasks
 
 ### AI Quick Add
-- Describe anything in plain English — the LLM classifies it as a **task**, **habit**, or **note** automatically
+- Describe anything in plain English — the LLM classifies it as a **task** or **habit** automatically
 - Paste or type multiple items at once ("call sam at 3pm, buy milk and eggs, meditate daily") — each is split and parsed individually
 - Date and time phrases are resolved to real datetimes: "call dentist tomorrow at 9am", "project review next Friday", "standup at 9"
 - A confirm screen shows the detected type with a one-click override, then type-specific fields to review before saving
 - Multiple items show a bulk-confirm list; click any item to open its full edit form before saving
-- Deterministic post-processing catches common patterns (list inputs → note, explicit recurrence → habit, "add a habit to X" → habit) even when the model guesses wrong
-- If type is genuinely ambiguous, a clarifying question is surfaced before you confirm
+- Deterministic post-processing catches common patterns (explicit recurrence → habit, "add a habit to X" → habit) even when the model guesses wrong
 - Tags are auto-suggested from your existing tags
 
 ### Habits
@@ -145,16 +151,17 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Link habits to a Withings health goal (step count auto-completes when goal is met)
 
 ### Health
-- Connect a Withings account (watch + smart scale) to sync step count and body fat %
+- Connect a Withings account (watch + smart scale) to sync step count, body fat %, and weight
 - Set a numeric goal per metric; step habits auto-check when the daily goal is synced
 - Charts showing steps (bar) and body fat % (line) over the past 90 days
 - Habit completion overlay on each chart to see how habits track with progress
 
-### Notes
-- Plain-text quick capture — no markdown, no formatting
-- Notes can also be created directly from Quick Add
-- Notes can be promoted to tasks with one click
-- Tag and archive notes; restore from archive
+### Workshop
+- A freeform AI workspace for research, drafts, brainstorming, and planning
+- Create named jobs with a goal prompt and optional input cards (tasks, habits, or reference cards as context)
+- **Run**: streams a direct AI response to your prompt
+- **Research**: agentic mode — the AI generates search queries, executes them via Tavily, then synthesizes a sourced answer; each step is shown live as it runs
+- Requires `TAVILY_API_KEY` for the Research mode; Run works with any LLM
 
 ### Daily Briefing
 - Streaming AI summary of your day: weather, schedule, tasks, and habits
@@ -183,11 +190,31 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Offline banner when network connection is lost
 - Optional password auth (set `AUTH_PASSWORD` env var)
 
+## iOS Shortcut
+
+Add tasks from anywhere on your iPhone — Siri, the home screen, or the Share Sheet — without opening the app.
+
+**Setup (2 steps):**
+
+1. Open the app on your iPhone, tap the **gear icon** → **iOS Shortcut**
+2. The `.shortcut` file downloads and opens in Shortcuts automatically — tap **Add Shortcut**
+
+The shortcut is pre-configured with your server URL and password. No manual entry required.
+
+**Using it:**
+- Tap the shortcut widget on your home screen → type your task → done
+- Ask Siri: "Run Add Task" → dictate your task
+- The task is parsed by AI (same as Quick Add) and lands in your board
+
+**Android:**
+
+On Android, the app registers as a Share Sheet target. Install the app to your home screen via Chrome (Install app), then use the native Share button from any app — the Quick Add modal opens with the shared text pre-filled.
+
 ## Configuration
 
 All configuration is via environment variables. Defaults work for local development — no config file needed.
 
-### LLM (AI Quick Add + Daily Briefing)
+### LLM (AI Quick Add + Daily Briefing + Workshop)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -216,11 +243,13 @@ export LLM_MODEL="llama-3.1-8b-instant"
 |---|---|---|
 | `AUTH_PASSWORD` | _(unset)_ | Login password — auth disabled if not set |
 
+When set, the password is also accepted as a Bearer token (`Authorization: Bearer <password>`) for API clients such as the iOS Shortcut.
+
 ### Workshop web search (optional)
 
 | Variable | Default | Description |
 |---|---|---|
-| `TAVILY_API_KEY` | _(unset)_ | API key from [tavily.com](https://tavily.com) — enables the "+ Search web" input in the Workshop. Free tier available. |
+| `TAVILY_API_KEY` | _(unset)_ | API key from [tavily.com](https://tavily.com) — enables Research mode in the Workshop. Free tier available. |
 
 ### Withings (optional)
 
@@ -237,9 +266,17 @@ Withings allows `http://localhost` redirect URIs. In your Withings developer app
 - `http://localhost:8000/api/withings/callback` — for local development
 - `https://YOUR_CLOUD_RUN_URL/api/withings/callback` — for production
 
-The backend runs on port 8000 locally, so the OAuth redirect lands there directly, then immediately redirects your browser back to the frontend at `http://localhost:5173/health`. No tunnel needed.
+The backend runs on port 8000 locally, so the OAuth redirect lands there directly, then redirects your browser back to the frontend at `http://localhost:5173/board`. No tunnel needed.
 
 Set `WITHINGS_CALLBACK_URI` in your `.env` to `http://localhost:8000/api/withings/callback` for local use, and as a GitHub secret pointing to your deployed URL for CI/CD.
+
+### Frontend origin (required in production)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALLOWED_ORIGIN` | `http://localhost:5173` | Frontend URL — used for CORS and OAuth redirects |
+
+In production (Cloud Run), set this to your deployed service URL.
 
 **To benchmark Ollama models locally:**
 
@@ -258,34 +295,59 @@ See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitH
 ```
 todo/
   backend/
-    main.py            # FastAPI app, all routes
+    main.py            # FastAPI app: startup migrations, middleware, router mounts
     models.py          # SQLAlchemy models
     schemas.py         # Pydantic schemas
     database.py        # DB engine, reads DATABASE_URL from env
+    deps.py            # Shared dependencies: DB session, LLM client, auth constants
+    streak.py          # Habit streak computation
+    push.py            # Web Push / VAPID helpers
+    routers/           # One file per feature area
+      auth.py          # Login/logout, session management
+      cards.py         # Tasks + reference cards CRUD, AI parse, iOS Shortcut download
+      habits.py        # Habits CRUD, completion toggle
+      calendar.py      # iCal feed sync, export
+      briefing.py      # Daily briefing, AI assist, daily plan
+      jobs.py          # Workshop jobs + agentic research
+      withings.py      # Withings OAuth, sync, health data
+      tags.py          # Tag CRUD
+      engineering.py   # GitHub engineering feed
+      push.py          # Push subscription management
+      search.py        # Cross-entity search
     model_plugins/     # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini)
+    alembic/           # Database migrations
     tests/
       test_calendar.py # Calendar feed CRUD, timezone, iCal export/import
       test_briefing.py # Daily briefing unit tests
-      test_plugins.py  # Post-processing: section overrides, type detection, list→note
+      test_plugins.py  # Post-processing: section overrides, type detection
+      test_localtime.py# Local date header handling
       test_parse.py    # Quick Add parse integration tests (requires Ollama)
       benchmark.py     # Parse quality benchmark across Ollama models
     Dockerfile
     requirements.txt
   frontend/
     public/
+      manifest.json    # PWA manifest (includes Web Share Target for Android)
+      sw.js            # Service worker: offline shell, push notifications
       bg.webm          # Background video
     src/
       App.jsx          # Root component, routing, global state
       api.js           # All API calls
-      components/      # TodayPage, TasksBoard, HabitsPage, NotesPage, CalendarPage,
-                       # DailyBriefing, QuickAddModal, modals, sidebar, archive
+      hooks/           # useCards, useHabits, useCalendar, useWithings, useNotifications
+      components/
+        pages/         # TodayPage, BoardPage, CardsPage, HabitsPage, CalendarPage,
+                       # EngineeringPage, WorkshopPage, HealthPage, LoginPage
+        board/         # Column, TodoCard, Archive
+        layout/        # Sidebar, MobileNav, TagFilterBar
+        modals/        # QuickAddModal, CardSheet, CalendarSettings, WithingsSettings, ...
+        shared/        # QueueIndicator and other shared components
     tests/
       visual.spec.js   # Playwright functional tests (all APIs mocked)
     dist/              # Production build output (gitignored)
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide
+  IDEAS.md             # Feature ideas and brainstorm
   dev.sh               # Development helper script
-  LLM_IDEAS.md         # Backlog of LLM integration ideas
 ```
 
 ## Credits

@@ -35,9 +35,9 @@ function formatGoalDisplay(metric, goal, isImperial) {
   return String(goal)
 }
 
-export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, isImperial = false }) {
+export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, isImperial = false, initialText = '' }) {
   // ── Input step ──
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialText)
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState('')
 

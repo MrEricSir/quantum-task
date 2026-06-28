@@ -45,10 +45,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or path == "/api/withings/callback"
         ):
             return await call_next(request)
+        # Session cookie (browser)
         token = request.cookies.get("session", "")
-        if not _hmac.compare_digest(token, SESSION_TOKEN):
-            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-        return await call_next(request)
+        if _hmac.compare_digest(token, SESSION_TOKEN):
+            return await call_next(request)
+        # Bearer token (API clients e.g. iOS Shortcuts)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            bearer = auth_header[7:]
+            if _hmac.compare_digest(bearer, AUTH_PASSWORD):
+                return await call_next(request)
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
 
 # ── Startup migrations ────────────────────────────────────────────────────────

@@ -74,6 +74,7 @@ export default function App() {
   const invalidateBriefing = useCallback(() => setBriefingKey((k) => k + 1), [])
   const [showModal, setShowModal] = useState(false)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
+  const [quickAddInitialText, setQuickAddInitialText] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [showTagManager, setShowTagManager] = useState(false)
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
@@ -275,6 +276,18 @@ export default function App() {
       }
     }
   }, [isBoardPage]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle Web Share Target: /share?text=...
+  useEffect(() => {
+    if (location.pathname !== '/share') return
+    const params = new URLSearchParams(location.search)
+    const shared = [params.get('text'), params.get('title'), params.get('url')].filter(Boolean).join(' ')
+    navigate('/today', { replace: true })
+    if (shared) {
+      setQuickAddInitialText(shared)
+      setShowQuickAdd(true)
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redirect legacy routes to their new locations
   useEffect(() => {
@@ -657,6 +670,9 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
                     &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => { window.location.href = '/api/shortcut/download' }}>
+                    &#128241; iOS Shortcut
+                  </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
                     onSelect={(e) => { e.preventDefault(); toggleUnit() }}
@@ -942,12 +958,13 @@ export default function App() {
       {showQuickAdd && (
         <QuickAddModal
           allTags={tags}
-          onClose={() => setShowQuickAdd(false)}
+          onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
           isImperial={isImperial}
+          initialText={quickAddInitialText}
         />
       )}
 

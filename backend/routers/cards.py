@@ -1,18 +1,137 @@
 import calendar as _calendar
+import io
 import json
+import os
+import plistlib
+import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import HTTPException
+from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
 import schemas
-from deps import get_db, llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date, AUTH_PASSWORD
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
+
+_ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:8000")
+
+
+def _build_shortcut_plist(base_url: str, password: str) -> bytes:
+    """Generate a pre-configured iOS .shortcut binary plist."""
+    ORC = "\uFFFC"  # Object Replacement Character — variable placeholder
+    ask_uuid = str(_uuid.uuid4()).upper()
+    post_uuid = str(_uuid.uuid4()).upper()
+
+    actions = [
+        # 1. Ask for text
+        {
+            "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+            "WFWorkflowActionParameters": {
+                "WFAskActionPrompt": "Add a task:",
+                "WFInputType": "Text",
+                "UUID": ask_uuid,
+            },
+        },
+        # 2. POST to /api/shortcut/add
+        {
+            "WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
+            "WFWorkflowActionParameters": {
+                "WFHTTPMethod": "POST",
+                "WFURL": f"{base_url}/api/shortcut/add",
+                "WFHTTPBodyType": "JSON",
+                "WFHTTPHeaders": {
+                    "Value": {
+                        "WFDictionaryFieldValueItems": [
+                            {
+                                "WFKey": {
+                                    "Value": {"string": "Authorization"},
+                                    "WFSerializationType": "WFTextTokenString",
+                                },
+                                "WFValue": {
+                                    "Value": {"string": f"Bearer {password}"},
+                                    "WFSerializationType": "WFTextTokenString",
+                                },
+                                "WFItemType": 0,
+                            }
+                        ]
+                    },
+                    "WFSerializationType": "WFDictionaryFieldValue",
+                },
+                "WFJSONValues": {
+                    "Value": {
+                        "WFDictionaryFieldValueItems": [
+                            {
+                                "WFKey": {
+                                    "Value": {"string": "text"},
+                                    "WFSerializationType": "WFTextTokenString",
+                                },
+                                "WFValue": {
+                                    "Value": {
+                                        "string": ORC,
+                                        "attachmentsByRange": {
+                                            "{0, 1}": {
+                                                "OutputUUID": ask_uuid,
+                                                "Type": "ActionOutput",
+                                                "OutputName": "Provided Input",
+                                            }
+                                        },
+                                    },
+                                    "WFSerializationType": "WFTextTokenString",
+                                },
+                                "WFItemType": 0,
+                            }
+                        ]
+                    },
+                    "WFSerializationType": "WFDictionaryFieldValue",
+                },
+                "UUID": post_uuid,
+            },
+        },
+        # 3. Show "Added: <title>" from JSON response
+        {
+            "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+            "WFWorkflowActionParameters": {
+                "Text": {
+                    "Value": {
+                        "string": f"Added: {ORC}",
+                        "attachmentsByRange": {
+                            "{7, 1}": {
+                                "OutputUUID": post_uuid,
+                                "Type": "ActionOutput",
+                                "OutputName": "Contents of URL",
+                            }
+                        },
+                    },
+                    "WFSerializationType": "WFTextTokenString",
+                }
+            },
+        },
+    ]
+
+    data = {
+        "WFWorkflowClientVersion": "1326.0.4",
+        "WFWorkflowMinimumClientVersion": 900,
+        "WFWorkflowMinimumClientVersionString": "900",
+        "WFWorkflowHasShortcutInputVariables": False,
+        "WFWorkflowActions": actions,
+        "WFWorkflowImportQuestions": [],
+        "WFWorkflowInputContentItemClasses": [],
+        "WFWorkflowTypes": ["NCWidget"],
+        "WFWorkflowIcon": {
+            "WFWorkflowIconStartColor": 4282601983,  # purple
+            "WFWorkflowIconGlyphNumber": 59511,
+        },
+    }
+
+    buf = io.BytesIO()
+    plistlib.dump(data, buf, fmt=plistlib.FMT_BINARY)
+    return buf.getvalue()
 
 router = APIRouter()
 
@@ -219,6 +338,74 @@ def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depend
             status_code=503,
             detail=f"LLM request failed ({LLM_MODEL}): {e}",
         )
+
+
+@router.get("/api/shortcut/download")
+def shortcut_download():
+    """Serve a pre-configured iOS .shortcut file for adding tasks."""
+    plist_bytes = _build_shortcut_plist(_ALLOWED_ORIGIN, AUTH_PASSWORD)
+    return Response(
+        content=plist_bytes,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="Add to Quantum Task.shortcut"'},
+    )
+
+
+@router.post("/api/shortcut/add")
+def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
+    """Parse free-text and create a card in one step. Designed for iOS Shortcuts."""
+    today = local_date(request)
+    tomorrow = today + timedelta(days=1)
+    tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
+    tags_section = (
+        f"Available tags: {', '.join(tag_names)}" if tag_names else "No tags available."
+    )
+    plugin = get_plugin(LLM_MODEL)
+    prompt = plugin.get_system_prompt(
+        today=today.isoformat(),
+        weekday=today.strftime("%A"),
+        tomorrow=tomorrow.isoformat(),
+        tags_section=tags_section,
+    )
+    try:
+        client = llm_client()
+        response = client.chat.completions.create(
+            model=plugin.model_name,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": req.text},
+            ],
+        )
+        raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
+        parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=req.text)
+        parsed = resolve_dates(parsed, text=req.text, today=today)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"LLM request failed: {e}")
+
+    # Resolve tag names → IDs
+    tag_ids = []
+    if parsed.suggested_tags:
+        tag_rows = db.query(models.Tag).filter(models.Tag.name.in_(parsed.suggested_tags)).all()
+        tag_ids = [t.id for t in tag_rows]
+
+    section = parsed.section or "today"
+    count = db.query(models.Card).filter(models.Card.section == section).count()
+    now = datetime.now(timezone.utc)
+    db_card = models.Card(
+        title=parsed.title,
+        description=parsed.description,
+        section=section,
+        scheduled_at=parsed.scheduled_at,
+        position=count,
+        updated_at=now,
+    )
+    if tag_ids:
+        db_card.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
+    db.add(db_card)
+    db.commit()
+    db.refresh(db_card)
+    return {"ok": True, "id": db_card.id, "title": db_card.title, "section": db_card.section}
 
 
 @router.put("/api/cards/{card_id}", response_model=schemas.Card)
