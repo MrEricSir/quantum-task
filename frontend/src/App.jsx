@@ -670,9 +670,6 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
                     &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => { window.location.href = '/api/shortcut/download' }}>
-                    &#128241; iOS Shortcut
-                  </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
                     onSelect={(e) => { e.preventDefault(); toggleUnit() }}

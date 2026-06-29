@@ -1,137 +1,18 @@
 import calendar as _calendar
-import io
 import json
-import os
-import plistlib
-import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import HTTPException
-from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
 import schemas
-from deps import get_db, llm_client, LLM_MODEL, local_date, AUTH_PASSWORD
+from deps import get_db, llm_client, LLM_MODEL, local_date
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
-
-_ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:8000")
-
-
-def _build_shortcut_plist(base_url: str, password: str) -> bytes:
-    """Generate a pre-configured iOS .shortcut binary plist."""
-    ORC = "\uFFFC"  # Object Replacement Character — variable placeholder
-    ask_uuid = str(_uuid.uuid4()).upper()
-    post_uuid = str(_uuid.uuid4()).upper()
-
-    actions = [
-        # 1. Ask for text
-        {
-            "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
-            "WFWorkflowActionParameters": {
-                "WFAskActionPrompt": "Add a task:",
-                "WFInputType": "Text",
-                "UUID": ask_uuid,
-            },
-        },
-        # 2. POST to /api/shortcut/add
-        {
-            "WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
-            "WFWorkflowActionParameters": {
-                "WFHTTPMethod": "POST",
-                "WFURL": f"{base_url}/api/shortcut/add",
-                "WFHTTPBodyType": "JSON",
-                "WFHTTPHeaders": {
-                    "Value": {
-                        "WFDictionaryFieldValueItems": [
-                            {
-                                "WFKey": {
-                                    "Value": {"string": "Authorization"},
-                                    "WFSerializationType": "WFTextTokenString",
-                                },
-                                "WFValue": {
-                                    "Value": {"string": f"Bearer {password}"},
-                                    "WFSerializationType": "WFTextTokenString",
-                                },
-                                "WFItemType": 0,
-                            }
-                        ]
-                    },
-                    "WFSerializationType": "WFDictionaryFieldValue",
-                },
-                "WFJSONValues": {
-                    "Value": {
-                        "WFDictionaryFieldValueItems": [
-                            {
-                                "WFKey": {
-                                    "Value": {"string": "text"},
-                                    "WFSerializationType": "WFTextTokenString",
-                                },
-                                "WFValue": {
-                                    "Value": {
-                                        "string": ORC,
-                                        "attachmentsByRange": {
-                                            "{0, 1}": {
-                                                "OutputUUID": ask_uuid,
-                                                "Type": "ActionOutput",
-                                                "OutputName": "Provided Input",
-                                            }
-                                        },
-                                    },
-                                    "WFSerializationType": "WFTextTokenString",
-                                },
-                                "WFItemType": 0,
-                            }
-                        ]
-                    },
-                    "WFSerializationType": "WFDictionaryFieldValue",
-                },
-                "UUID": post_uuid,
-            },
-        },
-        # 3. Show "Added: <title>" from JSON response
-        {
-            "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
-            "WFWorkflowActionParameters": {
-                "Text": {
-                    "Value": {
-                        "string": f"Added: {ORC}",
-                        "attachmentsByRange": {
-                            "{7, 1}": {
-                                "OutputUUID": post_uuid,
-                                "Type": "ActionOutput",
-                                "OutputName": "Contents of URL",
-                            }
-                        },
-                    },
-                    "WFSerializationType": "WFTextTokenString",
-                }
-            },
-        },
-    ]
-
-    data = {
-        "WFWorkflowClientVersion": "1326.0.4",
-        "WFWorkflowMinimumClientVersion": 900,
-        "WFWorkflowMinimumClientVersionString": "900",
-        "WFWorkflowHasShortcutInputVariables": False,
-        "WFWorkflowActions": actions,
-        "WFWorkflowImportQuestions": [],
-        "WFWorkflowInputContentItemClasses": [],
-        "WFWorkflowTypes": ["NCWidget"],
-        "WFWorkflowIcon": {
-            "WFWorkflowIconStartColor": 4282601983,  # purple
-            "WFWorkflowIconGlyphNumber": 59511,
-        },
-    }
-
-    buf = io.BytesIO()
-    plistlib.dump(data, buf, fmt=plistlib.FMT_BINARY)
-    return buf.getvalue()
 
 router = APIRouter()
 
@@ -338,17 +219,6 @@ def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depend
             status_code=503,
             detail=f"LLM request failed ({LLM_MODEL}): {e}",
         )
-
-
-@router.get("/api/shortcut/download")
-def shortcut_download():
-    """Serve a pre-configured iOS .shortcut file for adding tasks."""
-    plist_bytes = _build_shortcut_plist(_ALLOWED_ORIGIN, AUTH_PASSWORD)
-    return Response(
-        content=plist_bytes,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": 'attachment; filename="Add to Quantum Task.shortcut"'},
-    )
 
 
 @router.post("/api/shortcut/add")

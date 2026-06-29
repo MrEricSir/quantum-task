@@ -190,25 +190,13 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Offline banner when network connection is lost
 - Optional password auth (set `AUTH_PASSWORD` env var)
 
-## iOS Shortcut
+## Mobile capture
 
-Add tasks from anywhere on your iPhone — Siri, the home screen, or the Share Sheet — without opening the app.
+**Android:** The app registers as a Share Sheet target. Install it to your home screen via Chrome (three-dot menu → Install app), then use the native Share button from any app — the Quick Add modal opens with the shared text pre-filled.
 
-**Setup (2 steps):**
+**iOS:** The app works well as a home screen PWA (Safari → Share → Add to Home Screen), but iOS does not allow web apps to integrate into the Share Sheet or appear as Shortcuts targets without user-configured automation. No setup is required beyond adding to the home screen.
 
-1. Open the app on your iPhone, tap the **gear icon** → **iOS Shortcut**
-2. The `.shortcut` file downloads and opens in Shortcuts automatically — tap **Add Shortcut**
-
-The shortcut is pre-configured with your server URL and password. No manual entry required.
-
-**Using it:**
-- Tap the shortcut widget on your home screen → type your task → done
-- Ask Siri: "Run Add Task" → dictate your task
-- The task is parsed by AI (same as Quick Add) and lands in your board
-
-**Android:**
-
-On Android, the app registers as a Share Sheet target. Install the app to your home screen via Chrome (Install app), then use the native Share button from any app — the Quick Add modal opens with the shared text pre-filled.
+**API extension point:** `POST /api/shortcut/add` accepts `{"text": "..."}` with an `Authorization: Bearer <password>` header and handles parse + card creation in one step. This is intentionally left as an open endpoint for power users or future native app integration (e.g. a Capacitor build with a Share Extension, or an email-to-task pipeline).
 
 ## Configuration
 
