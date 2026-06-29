@@ -1,0 +1,145 @@
+.insights-panel {
+  margin: 0 0 1rem;
+}
+
+.insights-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, #6b7280);
+  margin: 0 0 0.5rem;
+}
+
+.insights-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.insight-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.insight-card--stuck {
+  border-left: 3px solid #f59e0b;
+}
+
+.insight-card--habit {
+  border-left: 3px solid #8b5cf6;
+}
+
+.insight-header {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.insight-icon {
+  font-size: 1rem;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.insight-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.insight-text {
+  margin: 0 0 0.2rem;
+  font-size: 0.82rem;
+  color: var(--color-text, #e5e7eb);
+  line-height: 1.4;
+}
+
+.insight-meta {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.insight-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.insight-btn {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text, #e5e7eb);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.insight-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.insight-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.insight-btn--danger {
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+.insight-btn--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.insight-btn--snooze {
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fcd34d;
+}
+
+.insight-btn--snooze:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.insight-btn--cancel {
+  color: var(--color-text-muted, #6b7280);
+}
+
+.insight-snooze-form {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.insight-reason-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text, #e5e7eb);
+  outline: none;
+}
+
+.insight-reason-input::placeholder {
+  color: var(--color-text-muted, #6b7280);
+}
+
+.insight-reason-input:focus {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.insight-snooze-options {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}

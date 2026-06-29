@@ -110,6 +110,8 @@ async function mockAPIs(page) {
     return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
   })
 
+  await page.route('**/api/insights', r => r.fulfill({ json: [] }))
+
   // Briefing SSE: send weather + text then close
   await page.route('**/api/briefing**', r =>
     r.fulfill({

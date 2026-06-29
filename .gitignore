@@ -5,7 +5,7 @@ backend/venv/
 **/*.pyo
 
 # ── Database ──────────────────────────────────────────────────────────────────
-backend/todos.db
+backend/*.db
 backend/*.db-shm
 backend/*.db-wal
 

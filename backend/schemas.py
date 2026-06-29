@@ -48,6 +48,8 @@ class CardUpdate(BaseModel):
     tag_ids: Optional[List[int]] = None
     recurrence_rule: Optional[str] = None
     archived: Optional[bool] = None
+    snoozed_until: Optional[str] = None   # YYYY-MM-DD
+    waiting_reason: Optional[str] = None
 
 
 class ParseRequest(BaseModel):
@@ -305,6 +307,8 @@ class Card(BaseModel):
     raw_input: Optional[str] = None
     recurrence_rule: Optional[str] = None
     external_id: Optional[str] = None
+    snoozed_until: Optional[str] = None
+    waiting_reason: Optional[str] = None
     tags: List[Tag] = []
 
     @computed_field

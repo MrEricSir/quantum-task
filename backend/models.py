@@ -48,6 +48,8 @@ class Card(Base):
     updated_at = Column(DateTime, nullable=True)
     archived = Column(Boolean, default=False)
     archived_at = Column(DateTime, nullable=True)
+    snoozed_until = Column(String, nullable=True)   # YYYY-MM-DD — suppress from insights until this date
+    waiting_reason = Column(String, nullable=True)  # free-text context shown as a badge on the board
     tags = relationship("Tag", secondary="card_tags", lazy="joined")
 
 

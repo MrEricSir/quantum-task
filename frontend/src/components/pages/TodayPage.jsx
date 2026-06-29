@@ -5,6 +5,7 @@ import TodoCard from '../board/TodoCard'
 import CalendarEventCard from '../board/CalendarEventCard'
 import DailyBriefing from '../shared/DailyBriefing'
 import DailyPlan from '../shared/DailyPlan'
+import InsightsPanel from '../shared/InsightsPanel'
 import { CollapseBody } from '../layout/Collapsible'
 import './TodayPage.css'
 
@@ -283,6 +284,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           todos={activeTodos}
           calendarEvents={todayEvents}
           habits={habits}
+        />
+
+        <InsightsPanel
+          refreshKey={briefingKey}
+          onEdit={onEdit}
+          onArchive={onArchive}
         />
 
         {hasHealthOrHabits && (

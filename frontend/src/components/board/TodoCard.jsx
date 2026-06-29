@@ -132,6 +132,11 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
           &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
         </div>
       )}
+      {todo.waiting_reason && (
+        <div className="card-waiting-badge">
+          &#9203; Waiting: {todo.waiting_reason}
+        </div>
+      )}
 
       {expanded && !isOverlay && (
         <div className="event-details">
