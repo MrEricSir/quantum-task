@@ -288,7 +288,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
 
         <InsightsPanel
           refreshKey={briefingKey}
-          onEdit={onEdit}
           onArchive={onArchive}
         />
 

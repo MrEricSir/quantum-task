@@ -14,7 +14,9 @@ Snoozed cards are suppressed until their snoozed_until date; the waiting_reason
 is stored on the card itself and displayed as a badge on the board.
 """
 
+import hashlib
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import List
 
@@ -38,9 +40,23 @@ Return JSON: {"insights": [{"index": 0, "text": "..."}]}
 Preserve the index values exactly as given.\
 """
 
+# In-memory cache for LLM-generated texts, keyed on a hash of the patterns.
+# DB queries always run; only the LLM call is cached.
+_text_cache: dict[str, tuple[float, list[str]]] = {}
+_TEXT_CACHE_TTL = 3600  # 1 hour — texts are stable until patterns change
+
+
+def _patterns_hash(patterns: list[str]) -> str:
+    return hashlib.md5("\n".join(patterns).encode()).hexdigest()
+
 
 def _generate_texts(patterns: list[str]) -> list[str]:
-    """Call LLM to produce one short sentence per pattern. Falls back to templates."""
+    """Return LLM-generated texts, using cache when patterns are unchanged."""
+    ph = _patterns_hash(patterns)
+    cached = _text_cache.get(ph)
+    if cached and time.monotonic() - cached[0] < _TEXT_CACHE_TTL:
+        return cached[1]
+
     numbered = [f"{i}: {p}" for i, p in enumerate(patterns)]
     try:
         client = llm_client()
@@ -55,9 +71,12 @@ def _generate_texts(patterns: list[str]) -> list[str]:
         )
         data = json.loads(response.choices[0].message.content)
         by_index = {item["index"]: item["text"] for item in data.get("insights", [])}
-        return [by_index.get(i, "") for i in range(len(patterns))]
+        texts = [by_index.get(i, "") for i in range(len(patterns))]
     except Exception:
-        return ["" for _ in patterns]
+        texts = ["" for _ in patterns]
+
+    _text_cache[ph] = (time.monotonic(), texts)
+    return texts
 
 
 @router.get("/api/insights")

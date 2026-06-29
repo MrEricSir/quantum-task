@@ -8,6 +8,12 @@ const SNOOZE_OPTIONS = [
   { label: '2 weeks', days: 14 },
 ]
 
+const MOVE_OPTIONS = [
+  { label: 'This Week', section: 'week' },
+  { label: 'This Month', section: 'month' },
+  { label: 'Stash', section: 'later' },
+]
+
 function addDays(days) {
   const d = new Date()
   d.setDate(d.getDate() + days)
@@ -15,11 +21,38 @@ function addDays(days) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-function StuckTaskInsight({ insight, onDismiss, onEdit, onArchive }) {
+function insightKey(ins) {
+  return ins.type === 'stuck_task' ? `task-${ins.card.id}` : `habit-${ins.habit_id}`
+}
+
+function StuckTaskInsight({ insight, onDismiss, onArchive }) {
   const { card, text, days_stuck } = insight
-  const [snoozing, setSnoozing] = useState(false)
+  const [mode, setMode] = useState(null) // null | 'reschedule' | 'snooze'
   const [reason, setReason] = useState('')
+  const [date, setDate] = useState('')
   const [busy, setBusy] = useState(false)
+  const key = insightKey(insight)
+
+  async function handleMove(section) {
+    setBusy(true)
+    try {
+      await updateCard(card.id, { section })
+      onDismiss(key)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSetDate() {
+    if (!date) return
+    setBusy(true)
+    try {
+      await updateCard(card.id, { scheduled_at: date + 'T00:00:00', section: 'week' })
+      onDismiss(key)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function handleSnooze(days) {
     setBusy(true)
@@ -28,7 +61,7 @@ function StuckTaskInsight({ insight, onDismiss, onEdit, onArchive }) {
         snoozed_until: addDays(days),
         waiting_reason: reason.trim() || null,
       })
-      onDismiss(card.id)
+      onDismiss(key)
     } finally {
       setBusy(false)
     }
@@ -44,7 +77,41 @@ function StuckTaskInsight({ insight, onDismiss, onEdit, onArchive }) {
         </div>
       </div>
 
-      {snoozing ? (
+      {mode === 'reschedule' && (
+        <div className="insight-reschedule-form">
+          <div className="insight-section-btns">
+            {MOVE_OPTIONS.map(opt => (
+              <button
+                key={opt.section}
+                className="insight-btn"
+                onClick={() => handleMove(opt.section)}
+                disabled={busy}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="insight-date-row">
+            <input
+              type="date"
+              className="insight-date-input"
+              value={date}
+              min={addDays(1)}
+              onChange={e => setDate(e.target.value)}
+            />
+            {date && (
+              <button className="insight-btn" onClick={handleSetDate} disabled={busy}>
+                Set date
+              </button>
+            )}
+          </div>
+          <button className="insight-btn insight-btn--cancel" onClick={() => setMode(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {mode === 'snooze' && (
         <div className="insight-snooze-form">
           <input
             className="insight-reason-input"
@@ -65,21 +132,23 @@ function StuckTaskInsight({ insight, onDismiss, onEdit, onArchive }) {
               </button>
             ))}
           </div>
-          <button className="insight-btn insight-btn--cancel" onClick={() => setSnoozing(false)}>
+          <button className="insight-btn insight-btn--cancel" onClick={() => setMode(null)}>
             Cancel
           </button>
         </div>
-      ) : (
+      )}
+
+      {!mode && (
         <div className="insight-actions">
-          <button className="insight-btn" onClick={() => onEdit(card)} disabled={busy}>
+          <button className="insight-btn" onClick={() => setMode('reschedule')} disabled={busy}>
             Reschedule
           </button>
-          <button className="insight-btn" onClick={() => setSnoozing(true)} disabled={busy}>
+          <button className="insight-btn" onClick={() => setMode('snooze')} disabled={busy}>
             Snooze
           </button>
           <button
             className="insight-btn insight-btn--danger"
-            onClick={() => onArchive(card)}
+            onClick={() => onArchive(insight)}
             disabled={busy}
           >
             Archive
@@ -90,7 +159,7 @@ function StuckTaskInsight({ insight, onDismiss, onEdit, onArchive }) {
   )
 }
 
-function HabitInsight({ insight }) {
+function HabitInsight({ insight, onDismiss }) {
   const { habit_name, text, completions_last_7 } = insight
   return (
     <div className="insight-card insight-card--habit">
@@ -100,12 +169,19 @@ function HabitInsight({ insight }) {
           <p className="insight-text">{text}</p>
           <p className="insight-meta">{habit_name} &middot; {completions_last_7}/7 days</p>
         </div>
+        <button
+          className="insight-dismiss"
+          onClick={() => onDismiss(insightKey(insight))}
+          title="Dismiss"
+        >
+          &#10005;
+        </button>
       </div>
     </div>
   )
 }
 
-export default function InsightsPanel({ refreshKey, onEdit, onArchive }) {
+export default function InsightsPanel({ refreshKey, onArchive }) {
   const [insights, setInsights] = useState([])
   const [loading, setLoading] = useState(true)
   const [dismissed, setDismissed] = useState(new Set())
@@ -125,18 +201,16 @@ export default function InsightsPanel({ refreshKey, onEdit, onArchive }) {
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  const handleDismiss = useCallback((cardId) => {
-    setDismissed(prev => new Set([...prev, cardId]))
+  const handleDismiss = useCallback((key) => {
+    setDismissed(prev => new Set([...prev, key]))
   }, [])
 
-  const handleArchive = useCallback(async (card) => {
-    setDismissed(prev => new Set([...prev, card.id]))
-    await onArchive(card)
+  const handleArchive = useCallback(async (insight) => {
+    setDismissed(prev => new Set([...prev, insightKey(insight)]))
+    await onArchive(insight.card)
   }, [onArchive])
 
-  const visible = insights.filter(ins =>
-    ins.type !== 'stuck_task' || !dismissed.has(ins.card?.id)
-  )
+  const visible = insights.filter(ins => !dismissed.has(insightKey(ins)))
 
   if (loading || visible.length === 0) return null
 
@@ -144,17 +218,20 @@ export default function InsightsPanel({ refreshKey, onEdit, onArchive }) {
     <section className="insights-panel">
       <h3 className="insights-title">Needs attention</h3>
       <div className="insights-list">
-        {visible.map((ins, i) =>
+        {visible.map((ins) =>
           ins.type === 'stuck_task' ? (
             <StuckTaskInsight
               key={ins.card.id}
               insight={ins}
               onDismiss={handleDismiss}
-              onEdit={onEdit}
               onArchive={handleArchive}
             />
           ) : (
-            <HabitInsight key={`habit-${ins.habit_id}-${i}`} insight={ins} />
+            <HabitInsight
+              key={`habit-${ins.habit_id}`}
+              insight={ins}
+              onDismiss={handleDismiss}
+            />
           )
         )}
       </div>
