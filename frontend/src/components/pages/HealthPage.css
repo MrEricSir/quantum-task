@@ -366,3 +366,311 @@
 .chart-bp-ref--dia {
   stroke: #06b6d4;
 }
+
+/* ── Segment cards ── */
+
+.seg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.seg-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.seg-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.seg-factor {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.seg-outcome {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.seg-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.seg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.seg-row--better {
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.seg-row--worse {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.seg-label {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.seg-value {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 72px;
+  text-align: right;
+}
+
+.seg-row--better .seg-value {
+  color: #22c55e;
+}
+
+.seg-n {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ── Correlations section ── */
+
+.corr-summary {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+
+.corr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.corr-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.corr-labels {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.corr-factor {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.corr-arrow {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.corr-outcome {
+  color: var(--text-muted);
+}
+
+.corr-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.corr-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 3px;
+  overflow: hidden;
+  max-width: 240px;
+}
+
+.corr-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.corr-bar-fill--pos {
+  background: #f97316;  /* orange = more of this → outcome goes up (e.g. weight gain) */
+}
+
+.corr-bar-fill--neg {
+  background: #22c55e;  /* green = more of this → outcome goes down (improvement) */
+}
+
+.corr-r {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}
+
+.corr-r--pos { color: #f97316; }
+.corr-r--neg { color: #22c55e; }
+
+.corr-n {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.corr-note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.corr-details {
+  margin-top: 4px;
+}
+
+.corr-toggle {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.corr-toggle:hover {
+  opacity: 1;
+}
+
+/* ── Analysis section ── */
+
+.analysis-section {
+  /* inherits health-section styles */
+}
+
+.analysis-subsection {
+  margin-bottom: 20px;
+}
+
+.analysis-subsection:last-child {
+  margin-bottom: 0;
+}
+
+.analysis-subsection-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.analysis-subsection-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Experiment card ── */
+
+.experiment-card {
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.experiment-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.experiment-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #a78bfa;
+}
+
+.experiment-days {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-left: auto;
+}
+
+.experiment-text {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+  margin: 0 0 8px;
+}
+
+.experiment-hypothesis {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+
+.experiment-hypothesis-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.experiment-habit-note {
+  font-size: 11px;
+  color: #a78bfa;
+  margin: 0 0 10px;
+  opacity: 0.85;
+}
+
+.experiment-footer {
+  margin-top: 12px;
+}
+
+.experiment-dismiss {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.experiment-dismiss:hover {
+  opacity: 1;
+}
+
+.experiment-dismiss:disabled {
+  cursor: default;
+  opacity: 0.35;
+}

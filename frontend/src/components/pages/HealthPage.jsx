@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment } from '../../api'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -303,9 +304,228 @@ function ChartLegend({ items }) {
   )
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Correlation analysis ──────────────────────────────────────────────────────
 
 const KG_TO_LBS = 2.20462
+
+function fmtDelta(val, unit, isImperial = false) {
+  const isWeight = unit.startsWith('kg')
+  let weekly = val * 7
+  let displayUnit = unit.replace('/day', '/wk')
+  if (isImperial && isWeight) {
+    weekly = weekly * KG_TO_LBS
+    displayUnit = 'lbs/wk'
+  }
+  const abs = Math.abs(weekly)
+  const display = abs < 0.01 ? weekly.toFixed(3) : abs < 0.1 ? weekly.toFixed(2) : weekly.toFixed(1)
+  return `${weekly >= 0 ? '+' : ''}${display} ${displayUnit}`
+}
+
+function SegmentCard({ segment, isImperial }) {
+  const { factor, outcome, outcome_unit, threshold, high, low } = segment
+  // For weight/fat loss, a more-negative delta is better
+  const highIsBetter = high.mean_delta < low.mean_delta
+  return (
+    <div className="seg-card">
+      <div className="seg-header">
+        <span className="seg-factor">{factor}</span>
+        <span className="seg-outcome">→ {outcome}</span>
+      </div>
+      <div className="seg-rows">
+        <div className={`seg-row ${highIsBetter ? 'seg-row--better' : 'seg-row--worse'}`}>
+          <span className="seg-label">Above {formatThreshold(factor, threshold)} avg</span>
+          <span className="seg-value">{fmtDelta(high.mean_delta, outcome_unit, isImperial)}</span>
+          <span className="seg-n">n={high.n}</span>
+        </div>
+        <div className={`seg-row ${!highIsBetter ? 'seg-row--better' : 'seg-row--worse'}`}>
+          <span className="seg-label">Below {formatThreshold(factor, threshold)} avg</span>
+          <span className="seg-value">{fmtDelta(low.mean_delta, outcome_unit, isImperial)}</span>
+          <span className="seg-n">n={low.n}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function formatThreshold(factor, threshold) {
+  if (factor === 'Daily steps') return `${Math.round(threshold).toLocaleString()} steps`
+  if (factor === 'Resting heart rate') return `${Math.round(threshold)} bpm`
+  if (factor === 'Habit completion rate') return `${Math.round(threshold * 100)}%`
+  if (factor === 'Tasks completed') return `${Math.round(threshold)} tasks`
+  return threshold
+}
+
+function CorrelationBar({ r, factor, outcome, n }) {
+  const abs = Math.abs(r)
+  const positive = r >= 0
+  return (
+    <div className="corr-row">
+      <div className="corr-labels">
+        <span className="corr-factor">{factor}</span>
+        <span className="corr-arrow">→</span>
+        <span className="corr-outcome">{outcome}</span>
+      </div>
+      <div className="corr-bar-wrap">
+        <div className="corr-bar-track">
+          <div
+            className={`corr-bar-fill corr-bar-fill--${positive ? 'pos' : 'neg'}`}
+            style={{ width: `${abs * 100}%` }}
+          />
+        </div>
+        <span className={`corr-r corr-r--${positive ? 'pos' : 'neg'}`}>
+          {r > 0 ? '+' : ''}{r.toFixed(2)}
+        </span>
+        <span className="corr-n">n={n}</span>
+      </div>
+    </div>
+  )
+}
+
+// ── Experiment card ───────────────────────────────────────────────────────────
+
+function ExperimentCard({ onDismiss }) {
+  const [exp, setExp] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [dismissing, setDismissing] = useState(false)
+
+  useEffect(() => {
+    fetchHealthExperiment()
+      .then(setExp)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleDismiss = async () => {
+    setDismissing(true)
+    try {
+      await dismissHealthExperiment()
+      setExp(null)
+      onDismiss?.()
+    } catch {
+      setDismissing(false)
+    }
+  }
+
+  if (loading) return null
+  if (!exp) return null
+
+  // Calculate days remaining in the experiment week
+  const weekMatch = exp.week?.match(/^(\d{4})-W(\d{2})$/)
+  let daysLeft = null
+  if (weekMatch) {
+    const y = parseInt(weekMatch[1]), w = parseInt(weekMatch[2])
+    const jan4 = new Date(y, 0, 4)
+    const weekStartMs = jan4.getTime() - jan4.getDay() * 86400000 + (w - 1) * 7 * 86400000
+    const weekEnd = new Date(weekStartMs + 7 * 86400000)
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    daysLeft = Math.max(0, Math.ceil((weekEnd - today) / 86400000))
+  }
+
+  return (
+    <div className="experiment-card">
+      <div className="experiment-header">
+        <span className="experiment-badge">This week's experiment</span>
+        {daysLeft !== null && (
+          <span className="experiment-days">{daysLeft} day{daysLeft !== 1 ? 's' : ''} left</span>
+        )}
+      </div>
+      <p className="experiment-text">{exp.text}</p>
+      {exp.hypothesis && (
+        <p className="experiment-hypothesis">
+          <span className="experiment-hypothesis-label">Hypothesis: </span>
+          {exp.hypothesis}
+        </p>
+      )}
+      {exp.needs_habit && exp.habit_id && (
+        <p className="experiment-habit-note">
+          A tracking habit has been created for you — check it off each day you complete the experiment.
+        </p>
+      )}
+      <div className="experiment-footer">
+        <button
+          className="experiment-dismiss"
+          onClick={handleDismiss}
+          disabled={dismissing}
+        >
+          {dismissing ? 'Dismissing…' : 'Dismiss & generate new'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Analysis section (correlations + experiment) ──────────────────────────────
+
+function AnalysisSection({ isImperial }) {
+  const [corrData, setCorrData] = useState(null)
+  const [corrLoading, setCorrLoading] = useState(true)
+  const [showCorr, setShowCorr] = useState(false)
+  const [expKey, setExpKey] = useState(0)  // bump to reload experiment after dismiss
+
+  useEffect(() => {
+    fetchHealthCorrelations()
+      .then(setCorrData)
+      .catch(() => {})
+      .finally(() => setCorrLoading(false))
+  }, [])
+
+  const hasCorr = !corrLoading && corrData && (corrData.correlations?.length > 0 || corrData.segments?.length > 0)
+
+  return (
+    <section className="health-section analysis-section">
+      <div className="health-section-header">
+        <h3 className="health-section-title">Analysis</h3>
+      </div>
+
+      {/* Experiment subsection */}
+      <div className="analysis-subsection">
+        <ExperimentCard key={expKey} onDismiss={() => setExpKey(k => k + 1)} />
+      </div>
+
+      {/* Correlations subsection */}
+      {hasCorr && (() => {
+        const { correlations = [], segments = [], summary, weight_n, fat_n } = corrData
+        const n = Math.max(weight_n, fat_n)
+        return (
+          <div className="analysis-subsection">
+            <div className="analysis-subsection-header">
+              <span className="analysis-subsection-title">Correlations</span>
+              <span className="health-section-goal">{n} weekly intervals · 90 days</span>
+            </div>
+
+            {summary && <p className="corr-summary">{summary}</p>}
+
+            {segments.length > 0 && (
+              <div className="seg-grid">
+                {segments.map((s, i) => <SegmentCard key={i} segment={s} isImperial={isImperial} />)}
+              </div>
+            )}
+
+            {correlations.length > 0 && (
+              <div className="corr-details">
+                <button className="corr-toggle" onClick={() => setShowCorr(v => !v)}>
+                  {showCorr ? 'Hide' : 'Show'} correlation coefficients
+                </button>
+                {showCorr && (
+                  <div className="corr-list">
+                    {correlations.map((c, i) => (
+                      <CorrelationBar key={i} r={c.r} factor={c.factor} outcome={c.outcome} n={c.n} />
+                    ))}
+                    <p className="corr-note">
+                      Negative r = factor correlates with improvement · correlation ≠ causation
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })()}
+    </section>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, onOpenSettings, isImperial = false }) {
   const [range, setRange] = useState(30)
@@ -548,6 +768,9 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
             <ChartLegend items={[{ color: 'var(--color-week)', label: 'Heart rate (bpm)' }]} />
           </section>
         )}
+
+        {/* Analysis */}
+        <AnalysisSection isImperial={isImperial} />
 
       </>)}
     </div>

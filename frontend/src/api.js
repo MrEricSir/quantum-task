@@ -347,6 +347,24 @@ export async function fetchInsights() {
   return res.json()
 }
 
+export async function fetchHealthCorrelations() {
+  const res = await apiFetch('/api/health/correlations')
+  if (!res.ok) throw new Error('Failed to fetch correlations')
+  return res.json()
+}
+
+export async function fetchHealthExperiment() {
+  const res = await apiFetch('/api/health/experiment')
+  if (!res.ok) throw new Error('Failed to fetch experiment')
+  return res.json()
+}
+
+export async function dismissHealthExperiment() {
+  const res = await apiFetch('/api/health/experiment', { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to dismiss experiment')
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.
