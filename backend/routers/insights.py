@@ -1,17 +1,14 @@
 """
-Proactive intelligence: surface stuck tasks and habit trend alerts.
+Proactive intelligence: surface stuck tasks, habit trend alerts, and health goal alerts.
 
-GET /api/insights  — returns a list of insight objects, each with an LLM-generated
-                     short description and the subject (card or habit) for action.
+GET /api/insights  — returns a list of insight objects.
 
-A task is "stuck" when it has been in the Today section for 3+ days without
-being completed or snoozed.
-
-A habit is "trending low" when it was completed fewer than 4 of the past 7 days
-and is at least 7 days old.
-
-Snoozed cards are suppressed until their snoozed_until date; the waiting_reason
-is stored on the card itself and displayed as a badge on the board.
+Insight types
+─────────────
+stuck_task   Task in Today for 3+ days, not snoozed. LLM-generated text + reschedule/snooze/archive actions.
+habit_trend  Habit completed <4/7 days this week. LLM-generated text, dismissible.
+health_trend Weight or fat-ratio trending away from goal, or stalled while above goal. Template text, dismissible.
+health_no_data  No measurement logged recently despite a goal being set. Template text, dismissible.
 """
 
 import hashlib
@@ -30,7 +27,8 @@ from deps import get_db, llm_client, LLM_MODEL, local_date
 
 router = APIRouter()
 
-_STUCK_DAYS = 3  # days in Today before a task is considered stuck
+_STUCK_DAYS = 3   # days in Today before a task is considered stuck
+_NO_DATA_DAYS = 3  # days without a measurement before we remind the user
 
 _SYSTEM_PROMPT = """\
 You generate brief, actionable insights about a user's task and habit patterns.
@@ -77,6 +75,130 @@ def _generate_texts(patterns: list[str]) -> list[str]:
 
     _text_cache[ph] = (time.monotonic(), texts)
     return texts
+
+
+def _load_health_goals(db: Session) -> dict[str, float]:
+    """Return goal values for weight/fat_ratio. Habit-linked goals override standalone."""
+    goals: dict[str, float] = {}
+    row = db.query(models.AppSetting).filter_by(key="withings_health_goals").first()
+    if row:
+        try:
+            for k, v in json.loads(row.value).items():
+                goals[k] = float(v)
+        except Exception:
+            pass
+    for h in db.query(models.Habit).filter(
+        models.Habit.withings_metric.isnot(None),
+        models.Habit.withings_goal.isnot(None),
+        models.Habit.archived == False,   # noqa: E712
+    ).all():
+        goals[h.withings_metric] = float(h.withings_goal)
+    return goals
+
+
+def _health_insights(db: Session, today: date) -> list[dict]:
+    """Surface weight/fat_ratio goal alerts without calling the LLM."""
+    goals = _load_health_goals(db)
+    results = []
+    cutoff = (today - timedelta(days=30)).isoformat()
+
+    for metric in ("weight", "fat_ratio"):
+        goal = goals.get(metric)
+        if goal is None:
+            continue
+
+        label = "weight" if metric == "weight" else "body fat"
+        unit = " kg" if metric == "weight" else "%"
+
+        readings = (
+            db.query(models.WithingsMeasurement)
+            .filter(
+                models.WithingsMeasurement.metric == metric,
+                models.WithingsMeasurement.date >= cutoff,
+            )
+            .order_by(models.WithingsMeasurement.date)
+            .all()
+        )
+
+        # ── No recent data ────────────────────────────────────────────────────
+        if not readings:
+            # Only remind if there's ever been a measurement (i.e. Withings is connected)
+            ever = db.query(models.WithingsMeasurement).filter(
+                models.WithingsMeasurement.metric == metric
+            ).first()
+            if ever:
+                results.append({
+                    "type": "health_no_data",
+                    "text": f"No {label} logged in 30+ days — step on the scale to track your {goal:.1f}{unit} goal.",
+                    "metric": metric,
+                    "days_since": 30,
+                })
+            continue
+
+        latest = readings[-1]
+        days_since = (today - date.fromisoformat(latest.date)).days
+
+        if days_since > _NO_DATA_DAYS:
+            results.append({
+                "type": "health_no_data",
+                "text": f"No {label} logged in {days_since} days — step on the scale to track your {goal:.1f}{unit} goal.",
+                "metric": metric,
+                "days_since": days_since,
+            })
+            continue
+
+        # ── Trend analysis ────────────────────────────────────────────────────
+        current = latest.value
+        gap = current - goal   # positive = above goal (want to go down), negative = below (want to go up)
+
+        # Within 1 unit of goal — no alert needed
+        if abs(gap) <= 1.0:
+            continue
+
+        # Need enough data for a meaningful trend
+        if len(readings) < 4:
+            continue
+
+        mid = len(readings) // 2
+        first_avg = sum(r.value for r in readings[:mid]) / mid
+        second_avg = sum(r.value for r in readings[mid:]) / (len(readings) - mid)
+        delta = second_avg - first_avg   # positive = trending up over the window
+        span_days = (date.fromisoformat(readings[-1].date) - date.fromisoformat(readings[0].date)).days
+
+        # "Wrong direction" = trending away from goal
+        if gap > 0 and delta > 0.3:
+            # Above goal and still going up
+            results.append({
+                "type": "health_trend",
+                "text": f"{label.capitalize()} is trending up (+{abs(delta):.1f}{unit} over {span_days}d) while {abs(gap):.1f}{unit} above your goal.",
+                "metric": metric,
+                "direction": "worsening",
+                "delta": round(delta, 2),
+                "gap": round(gap, 2),
+            })
+        elif gap < 0 and delta < -0.3:
+            # Below goal and still going down
+            results.append({
+                "type": "health_trend",
+                "text": f"{label.capitalize()} is trending down ({abs(delta):.1f}{unit} over {span_days}d) while {abs(gap):.1f}{unit} below your goal.",
+                "metric": metric,
+                "direction": "worsening",
+                "delta": round(delta, 2),
+                "gap": round(gap, 2),
+            })
+        elif span_days >= 14 and abs(delta) <= 0.3:
+            # No meaningful movement for 2+ weeks while above/below goal
+            direction_word = "above" if gap > 0 else "below"
+            results.append({
+                "type": "health_trend",
+                "text": f"{label.capitalize()} hasn't moved in {span_days} days — still {abs(gap):.1f}{unit} {direction_word} your {goal:.1f}{unit} goal.",
+                "metric": metric,
+                "direction": "stalled",
+                "delta": round(delta, 2),
+                "gap": round(gap, 2),
+            })
+
+    return results
 
 
 @router.get("/api/insights")
@@ -132,25 +254,24 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
             )
             .count()
         )
-        if count < 4:  # fewer than 4/7 days ≈ < 57%
+        if count < 4:
             low_habits.append((habit, count))
 
-    if not stuck_cards and not low_habits:
+    # ── Health goal alerts (template text — no LLM) ───────────────────────────
+    health = _health_insights(db, today)
+
+    if not stuck_cards and not low_habits and not health:
         return []
 
-    # ── Build pattern strings for LLM ────────────────────────────────────────
+    # ── LLM texts for task/habit patterns ────────────────────────────────────
     patterns = []
     for card in stuck_cards:
         days = (today - card.created_at.date()).days
-        patterns.append(
-            f'Task "{card.title}" has been in Today for {days} days without progress'
-        )
+        patterns.append(f'Task "{card.title}" has been in Today for {days} days without progress')
     for habit, count in low_habits:
-        patterns.append(
-            f'Habit "{habit.name}" completed only {count}/7 days this past week'
-        )
+        patterns.append(f'Habit "{habit.name}" completed only {count}/7 days this past week')
 
-    texts = _generate_texts(patterns)
+    texts = _generate_texts(patterns) if patterns else []
 
     # ── Assemble response ─────────────────────────────────────────────────────
     results = []
@@ -158,24 +279,25 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
 
     for card in stuck_cards:
         days = (today - card.created_at.date()).days
-        text = texts[idx] or f"In Today for {days} days — reschedule, snooze, or archive."
+        text = texts[idx] if idx < len(texts) else ""
         results.append({
             "type": "stuck_task",
-            "text": text,
+            "text": text or f"In Today for {days} days — reschedule, snooze, or archive.",
             "days_stuck": days,
             "card": schemas.Card.model_validate(card).model_dump(mode="json"),
         })
         idx += 1
 
     for habit, count in low_habits:
-        text = texts[idx] or f"Completed {count}/7 days this week — try to build consistency."
+        text = texts[idx] if idx < len(texts) else ""
         results.append({
             "type": "habit_trend",
-            "text": text,
+            "text": text or f"Completed {count}/7 days this week — try to build consistency.",
             "completions_last_7": count,
             "habit_id": habit.id,
             "habit_name": habit.name,
         })
         idx += 1
 
+    results.extend(health)
     return results

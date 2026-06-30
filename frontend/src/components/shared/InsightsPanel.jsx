@@ -22,7 +22,9 @@ function addDays(days) {
 }
 
 function insightKey(ins) {
-  return ins.type === 'stuck_task' ? `task-${ins.card.id}` : `habit-${ins.habit_id}`
+  if (ins.type === 'stuck_task') return `task-${ins.card.id}`
+  if (ins.type === 'habit_trend') return `habit-${ins.habit_id}`
+  return `health-${ins.metric}-${ins.type}` // health_trend | health_no_data
 }
 
 function StuckTaskInsight({ insight, onDismiss, onArchive }) {
@@ -181,6 +183,28 @@ function HabitInsight({ insight, onDismiss }) {
   )
 }
 
+function HealthInsight({ insight, onDismiss }) {
+  const { text, type } = insight
+  const icon = type === 'health_no_data' ? '\u{1F4CF}' : '\u{1F4C8}'
+  return (
+    <div className="insight-card insight-card--health">
+      <div className="insight-header">
+        <span className="insight-icon">{icon}</span>
+        <div className="insight-body">
+          <p className="insight-text">{text}</p>
+        </div>
+        <button
+          className="insight-dismiss"
+          onClick={() => onDismiss(insightKey(insight))}
+          title="Dismiss"
+        >
+          &#10005;
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function InsightsPanel({ refreshKey, onArchive }) {
   const [insights, setInsights] = useState([])
   const [loading, setLoading] = useState(true)
@@ -218,22 +242,18 @@ export default function InsightsPanel({ refreshKey, onArchive }) {
     <section className="insights-panel">
       <h3 className="insights-title">Needs attention</h3>
       <div className="insights-list">
-        {visible.map((ins) =>
-          ins.type === 'stuck_task' ? (
-            <StuckTaskInsight
-              key={ins.card.id}
-              insight={ins}
-              onDismiss={handleDismiss}
-              onArchive={handleArchive}
-            />
-          ) : (
-            <HabitInsight
-              key={`habit-${ins.habit_id}`}
-              insight={ins}
-              onDismiss={handleDismiss}
-            />
+        {visible.map((ins) => {
+          const key = insightKey(ins)
+          if (ins.type === 'stuck_task') return (
+            <StuckTaskInsight key={key} insight={ins} onDismiss={handleDismiss} onArchive={handleArchive} />
           )
-        )}
+          if (ins.type === 'habit_trend') return (
+            <HabitInsight key={key} insight={ins} onDismiss={handleDismiss} />
+          )
+          return (
+            <HealthInsight key={key} insight={ins} onDismiss={handleDismiss} />
+          )
+        })}
       </div>
     </section>
   )

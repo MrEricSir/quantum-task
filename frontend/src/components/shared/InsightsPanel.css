@@ -32,6 +32,10 @@
   border-left: 3px solid #8b5cf6;
 }
 
+.insight-card--health {
+  border-left: 3px solid #06b6d4;
+}
+
 .insight-header {
   display: flex;
   gap: 0.6rem;
