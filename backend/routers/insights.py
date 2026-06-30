@@ -198,6 +198,78 @@ def _health_insights(db: Session, today: date) -> list[dict]:
                 "gap": round(gap, 2),
             })
 
+    # ── Blood pressure ────────────────────────────────────────────────────────
+    sys_readings = (
+        db.query(models.WithingsMeasurement)
+        .filter(models.WithingsMeasurement.metric == "bp_systolic",
+                models.WithingsMeasurement.date >= cutoff)
+        .order_by(models.WithingsMeasurement.date)
+        .all()
+    )
+    dia_readings = (
+        db.query(models.WithingsMeasurement)
+        .filter(models.WithingsMeasurement.metric == "bp_diastolic",
+                models.WithingsMeasurement.date >= cutoff)
+        .order_by(models.WithingsMeasurement.date)
+        .all()
+    )
+
+    if not sys_readings and not dia_readings:
+        ever_bp = db.query(models.WithingsMeasurement).filter(
+            models.WithingsMeasurement.metric == "bp_systolic"
+        ).first()
+        if ever_bp:
+            results.append({
+                "type": "health_no_data",
+                "text": "No blood pressure reading in 30+ days — take a reading to track cardiovascular health.",
+                "metric": "blood_pressure",
+                "days_since": 30,
+            })
+    else:
+        sys_by_date = {r.date: r.value for r in sys_readings}
+        dia_by_date = {r.date: r.value for r in dia_readings}
+        shared = sorted(set(sys_by_date) & set(dia_by_date))
+        if shared:
+            latest_date = shared[-1]
+            sys_val = sys_by_date[latest_date]
+            dia_val = dia_by_date[latest_date]
+            days_since = (today - date.fromisoformat(latest_date)).days
+
+            if days_since > 7:
+                results.append({
+                    "type": "health_no_data",
+                    "text": f"No blood pressure reading in {days_since} days — take a reading to track cardiovascular health.",
+                    "metric": "blood_pressure",
+                    "days_since": days_since,
+                })
+            elif sys_val >= 140 or dia_val >= 90:
+                results.append({
+                    "type": "health_bp",
+                    "text": f"Blood pressure {int(sys_val)}/{int(dia_val)} mmHg is in the Stage 2 high range — consult your doctor.",
+                    "metric": "blood_pressure",
+                    "systolic": sys_val,
+                    "diastolic": dia_val,
+                    "stage": 2,
+                })
+            elif sys_val >= 130 or dia_val >= 80:
+                results.append({
+                    "type": "health_bp",
+                    "text": f"Blood pressure {int(sys_val)}/{int(dia_val)} mmHg is elevated — monitor and consider lifestyle adjustments.",
+                    "metric": "blood_pressure",
+                    "systolic": sys_val,
+                    "diastolic": dia_val,
+                    "stage": 1,
+                })
+            elif sys_val < 90 or dia_val < 60:
+                results.append({
+                    "type": "health_bp",
+                    "text": f"Blood pressure {int(sys_val)}/{int(dia_val)} mmHg is low — stay hydrated and monitor for symptoms.",
+                    "metric": "blood_pressure",
+                    "systolic": sys_val,
+                    "diastolic": dia_val,
+                    "stage": 0,
+                })
+
     return results
 
 

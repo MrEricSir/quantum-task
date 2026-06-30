@@ -18,7 +18,7 @@ const GOAL_FIELDS = [
   { metric: 'fat_ratio', label: 'Body Fat %', unit: '%',   placeholder: '20.0', step: '0.1', min: '0' },
 ]
 
-export default function WithingsSettings({ status, onSync, onDisconnect, onSaveGoals, syncing, healthGoals, onClose, isImperial = false }) {
+export default function WithingsSettings({ status, onSync, onDisconnect, onSaveGoals, syncing, syncError, healthGoals, onClose, isImperial = false }) {
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
   const [goalDraft, setGoalDraft] = useState(null)  // null = not editing; dict when editing
@@ -101,6 +101,14 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
       </div>
 
       {error && <p className="withings-settings-error">{error}</p>}
+      {syncError === 'invalid_token' && (
+        <p className="withings-settings-error">
+          Withings connection expired — click <strong>Reconnect</strong> to re-authorize.
+        </p>
+      )}
+      {syncError && syncError !== 'invalid_token' && (
+        <p className="withings-settings-error">Sync failed. Check your connection and try again.</p>
+      )}
 
       {/* Standalone health goals */}
       <div className="withings-goals-section">

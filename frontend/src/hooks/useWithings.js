@@ -6,6 +6,7 @@ export function useWithings({ authed }) {
   const [healthData, setHealthData] = useState(null) // { measurements, habit_completions }
   const [healthGoals, setHealthGoals] = useState(null) // { steps, fat_ratio, weight }
   const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState(null)
 
   const loadStatus = useCallback(() => {
     fetchWithingsStatus().then(setStatus).catch(() => {})
@@ -47,12 +48,17 @@ export function useWithings({ authed }) {
 
   const handleSync = async () => {
     setSyncing(true)
+    setSyncError(null)
     try {
-      await syncWithings()
-      loadStatus()
-      loadHealthData()
+      const result = await syncWithings()
+      if (result?.ok === false) {
+        setSyncError(result.error ?? 'sync_failed')
+      } else {
+        loadStatus()
+        loadHealthData()
+      }
     } catch {
-      // ignore
+      setSyncError('sync_failed')
     } finally {
       setSyncing(false)
     }
@@ -64,5 +70,5 @@ export function useWithings({ authed }) {
     setHealthData(null)
   }
 
-  return { status, healthData, healthGoals, syncing, handleSync, handleDisconnect, handleSaveGoals, loadStatus, loadHealthData }
+  return { status, healthData, healthGoals, syncing, syncError, handleSync, handleDisconnect, handleSaveGoals, loadStatus, loadHealthData }
 }

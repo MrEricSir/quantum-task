@@ -215,6 +215,79 @@ function LineChart({ data, goal, completionDates, unit = '', emptyMsg, ariaLabel
   )
 }
 
+// ── Blood pressure dual-line chart ───────────────────────────────────────────
+
+function BPChart({ sysData, diaData }) {
+  const [tooltip, setTooltip] = useState(null)
+
+  if (!sysData.length && !diaData.length) {
+    return <div className="health-chart-empty">No blood pressure data yet. Take a reading with your Withings device.</div>
+  }
+
+  const sysMap = Object.fromEntries(sysData.map(d => [d.date, d.value]))
+  const diaMap = Object.fromEntries(diaData.map(d => [d.date, d.value]))
+  const allDates = [...new Set([...sysData.map(d => d.date), ...diaData.map(d => d.date)])].sort()
+  const count = allDates.length
+
+  const allVals = [...sysData.map(d => d.value), ...diaData.map(d => d.value)]
+  const minV = Math.floor(Math.min(...allVals, 60) - 5)
+  const maxV = Math.ceil(Math.max(...allVals, 140) + 5)
+
+  const makePoints = (map) => allDates
+    .map((date, i) => map[date] != null ? { x: xPos(i, count), y: yScale(map[date], minV, maxV), date, value: map[date] } : null)
+    .filter(Boolean)
+
+  const sysPoints = makePoints(sysMap)
+  const diaPoints = makePoints(diaMap)
+  const labelIndices = labelIndicesFor(count)
+
+  return (
+    <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} className="health-chart-svg" aria-label="Blood pressure chart">
+      <AxisY min={minV} max={maxV} ticks={4} />
+
+      {/* AHA Stage 1 reference lines */}
+      {130 > minV && 130 < maxV && (
+        <line x1={PAD.left} x2={PAD.left + INNER_W} y1={yScale(130, minV, maxV)} y2={yScale(130, minV, maxV)} className="chart-bp-ref chart-bp-ref--sys" />
+      )}
+      {80 > minV && 80 < maxV && (
+        <line x1={PAD.left} x2={PAD.left + INNER_W} y1={yScale(80, minV, maxV)} y2={yScale(80, minV, maxV)} className="chart-bp-ref chart-bp-ref--dia" />
+      )}
+
+      {sysPoints.length > 1 && <polyline points={sysPoints.map(p => `${p.x},${p.y}`).join(' ')} className="chart-line chart-line--systolic" />}
+      {diaPoints.length > 1 && <polyline points={diaPoints.map(p => `${p.x},${p.y}`).join(' ')} className="chart-line chart-line--diastolic" />}
+
+      {allDates.map((date, i) => {
+        const sys = sysMap[date]
+        const dia = diaMap[date]
+        if (sys == null && dia == null) return null
+        const x = xPos(i, count)
+        const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        const tipLabel = (sys != null && dia != null)
+          ? `${dateLabel} · ${Math.round(sys)}/${Math.round(dia)} mmHg`
+          : sys != null ? `${dateLabel} · ${Math.round(sys)} sys` : `${dateLabel} · ${Math.round(dia)} dia`
+        const hitY = sys != null ? yScale(sys, minV, maxV) : yScale(dia, minV, maxV)
+        return (
+          <g key={date}>
+            {sys != null && <circle cx={x} cy={yScale(sys, minV, maxV)} r={3} className="chart-dot chart-dot--systolic" />}
+            {dia != null && <circle cx={x} cy={yScale(dia, minV, maxV)} r={3} className="chart-dot chart-dot--diastolic" />}
+            <rect
+              x={x - 10} y={PAD.top} width={20} height={INNER_H}
+              fill="transparent"
+              onMouseEnter={() => setTooltip({ x, y: hitY, label: tipLabel })}
+              onMouseLeave={() => setTooltip(null)}
+            />
+            {labelIndices.has(i) && (
+              <text x={x} y={CHART_H - 4} className="chart-axis-label" textAnchor="middle">{dateLabel}</text>
+            )}
+          </g>
+        )
+      })}
+
+      <SvgTooltip tooltip={tooltip} />
+    </svg>
+  )
+}
+
 // ── Legend ────────────────────────────────────────────────────────────────────
 
 function ChartLegend({ items }) {
@@ -259,10 +332,22 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
   const stepsData  = measurements.filter(m => m.metric === 'steps').slice(-range)
   const fatData    = measurements.filter(m => m.metric === 'fat_ratio').slice(-range)
   const weightData = measurements.filter(m => m.metric === 'weight').slice(-range)
+  const bpSysData  = measurements.filter(m => m.metric === 'bp_systolic').slice(-range)
+  const bpDiaData  = measurements.filter(m => m.metric === 'bp_diastolic').slice(-range)
+  const hrData     = measurements.filter(m => m.metric === 'heart_rate').slice(-range)
 
   const stepsHabits  = habits.filter(h => h.withings_metric === 'steps'    && !h.archived)
   const fatHabits    = habits.filter(h => h.withings_metric === 'fat_ratio' && !h.archived)
   const weightHabits = habits.filter(h => h.withings_metric === 'weight'    && !h.archived)
+
+  // Most recent BP / HR (may predate today)
+  const _allSys = measurements.filter(m => m.metric === 'bp_systolic')
+  const _allDia = measurements.filter(m => m.metric === 'bp_diastolic')
+  const _allHR  = measurements.filter(m => m.metric === 'heart_rate')
+  const recentSys = _allSys.length ? _allSys[_allSys.length - 1] : null
+  const recentDia = _allDia.length ? _allDia[_allDia.length - 1] : null
+  const recentHR  = _allHR.length  ? _allHR[_allHR.length - 1]   : null
+  const recentBP  = recentSys && recentDia ? { sys: recentSys.value, dia: recentDia.value, date: recentSys.date } : null
 
   const completions = (hs) => hs.flatMap(h => habitCompletions[String(h.id)] ?? [])
 
@@ -306,7 +391,7 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
       {showCharts && (<>
 
         {/* Today at a glance */}
-        {(todayVals.steps != null || todayVals.weight != null || todayVals.fat_ratio != null) && (
+        {(todayVals.steps != null || todayVals.weight != null || todayVals.fat_ratio != null || recentBP != null || recentHR != null) && (
           <div className="health-hero">
             <div className="health-hero-label">Today</div>
             <div className="health-hero-stats">
@@ -349,6 +434,32 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
                   {primaryFatGoal != null && <div className="health-hero-goal">goal ≤ {primaryFatGoal.toFixed(1)}%</div>}
                 </div>
               )}
+              {recentBP && (() => {
+                const dateNote = recentBP.date !== todayStr
+                  ? ` · ${new Date(recentBP.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                  : ''
+                const stage = recentBP.sys >= 140 || recentBP.dia >= 90 ? 'Stage 2 high'
+                  : recentBP.sys >= 130 || recentBP.dia >= 80 ? 'Elevated'
+                  : recentBP.sys < 90 || recentBP.dia < 60 ? 'Low' : null
+                return (
+                  <div className="health-hero-stat">
+                    <div className="health-hero-value" style={{ fontSize: '22px' }}>{Math.round(recentBP.sys)}/{Math.round(recentBP.dia)}</div>
+                    <div className="health-hero-metric">mmHg{dateNote}</div>
+                    {stage && <div className="health-hero-delta">{stage}</div>}
+                  </div>
+                )
+              })()}
+              {recentHR && (() => {
+                const dateNote = recentHR.date !== todayStr
+                  ? ` · ${new Date(recentHR.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                  : ''
+                return (
+                  <div className="health-hero-stat">
+                    <div className="health-hero-value">{Math.round(recentHR.value)}</div>
+                    <div className="health-hero-metric">bpm{dateNote}</div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
@@ -408,6 +519,35 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
             ...(primaryWeightGoal != null ? [{ color: '#f59e0b', label: 'Target' }] : []),
           ]} />
         </section>
+
+        {/* Blood Pressure */}
+        {(bpSysData.length > 0 || bpDiaData.length > 0) && (
+          <section className="health-section">
+            <div className="health-section-header">
+              <h3 className="health-section-title">Blood Pressure</h3>
+            </div>
+            <BPChart sysData={bpSysData} diaData={bpDiaData} />
+            <ChartLegend items={[
+              { color: '#f97316', label: 'Systolic' },
+              { color: '#06b6d4', label: 'Diastolic' },
+              { color: 'rgba(249,115,22,0.4)', label: '130 / 80 threshold' },
+            ]} />
+          </section>
+        )}
+
+        {/* Heart Rate */}
+        {hrData.length > 0 && (
+          <section className="health-section">
+            <div className="health-section-header">
+              <h3 className="health-section-title">Heart Rate</h3>
+            </div>
+            <LineChart
+              data={hrData} goal={null} completionDates={[]}
+              unit=" bpm" emptyMsg="No heart rate data." ariaLabel="Heart rate line chart"
+            />
+            <ChartLegend items={[{ color: 'var(--color-week)', label: 'Heart rate (bpm)' }]} />
+          </section>
+        )}
 
       </>)}
     </div>

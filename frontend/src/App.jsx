@@ -111,6 +111,7 @@ export default function App() {
     healthData,
     healthGoals,
     syncing: withinsSyncing,
+    syncError: withinsSyncError,
     handleSync: handleWithingsSync,
     handleDisconnect: handleWithingsDisconnect,
     handleSaveGoals: handleSaveWithingsGoals,
@@ -918,6 +919,7 @@ export default function App() {
           syncing={withinsSyncing}
           healthGoals={healthGoals}
           onSync={handleWithingsSync}
+          syncError={withinsSyncError}
           onDisconnect={handleWithingsDisconnect}
           onSaveGoals={handleSaveWithingsGoals}
           onClose={() => setShowWithingsSettings(false)}

@@ -137,4 +137,29 @@ def build_health_context(db: "Session", today: date) -> tuple[dict, str | None]:
             lines.append(f"  - Body fat: {val:.1f}%{date_note}")
         has_content = True
 
+    # Blood pressure — most recent reading with clinical context
+    if "bp_systolic" in recent_vals and "bp_diastolic" in recent_vals:
+        sys_val = int(recent_vals["bp_systolic"])
+        dia_val = int(recent_vals["bp_diastolic"])
+        mdate = recent_dates.get("bp_systolic", today_str)
+        date_note = f" (as of {mdate})" if mdate != today_str else ""
+        if sys_val >= 140 or dia_val >= 90:
+            status = " — Stage 2 high"
+        elif sys_val >= 130 or dia_val >= 80:
+            status = " — elevated"
+        elif sys_val < 90 or dia_val < 60:
+            status = " — low"
+        else:
+            status = ""
+        lines.append(f"  - Blood pressure: {sys_val}/{dia_val} mmHg{date_note}{status}")
+        has_content = True
+
+    # Heart rate — most recent reading
+    if "heart_rate" in recent_vals:
+        hr_val = int(recent_vals["heart_rate"])
+        mdate = recent_dates.get("heart_rate", today_str)
+        date_note = f" (as of {mdate})" if mdate != today_str else ""
+        lines.append(f"  - Heart rate: {hr_val} bpm{date_note}")
+        has_content = True
+
     return data, "\n".join(lines) if has_content else None

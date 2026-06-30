@@ -325,3 +325,44 @@
   stroke-linecap: round;
   pointer-events: none;
 }
+
+/* Blood pressure dual-line chart */
+.chart-line--systolic {
+  fill: none;
+  stroke: #f97316;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-line--diastolic {
+  fill: none;
+  stroke: #06b6d4;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-dot--systolic {
+  fill: #f97316;
+  stroke: none;
+}
+
+.chart-dot--diastolic {
+  fill: #06b6d4;
+  stroke: none;
+}
+
+.chart-bp-ref {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: 0.4;
+}
+
+.chart-bp-ref--sys {
+  stroke: #f97316;
+}
+
+.chart-bp-ref--dia {
+  stroke: #06b6d4;
+}

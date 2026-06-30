@@ -99,6 +99,7 @@ def _upsert_measurement(db: Session, date_str: str, metric: str, value: float) -
             value=value,
             synced_at=datetime.now(timezone.utc),
         ))
+        db.flush()  # make visible to subsequent queries in same transaction
 
 
 def _auto_check_habits(db: Session, today: date) -> None:
@@ -148,6 +149,35 @@ def _withings_get(creds_data: dict, path: str, params: dict) -> dict:
     return body.get("body", {})
 
 
+def _refresh_token(creds_data: dict, db: Session) -> dict:
+    """Exchange a refresh token for a new access token and persist it."""
+    resp = _requests.post(
+        "https://wbsapi.withings.net/v2/oauth2",
+        data={
+            "action": "requesttoken",
+            "grant_type": "refresh_token",
+            "client_id": WITHINGS_CLIENT_ID,
+            "client_secret": WITHINGS_SECRET,
+            "refresh_token": creds_data["refresh_token"],
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    if payload.get("status") != 0:
+        raise RuntimeError(f"Token refresh failed: status={payload.get('status')} {payload.get('error', '')}")
+    body = payload["body"]
+    new_creds = {
+        **creds_data,
+        "access_token": body["access_token"],
+        "refresh_token": body["refresh_token"],
+        "expires_in": body.get("expires_in", 10800),
+    }
+    db.merge(models.AppSetting(key="withings_credentials", value=json.dumps(new_creds)))
+    db.commit()
+    return new_creds
+
+
 def do_sync(db: Session) -> dict:
     """Fetch recent Withings data and upsert into withings_measurements.
     Returns a summary dict."""
@@ -160,9 +190,20 @@ def do_sync(db: Session) -> dict:
     except Exception:
         return {"ok": False, "error": "invalid_credentials"}
 
+    # Proactively refresh the access token before syncing.
+    # Withings tokens expire after ~3 hours; refresh ensures we always have a
+    # valid token. If refresh itself fails, the token has been revoked and the
+    # user must reconnect.
+    if WITHINGS_CLIENT_ID and WITHINGS_SECRET:
+        try:
+            creds_data = _refresh_token(creds_data, db)
+        except Exception as exc:
+            print(f"[withings] token refresh failed: {exc}", flush=True)
+            return {"ok": False, "error": "invalid_token"}
+
     today = date.today()
     start = today - timedelta(days=89)
-    synced = {"steps": 0, "fat_ratio": 0, "weight": 0}
+    synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0}
 
     # ── Steps (activity) ──────────────────────────────────────────────────────
     try:
@@ -184,18 +225,27 @@ def do_sync(db: Session) -> dict:
         body = _withings_get(creds_data, "measure", {
             "action": "getmeas",
             "startdate": int(datetime.combine(start, datetime.min.time()).timestamp()),
-            "enddate": int(datetime.combine(today, datetime.min.time()).timestamp()),
+            "enddate": int(datetime.combine(today + timedelta(days=1), datetime.min.time()).timestamp()),
         })
         for group in body.get("measuregrps", []):
             grp_date = date.fromtimestamp(group["date"]).isoformat()
             for measure in group.get("measures", []):
                 raw = measure["value"] * (10 ** measure["unit"])
-                if measure.get("type") == 6:  # FAT_RATIO
+                if measure.get("type") == 6:    # FAT_RATIO
                     _upsert_measurement(db, grp_date, "fat_ratio", round(raw, 2))
                     synced["fat_ratio"] += 1
                 elif measure.get("type") == 1:  # WEIGHT (kg)
                     _upsert_measurement(db, grp_date, "weight", round(raw, 2))
                     synced["weight"] += 1
+                elif measure.get("type") == 9:  # DIASTOLIC BP (mmHg)
+                    _upsert_measurement(db, grp_date, "bp_diastolic", round(raw, 1))
+                    synced["bp_diastolic"] += 1
+                elif measure.get("type") == 10: # SYSTOLIC BP (mmHg)
+                    _upsert_measurement(db, grp_date, "bp_systolic", round(raw, 1))
+                    synced["bp_systolic"] += 1
+                elif measure.get("type") == 11: # HEART RATE (bpm)
+                    _upsert_measurement(db, grp_date, "heart_rate", round(raw, 1))
+                    synced["heart_rate"] += 1
     except Exception as exc:
         print(f"[withings] measurements sync error: {exc}", flush=True)
 
