@@ -122,8 +122,22 @@ def delete_habit(habit_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+def _require_manual(habit_id: int, db: Session) -> models.Habit:
+    """Return the habit or raise if it is auto-tracked (Withings or experiment)."""
+    db_habit = db.query(models.Habit).filter(models.Habit.id == habit_id).first()
+    if not db_habit:
+        raise HTTPException(status_code=404, detail="Habit not found")
+    if db_habit.withings_metric or db_habit.name.startswith("🧪"):
+        raise HTTPException(
+            status_code=403,
+            detail="This habit is tracked automatically and cannot be checked manually.",
+        )
+    return db_habit
+
+
 @router.post("/api/habits/{habit_id}/check")
 def check_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
+    _require_manual(habit_id, db)
     today = local_date(request)
     today_str = today.isoformat()
     if not db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first():
@@ -136,6 +150,7 @@ def check_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/api/habits/{habit_id}/check")
 def uncheck_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
+    _require_manual(habit_id, db)
     today = local_date(request)
     today_str = today.isoformat()
     row = db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first()

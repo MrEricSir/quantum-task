@@ -114,21 +114,30 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
         <div className="habits-list">
           {visibleHabits.map((habit) => (
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
-              <button
-                type="button"
-                className={`habit-card-check${poppingId === habit.id ? ' habit-card-check--pop' : ''}`}
-                onClick={habit.withings_metric ? undefined : () => {
-                  setPoppingId(habit.id)
-                  clearTimeout(popTimer.current)
-                  popTimer.current = setTimeout(() => setPoppingId(null), 350)
-                  onToggle(habit)
-                }}
-                disabled={!!habit.withings_metric}
-                title={habit.withings_metric ? 'Synced automatically from Withings' : undefined}
-                aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
-              >
-                {habit.completed_today ? <CheckIcon width={13} height={13} /> : null}
-              </button>
+              {(() => {
+                const isAuto = !!habit.withings_metric || habit.name.startsWith('🧪')
+                return (
+                  <button
+                    type="button"
+                    className={`habit-card-check${poppingId === habit.id ? ' habit-card-check--pop' : ''}${isAuto && !habit.completed_today ? ' habit-card-check--auto' : ''}`}
+                    onClick={isAuto ? undefined : () => {
+                      setPoppingId(habit.id)
+                      clearTimeout(popTimer.current)
+                      popTimer.current = setTimeout(() => setPoppingId(null), 350)
+                      onToggle(habit)
+                    }}
+                    disabled={isAuto}
+                    title={isAuto ? 'Synced automatically from Withings' : undefined}
+                    aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
+                  >
+                    {habit.completed_today
+                      ? <CheckIcon width={13} height={13} />
+                      : isAuto
+                        ? <span className="habit-auto-icon">↻</span>
+                        : null}
+                  </button>
+                )
+              })()}
 
               <div className="habit-card-body">
                 {editingId === habit.id ? (

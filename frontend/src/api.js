@@ -365,6 +365,12 @@ export async function dismissHealthExperiment() {
   return res.json()
 }
 
+export async function fetchHealthExperiments() {
+  const res = await apiFetch('/api/health/experiments')
+  if (!res.ok) throw new Error('Failed to fetch experiment history')
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

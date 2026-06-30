@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments } from '../../api'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -355,15 +355,22 @@ function formatThreshold(factor, threshold) {
   return threshold
 }
 
-function CorrelationBar({ r, factor, outcome, n }) {
+function CorrelationBar({ r, p, factor, outcome, n }) {
   const abs = Math.abs(r)
   const positive = r >= 0
+  const sig = p != null && p < 0.05
+  const borderline = p != null && p >= 0.05 && p < 0.10
   return (
     <div className="corr-row">
       <div className="corr-labels">
         <span className="corr-factor">{factor}</span>
         <span className="corr-arrow">→</span>
         <span className="corr-outcome">{outcome}</span>
+        {p != null && (
+          <span className={`corr-p${sig ? ' corr-p--sig' : borderline ? ' corr-p--borderline' : ''}`}>
+            p={p < 0.001 ? '<0.001' : p.toFixed(3)}{sig ? ' ✓' : ''}
+          </span>
+        )}
       </div>
       <div className="corr-bar-wrap">
         <div className="corr-bar-track">
@@ -454,6 +461,74 @@ function ExperimentCard({ onDismiss }) {
   )
 }
 
+// ── Experiment history ────────────────────────────────────────────────────────
+
+function ExperimentsHistory({ isImperial }) {
+  const [history, setHistory] = useState(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    fetchHealthExperiments().then(setHistory).catch(() => setHistory([]))
+  }, [])
+
+  // Only show past (dismissed) experiments
+  const past = (history ?? []).filter(e => e.status === 'dismissed')
+  if (!past.length) return null
+
+  return (
+    <div className="exp-history">
+      <button className="corr-toggle" onClick={() => setOpen(v => !v)}>
+        {open ? 'Hide' : 'Show'} past experiments ({past.length})
+      </button>
+      {open && (
+        <div className="exp-history-list">
+          {past.map(exp => {
+            const hasDelta = exp.weight_delta != null || exp.fat_delta != null
+            const weekLabel = exp.week
+            return (
+              <div key={exp.id} className="exp-history-row">
+                <div className="exp-history-header">
+                  <span className="exp-history-week">{weekLabel}</span>
+                  {exp.habit_completion_rate != null && (
+                    <span className="exp-history-rate">
+                      {Math.round(exp.habit_completion_rate * 100)}% completion
+                    </span>
+                  )}
+                </div>
+                <p className="exp-history-action">{exp.action ?? exp.text}</p>
+                {hasDelta && (
+                  <div className="exp-history-outcome">
+                    {exp.weight_delta != null && (
+                      <span className="exp-history-metric">
+                        Weight: <strong>{fmtDelta(exp.weight_delta, 'kg/day', isImperial)}</strong>
+                        {exp.weight_baseline != null && (
+                          <span className="exp-history-baseline">
+                            {' '}(baseline {fmtDelta(exp.weight_baseline, 'kg/day', isImperial)})
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {exp.fat_delta != null && (
+                      <span className="exp-history-metric">
+                        Body fat: <strong>{fmtDelta(exp.fat_delta, '%/day', false)}</strong>
+                        {exp.fat_baseline != null && (
+                          <span className="exp-history-baseline">
+                            {' '}(baseline {fmtDelta(exp.fat_baseline, '%/day', false)})
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Analysis section (correlations + experiment) ──────────────────────────────
 
 function AnalysisSection({ isImperial }) {
@@ -480,6 +555,7 @@ function AnalysisSection({ isImperial }) {
       {/* Experiment subsection */}
       <div className="analysis-subsection">
         <ExperimentCard key={expKey} onDismiss={() => setExpKey(k => k + 1)} />
+        <ExperimentsHistory key={expKey} isImperial={isImperial} />
       </div>
 
       {/* Correlations subsection */}
@@ -509,7 +585,7 @@ function AnalysisSection({ isImperial }) {
                 {showCorr && (
                   <div className="corr-list">
                     {correlations.map((c, i) => (
-                      <CorrelationBar key={i} r={c.r} factor={c.factor} outcome={c.outcome} n={c.n} />
+                      <CorrelationBar key={i} r={c.r} p={c.p} factor={c.factor} outcome={c.outcome} n={c.n} />
                     ))}
                     <p className="corr-note">
                       Negative r = factor correlates with improvement · correlation ≠ causation
@@ -549,25 +625,32 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
     if (m.date === yesterdayStr) yesterdayVals[m.metric] = m.value
   }
 
-  const stepsData  = measurements.filter(m => m.metric === 'steps').slice(-range)
-  const fatData    = measurements.filter(m => m.metric === 'fat_ratio').slice(-range)
-  const weightData = measurements.filter(m => m.metric === 'weight').slice(-range)
-  const bpSysData  = measurements.filter(m => m.metric === 'bp_systolic').slice(-range)
-  const bpDiaData  = measurements.filter(m => m.metric === 'bp_diastolic').slice(-range)
-  const hrData     = measurements.filter(m => m.metric === 'heart_rate').slice(-range)
+  const stepsData      = measurements.filter(m => m.metric === 'steps').slice(-range)
+  const fatData        = measurements.filter(m => m.metric === 'fat_ratio').slice(-range)
+  const weightData     = measurements.filter(m => m.metric === 'weight').slice(-range)
+  const bpSysData      = measurements.filter(m => m.metric === 'bp_systolic').slice(-range)
+  const bpDiaData      = measurements.filter(m => m.metric === 'bp_diastolic').slice(-range)
+  const hrData         = measurements.filter(m => m.metric === 'heart_rate').slice(-range)
+  const sleepScoreData = measurements.filter(m => m.metric === 'sleep_score').slice(-range)
+  const sleepMinData   = measurements.filter(m => m.metric === 'sleep_minutes').slice(-range)
+  const spo2Data       = measurements.filter(m => m.metric === 'spo2').slice(-range)
 
   const stepsHabits  = habits.filter(h => h.withings_metric === 'steps'    && !h.archived)
   const fatHabits    = habits.filter(h => h.withings_metric === 'fat_ratio' && !h.archived)
   const weightHabits = habits.filter(h => h.withings_metric === 'weight'    && !h.archived)
 
-  // Most recent BP / HR (may predate today)
-  const _allSys = measurements.filter(m => m.metric === 'bp_systolic')
-  const _allDia = measurements.filter(m => m.metric === 'bp_diastolic')
-  const _allHR  = measurements.filter(m => m.metric === 'heart_rate')
-  const recentSys = _allSys.length ? _allSys[_allSys.length - 1] : null
-  const recentDia = _allDia.length ? _allDia[_allDia.length - 1] : null
-  const recentHR  = _allHR.length  ? _allHR[_allHR.length - 1]   : null
-  const recentBP  = recentSys && recentDia ? { sys: recentSys.value, dia: recentDia.value, date: recentSys.date } : null
+  // Most recent BP / HR / sleep / SpO2 (may predate today)
+  const _allSys   = measurements.filter(m => m.metric === 'bp_systolic')
+  const _allDia   = measurements.filter(m => m.metric === 'bp_diastolic')
+  const _allHR    = measurements.filter(m => m.metric === 'heart_rate')
+  const _allSleep = measurements.filter(m => m.metric === 'sleep_score')
+  const _allSpo2  = measurements.filter(m => m.metric === 'spo2')
+  const recentSys   = _allSys.length   ? _allSys[_allSys.length - 1]     : null
+  const recentDia   = _allDia.length   ? _allDia[_allDia.length - 1]     : null
+  const recentHR    = _allHR.length    ? _allHR[_allHR.length - 1]       : null
+  const recentSleep = _allSleep.length ? _allSleep[_allSleep.length - 1] : null
+  const recentSpo2  = _allSpo2.length  ? _allSpo2[_allSpo2.length - 1]  : null
+  const recentBP    = recentSys && recentDia ? { sys: recentSys.value, dia: recentDia.value, date: recentSys.date } : null
 
   const completions = (hs) => hs.flatMap(h => habitCompletions[String(h.id)] ?? [])
 
@@ -611,7 +694,7 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
       {showCharts && (<>
 
         {/* Today at a glance */}
-        {(todayVals.steps != null || todayVals.weight != null || todayVals.fat_ratio != null || recentBP != null || recentHR != null) && (
+        {(todayVals.steps != null || todayVals.weight != null || todayVals.fat_ratio != null || recentBP != null || recentHR != null || recentSleep != null || recentSpo2 != null) && (
           <div className="health-hero">
             <div className="health-hero-label">Today</div>
             <div className="health-hero-stats">
@@ -677,6 +760,34 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
                   <div className="health-hero-stat">
                     <div className="health-hero-value">{Math.round(recentHR.value)}</div>
                     <div className="health-hero-metric">bpm{dateNote}</div>
+                  </div>
+                )
+              })()}
+              {recentSleep && (() => {
+                const dateNote = recentSleep.date !== todayStr
+                  ? ` · ${new Date(recentSleep.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                  : ''
+                const score = Math.round(recentSleep.value)
+                const quality = score >= 85 ? 'Good' : score >= 70 ? 'Fair' : 'Poor'
+                return (
+                  <div className="health-hero-stat">
+                    <div className="health-hero-value">{score}</div>
+                    <div className="health-hero-metric">sleep score{dateNote}</div>
+                    <div className="health-hero-delta">{quality}</div>
+                  </div>
+                )
+              })()}
+              {recentSpo2 && (() => {
+                const dateNote = recentSpo2.date !== todayStr
+                  ? ` · ${new Date(recentSpo2.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                  : ''
+                const val = recentSpo2.value.toFixed(1)
+                const low = recentSpo2.value < 95
+                return (
+                  <div className="health-hero-stat">
+                    <div className="health-hero-value">{val}%</div>
+                    <div className="health-hero-metric">SpO₂{dateNote}</div>
+                    {low && <div className="health-hero-delta">Below normal</div>}
                   </div>
                 )
               })()}
@@ -766,6 +877,48 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
               unit=" bpm" emptyMsg="No heart rate data." ariaLabel="Heart rate line chart"
             />
             <ChartLegend items={[{ color: 'var(--color-week)', label: 'Heart rate (bpm)' }]} />
+          </section>
+        )}
+
+        {/* Sleep */}
+        {(sleepScoreData.length > 0 || sleepMinData.length > 0) && (
+          <section className="health-section">
+            <div className="health-section-header">
+              <h3 className="health-section-title">Sleep</h3>
+            </div>
+            {sleepScoreData.length > 0 && (<>
+              <p className="health-chart-sublabel">Sleep score</p>
+              <LineChart
+                data={sleepScoreData} goal={null} completionDates={[]}
+                unit="" emptyMsg="" ariaLabel="Sleep score line chart"
+              />
+            </>)}
+            {sleepMinData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: sleepScoreData.length > 0 ? '16px' : 0 }}>Sleep duration</p>
+              <LineChart
+                data={sleepMinData.map(d => ({ ...d, value: Math.round(d.value / 6) / 10 }))}
+                goal={null} completionDates={[]}
+                unit=" h" emptyMsg="" ariaLabel="Sleep duration line chart"
+              />
+            </>)}
+            <ChartLegend items={[
+              ...(sleepScoreData.length > 0 ? [{ color: 'var(--color-week)', label: 'Sleep score (0–100)' }] : []),
+              ...(sleepMinData.length > 0   ? [{ color: 'var(--color-week)', label: 'Sleep duration (hours)' }] : []),
+            ]} />
+          </section>
+        )}
+
+        {/* SpO2 */}
+        {spo2Data.length > 0 && (
+          <section className="health-section">
+            <div className="health-section-header">
+              <h3 className="health-section-title">Blood Oxygen (SpO₂)</h3>
+            </div>
+            <LineChart
+              data={spo2Data} goal={null} completionDates={[]}
+              unit="%" emptyMsg="No SpO2 data." ariaLabel="SpO2 line chart"
+            />
+            <ChartLegend items={[{ color: 'var(--color-week)', label: 'SpO2 (%)' }]} />
           </section>
         )}
 

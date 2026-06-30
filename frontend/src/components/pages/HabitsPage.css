@@ -119,15 +119,24 @@
   padding: 0;
 }
 
-.habit-card-check:hover {
+.habit-card-check:not(:disabled):hover {
   border-color: #a78bfa;
 }
 
 .habit-card-check:disabled {
   cursor: default;
 }
-.habit-card-check:disabled:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+
+.habit-card-check--auto {
+  border-color: rgba(255, 255, 255, 0.12);
+  border-style: dashed;
+}
+
+.habit-auto-icon {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+  line-height: 1;
+  display: block;
 }
 
 .habit-card--done .habit-card-check {

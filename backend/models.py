@@ -104,6 +104,31 @@ class HabitStreakDay(Base):
     streak   = Column(Integer, nullable=False)
 
 
+class HealthExperiment(Base):
+    """One row per weekly experiment — persisted for historical comparison."""
+    __tablename__ = "health_experiments"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    week       = Column(String, nullable=False)       # ISO week "2026-W26"
+    text       = Column(String, nullable=False)        # LLM description shown to user
+    hypothesis = Column(String, nullable=True)
+    action     = Column(String, nullable=True)         # specific daily action
+    needs_habit      = Column(Boolean, default=False)
+    habit_id         = Column(Integer, nullable=True)  # linked 🧪 habit (no FK — habit may be archived)
+    withings_metric  = Column(String, nullable=True)
+    withings_goal    = Column(Float, nullable=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    dismissed_at = Column(DateTime, nullable=True)
+    status      = Column(String, default="active")    # "active" | "dismissed"
+
+    # Outcome metrics — filled on dismiss
+    habit_completion_rate = Column(Float, nullable=True)  # 0–1 fraction of days checked
+    weight_delta    = Column(Float, nullable=True)   # kg/day during experiment week
+    fat_delta       = Column(Float, nullable=True)   # %/day during experiment week
+    weight_baseline = Column(Float, nullable=True)   # avg kg/day across prior weeks (control)
+    fat_baseline    = Column(Float, nullable=True)
+
+
 class WithingsMeasurement(Base):
     """One row per (date, metric) — upserted on each sync."""
     __tablename__ = "withings_measurements"

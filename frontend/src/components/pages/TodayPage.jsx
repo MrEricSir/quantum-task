@@ -307,16 +307,25 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     key={habit.id}
                     className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
                   >
-                    <button
-                      type="button"
-                      className="today-habit-check"
-                      onClick={habit.withings_metric ? undefined : () => onToggleHabit(habit)}
-                      disabled={!!habit.withings_metric}
-                      title={habit.withings_metric ? 'Synced automatically from Withings' : undefined}
-                      aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
-                    >
-                      {habit.completed_today && <CheckIcon width={11} height={11} />}
-                    </button>
+                    {(() => {
+                      const isAuto = !!habit.withings_metric || habit.name.startsWith('🧪')
+                      return (
+                        <button
+                          type="button"
+                          className={`today-habit-check${isAuto && !habit.completed_today ? ' today-habit-check--auto' : ''}`}
+                          onClick={isAuto ? undefined : () => onToggleHabit(habit)}
+                          disabled={isAuto}
+                          title={isAuto ? 'Synced automatically from Withings' : undefined}
+                          aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
+                        >
+                          {habit.completed_today
+                            ? <CheckIcon width={11} height={11} />
+                            : isAuto
+                              ? <span className="habit-auto-icon">↻</span>
+                              : null}
+                        </button>
+                      )
+                    })()}
                     <span className="today-habit-name">{habit.name}</span>
                     <MetricProgress habit={habit} todayMetrics={todayMetrics} isImperial={isImperial} />
                     {habit.tags.length > 0 && (

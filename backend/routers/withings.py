@@ -203,7 +203,7 @@ def do_sync(db: Session) -> dict:
 
     today = date.today()
     start = today - timedelta(days=89)
-    synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0}
+    synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0, "spo2": 0, "sleep_score": 0, "sleep_minutes": 0, "sleep_deep_minutes": 0}
 
     # ── Steps (activity) ──────────────────────────────────────────────────────
     try:
@@ -246,8 +246,37 @@ def do_sync(db: Session) -> dict:
                 elif measure.get("type") == 11: # HEART RATE (bpm)
                     _upsert_measurement(db, grp_date, "heart_rate", round(raw, 1))
                     synced["heart_rate"] += 1
+                elif measure.get("type") == 54: # SPO2 (%)
+                    _upsert_measurement(db, grp_date, "spo2", round(raw, 1))
+                    synced["spo2"] += 1
     except Exception as exc:
         print(f"[withings] measurements sync error: {exc}", flush=True)
+
+    # ── Sleep summary ─────────────────────────────────────────────────────────
+    # Requires USER_SLEEP_EVENTS scope; silently skipped if not granted.
+    try:
+        body = _withings_get(creds_data, "v2/sleep", {
+            "action": "getsummary",
+            "startdateymd": start.isoformat(),
+            "enddateymd": today.isoformat(),
+            "data_fields": "sleep_score,total_sleep_time,deep_sleep_duration",
+        })
+        for item in body.get("series", []):
+            d = item.get("date")
+            if not d:
+                continue
+            data = item.get("data", {})
+            if data.get("sleep_score") is not None:
+                _upsert_measurement(db, d, "sleep_score", float(data["sleep_score"]))
+                synced["sleep_score"] += 1
+            if data.get("total_sleep_time") is not None:
+                _upsert_measurement(db, d, "sleep_minutes", round(float(data["total_sleep_time"]), 0))
+                synced["sleep_minutes"] += 1
+            if data.get("deep_sleep_duration") is not None:
+                _upsert_measurement(db, d, "sleep_deep_minutes", round(float(data["deep_sleep_duration"]), 0))
+                synced["sleep_deep_minutes"] += 1
+    except Exception as exc:
+        print(f"[withings] sleep sync error: {exc}", flush=True)
 
     db.commit()
     _auto_check_habits(db, today)
@@ -284,7 +313,7 @@ def withings_auth_url():
         client_id=WITHINGS_CLIENT_ID,
         consumer_secret=WITHINGS_SECRET,
         callback_uri=WITHINGS_CALLBACK_URI,
-        scope=(AuthScope.USER_METRICS, AuthScope.USER_ACTIVITY),
+        scope=(AuthScope.USER_METRICS, AuthScope.USER_ACTIVITY, AuthScope.USER_SLEEP_EVENTS),
     )
     return {"url": auth.get_authorize_url()}
 

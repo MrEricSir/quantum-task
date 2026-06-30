@@ -191,15 +191,17 @@
   border-color: #7c3aed;
 }
 
-.today-habit-check:hover {
+.today-habit-check:not(:disabled):hover {
   border-color: #7c3aed;
 }
 
 .today-habit-check:disabled {
   cursor: default;
 }
-.today-habit-check:disabled:hover {
-  border-color: var(--border);
+
+.today-habit-check--auto {
+  border-color: rgba(255, 255, 255, 0.1);
+  border-style: dashed;
 }
 
 .today-habit-name {
