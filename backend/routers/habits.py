@@ -31,6 +31,12 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         for i in range(7)
     ]
 
+    is_experiment = (
+        db.query(models.HealthExperiment)
+        .filter_by(habit_id=habit.id, status="active")
+        .first()
+    ) is not None
+
     return schemas.Habit(
         id=habit.id,
         name=habit.name,
@@ -41,6 +47,7 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         recent_completions=recent_completions,
         withings_metric=habit.withings_metric,
         withings_goal=habit.withings_goal,
+        is_experiment=is_experiment,
     )
 
 
@@ -123,11 +130,21 @@ def delete_habit(habit_id: int, db: Session = Depends(get_db)):
 
 
 def _require_manual(habit_id: int, db: Session) -> models.Habit:
-    """Return the habit or raise if it is auto-tracked (Withings or experiment)."""
+    """Return the habit or raise if it is auto-tracked (Withings or active experiment)."""
     db_habit = db.query(models.Habit).filter(models.Habit.id == habit_id).first()
     if not db_habit:
         raise HTTPException(status_code=404, detail="Habit not found")
-    if db_habit.withings_metric or db_habit.name.startswith("🧪"):
+    if db_habit.withings_metric:
+        raise HTTPException(
+            status_code=403,
+            detail="This habit is tracked automatically and cannot be checked manually.",
+        )
+    active_experiment = (
+        db.query(models.HealthExperiment)
+        .filter_by(habit_id=habit_id, status="active")
+        .first()
+    )
+    if active_experiment:
         raise HTTPException(
             status_code=403,
             detail="This habit is tracked automatically and cannot be checked manually.",

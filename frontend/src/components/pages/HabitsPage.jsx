@@ -115,7 +115,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
           {visibleHabits.map((habit) => (
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
               {(() => {
-                const isAuto = !!habit.withings_metric || habit.name.startsWith('🧪')
+                const isAuto = !!habit.withings_metric || !!habit.is_experiment
                 return (
                   <button
                     type="button"

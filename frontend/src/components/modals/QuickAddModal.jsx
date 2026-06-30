@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { parseBulkCards } from '../../api'
+import { parseBulkCards, localDateTime } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
 import './QuickAddModal.css'
@@ -152,7 +152,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
       } else if (detectedType === 'habit') {
         await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else if (detectedType === 'food') {
-        await onSaveFood({ raw_input: text })
+        await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
       } else {
         await onSaveTask(buildCardPayload())
       }
@@ -256,7 +256,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         } else if (item.type === 'habit') {
           await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
         } else if (item.type === 'food') {
-          await onSaveFood({ raw_input: item.source_text || item.title || text })
+          await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
         } else {
           await onSaveTask({
             title: item.title,

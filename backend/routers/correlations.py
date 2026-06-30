@@ -98,6 +98,15 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
         if d >= start_str:
             cards_done_by_date[d] = cards_done_by_date.get(d, 0) + 1
 
+    # Food quality: collect per-day quality scores to weekly-bin later
+    food_quality_by_date: dict[str, list[float]] = {}
+    for entry in db.query(models.FoodEntry).filter(
+        models.FoodEntry.quality.isnot(None),
+    ).all():
+        d_str = str(entry.consumed_at)[:10]
+        if d_str >= start_str:
+            food_quality_by_date.setdefault(d_str, []).append(float(entry.quality))
+
     # Weekly binning
     week_vals: dict[str, dict[str, list[float]]] = {}
     for d, metrics in by_date.items():
@@ -120,6 +129,11 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
         wk = _isoweek(d)
         week_cards[wk] = week_cards.get(wk, 0) + cnt
 
+    week_food_quality: dict[str, list[float]] = {}
+    for d, scores in food_quality_by_date.items():
+        wk = _isoweek(d)
+        week_food_quality.setdefault(wk, []).extend(scores)
+
     def build_obs(outcome_metric: str) -> list[dict]:
         weeks = sorted(wk for wk, avgs in week_avgs.items() if outcome_metric in avgs)
         rows = []
@@ -135,19 +149,21 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
                 week_completions.get(curr_wk, 0) / (7 * active_habit_count)
                 if active_habit_count > 0 else None
             )
+            fq = week_food_quality.get(curr_wk)
             rows.append({
-                "date":            curr_wk,
-                "delta_per_day":   delta_per_day,
-                "avg_steps":       week_avgs[curr_wk].get("steps"),
-                "avg_hr":          week_avgs[curr_wk].get("heart_rate"),
-                "habit_rate":      habit_rate,
-                "cards_done":      week_cards.get(curr_wk) or None,
-                "avg_sleep_score": week_avgs[curr_wk].get("sleep_score"),
-                "avg_sleep_hours": (
+                "date":             curr_wk,
+                "delta_per_day":    delta_per_day,
+                "avg_steps":        week_avgs[curr_wk].get("steps"),
+                "avg_hr":           week_avgs[curr_wk].get("heart_rate"),
+                "habit_rate":       habit_rate,
+                "cards_done":       week_cards.get(curr_wk) or None,
+                "avg_sleep_score":  week_avgs[curr_wk].get("sleep_score"),
+                "avg_sleep_hours":  (
                     week_avgs[curr_wk]["sleep_minutes"] / 60
                     if week_avgs[curr_wk].get("sleep_minutes") is not None else None
                 ),
-                "avg_spo2":        week_avgs[curr_wk].get("spo2"),
+                "avg_spo2":         week_avgs[curr_wk].get("spo2"),
+                "avg_food_quality": sum(fq) / len(fq) if fq else None,
             })
         return rows
 
@@ -157,13 +173,14 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
 # ── Correlation + segment computation ────────────────────────────────────────
 
 FACTORS = [
-    ("avg_steps",       "Daily steps"),
-    ("avg_hr",          "Resting heart rate"),
-    ("avg_sleep_score", "Sleep score"),
-    ("avg_sleep_hours", "Sleep duration"),
-    ("avg_spo2",        "Blood oxygen (SpO2)"),
-    ("habit_rate",      "Habit completion rate"),
-    ("cards_done",      "Tasks completed"),
+    ("avg_steps",        "Daily steps"),
+    ("avg_hr",           "Resting heart rate"),
+    ("avg_sleep_score",  "Sleep score"),
+    ("avg_sleep_hours",  "Sleep duration"),
+    ("avg_spo2",         "Blood oxygen (SpO2)"),
+    ("avg_food_quality", "Diet quality"),
+    ("habit_rate",       "Habit completion rate"),
+    ("cards_done",       "Tasks completed"),
 ]
 
 

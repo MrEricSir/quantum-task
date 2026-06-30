@@ -10,6 +10,15 @@ function localDate() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// Returns a local datetime string without timezone suffix, e.g. "2026-06-15T23:00:00".
+// Use this instead of new Date().toISOString() when the value will be stored as a
+// naive datetime and filtered/displayed by local date — e.g. food log consumed_at.
+export function localDateTime() {
+  const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 function apiFetch(url, opts = {}) {
   const headers = { 'X-Local-Date': localDate(), ...opts.headers }
   return fetch(url, { ...opts, headers })

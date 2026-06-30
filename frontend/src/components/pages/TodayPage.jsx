@@ -308,7 +308,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
                   >
                     {(() => {
-                      const isAuto = !!habit.withings_metric || habit.name.startsWith('🧪')
+                      const isAuto = !!habit.withings_metric || !!habit.is_experiment
                       return (
                         <button
                           type="button"

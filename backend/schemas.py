@@ -115,6 +115,7 @@ class Habit(BaseModel):
     recent_completions: List[bool] = []
     withings_metric: Optional[str] = None
     withings_goal: Optional[float] = None
+    is_experiment: bool = False  # linked to an active HealthExperiment
 
     model_config = {"from_attributes": True}
 

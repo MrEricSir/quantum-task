@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime } from '../../api'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -443,7 +443,7 @@ function ExperimentCard({ onDismiss }) {
           {exp.hypothesis}
         </p>
       )}
-      {exp.needs_habit && exp.habit_id && (
+      {exp.needs_habit && exp.habit_id && !exp.withings_metric && (
         <p className="experiment-habit-note">
           A tracking habit has been created for you — check it off each day you complete the experiment.
         </p>
@@ -631,7 +631,7 @@ function FoodLog() {
     if (!input.trim() || saving) return
     setSaving(true)
     try {
-      await createFoodEntry({ raw_input: input.trim() })
+      await createFoodEntry({ raw_input: input.trim(), consumed_at: localDateTime() })
       setInput('')
       await load(date)
     } catch {
@@ -762,9 +762,10 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
   const bpSysData      = measurements.filter(m => m.metric === 'bp_systolic').slice(-range)
   const bpDiaData      = measurements.filter(m => m.metric === 'bp_diastolic').slice(-range)
   const hrData         = measurements.filter(m => m.metric === 'heart_rate').slice(-range)
-  const sleepScoreData = measurements.filter(m => m.metric === 'sleep_score').slice(-range)
-  const sleepMinData   = measurements.filter(m => m.metric === 'sleep_minutes').slice(-range)
-  const spo2Data       = measurements.filter(m => m.metric === 'spo2').slice(-range)
+  const sleepScoreData    = measurements.filter(m => m.metric === 'sleep_score').slice(-range)
+  const sleepMinData      = measurements.filter(m => m.metric === 'sleep_minutes').slice(-range)
+  const sleepDeepMinData  = measurements.filter(m => m.metric === 'sleep_deep_minutes').slice(-range)
+  const spo2Data          = measurements.filter(m => m.metric === 'spo2').slice(-range)
 
   const stepsHabits  = habits.filter(h => h.withings_metric === 'steps'    && !h.archived)
   const fatHabits    = habits.filter(h => h.withings_metric === 'fat_ratio' && !h.archived)
@@ -1015,7 +1016,7 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
         )}
 
         {/* Sleep */}
-        {(sleepScoreData.length > 0 || sleepMinData.length > 0) && (
+        {(sleepScoreData.length > 0 || sleepMinData.length > 0 || sleepDeepMinData.length > 0) && (
           <section className="health-section">
             <div className="health-section-header">
               <h3 className="health-section-title">Sleep</h3>
@@ -1028,16 +1029,25 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
               />
             </>)}
             {sleepMinData.length > 0 && (<>
-              <p className="health-chart-sublabel" style={{ marginTop: sleepScoreData.length > 0 ? '16px' : 0 }}>Sleep duration</p>
+              <p className="health-chart-sublabel" style={{ marginTop: sleepScoreData.length > 0 ? '16px' : 0 }}>Total sleep</p>
               <LineChart
-                data={sleepMinData.map(d => ({ ...d, value: Math.round(d.value / 6) / 10 }))}
+                data={sleepMinData.map(d => ({ ...d, value: d.value / 60 }))}
                 goal={null} completionDates={[]}
                 unit=" h" emptyMsg="" ariaLabel="Sleep duration line chart"
               />
             </>)}
+            {sleepDeepMinData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Deep sleep</p>
+              <LineChart
+                data={sleepDeepMinData.map(d => ({ ...d, value: d.value / 60 }))}
+                goal={null} completionDates={[]}
+                unit=" h" emptyMsg="" ariaLabel="Deep sleep duration line chart"
+              />
+            </>)}
             <ChartLegend items={[
-              ...(sleepScoreData.length > 0 ? [{ color: 'var(--color-week)', label: 'Sleep score (0–100)' }] : []),
-              ...(sleepMinData.length > 0   ? [{ color: 'var(--color-week)', label: 'Sleep duration (hours)' }] : []),
+              ...(sleepScoreData.length > 0    ? [{ color: 'var(--color-week)', label: 'Sleep score (0–100)' }] : []),
+              ...(sleepMinData.length > 0      ? [{ color: 'var(--color-week)', label: 'Total sleep (hours)' }] : []),
+              ...(sleepDeepMinData.length > 0  ? [{ color: 'var(--color-week)', label: 'Deep sleep (hours)' }] : []),
             ]} />
           </section>
         )}

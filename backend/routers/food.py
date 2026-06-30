@@ -7,7 +7,7 @@ DELETE /api/food/{id}       – remove an entry
 """
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Request
@@ -131,17 +131,14 @@ def get_food_entries(request: Request, date_str: str = None, db: Session = Depen
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid date format")
 
-    # Match on date portion of consumed_at (stored as UTC; close enough for same-day queries)
-    entries = (
+    next_day = d + timedelta(days=1)
+    result = (
         db.query(models.FoodEntry)
+        .filter(models.FoodEntry.consumed_at >= d.isoformat(),
+                models.FoodEntry.consumed_at <  next_day.isoformat())
+        .order_by(models.FoodEntry.consumed_at)
         .all()
     )
-    # Filter in Python to handle datetime comparison portably across SQLite
-    result = [
-        e for e in entries
-        if e.consumed_at.date() == d
-    ]
-    result.sort(key=lambda e: e.consumed_at)
     return [_entry_dict(e) for e in result]
 
 
