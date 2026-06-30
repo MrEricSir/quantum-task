@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments } from '../../api'
+import { useState, useEffect, useRef } from 'react'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry } from '../../api'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -601,6 +601,137 @@ function AnalysisSection({ isImperial }) {
   )
 }
 
+// ── Food log ──────────────────────────────────────────────────────────────────
+
+const MEAL_ICONS = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎', drink: '☕' }
+const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack', 'drink']
+
+function qualityColor(q) {
+  if (q == null) return 'var(--text-muted)'
+  if (q >= 7) return '#22c55e'
+  if (q >= 4) return '#f59e0b'
+  return '#ef4444'
+}
+
+function FoodLog() {
+  const [entries, setEntries] = useState([])
+  const [input, setInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  })
+  const inputRef = useRef(null)
+
+  const load = (d) => fetchFoodEntries(d).then(setEntries).catch(() => {})
+
+  useEffect(() => { load(date) }, [date])
+
+  const handleAdd = async () => {
+    if (!input.trim() || saving) return
+    setSaving(true)
+    try {
+      await createFoodEntry({ raw_input: input.trim() })
+      setInput('')
+      await load(date)
+    } catch {
+      // keep input
+    } finally {
+      setSaving(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  const handleDelete = async (id) => {
+    await deleteFoodEntry(id).catch(() => {})
+    setEntries(prev => prev.filter(e => e.id !== id))
+  }
+
+  // Group by meal_type in meal order, then unrecognised
+  const grouped = MEAL_ORDER.reduce((acc, mt) => {
+    const items = entries.filter(e => e.meal_type === mt)
+    if (items.length) acc.push({ meal_type: mt, items })
+    return acc
+  }, [])
+  const otherMeals = new Set(entries.map(e => e.meal_type).filter(mt => !MEAL_ORDER.includes(mt)))
+  otherMeals.forEach(mt => {
+    const items = entries.filter(e => e.meal_type === mt)
+    if (items.length) grouped.push({ meal_type: mt, items })
+  })
+
+  return (
+    <section className="health-section">
+      <div className="health-section-header">
+        <h3 className="health-section-title">Food Log</h3>
+        <input
+          type="date"
+          className="food-date-picker"
+          value={date}
+          onChange={e => setDate(e.target.value)}
+        />
+      </div>
+
+      <div className="food-input-row">
+        <input
+          ref={inputRef}
+          type="text"
+          className="food-input"
+          placeholder="I ate a donut · just had coffee · chicken salad for lunch…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          disabled={saving}
+        />
+        <button
+          className="food-add-btn"
+          onClick={handleAdd}
+          disabled={!input.trim() || saving}
+        >
+          {saving ? '…' : 'Log'}
+        </button>
+      </div>
+
+      {grouped.length === 0 && (
+        <p className="food-empty">Nothing logged yet for this day.</p>
+      )}
+
+      {grouped.map(({ meal_type, items }) => (
+        <div key={meal_type} className="food-group">
+          <div className="food-group-label">
+            {MEAL_ICONS[meal_type] ?? '🍽'} {meal_type}
+          </div>
+          {items.map(entry => {
+            const time = new Date(entry.consumed_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+            return (
+              <div key={entry.id} className="food-entry">
+                <span className="food-entry-time">{time}</span>
+                <span className="food-entry-name">{entry.name}</span>
+                {entry.quality != null && (
+                  <span
+                    className="food-entry-quality"
+                    style={{ color: qualityColor(entry.quality) }}
+                    title={`Quality score: ${entry.quality}/10`}
+                  >
+                    {entry.quality}/10
+                  </span>
+                )}
+                {entry.notes && (
+                  <span className="food-entry-notes">{entry.notes}</span>
+                )}
+                <button
+                  className="food-entry-delete"
+                  onClick={() => handleDelete(entry.id)}
+                  aria-label="Remove"
+                >✕</button>
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </section>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, onOpenSettings, isImperial = false }) {
@@ -794,6 +925,9 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
             </div>
           </div>
         )}
+
+        {/* Food log */}
+        <FoodLog />
 
         {/* Steps */}
         <section className="health-section">

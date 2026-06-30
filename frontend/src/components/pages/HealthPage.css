@@ -590,6 +590,183 @@
   opacity: 1;
 }
 
+/* ── Food log ── */
+
+.food-date-picker {
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.food-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.food-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.food-input:focus {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.food-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.food-add-btn {
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.food-add-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.food-add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.food-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 20px 0;
+  opacity: 0.6;
+  margin: 0;
+}
+
+.food-group {
+  margin-bottom: 14px;
+}
+
+.food-group:last-child {
+  margin-bottom: 0;
+}
+
+.food-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.food-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  flex-wrap: wrap;
+}
+
+.food-entry:last-child {
+  border-bottom: none;
+}
+
+.food-entry-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+  min-width: 44px;
+}
+
+.food-entry-name {
+  font-size: 13px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.food-entry-quality {
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.food-entry-notes {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 100%;
+  padding-left: 52px;
+  opacity: 0.7;
+  line-height: 1.4;
+}
+
+.food-entry-delete {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.food-entry:hover .food-entry-delete {
+  opacity: 0.5;
+}
+
+.food-entry-delete:hover {
+  opacity: 1 !important;
+}
+
+/* Quick add food preview */
+.quick-food-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.quick-food-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.quick-food-text {
+  font-size: 14px;
+  color: var(--text);
+}
+
 /* ── Analysis section ── */
 
 .analysis-section {

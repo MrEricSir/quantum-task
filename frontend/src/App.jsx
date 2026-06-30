@@ -47,6 +47,7 @@ import {
   parseCard,
   checkAuth, logout,
   syncEngineering, fetchEngineeringItems,
+  createFoodEntry,
 } from './api'
 import './App.css'
 
@@ -962,6 +963,7 @@ export default function App() {
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
+          onSaveFood={createFoodEntry}
           isImperial={isImperial}
           initialText={quickAddInitialText}
         />

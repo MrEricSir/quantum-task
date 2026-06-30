@@ -371,6 +371,28 @@ export async function fetchHealthExperiments() {
   return res.json()
 }
 
+export async function createFoodEntry(data) {
+  const res = await apiFetch('/api/food', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to log food entry')
+  return res.json()
+}
+
+export async function fetchFoodEntries(date) {
+  const url = date ? `/api/food?date_str=${date}` : '/api/food'
+  const res = await apiFetch(url)
+  if (!res.ok) throw new Error('Failed to fetch food log')
+  return res.json()
+}
+
+export async function deleteFoodEntry(id) {
+  const res = await apiFetch(`/api/food/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete food entry')
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

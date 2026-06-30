@@ -36,7 +36,7 @@ Reference dates:
 {tags_section}
 
 Fields:
-  type          — "task" | "habit" | "goal"
+  type          — "task" | "habit" | "goal" | "food"
                   task  = a discrete, completable item with a clear done state
                           (e.g. "send Bob the report", "dentist appointment", "buy groceries")
                   habit = something you do repeatedly on an ongoing, indefinite basis with
@@ -46,6 +46,10 @@ Fields:
                           Use when the input explicitly says "set/change/update my X goal to Y"
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
                           Always set withings_metric and withings_goal when type="goal"
+                  food  = logging something eaten or drunk, right now or very recently
+                          (e.g. "I ate a donut", "just had coffee", "about to drink green tea",
+                          "had a chicken salad for lunch", "drinking a beer")
+                          When type is "food", set title to the food/drink name only
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;

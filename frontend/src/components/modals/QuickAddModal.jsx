@@ -18,7 +18,7 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal' }
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log' }
 
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
 
@@ -35,7 +35,7 @@ function formatGoalDisplay(metric, goal, isImperial) {
   return String(goal)
 }
 
-export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, isImperial = false, initialText = '' }) {
+export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, onSaveFood, isImperial = false, initialText = '' }) {
   // ── Input step ──
   const [text, setText] = useState(initialText)
   const [parsing, setParsing] = useState(false)
@@ -151,6 +151,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         await onSaveGoals({ [withingsMetric]: withingsGoal })
       } else if (detectedType === 'habit') {
         await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
+      } else if (detectedType === 'food') {
+        await onSaveFood({ raw_input: text })
       } else {
         await onSaveTask(buildCardPayload())
       }
@@ -253,6 +255,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
         } else if (item.type === 'habit') {
           await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
+        } else if (item.type === 'food') {
+          await onSaveFood({ raw_input: item.source_text || item.title || text })
         } else {
           await onSaveTask({
             title: item.title,
@@ -275,7 +279,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const confirmDisabled = saving || (
     detectedType === 'goal'
       ? (!withingsMetric || withingsGoal == null)
-      : !title.trim()
+      : detectedType === 'food'
+        ? !text.trim()
+        : !title.trim()
   )
 
   const renderCardFields = (idPrefix) => (
@@ -472,21 +478,23 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
             </div>
           )}
 
-          <div className="quick-type-row">
-            <span className="quick-type-label">Detected as</span>
-            <div className="quick-type-tabs">
-              {(detectedType === 'goal' ? ['goal'] : ['task', 'habit']).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`quick-type-tab${detectedType === t ? ' quick-type-tab--active' : ''}`}
-                  onClick={() => t !== 'goal' && setDetectedType(t)}
-                >
-                  {TYPE_LABELS[t]}
-                </button>
-              ))}
+          {detectedType !== 'food' && (
+            <div className="quick-type-row">
+              <span className="quick-type-label">Detected as</span>
+              <div className="quick-type-tabs">
+                {(detectedType === 'goal' ? ['goal'] : ['task', 'habit']).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`quick-type-tab${detectedType === t ? ' quick-type-tab--active' : ''}`}
+                    onClick={() => t !== 'goal' && setDetectedType(t)}
+                  >
+                    {TYPE_LABELS[t]}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {detectedType === 'task' && renderCardFields('qa')}
 
@@ -510,10 +518,17 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
             </div>
           )}
 
+          {detectedType === 'food' && (
+            <div className="quick-food-preview">
+              <span className="quick-food-icon">🍽</span>
+              <span className="quick-food-text">{title || text}</span>
+            </div>
+          )}
+
           <div className="modal-footer">
             <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
             <button className="btn-save" onClick={handleConfirm} disabled={confirmDisabled}>
-              {saving ? 'Saving…' : detectedType === 'goal' ? 'Set Goal' : `Add ${TYPE_LABELS[detectedType]}`}
+              {saving ? 'Saving…' : detectedType === 'goal' ? 'Set Goal' : detectedType === 'food' ? 'Log Food' : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
           </div>
         </>
