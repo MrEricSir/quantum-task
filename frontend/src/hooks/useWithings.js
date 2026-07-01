@@ -32,8 +32,10 @@ export function useWithings({ authed }) {
     const handler = (event) => {
       if (event.origin !== window.location.origin) return
       if (event.data?.type === 'withings-connected') {
-        loadStatus()
-        loadHealthData()
+        // Trigger a sync immediately so data appears without a manual step
+        syncWithings()
+          .then(() => { loadStatus(); loadHealthData() })
+          .catch(() => { loadStatus(); loadHealthData() })
       }
     }
     window.addEventListener('message', handler)

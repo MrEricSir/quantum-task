@@ -262,8 +262,8 @@ export default function App() {
         }
         window.close()
       } else {
-        reloadWithingsStatus()
-        reloadWithingsHealthData()
+        // No opener (cross-origin nav cleared it) — sync then reload in this tab
+        handleWithingsSync()
       }
       navigate('/board', { replace: true })
     } else if (result === 'error') {

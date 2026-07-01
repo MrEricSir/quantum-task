@@ -366,10 +366,9 @@ def withings_callback(code: str, db: Session = Depends(get_db)):
             expires_in=int(body.get("expires_in", 10800)),
         )
         _save_credentials(db, creds)
-        try:
-            do_sync(db)
-        except Exception:
-            traceback.print_exc()
+        # Do NOT call do_sync here — it makes 4 sequential Withings API calls
+        # and can exceed Cloud Run's request timeout, killing the redirect response.
+        # The frontend triggers a sync automatically after detecting ?withings=connected.
     except Exception as exc:
         traceback.print_exc()
         print(f"[withings] callback error: {exc}")
