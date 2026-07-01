@@ -27,19 +27,15 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
   const handleConnect = async () => {
     setConnecting(true)
     setError('')
-    // Open a blank tab synchronously while we still have the user gesture —
-    // browsers block window.open() called after an await as a popup.
-    const tab = window.open('', '_blank')
     try {
       const { url } = await fetchWithingsAuthUrl()
-      if (tab) {
-        tab.location.href = url
-      }
+      // Navigate the current tab directly — popup/new-tab approaches fail in modern
+      // browsers when Withings redirects back cross-origin. The ?withings=connected
+      // handler in App.jsx works fine without window.opener.
+      window.location.href = url
     } catch (e) {
-      if (tab) tab.close()
-      setError(e.message || 'Could not get Withings auth URL. Check that WITHINGS_CLIENT_ID and WITHINGS_SECRET are set.')
-    } finally {
       setConnecting(false)
+      setError(e.message || 'Could not get Withings auth URL. Check that WITHINGS_CLIENT_ID and WITHINGS_SECRET are set.')
     }
   }
 
@@ -96,8 +92,8 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
       </p>
 
       <div className="withings-settings-note">
-        After clicking <strong>Connect</strong>, authorise in the new tab. Once done,
-        return here and click <strong>Sync now</strong> to load your data.
+        Clicking <strong>Connect</strong> will take you to Withings to authorise.
+        You'll be redirected back automatically when done.
       </div>
 
       {error && <p className="withings-settings-error">{error}</p>}

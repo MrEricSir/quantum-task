@@ -205,12 +205,32 @@ _gcp_prereqs() {
 # Requires $IMAGE and $GCP_PROJECT_ID to be set.
 _build_and_push() {
   local primary="$1"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  local tarball="$tmpdir/source.tar.gz"
+
+  echo "==> Packaging source (working tree, including uncommitted changes)..."
+  # Use tar directly so uncommitted changes are always included.
+  # gcloud builds submit uses git-aware file enumeration which skips modified
+  # but uncommitted files. Submitting an explicit tarball bypasses that.
+  tar czf "$tarball" \
+    --exclude=".git" \
+    --exclude="frontend/node_modules" \
+    --exclude="frontend/dist" \
+    --exclude="backend/venv" \
+    --exclude="backend/__pycache__" \
+    --exclude="**/*.pyc" \
+    --exclude=".gcp-config" \
+    --exclude=".github-actions-sa-key.json" \
+    -C "$SCRIPT_DIR" .
 
   echo "==> Building and pushing image via Cloud Build ($primary)..."
-  gcloud builds submit "$SCRIPT_DIR" \
+  gcloud builds submit "$tarball" \
     --tag "$IMAGE:$primary" \
     --project "$GCP_PROJECT_ID" \
     --quiet
+
+  rm -rf "$tmpdir"
 
   for t in "${@:2}"; do
     gcloud artifacts docker tags add \
@@ -373,6 +393,27 @@ gcp_deploy() {
     --format 'value(status.url)'
 }
 
+gcp_logs() {
+  _check_gcp_auth
+  _load_gcp_config
+
+  local LIMIT="${2:-100}"
+  local FILTER="${3:-}"
+
+  echo "==> Fetching last $LIMIT log lines for $GCP_SERVICE_NAME..."
+  if [[ -n "$FILTER" ]]; then
+    gcloud run services logs read "$GCP_SERVICE_NAME" \
+      --region "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --limit "$LIMIT" | grep -i "$FILTER"
+  else
+    gcloud run services logs read "$GCP_SERVICE_NAME" \
+      --region "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --limit "$LIMIT"
+  fi
+}
+
 gcp_update_env() {
   _check_gcp_auth
   _load_gcp_config
@@ -404,6 +445,7 @@ case "${1:-}" in
   gcp-setup)      gcp_setup ;;
   gcp-deploy)     gcp_deploy ;;
   gcp-update-env) gcp_update_env ;;
+  gcp-logs)       gcp_logs "$@" ;;
   *)
     echo "Usage: ./dev.sh <command>"
     echo ""
@@ -421,6 +463,7 @@ case "${1:-}" in
     echo "  gcp-setup       One-time GCP infrastructure setup + initial deploy"
     echo "  gcp-deploy      Build and deploy manually"
     echo "  gcp-update-env  Push updated env vars from .gcp-config to Cloud Run"
+    echo "  gcp-logs [N] [grep]  Fetch last N log lines (default 100), optionally grepped"
     exit 1
     ;;
 esac

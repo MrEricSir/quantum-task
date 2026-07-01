@@ -112,6 +112,13 @@ async function mockAPIs(page) {
 
   await page.route('**/api/insights', r => r.fulfill({ json: [] }))
 
+  await page.route('**/api/withings/status', r =>
+    r.fulfill({ json: { connected: false, last_synced: null } }))
+  await page.route('**/api/withings/goals', r =>
+    r.fulfill({ json: { steps: null, fat_ratio: null, weight: null } }))
+  await page.route('**/api/withings/health-data**', r =>
+    r.fulfill({ json: { measurements: [], habit_completions: {} } }))
+
   // Briefing SSE: send weather + text then close
   await page.route('**/api/briefing**', r =>
     r.fulfill({
@@ -492,6 +499,14 @@ test.describe('settings modals', () => {
     await page.getByRole('menuitem', { name: /calendar/i }).click()
     await expect(page.getByText(/export tasks as ical/i)).toBeVisible()
     await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
+  })
+
+  test('withings settings opens with heading and Connect button when not connected', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /withings/i }).click()
+    await expect(page.getByRole('heading', { name: 'Withings' })).toBeVisible()
+    await expect(page.getByText(/not connected/i)).toBeVisible()
+    await expect(page.getByRole('button', { name: /connect withings/i })).toBeVisible()
   })
 })
 

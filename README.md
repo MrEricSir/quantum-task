@@ -53,6 +53,11 @@ Use the `dev.sh` script from the project root for everything:
 
 # Benchmark parse quality across all available Ollama models
 ./dev.sh benchmark
+
+# Fetch Cloud Run logs (GCP only)
+./dev.sh gcp-logs            # last 100 lines
+./dev.sh gcp-logs 200        # last 200 lines
+./dev.sh gcp-logs 100 withings  # last 100 lines, grep for "withings"
 ```
 
 `setup` handles everything in one step:

@@ -140,6 +140,19 @@ This updates the env vars on the running Cloud Run service — no image rebuild 
 
 ---
 
+## Viewing logs
+
+```bash
+./dev.sh gcp-logs              # last 100 lines from Cloud Run
+./dev.sh gcp-logs 200          # last 200 lines
+./dev.sh gcp-logs 100 withings # last 100 lines, grep for "withings"
+./dev.sh gcp-logs 50 callback  # useful for diagnosing OAuth flows
+```
+
+Requires `gcloud auth login`. Reads from the Cloud Run service configured in `.gcp-config`.
+
+---
+
 ## Local development
 
 Without any env vars set, the backend falls back to:
