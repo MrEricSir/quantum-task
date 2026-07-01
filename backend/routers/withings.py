@@ -204,6 +204,7 @@ def do_sync(db: Session) -> dict:
     today = date.today()
     start = today - timedelta(days=89)
     synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0, "spo2": 0, "sleep_score": 0, "sleep_minutes": 0, "sleep_deep_minutes": 0}
+    errors: dict[str, str] = {}
 
     # ── Steps (activity) ──────────────────────────────────────────────────────
     try:
@@ -219,38 +220,45 @@ def do_sync(db: Session) -> dict:
                 synced["steps"] += 1
     except Exception as exc:
         print(f"[withings] activity sync error: {exc}", flush=True)
+        errors["activity"] = str(exc)
 
-    # ── Body measurements (fat ratio + weight) ────────────────────────────────
+    # ── Body measurements (weight, fat, HR, BP, SpO2) ─────────────────────────
     try:
         body = _withings_get(creds_data, "measure", {
             "action": "getmeas",
             "startdate": int(datetime.combine(start, datetime.min.time()).timestamp()),
             "enddate": int(datetime.combine(today + timedelta(days=1), datetime.min.time()).timestamp()),
         })
+        seen_types: set[int] = set()
         for group in body.get("measuregrps", []):
             grp_date = date.fromtimestamp(group["date"]).isoformat()
             for measure in group.get("measures", []):
+                t = measure.get("type")
+                seen_types.add(t)
                 raw = measure["value"] * (10 ** measure["unit"])
-                if measure.get("type") == 6:    # FAT_RATIO
+                if t == 6:    # FAT_RATIO
                     _upsert_measurement(db, grp_date, "fat_ratio", round(raw, 2))
                     synced["fat_ratio"] += 1
-                elif measure.get("type") == 1:  # WEIGHT (kg)
+                elif t == 1:  # WEIGHT (kg)
                     _upsert_measurement(db, grp_date, "weight", round(raw, 2))
                     synced["weight"] += 1
-                elif measure.get("type") == 9:  # DIASTOLIC BP (mmHg)
+                elif t == 9:  # DIASTOLIC BP (mmHg)
                     _upsert_measurement(db, grp_date, "bp_diastolic", round(raw, 1))
                     synced["bp_diastolic"] += 1
-                elif measure.get("type") == 10: # SYSTOLIC BP (mmHg)
+                elif t == 10: # SYSTOLIC BP (mmHg)
                     _upsert_measurement(db, grp_date, "bp_systolic", round(raw, 1))
                     synced["bp_systolic"] += 1
-                elif measure.get("type") == 11: # HEART RATE (bpm)
+                elif t == 11: # HEART RATE (bpm)
                     _upsert_measurement(db, grp_date, "heart_rate", round(raw, 1))
                     synced["heart_rate"] += 1
-                elif measure.get("type") == 54: # SPO2 (%)
+                elif t == 54: # SPO2 (%)
                     _upsert_measurement(db, grp_date, "spo2", round(raw, 1))
                     synced["spo2"] += 1
+        # Log which measurement types came back to help diagnose missing data
+        print(f"[withings] getmeas returned types: {sorted(seen_types)}", flush=True)
     except Exception as exc:
         print(f"[withings] measurements sync error: {exc}", flush=True)
+        errors["measurements"] = str(exc)
 
     # ── Sleep summary ─────────────────────────────────────────────────────────
     # Requires USER_SLEEP_EVENTS scope; silently skipped if not granted.
@@ -277,6 +285,7 @@ def do_sync(db: Session) -> dict:
                 synced["sleep_deep_minutes"] += 1
     except Exception as exc:
         print(f"[withings] sleep sync error: {exc}", flush=True)
+        errors["sleep"] = str(exc)
 
     db.commit()
     _auto_check_habits(db, today)
@@ -288,7 +297,10 @@ def do_sync(db: Session) -> dict:
     ))
     db.commit()
 
-    return {"ok": True, "synced": synced}
+    result: dict = {"ok": True, "synced": synced}
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

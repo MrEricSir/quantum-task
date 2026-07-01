@@ -23,18 +23,23 @@ _PARSE_SYSTEM = """\
 You parse food and drink log entries into structured data. \
 Respond with ONLY valid JSON (no markdown, no explanation).
 
-{
+{{
   "name":      "concise name of what was consumed, e.g. 'donut', 'coffee with oat milk', 'chicken salad'",
   "category":  "food" | "drink",
   "meal_type": "breakfast" | "lunch" | "dinner" | "snack" | "drink",
   "notes":     "1-2 sentence honest nutritional assessment — be specific, not preachy",
   "quality":   integer 1-10 (10 = highly nutritious whole foods; 1 = pure junk with no redeeming value)
-}
+}}
 
 meal_type rules:
 - Use "drink" for any beverage (coffee, tea, water, juice, alcohol)
-- Use context clues for meal classification; default to "snack" if unclear
-- "about to" / "going to" still gets the current time — log it as if consumed now
+- Use the local hour of consumption (provided below) as the primary signal for meal classification:
+    5–10  → breakfast
+    11–13 → lunch
+    17–21 → dinner
+    outside those windows → snack (unless the text clearly says otherwise)
+- Text context overrides time (e.g. "late lunch" at 3pm → lunch)
+- "about to" / "going to" still counts as the current time
 
 quality examples:
 - leafy salad, grilled salmon → 9
@@ -46,16 +51,18 @@ quality examples:
 - donut → 3
 - bag of chips → 3
 - energy drink → 2
+
+Local hour of consumption: {hour}
 """
 
 
-def _parse_food(raw: str) -> dict:
+def _parse_food(raw: str, hour: int = 12) -> dict:
     try:
         client = llm_client()
         resp = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
-                {"role": "system", "content": _PARSE_SYSTEM},
+                {"role": "system", "content": _PARSE_SYSTEM.format(hour=hour)},
                 {"role": "user",   "content": raw},
             ],
             max_tokens=200,
@@ -100,15 +107,16 @@ def create_food_entry(payload: dict, request: Request, db: Session = Depends(get
     if not raw:
         raise HTTPException(status_code=422, detail="raw_input is required")
 
-    parsed = _parse_food(raw)
-
-    # Allow caller to override consumed_at (e.g. quick add knows the local time)
+    # Allow caller to override consumed_at (e.g. quick add knows the local time).
+    # Parse it first so we can pass the local hour to the LLM for meal classification.
     consumed_at = datetime.now(timezone.utc)
     if payload.get("consumed_at"):
         try:
             consumed_at = datetime.fromisoformat(payload["consumed_at"])
         except ValueError:
             pass
+
+    parsed = _parse_food(raw, hour=consumed_at.hour)
 
     entry = models.FoodEntry(
         raw_input=raw,

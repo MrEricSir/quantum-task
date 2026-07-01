@@ -58,7 +58,7 @@ _PARSED = {
 }
 
 
-def _mock_parse(raw: str) -> dict:
+def _mock_parse(raw: str, hour: int = 12) -> dict:
     return {**_PARSED, "name": raw[:20]}  # name reflects input for traceability
 
 
