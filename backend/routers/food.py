@@ -28,7 +28,8 @@ Respond with ONLY valid JSON (no markdown, no explanation).
   "category":  "food" | "drink",
   "meal_type": "breakfast" | "lunch" | "dinner" | "snack" | "drink",
   "notes":     "1-2 sentence honest nutritional assessment — be specific, not preachy",
-  "quality":   integer 1-10 (10 = highly nutritious whole foods; 1 = pure junk with no redeeming value)
+  "quality":   integer 1-10 (10 = highly nutritious whole foods; 1 = pure junk with no redeeming value),
+  "calories":  integer estimated kcal — best estimate for a typical serving; null only if truly impossible
 }}
 
 meal_type rules:
@@ -51,6 +52,15 @@ quality examples:
 - donut → 3
 - bag of chips → 3
 - energy drink → 2
+
+calories examples:
+- black coffee → 5
+- coffee with oat milk → 60
+- banana → 90
+- donut → 300
+- pizza slice → 285
+- chicken salad (large) → 450
+- bag of chips (regular) → 150
 
 Local hour of consumption: {hour}
 """
@@ -82,10 +92,16 @@ def _parse_food(raw: str, hour: int = 12) -> dict:
                 quality = max(1, min(10, int(quality)))
             except (TypeError, ValueError):
                 quality = None
-        return {"name": name, "category": category, "meal_type": meal_type, "notes": notes, "quality": quality}
+        calories = data.get("calories")
+        if calories is not None:
+            try:
+                calories = max(0, int(calories))
+            except (TypeError, ValueError):
+                calories = None
+        return {"name": name, "category": category, "meal_type": meal_type, "notes": notes, "quality": quality, "calories": calories}
     except Exception:
         # Fallback: store as-is with no LLM enrichment
-        return {"name": raw[:120], "category": "food", "meal_type": "snack", "notes": None, "quality": None}
+        return {"name": raw[:120], "category": "food", "meal_type": "snack", "notes": None, "quality": None, "calories": None}
 
 
 def _entry_dict(e: models.FoodEntry) -> dict:
@@ -98,6 +114,7 @@ def _entry_dict(e: models.FoodEntry) -> dict:
         "consumed_at": e.consumed_at.isoformat(),
         "notes":       e.notes,
         "quality":     e.quality,
+        "calories":    e.calories,
     }
 
 

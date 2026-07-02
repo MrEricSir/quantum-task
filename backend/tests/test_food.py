@@ -55,6 +55,7 @@ _PARSED = {
     "meal_type": "snack",
     "notes": "High in sugar and refined carbs.",
     "quality": 3,
+    "calories": 300,
 }
 
 

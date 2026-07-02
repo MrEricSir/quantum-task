@@ -98,14 +98,16 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
         if d >= start_str:
             cards_done_by_date[d] = cards_done_by_date.get(d, 0) + 1
 
-    # Food quality: collect per-day quality scores to weekly-bin later
+    # Food quality + calories: collect per-day scores to weekly-bin later
     food_quality_by_date: dict[str, list[float]] = {}
-    for entry in db.query(models.FoodEntry).filter(
-        models.FoodEntry.quality.isnot(None),
-    ).all():
+    food_calories_by_date: dict[str, list[float]] = {}
+    for entry in db.query(models.FoodEntry).all():
         d_str = str(entry.consumed_at)[:10]
         if d_str >= start_str:
-            food_quality_by_date.setdefault(d_str, []).append(float(entry.quality))
+            if entry.quality is not None:
+                food_quality_by_date.setdefault(d_str, []).append(float(entry.quality))
+            if entry.calories is not None:
+                food_calories_by_date.setdefault(d_str, []).append(float(entry.calories))
 
     # Weekly binning
     week_vals: dict[str, dict[str, list[float]]] = {}
@@ -133,6 +135,11 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
     for d, scores in food_quality_by_date.items():
         wk = _isoweek(d)
         week_food_quality.setdefault(wk, []).extend(scores)
+
+    week_food_calories: dict[str, list[float]] = {}
+    for d, cals in food_calories_by_date.items():
+        wk = _isoweek(d)
+        week_food_calories.setdefault(wk, []).extend(cals)
 
     def build_obs(outcome_metric: str) -> list[dict]:
         weeks = sorted(wk for wk, avgs in week_avgs.items() if outcome_metric in avgs)
@@ -164,6 +171,7 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
                 ),
                 "avg_spo2":         week_avgs[curr_wk].get("spo2"),
                 "avg_food_quality": sum(fq) / len(fq) if fq else None,
+                "avg_calories":     sum(fc) / len(fc) if (fc := week_food_calories.get(curr_wk)) else None,
             })
         return rows
 
@@ -179,6 +187,7 @@ FACTORS = [
     ("avg_sleep_hours",  "Sleep duration"),
     ("avg_spo2",         "Blood oxygen (SpO2)"),
     ("avg_food_quality", "Diet quality"),
+    ("avg_calories",     "Daily calories"),
     ("habit_rate",       "Habit completion rate"),
     ("cards_done",       "Tasks completed"),
 ]

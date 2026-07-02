@@ -706,6 +706,11 @@ function FoodLog() {
               <div key={entry.id} className="food-entry">
                 <span className="food-entry-time">{time}</span>
                 <span className="food-entry-name">{entry.name}</span>
+                {entry.calories != null && (
+                  <span className="food-entry-calories" title="Estimated calories">
+                    {entry.calories} kcal
+                  </span>
+                )}
                 {entry.quality != null && (
                   <span
                     className="food-entry-quality"

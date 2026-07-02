@@ -116,6 +116,7 @@ class FoodEntry(Base):
     consumed_at = Column(DateTime, nullable=False)         # when eaten/drunk (defaults to now)
     notes       = Column(String, nullable=True)            # brief LLM nutritional assessment
     quality     = Column(Integer, nullable=True)           # 1–10 (10 = highly nutritious)
+    calories    = Column(Integer, nullable=True)           # estimated kcal
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
