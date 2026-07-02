@@ -7,6 +7,7 @@ import DailyBriefing from '../shared/DailyBriefing'
 import DailyPlan from '../shared/DailyPlan'
 import InsightsPanel from '../shared/InsightsPanel'
 import { CollapseBody } from '../layout/Collapsible'
+import { useDailyPlan } from '../../hooks/useDailyPlan'
 import './TodayPage.css'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -226,6 +227,8 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
 
   const catchUpCount  = todos.filter((t) => !t.completed && t.section === 'week').length
 
+  const plan = useDailyPlan(activeTodos, todayEvents, habits)
+
   const overdueScheduleCount = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
                              + untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
 
@@ -281,9 +284,12 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
         />
 
         <DailyPlan
-          todos={activeTodos}
-          calendarEvents={todayEvents}
-          habits={habits}
+          status={plan.status}
+          blocks={plan.blocks}
+          isStale={plan.isStale}
+          error={plan.error}
+          onGenerate={plan.generate}
+          onDismiss={plan.dismiss}
         />
 
         <InsightsPanel
@@ -328,13 +334,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     })()}
                     <span className="today-habit-name">{habit.name}</span>
                     <MetricProgress habit={habit} todayMetrics={todayMetrics} isImperial={isImperial} />
-                    {habit.tags.length > 0 && (
-                      <div className="today-habit-dots">
-                        {habit.tags.map((tag) => (
-                          <span key={tag.id} className="today-habit-dot" style={{ background: tag.color }} title={tag.name} />
-                        ))}
-                      </div>
-                    )}
                     {habit.streak > 0 && (
                       <span className="today-habit-streak">{habit.streak}</span>
                     )}

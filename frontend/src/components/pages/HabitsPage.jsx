@@ -179,20 +179,6 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                   <span className="habit-card-name">{habit.name}</span>
                 )}
 
-                {editingId !== habit.id && habit.tags.length > 0 && (
-                  <div className="habit-card-tags">
-                    {habit.tags.map((tag) => (
-                      <span
-                        key={tag.id}
-                        className="habit-card-tag"
-                        style={{ background: `${tag.color}22`, color: tag.color, borderColor: `${tag.color}44` }}
-                      >
-                        {tag.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
                 {editingId !== habit.id && habit.withings_metric && (
                   <button
                     type="button"

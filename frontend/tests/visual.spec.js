@@ -215,10 +215,11 @@ test.describe('today page', () => {
       contentType: 'application/json',
       body: JSON.stringify({
         blocks: [
-          { time: '09:00', duration: 60,  title: 'Team standup',   type: 'event', fixed: true,  note: null },
+          // Clock is frozen at 10:00 — only blocks with time >= "10:00" are shown
+          { time: '10:30', duration: 60,  title: 'Team standup',   type: 'event', fixed: true,  note: null },
           { time: '10:00', duration: 45,  title: 'Review PRs',     type: 'task',  fixed: false, note: 'Start fresh' },
           { time: '14:30', duration: 30,  title: 'Exercise',        type: 'habit', fixed: false, note: null },
-          { time: '00:00', duration: 15,  title: 'Midnight task',   type: 'task',  fixed: false, note: null },
+          { time: '22:00', duration: 15,  title: 'Late task',       type: 'task',  fixed: false, note: null },
           { time: '12:00', duration: 60,  title: 'Lunch meeting',   type: 'event', fixed: true,  note: null },
           { time: null,    duration: 30,  title: 'Overflow item',   type: 'task',  fixed: false, note: null },
         ]
@@ -228,10 +229,10 @@ test.describe('today page', () => {
     await page.getByRole('button', { name: /plan my day/i }).click()
 
     // Times should display in 12h format, not raw 24h strings
-    await expect(page.getByText('9 AM')).toBeVisible()
+    await expect(page.getByText('10:30 AM')).toBeVisible()
     await expect(page.getByText('10 AM')).toBeVisible()
     await expect(page.getByText('2:30 PM')).toBeVisible()
-    await expect(page.getByText('12 AM')).toBeVisible()  // midnight
+    await expect(page.getByText('10 PM')).toBeVisible()  // 22:00
     await expect(page.getByText('12 PM')).toBeVisible()  // noon
 
     // Task/event titles visible
@@ -239,8 +240,8 @@ test.describe('today page', () => {
     await expect(page.getByText('Review PRs')).toBeVisible()
     await expect(page.getByText('Exercise')).toBeVisible()
 
-    // Overflow item (null time) appears in "Didn't fit today" section
-    await expect(page.getByText("Didn't fit today")).toBeVisible()
+    // Overflow item (null time) appears in "Didn't get to" section
+    await expect(page.getByText("Didn't get to")).toBeVisible()
     await expect(page.getByText('Overflow item')).toBeVisible()
 
     // Raw 24h strings must NOT appear
@@ -505,7 +506,7 @@ test.describe('settings modals', () => {
     await page.getByRole('button', { name: /settings/i }).click()
     await page.getByRole('menuitem', { name: /withings/i }).click()
     await expect(page.getByRole('heading', { name: 'Withings' })).toBeVisible()
-    await expect(page.getByText(/not connected/i)).toBeVisible()
+    await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: /connect withings/i })).toBeVisible()
   })
 })

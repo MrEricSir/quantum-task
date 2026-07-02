@@ -671,7 +671,8 @@ def _normalize_plan_time(t) -> str | None:
 
 
 _DAILY_PLAN_SYSTEM = """\
-You are a daily scheduler. Your ONLY job is to assign times to the items provided — \
+You are a daily scheduler. Calendar events and timed tasks have already been anchored at their \
+fixed times. Your ONLY job is to assign start times to the FLEXIBLE ITEMS listed — \
 nothing more. Every block's title must be copied character-for-character from the input list.
 
 Return ONLY a valid JSON object: {"blocks": [...]}
@@ -679,25 +680,24 @@ Return ONLY a valid JSON object: {"blocks": [...]}
 Each block has these fields:
   time     - "HH:MM" 24h local time when the block starts, or null if it can't fit today
   duration - integer minutes
-  title    - EXACT name copied from the input (never paraphrase or invent)
-  type     - one of: "event" | "task" | "habit" | "walk" | "break"
-  fixed    - true for calendar events, false for everything else
+  title    - EXACT name copied from the flexible items list (never paraphrase or invent)
+  type     - "task" for tasks, "habit" for habits, "walk" for a walk block, "break" for a break
   note     - one short phrase (3-5 words) of rationale, or null
 
 Scheduling rules:
-1. Calendar events AND tasks with a fixed start time are FIXED — the block's time must equal their stated start time exactly. Never shift them earlier or later.
-2. Estimate durations realistically: 15 min for quick tasks, 30-60 min typical, longer for complex work.
-3. Fill gaps between fixed items with flexible tasks, starting from the current time.
+1. Only output blocks for the FLEXIBLE ITEMS. Do not repeat or mention the fixed items.
+2. Start scheduling from the current time, working around the fixed items shown in context.
+3. Estimate durations realistically: 15 min for quick tasks, 30-60 min typical, longer for complex work.
 4. Add a 10-min break block after 90+ consecutive minutes of focused work.
-5. Tasks that cannot fit today appear at the end with time=null.
-6. The only allowed block types are items from the input lists plus optional break and walk blocks.
-7. If a "Health data" section shows steps below 60% of goal, add ONE "Walk" block (20-30 min) \
+5. Flexible items that cannot fit today appear at the end with time=null.
+6. If a "Health data" section shows steps below 60% of goal, add ONE "Walk" block (20-30 min) \
 in an open afternoon slot. Only add it if a genuinely free slot exists — never displace fixed items.
 """
 
 
 def _build_daily_plan_context(
-    today_dt, today_events: list, today_todos: list, pending_habits: list, tz_offset: int,
+    today_dt, anchored_events: list, anchored_timed_todos: list,
+    untimed_todos: list, pending_habits: list, tz_offset: int,
     health_context: str | None = None,
 ) -> str:
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -706,32 +706,27 @@ def _build_daily_plan_context(
         f"Date: {today_dt.strftime('%A, %B %d, %Y')}",
     ]
 
-    if today_events:
-        lines.append("\nCalendar events (FIXED — do not move):")
-        for e in today_events:
-            if e.all_day:
-                lines.append(f"  - {e.title} (all day)")
-            else:
-                start_s = _fmt_time_24h(e.start, tz_offset)
-                end_s = _fmt_time_24h(e.end, tz_offset) if e.end else None
-                range_s = f"{start_s}–{end_s}" if end_s else start_s
-                lines.append(f"  - {e.title} at {range_s}")
-
-    timed_todos   = [t for t in today_todos if t.scheduled_at]
-    untimed_todos = [t for t in today_todos if not t.scheduled_at]
-
-    if timed_todos:
-        lines.append("\nTasks with a fixed start time (treat exactly like calendar events — do not shift):")
-        for t in timed_todos:
-            lines.append(f"  - {t.title} starts at {_fmt_time_24h(t.scheduled_at, tz_offset)}")
+    # Show fixed schedule as context so LLM avoids overlapping them
+    fixed_lines = []
+    for e in anchored_events:
+        if not e.all_day:
+            start_s = _fmt_time_24h(e.start, tz_offset)
+            end_s = _fmt_time_24h(e.end, tz_offset) if e.end else None
+            range_s = f"{start_s}–{end_s}" if end_s else start_s
+            fixed_lines.append(f"  - {e.title} at {range_s} [calendar event]")
+    for t in anchored_timed_todos:
+        fixed_lines.append(f"  - {t.title} at {_fmt_time_24h(t.scheduled_at, tz_offset)} [task]")
+    if fixed_lines:
+        lines.append("\nFixed schedule (already placed — do NOT include these in your output):")
+        lines.extend(fixed_lines)
 
     if untimed_todos:
-        lines.append("\nUnscheduled tasks (find the best available slot):")
+        lines.append("\nFlexible tasks to schedule (include ALL of these in your output):")
         for t in untimed_todos:
             lines.append(f"  - {t.title}")
 
     if pending_habits:
-        lines.append("\nHabits still to complete today:")
+        lines.append("\nHabits still to complete today (include ALL of these in your output):")
         for h in pending_habits:
             lines.append(f"  - {h.name}")
 
@@ -747,38 +742,77 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
     today_dt = local_date(request)
     tz_offset = req.utc_offset_minutes or 0
 
-    today_todos = [t for t in req.todos if t.section == "today" and not t.completed]
+    # Gather today's items
     today_events = sorted(
         [e for e in req.calendar_events if _event_local_date(e, tz_offset) == today_dt and not e.is_ooo],
         key=lambda e: e.start,
     )
     pending_habits = [h for h in req.habits if not h.completed_today]
 
-    if not today_todos and not today_events and not pending_habits:
+    # Today-section tasks + overdue scheduled tasks from any section
+    today_section = [t for t in req.todos if t.section == "today" and not t.completed]
+    overdue_scheduled = [
+        t for t in req.todos
+        if not t.completed and t.section != "today" and t.scheduled_at
+        and (t.scheduled_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)).date() <= today_dt
+    ]
+    all_today_todos = today_section + overdue_scheduled
+
+    timed_todos   = [t for t in all_today_todos if t.scheduled_at]
+    untimed_todos = [t for t in all_today_todos if not t.scheduled_at]
+
+    if not all_today_todos and not today_events and not pending_habits:
         return {"blocks": []}
 
+    # ── Tier 1: Deterministic anchored blocks ─────────────────────────────────
+    anchored: list[dict] = []
+
+    for e in today_events:
+        if e.all_day:
+            continue
+        start_s = _fmt_time_24h(e.start, tz_offset)
+        duration_min = None
+        if e.end and e.start:
+            duration_min = int((e.end - e.start).total_seconds() / 60)
+        anchored.append({
+            "time": start_s,
+            "title": e.title,
+            "type": "event",
+            "duration": duration_min,
+            "fixed": True,
+        })
+
+    for t in timed_todos:
+        anchored.append({
+            "time": _fmt_time_24h(t.scheduled_at, tz_offset),
+            "title": t.title,
+            "type": "task",
+            "fixed": True,
+        })
+
+    # If nothing to slot via LLM, return anchored blocks sorted by time
+    if not untimed_todos and not pending_habits:
+        anchored.sort(key=lambda b: b.get("time") or "99:99")
+        return {"blocks": anchored}
+
+    # ── Tier 2: LLM slots untimed tasks + habits into the gaps ────────────────
     with SessionLocal() as _hdb:
         health_data, health_ctx = build_health_context(_hdb, today_dt)
 
-    # Allow the AI to add a Walk block when steps are well below goal
     steps_today = health_data["today"].get("steps")
-    steps_goal = health_data["goals"].get("steps")
+    steps_goal  = health_data["goals"].get("steps")
     walk_eligible = (
         steps_today is not None and steps_goal is not None and steps_today < steps_goal * 0.6
     )
 
     context = _build_daily_plan_context(
-        today_dt, today_events, today_todos, pending_habits, tz_offset,
+        today_dt, today_events, timed_todos, untimed_todos, pending_habits, tz_offset,
         health_context=health_ctx,
     )
 
-    valid_titles = (
-        {e.title for e in today_events}
-        | {t.title for t in today_todos}
-        | {h.name for h in pending_habits}
-    )
+    valid_flexible_titles = {t.title for t in untimed_todos} | {h.name for h in pending_habits}
     if walk_eligible:
-        valid_titles.add("Walk")
+        valid_flexible_titles.add("Walk")
 
     try:
         response = llm_client().chat.completions.create(
@@ -791,12 +825,36 @@ def generate_daily_plan(request: Request, req: schemas.BriefingRequest):
             response_format={"type": "json_object"},
         )
         result = json.loads(response.choices[0].message.content)
-        blocks = result.get("blocks", [])
-        validated = []
-        for block in blocks:
+        llm_blocks = result.get("blocks", [])
+
+        # Only keep LLM blocks that actually got a time (breaks/walks included).
+        # We compute overflow ourselves — don't trust the LLM's null-time entries.
+        seen_titles: set[str] = set()
+        flexible = []
+        for block in llm_blocks:
             block["time"] = _normalize_plan_time(block.get("time"))
-            if block.get("type") == "break" or block.get("title") in valid_titles:
-                validated.append(block)
-        return {"blocks": validated}
+            block.pop("fixed", None)
+            if not block.get("time"):
+                continue  # skip — overflow is computed deterministically below
+            title = block.get("title")
+            if title:
+                if title not in valid_flexible_titles or title in seen_titles:
+                    continue  # reject hallucinations and duplicates
+                seen_titles.add(title)
+            elif block.get("type") not in ("break", "walk"):
+                continue
+            flexible.append(block)
+
+        # Deterministic overflow: input items the LLM didn't schedule
+        for t in untimed_todos:
+            if t.title not in seen_titles:
+                flexible.append({"time": None, "title": t.title, "type": "task"})
+        for h in pending_habits:
+            if h.name not in seen_titles:
+                flexible.append({"time": None, "title": h.name, "type": "habit"})
+
+        all_blocks = anchored + flexible
+        all_blocks.sort(key=lambda b: b.get("time") or "99:99")
+        return {"blocks": all_blocks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
