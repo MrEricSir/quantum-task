@@ -789,6 +789,39 @@ test.describe('mobile card sheet', () => {
 // ---------------------------------------------------------------------------
 // Edit modal — scheduled_at persistence
 // ---------------------------------------------------------------------------
+test.describe('breakdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('"Break down" tab is visible in the Assistant modal', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', (r) =>
+      r.fulfill({ json: { subtasks: [], tag_name: 'Project: Call dentist' } })
+    )
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await expect(page.locator('.assist-modal')).toBeVisible()
+    await expect(page.getByRole('button', { name: /^break down$/i })).toBeVisible()
+  })
+
+  test('clicking "Break down" tab generates subtasks and shows editable list', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', (r) =>
+      r.fulfill({ json: { subtasks: ['Step 1', 'Step 2', 'Step 3'], tag_name: 'Project: Call dentist' } })
+    )
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await page.getByRole('button', { name: /^break down$/i }).click()
+    await expect(page.getByText('Project: Call dentist')).toBeVisible()
+    await expect(page.locator('.assist-bd-input').nth(0)).toHaveValue('Step 1')
+    await expect(page.locator('.assist-bd-input').nth(1)).toHaveValue('Step 2')
+    await expect(page.locator('.assist-bd-input').nth(2)).toHaveValue('Step 3')
+    await expect(page.getByRole('button', { name: /create 3 subtasks/i })).toBeVisible()
+  })
+})
+
 test.describe('edit modal scheduled_at', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/board')

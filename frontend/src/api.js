@@ -145,6 +145,22 @@ export async function parseBulkCards(text) {
   return res.json()
 }
 
+export async function breakdownCard(id) {
+  const res = await apiFetch(`${BASE}/${id}/breakdown`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to generate breakdown')
+  return res.json()
+}
+
+export async function commitBreakdown(id, subtasks, tag_name) {
+  const res = await apiFetch(`${BASE}/${id}/breakdown/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subtasks, tag_name }),
+  })
+  if (!res.ok) throw new Error('Failed to commit breakdown')
+  return res.json()
+}
+
 export async function reorderCards(updates) {
   // updates: [{ id, section, position }, ...]
   const res = await apiFetch(`${BASE}/reorder`, {

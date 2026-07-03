@@ -151,7 +151,7 @@ function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
   )
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false, allTags = [] }) {
+export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false, allTags = [], onBreakdown }) {
   const activeTodos = todos.filter((t) => !t.completed)
   const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayTodos   = activeTodos.filter((t) => t.section === 'today')
@@ -279,17 +279,25 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           invalidationKey={briefingKey}
         />
 
-        {sortedUntimedTasks.length > 0 && (
-          <div className="focus-next">
-            <span className="focus-next-label">Focus next</span>
-            <span className="focus-next-title">{sortedUntimedTasks[0].title}</span>
-            {(sortedUntimedTasks[0].overdue_days ?? 0) > 0 && (
-              <span className="focus-next-overdue">
-                {sortedUntimedTasks[0].overdue_days}d overdue
+        {sortedUntimedTasks.length > 0 && (() => {
+          const focusTask = sortedUntimedTasks[0]
+          const projectTag = focusTask.tags?.find((t) => t.name.startsWith('Project: '))
+          const projectName = projectTag ? projectTag.name.slice('Project: '.length) : null
+          return (
+            <div className="focus-next">
+              <span className="focus-next-label">Focus next</span>
+              <span className="focus-next-title">
+                {projectName && <span className="focus-next-project">{projectName} ›</span>}
+                {focusTask.title}
               </span>
-            )}
-          </div>
-        )}
+              {(focusTask.overdue_days ?? 0) > 0 && (
+                <span className="focus-next-overdue">
+                  {focusTask.overdue_days}d overdue
+                </span>
+              )}
+            </div>
+          )
+        })()}
 
         <InsightsPanel
           refreshKey={briefingKey}
@@ -376,6 +384,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                     onToggle={onToggle}
                     onMove={onMove}
                     allTags={allTags}
+                    onBreakdown={onBreakdown}
                     isMobile
                   />
                 )
@@ -391,6 +400,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                   onToggle={onToggle}
                   onMove={onMove}
                   allTags={allTags}
+                  onBreakdown={onBreakdown}
                   isMobile
                 />
               ))}

@@ -358,6 +358,11 @@ export default function App() {
   const activeTodos = todos.filter((t) => !t.completed && !t.archived && t.section !== 'none')
   const completedTodos = todos.filter((t) => t.completed && !t.archived)
 
+  const visibleTags = tags.filter((tag) => {
+    if (!tag.name.startsWith('Project: ')) return true
+    return todos.some((t) => !t.completed && !t.archived && (t.tags ?? []).some((tg) => tg.id === tag.id))
+  })
+
   const visibleCalendarEvents = selectedTagId === null
     ? calendarEvents
     : calendarEvents.filter((e) => e.tag_id === selectedTagId)
@@ -601,6 +606,17 @@ export default function App() {
     setEditingTodo(null)
   }
 
+  const handleBreakdownCommit = ({ tag, cards, archived_card }) => {
+    setTags((prev) => {
+      if (prev.some((t) => t.id === tag.id)) return prev
+      return [...prev, tag].sort((a, b) => a.name.localeCompare(b.name))
+    })
+    setTodos((prev) => {
+      const updated = prev.map((t) => (t.id === archived_card.id ? archived_card : t))
+      return [...updated, ...cards]
+    })
+  }
+
   const handleModalSave = async (data) => {
     if (editingTodo) {
       await handleUpdateTodo(editingTodo.id, data)
@@ -719,7 +735,7 @@ export default function App() {
 
       <div className="app-body">
         <Sidebar
-          tags={tags}
+          tags={visibleTags}
           selectedTagId={selectedTagId}
           page={currentPage}
           onNavigate={handlePageNavigate}
@@ -727,7 +743,7 @@ export default function App() {
 
       <main className="board-wrapper">
         <TagFilterBar
-          tags={tags}
+          tags={visibleTags}
           selectedTagId={selectedTagId}
           page={currentPage}
           onNavigate={handlePageNavigate}
@@ -747,6 +763,7 @@ export default function App() {
             onArchive={handleArchiveCard}
             onMove={handleMoveSection}
             allTags={tags}
+            onBreakdown={handleBreakdownCommit}
             onWeather={setWeather}
             briefingKey={briefingKey}
             healthData={healthData}
@@ -807,6 +824,7 @@ export default function App() {
                     onMove={handleMoveSection}
                     onAdd={() => openNewCard(section)}
                     allTags={tags}
+                    onBreakdown={handleBreakdownCommit}
                   />
                 ))}
               </div>

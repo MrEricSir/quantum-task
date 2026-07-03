@@ -45,6 +45,13 @@
   flex-shrink: 0;
 }
 
+.focus-next-project {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  margin-right: 4px;
+}
+
 /* ── Header ── */
 .today-header {
   margin-bottom: 16px;

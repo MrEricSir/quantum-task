@@ -34,7 +34,7 @@ function parseGitHubUrl(str) {
   return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
 }
 
-export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags }) {
+export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown }) {
   const [expanded, setExpanded] = useState(false)
   const [showSheet, setShowSheet] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -200,6 +200,7 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
         open={showAssist}
         onClose={() => setShowAssist(false)}
         task={todo}
+        onBreakdown={onBreakdown}
       />
 
       {showSheet && (

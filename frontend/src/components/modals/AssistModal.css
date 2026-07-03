@@ -11,6 +11,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(560px, calc(100vw - 32px));
+  min-height: 380px;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   background: rgba(14, 8, 30, 0.97);
@@ -235,4 +236,124 @@
 .assist-output-placeholder {
   color: var(--text-muted);
   font-style: italic;
+}
+
+/* ── Mode tabs ── */
+.assist-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.assist-tab {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.assist-tab:hover:not(.assist-tab--active) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.assist-tab--active {
+  background: rgba(139, 92, 246, 0.2);
+  color: #c4b5fd;
+}
+
+/* ── Breakdown mode ── */
+.assist-bd-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.assist-spinner--dark {
+  border-color: rgba(255, 255, 255, 0.15);
+  border-top-color: #a78bfa;
+}
+
+.assist-bd-error {
+  font-size: 13px;
+  color: #f87171;
+  padding: 4px 0;
+}
+
+.assist-bd-intro {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.assist-bd-intro strong {
+  color: var(--text);
+}
+
+.assist-bd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assist-bd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assist-bd-num {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  width: 16px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.assist-bd-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+}
+
+.assist-bd-input:focus {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.assist-bd-remove {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 6px;
+  opacity: 0.5;
+  transition: opacity 0.12s;
+  line-height: 1;
+}
+
+.assist-bd-remove:hover {
+  opacity: 1;
 }

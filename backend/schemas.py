@@ -291,6 +291,11 @@ class CardReorderItem(BaseModel):
     position: int
 
 
+class BreakdownCommit(BaseModel):
+    subtasks: List[str]
+    tag_name: str
+
+
 class Card(BaseModel):
     id: int
     title: str

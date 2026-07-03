@@ -1,5 +1,6 @@
 import calendar as _calendar
 import json
+import random
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -346,6 +347,110 @@ def remove_tag_from_card(card_id: int, tag_id: int, db: Session = Depends(get_db
         db_card.tags.remove(db_tag)
         db.commit()
     return {"ok": True}
+
+
+_PROJECT_TAG_COLORS = [
+    "#7c3aed",  # purple
+    "#2563eb",  # blue
+    "#059669",  # green
+    "#d97706",  # amber
+    "#dc2626",  # red
+    "#0891b2",  # cyan
+    "#c026d3",  # fuchsia
+    "#65a30d",  # lime
+    "#ea580c",  # orange
+    "#db2777",  # pink
+]
+
+_BREAKDOWN_SYSTEM = """\
+Break down the following task into 3 to 6 ordered, specific, actionable subtasks.
+Also suggest a short project name (2–4 words, no "Project:" prefix).
+Return ONLY a JSON object — no markdown, no explanation.
+Example: {"project_name": "Brunch Planning", "subtasks": ["Research venues", "Send invitations", "Buy supplies"]}
+"""
+
+
+@router.post("/api/cards/{card_id}/breakdown")
+def breakdown_card(card_id: int, db: Session = Depends(get_db)):
+    """Call LLM to suggest subtasks. Returns preview only — no DB changes."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+    prompt = card.title
+    if card.description:
+        prompt += f"\n\nContext: {card.description}"
+    try:
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _BREAKDOWN_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=400,
+        )
+        raw = resp.choices[0].message.content.strip()
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected object")
+        project_name = str(parsed.get("project_name", card.title)).strip()
+        subtasks = parsed.get("subtasks", [])
+        if not isinstance(subtasks, list):
+            raise ValueError("Expected subtasks list")
+        subtasks = [s.strip() for s in subtasks if isinstance(s, str) and s.strip()]
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"LLM request failed: {e}")
+    return {"subtasks": subtasks, "tag_name": f"Project: {project_name}"}
+
+
+@router.post("/api/cards/{card_id}/breakdown/commit")
+def commit_breakdown(card_id: int, req: schemas.BreakdownCommit, db: Session = Depends(get_db)):
+    """Create project tag + subtask cards and archive the original card."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    tag_name = req.tag_name
+    tag = db.query(models.Tag).filter(models.Tag.name == tag_name).first()
+    if not tag:
+        used_colors = {row[0] for row in db.query(models.Tag.color).all()}
+        available = [c for c in _PROJECT_TAG_COLORS if c not in used_colors]
+        color = available[0] if available else random.choice(_PROJECT_TAG_COLORS)
+        tag = models.Tag(name=tag_name, color=color)
+        db.add(tag)
+        db.flush()
+
+    now = datetime.now(timezone.utc)
+    base_pos = db.query(models.Card).filter(models.Card.section == card.section).count()
+    created = []
+    for i, title in enumerate(req.subtasks):
+        t = title.strip()
+        if not t:
+            continue
+        c = models.Card(title=t, section=card.section, position=base_pos + i,
+                        completed=False, updated_at=now)
+        c.tags = [tag]
+        db.add(c)
+        db.flush()
+        created.append(c)
+
+    card.archived = True
+    card.archived_at = now
+    card.updated_at = now
+    if tag not in card.tags:
+        card.tags.append(tag)
+
+    db.commit()
+    for c in created:
+        db.refresh(c)
+    db.refresh(card)
+    db.refresh(tag)
+
+    return {
+        "tag": {"id": tag.id, "name": tag.name, "color": tag.color},
+        "cards": [schemas.Card.model_validate(c) for c in created],
+        "archived_card": schemas.Card.model_validate(card),
+    }
 
 
 @router.delete("/api/cards/{card_id}")
