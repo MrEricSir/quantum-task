@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Cross2Icon, CopyIcon, CheckIcon } from '@radix-ui/react-icons'
-import { breakdownCard, commitBreakdown, createCard } from '../../api'
+import { breakdownCard, commitBreakdown, bulkCreateCards } from '../../api'
 import './AssistModal.css'
 
 export default function AssistModal({ open, onClose, task, onBreakdown }) {
@@ -16,6 +16,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
   // Create-tasks flow (parsed from output)
   const [taskItems,  setTaskItems]  = useState([])
   const [taskMode,   setTaskMode]   = useState('none') // none | confirming | creating
+  const [taskError,  setTaskError]  = useState('')
   const abortRef   = useRef(null)
   const outputRef  = useRef(null)
 
@@ -30,7 +31,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
     if (open) {
       setMode('assist')
       setContext(''); setOutput(''); setStatus('idle'); setCopied(false); setSearching(false)
-      setTaskItems([]); setTaskMode('none')
+      setTaskItems([]); setTaskMode('none'); setTaskError('')
       setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
     }
   }, [open, task?.id])
@@ -118,48 +119,47 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
 
   // ── Create tasks from output ───────────────────────────────────────────────
 
-  const parseOutputItems = (text) => {
+  const parsedOutputItems = useMemo(() => {
     const items = []
     const clean = (raw) =>
       raw
-        .replace(/\*\*(.+?)\*\*/g, '$1')   // **bold**
-        .replace(/\*(.+?)\*/g, '$1')         // *italic*
-        .replace(/\[(.+?)\]\(.+?\)/g, '$1') // [link](url)
-        .replace(/^[:#–—-]+\s*/, '')         // leading punctuation
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+        .replace(/^[:#–—-]+\s*/, '')
         .trim()
-
-    for (const line of text.split('\n')) {
+    for (const line of output.split('\n')) {
       const t = line.trim()
       if (!t) continue
       let m
-      // Numbered list: "1. " or "1) "
-      if ((m = t.match(/^[\d]+[.)]\s+(.+)/)))      { const c = clean(m[1]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-      // Bulleted: "- " "• " "* "
-      if ((m = t.match(/^[-•*]\s+(.+)/)))           { const c = clean(m[1]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-      // Markdown heading: "## Name" or "### Name"
-      if ((m = t.match(/^#{1,3}\s+(.+)/)))          { const c = clean(m[1]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-      // Bold-first line used as heading: "**Name**" or "**Name** - desc"
-      if ((m = t.match(/^\*\*(.+?)\*\*(.*)$/)))     { const c = clean(m[1] + m[2]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      if ((m = t.match(/^[\d]+[.)]\s+(.+)/)))  { const c = clean(m[1]);        if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      if ((m = t.match(/^[-•*]\s+(.+)/)))       { const c = clean(m[1]);        if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      if ((m = t.match(/^#{1,3}\s+(.+)/)))      { const c = clean(m[1]);        if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      if ((m = t.match(/^\*\*(.+?)\*\*(.*)$/))) { const c = clean(m[1] + m[2]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
     }
     return items
-  }
+  }, [output])
 
   const startCreateTasks = () => {
-    setTaskItems(parseOutputItems(output))
+    setTaskItems(parsedOutputItems)
     setTaskMode('confirming')
+    setTaskError('')
   }
 
   const confirmCreateTasks = async () => {
-    const valid = taskItems.filter((s) => s.trim())
+    const valid = taskItems.map((s) => s.trim()).filter(Boolean)
     if (!valid.length) return
     setTaskMode('creating')
+    setTaskError('')
     try {
-      const created = await Promise.all(
-        valid.map((title) => createCard({ title, section: task.section ?? 'today' }))
+      const section = task.section ?? 'today'
+      const { cards: created } = await bulkCreateCards(
+        valid.map((title) => ({ title, section }))
       )
       onBreakdown?.({ cards: created })
       handleClose()
     } catch {
+      setTaskError('Failed to create tasks. Please try again.')
       setTaskMode('confirming')
     }
   }
@@ -275,7 +275,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
                     <span className="assist-label">Output</span>
                     {status === 'done' && (
                       <div className="assist-output-actions">
-                        {parseOutputItems(output).length >= 2 && (
+                        {parsedOutputItems.length >= 2 && (
                           <button className="assist-copy" onClick={startCreateTasks}>
                             Create tasks
                           </button>
@@ -319,6 +319,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
                       </div>
                     ))}
                   </div>
+                  {taskError && <p className="assist-bd-error">{taskError}</p>}
                   <div className="assist-task-confirm-row">
                     <button className="assist-copy" onClick={() => setTaskMode('none')}>Back</button>
                     <button

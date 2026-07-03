@@ -588,12 +588,19 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
 _ASSIST_TAVILY_KEY = os.getenv("TAVILY_API_KEY", "")
 
 
+_geocode_cache: dict[tuple, str | None] = {}
+
+
 def _reverse_geocode(lat: float, lon: float) -> str | None:
+    # Round to ~1 km precision for cache key
+    key = (round(lat, 2), round(lon, 2))
+    if key in _geocode_cache:
+        return _geocode_cache[key]
     try:
         r = http_requests.get(
             "https://nominatim.openstreetmap.org/reverse",
             params={"lat": lat, "lon": lon, "format": "json"},
-            headers={"User-Agent": "todo-app/1.0"},
+            headers={"User-Agent": "personal-todo-app/1.0"},
             timeout=5,
         )
         addr = r.json().get("address", {})
@@ -603,9 +610,11 @@ def _reverse_geocode(lat: float, lon: float) -> str | None:
         parts = [p for p in [city, state] if p]
         if country and country != "US":
             parts.append(country)
-        return ", ".join(parts) if parts else None
+        result = ", ".join(parts) if parts else None
     except Exception:
-        return None
+        result = None
+    _geocode_cache[key] = result
+    return result
 
 
 def _tavily_search(query: str, max_results: int = 5) -> list[dict]:
@@ -686,6 +695,7 @@ def stream_assist(req: schemas.AssistRequest):
                     ],
                     max_tokens=150,
                     temperature=0,
+                    timeout=10,
                 )
                 decision = json.loads(decision_resp.choices[0].message.content.strip())
                 if decision.get("search"):

@@ -403,44 +403,71 @@ def breakdown_card(card_id: int, db: Session = Depends(get_db)):
     return {"subtasks": subtasks, "tag_name": f"Project: {project_name}"}
 
 
+@router.post("/api/cards/bulk")
+def bulk_create_cards(req: schemas.BulkCardCreate, db: Session = Depends(get_db)):
+    """Create multiple cards atomically. All succeed or all fail."""
+    now = datetime.now(timezone.utc)
+    try:
+        created = []
+        for item in req.cards:
+            base_pos = db.query(models.Card).filter(models.Card.section == item.section).count()
+            c = models.Card(title=item.title.strip(), section=item.section,
+                            position=base_pos, completed=False, updated_at=now)
+            db.add(c)
+            db.flush()
+            created.append(c)
+        db.commit()
+        for c in created:
+            db.refresh(c)
+        return {"cards": [schemas.Card.model_validate(c) for c in created]}
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create cards")
+
+
 @router.post("/api/cards/{card_id}/breakdown/commit")
 def commit_breakdown(card_id: int, req: schemas.BreakdownCommit, db: Session = Depends(get_db)):
-    """Create project tag + subtask cards and archive the original card."""
+    """Create project tag + subtask cards and archive the original card — all in one transaction."""
     card = db.query(models.Card).filter(models.Card.id == card_id).first()
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
 
-    tag_name = req.tag_name
-    tag = db.query(models.Tag).filter(models.Tag.name == tag_name).first()
-    if not tag:
-        used_colors = {row[0] for row in db.query(models.Tag.color).all()}
-        available = [c for c in _PROJECT_TAG_COLORS if c not in used_colors]
-        color = available[0] if available else random.choice(_PROJECT_TAG_COLORS)
-        tag = models.Tag(name=tag_name, color=color)
-        db.add(tag)
-        db.flush()
+    try:
+        tag_name = req.tag_name
+        tag = db.query(models.Tag).filter(models.Tag.name == tag_name).first()
+        if not tag:
+            used_colors = {row[0] for row in db.query(models.Tag.color).all()}
+            available = [c for c in _PROJECT_TAG_COLORS if c not in used_colors]
+            color = available[0] if available else random.choice(_PROJECT_TAG_COLORS)
+            tag = models.Tag(name=tag_name, color=color)
+            db.add(tag)
+            db.flush()
 
-    now = datetime.now(timezone.utc)
-    base_pos = db.query(models.Card).filter(models.Card.section == card.section).count()
-    created = []
-    for i, title in enumerate(req.subtasks):
-        t = title.strip()
-        if not t:
-            continue
-        c = models.Card(title=t, section=card.section, position=base_pos + i,
-                        completed=False, updated_at=now)
-        c.tags = [tag]
-        db.add(c)
-        db.flush()
-        created.append(c)
+        now = datetime.now(timezone.utc)
+        base_pos = db.query(models.Card).filter(models.Card.section == card.section).count()
+        created = []
+        for i, title in enumerate(req.subtasks):
+            t = title.strip()
+            if not t:
+                continue
+            c = models.Card(title=t, section=card.section, position=base_pos + i,
+                            completed=False, updated_at=now)
+            c.tags = [tag]
+            db.add(c)
+            db.flush()
+            created.append(c)
 
-    card.archived = True
-    card.archived_at = now
-    card.updated_at = now
-    if tag not in card.tags:
-        card.tags.append(tag)
+        card.archived = True
+        card.archived_at = now
+        card.updated_at = now
+        if tag not in card.tags:
+            card.tags.append(tag)
 
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to commit breakdown")
+
     for c in created:
         db.refresh(c)
     db.refresh(card)

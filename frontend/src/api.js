@@ -145,6 +145,16 @@ export async function parseBulkCards(text) {
   return res.json()
 }
 
+export async function bulkCreateCards(cards) {
+  const res = await apiFetch(`${BASE}/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cards }),
+  })
+  if (!res.ok) throw new Error('Failed to create cards')
+  return res.json()
+}
+
 export async function breakdownCard(id) {
   const res = await apiFetch(`${BASE}/${id}/breakdown`, { method: 'POST' })
   if (!res.ok) throw new Error('Failed to generate breakdown')

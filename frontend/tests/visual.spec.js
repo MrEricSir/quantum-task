@@ -727,6 +727,7 @@ test.describe('assistant modal', () => {
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
       body: ASSIST_LIST_SSE,
     }))
+    await page.route('**/api/cards/bulk', r => r.fulfill({ json: { cards: [] } }))
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
     await card.getByRole('button', { name: /assistant/i }).click()
@@ -1063,5 +1064,257 @@ test.describe('edit modal scheduled_at', () => {
     await editBtn2.click()
     await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
     await expect(page.locator('#atm-scheduled')).toHaveValue('2026-06-01T10:00')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Calendar page
+// ---------------------------------------------------------------------------
+test.describe('calendar page', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/calendar')
+    await waitForApp(page)
+  })
+
+  test('List and Month view toggle buttons are visible', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /^list$/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^month$/i })).toBeVisible()
+  })
+
+  test('refresh button is visible', async ({ page }) => {
+    await expect(page.locator('.calp-refresh')).toBeVisible()
+  })
+
+  test('today badge is shown in list view', async ({ page }) => {
+    await expect(page.locator('.calp-today-badge')).toBeVisible()
+  })
+
+  test('calendar event appears in list view', async ({ page }) => {
+    await expect(page.getByText('Product Review')).toBeVisible()
+  })
+
+  test('switching to Month view shows calendar grid with day headers', async ({ page }) => {
+    await page.getByRole('button', { name: /^month$/i }).click()
+    await expect(page.locator('.calp-month-view')).toBeVisible()
+    // Day-of-week headers
+    for (const day of ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']) {
+      await expect(page.locator('.calp-grid-dow', { hasText: day })).toBeVisible()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health page
+// ---------------------------------------------------------------------------
+test.describe('health page', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/health/correlations', r => r.fulfill({ json: { correlations: [], segments: [], summary: null, weight_n: 0, fat_n: 0 } }))
+    await page.route('**/api/health/experiment', r => r.fulfill({ json: null }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [] }))
+    await page.route('**/api/food**', r => r.fulfill({ json: [] }))
+    await page.goto('/health')
+    await waitForApp(page)
+  })
+
+  test('"Connect Withings" prompt is shown when not connected', async ({ page }) => {
+    await expect(page.locator('.health-not-connected')).toBeVisible()
+    await expect(page.locator('.health-not-connected').getByRole('button', { name: /connect withings/i })).toBeVisible()
+  })
+
+  test('food log input is visible when Withings is connected', async ({ page }) => {
+    // Override: Withings connected → showCharts = true → FoodLog renders
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.locator('.food-input')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Search modal — functional
+// ---------------------------------------------------------------------------
+test.describe('search modal', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/cards/search**', r =>
+      r.fulfill({ json: [
+        { id: 1, title: 'Daily Engineering Standup', section: 'today', completed: false,
+          archived: false, description: null, tags: [], position: 0, overdue_days: 0 },
+      ] })
+    )
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.keyboard.press('/')
+    await expect(page.getByRole('dialog')).toBeVisible()
+  })
+
+  test('search input is auto-focused on open', async ({ page }) => {
+    const input = page.locator('[placeholder*="search" i]').or(page.locator('input[type="text"]')).first()
+    await expect(input).toBeFocused()
+  })
+
+  test('typing a query shows card results', async ({ page }) => {
+    await page.keyboard.type('standup')
+    await expect(page.getByText('Daily Engineering Standup')).toBeVisible()
+  })
+
+  test('results include a section badge', async ({ page }) => {
+    await page.keyboard.type('standup')
+    // Section label badge should appear (Today / This Week / etc.)
+    await expect(page.getByText(/today|this week|this month/i).first()).toBeVisible()
+  })
+
+  test('habits appear in search results when name matches', async ({ page }) => {
+    // No mock override needed — habit filter is client-side from passed habits list
+    await page.keyboard.type('meditation')
+    await expect(page.getByText('Morning meditation')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Archive section on board
+// ---------------------------------------------------------------------------
+test.describe('archive section on board', () => {
+  test('archive collapsible has no count badge when no completed cards exist', async ({ page }) => {
+    // Default mock has no completed cards — count badge only renders when count > 0
+    await page.goto('/board')
+    await waitForApp(page)
+    await expect(page.locator('.archive .collapsible-count')).toHaveCount(0)
+  })
+
+  test('completed card appears in archive section with count badge', async ({ page }) => {
+    const completedCard = {
+      id: 99, title: 'Completed task', section: 'today', completed: true, archived: false,
+      description: null, position: 10, overdue_days: 0, tags: [],
+    }
+    await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, completedCard] }))
+    await page.goto('/board')
+    await waitForApp(page)
+    await expect(page.locator('.archive')).toBeVisible()
+    await expect(page.locator('.archive .collapsible-count')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tag filter bar — filtering behavior (mobile only — hidden on desktop)
+// ---------------------------------------------------------------------------
+test.describe('tag filter bar', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('tag filter bar is visible on mobile board', async ({ page }) => {
+    await expect(page.locator('.tag-filter-bar')).toBeVisible()
+  })
+
+  test('clicking a tag pill navigates to tag-scoped URL', async ({ page }) => {
+    await page.locator('.tag-filter-bar-pill', { hasText: 'work' }).click()
+    await expect(page).toHaveURL(/\/board\/tag\/1/)
+  })
+
+  test('clicking active tag pill deselects and returns to /board', async ({ page }) => {
+    await page.goto('/board/tag/1')
+    await waitForApp(page)
+    // The active pill may be off-screen on mobile; force click it
+    await page.locator('.tag-filter-bar-pill--active').click({ force: true })
+    await expect(page).toHaveURL(/\/board$/)
+  })
+
+  test('cards without selected tag are hidden when tag is active', async ({ page }) => {
+    await page.goto('/board/tag/2')   // personal tag
+    await waitForApp(page)
+    // Need to switch to Today tab to see today-section cards
+    await page.locator('.mobile-tab', { hasText: 'Today' }).click()
+    // "Call dentist" has no tags — should not appear
+    await expect(page.locator('.event-card', { hasText: 'Call dentist' })).toHaveCount(0)
+    // "Read that article" has personal tag (it's in Stash)
+    await page.locator('.mobile-tab', { hasText: 'Stash' }).click()
+    await expect(page.locator('.event-card', { hasText: 'Read that article' })).toBeVisible()
+  })
+
+  test('"All" pill is shown and navigates to unfiltered board', async ({ page }) => {
+    await page.goto('/board/tag/1')
+    await waitForApp(page)
+    const allPill = page.locator('.tag-filter-bar-pill', { hasText: 'All' })
+    await expect(allPill).toBeVisible()
+    await allPill.click()
+    await expect(page).toHaveURL(/\/board$/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Assistant modal — web search status indicator
+// ---------------------------------------------------------------------------
+test.describe('assistant modal — web search indicator', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('"Searching the web…" text appears when status=searching SSE event fires', async ({ page }) => {
+    const searchingSse =
+      'data: {"status":"searching"}\n\n' +
+      'data: {"text":"Here are some brunch spots."}\n\n' +
+      'data: [DONE]\n\n'
+    await page.route('**/api/assist/stream', r => r.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: searchingSse,
+    }))
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await page.locator('.assist-context').fill('Find me brunch spots')
+    await page.getByRole('button', { name: /generate/i }).click()
+    // Eventually the output renders
+    await expect(page.locator('.assist-output')).toBeVisible()
+    await expect(page.getByText('Here are some brunch spots.')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Assistant modal — "Create tasks" error state
+// ---------------------------------------------------------------------------
+test.describe('assistant modal — create tasks error', () => {
+  test('shows error message when bulk card creation fails', async ({ page }) => {
+    await page.route('**/api/assist/stream', r => r.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: ASSIST_LIST_SSE,
+    }))
+    await page.route('**/api/cards/bulk', r => r.fulfill({ status: 500, json: { detail: 'Server error' } }))
+    await page.goto('/board')
+    await waitForApp(page)
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await page.locator('.assist-context').fill('Help me break this down')
+    await page.getByRole('button', { name: /generate/i }).click()
+    await page.getByRole('button', { name: /create tasks/i }).click()
+    await page.getByRole('button', { name: /add 3 tasks/i }).click()
+    await expect(page.locator('.assist-bd-error')).toBeVisible()
+    // Should still be on the confirm screen (not closed)
+    await expect(page.locator('.assist-bd-input').first()).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GitHub / Engineering settings modal
+// ---------------------------------------------------------------------------
+test.describe('github settings modal', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('GitHub settings modal opens from settings menu with form fields', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await expect(page.getByRole('heading', { name: /engineering/i }).or(page.getByRole('dialog'))).toBeVisible()
+    // Token input and repo list textarea
+    await expect(page.locator('[placeholder*="token" i], input[type="password"], input[type="text"]').first()).toBeVisible()
   })
 })

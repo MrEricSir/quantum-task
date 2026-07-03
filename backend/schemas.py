@@ -298,6 +298,15 @@ class BreakdownCommit(BaseModel):
     tag_name: str
 
 
+class BulkCardItem(BaseModel):
+    title: str
+    section: str
+
+
+class BulkCardCreate(BaseModel):
+    cards: List[BulkCardItem]
+
+
 class Card(BaseModel):
     id: int
     title: str

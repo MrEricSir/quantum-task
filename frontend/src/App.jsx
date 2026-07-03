@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   DndContext,
@@ -358,10 +358,13 @@ export default function App() {
   const activeTodos = todos.filter((t) => !t.completed && !t.archived && t.section !== 'none')
   const completedTodos = todos.filter((t) => t.completed && !t.archived)
 
-  const visibleTags = tags.filter((tag) => {
-    if (!tag.name.startsWith('Project: ')) return true
-    return todos.some((t) => !t.completed && !t.archived && (t.tags ?? []).some((tg) => tg.id === tag.id))
-  })
+  const visibleTags = useMemo(() =>
+    tags.filter((tag) => {
+      if (!tag.name.startsWith('Project: ')) return true
+      return todos.some((t) => !t.completed && !t.archived && (t.tags ?? []).some((tg) => tg.id === tag.id))
+    }),
+    [tags, todos]
+  )
 
   const visibleCalendarEvents = selectedTagId === null
     ? calendarEvents
