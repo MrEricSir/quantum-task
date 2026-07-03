@@ -400,6 +400,13 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         if withings_metric not in ("steps", "fat_ratio", "weight", None):
             withings_metric = None
             withings_goal = None
+        # Fallback: infer steps goal from action text if LLM forgot to set it
+        if withings_metric is None and action and "steps" in action.lower():
+            import re as _re
+            m = _re.search(r'([\d,]+)\s*steps', action, _re.I)
+            if m:
+                withings_metric = "steps"
+                withings_goal = float(m.group(1).replace(",", ""))
     except Exception:
         text = "Try increasing your daily step count by 10% compared to your recent average."
         hypothesis = "More consistent movement should correlate with better weight outcomes."

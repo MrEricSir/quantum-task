@@ -267,7 +267,7 @@ def do_sync(db: Session) -> dict:
             "action": "getsummary",
             "startdateymd": start.isoformat(),
             "enddateymd": today.isoformat(),
-            "data_fields": "sleep_score,total_sleep_time,deep_sleep_duration",
+            "data_fields": "sleep_score,total_sleep_time,deep_sleep_duration,spo2_average",
         })
         for item in body.get("series", []):
             d = item.get("date")
@@ -283,6 +283,9 @@ def do_sync(db: Session) -> dict:
             if data.get("deep_sleep_duration") is not None:
                 _upsert_measurement(db, d, "sleep_deep_minutes", round(float(data["deep_sleep_duration"]), 0))
                 synced["sleep_deep_minutes"] += 1
+            if data.get("spo2_average") is not None:
+                _upsert_measurement(db, d, "spo2", round(float(data["spo2_average"]), 1))
+                synced["spo2"] += 1
     except Exception as exc:
         print(f"[withings] sleep sync error: {exc}", flush=True)
         errors["sleep"] = str(exc)
