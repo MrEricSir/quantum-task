@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta, time as dt_time, timezone
@@ -584,6 +585,56 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
 
 # ── Assistant endpoint ────────────────────────────────────────────────────────
 
+_ASSIST_TAVILY_KEY = os.getenv("TAVILY_API_KEY", "")
+
+
+def _reverse_geocode(lat: float, lon: float) -> str | None:
+    try:
+        r = http_requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": lat, "lon": lon, "format": "json"},
+            headers={"User-Agent": "todo-app/1.0"},
+            timeout=5,
+        )
+        addr = r.json().get("address", {})
+        city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("county")
+        state = addr.get("state")
+        country = addr.get("country_code", "").upper()
+        parts = [p for p in [city, state] if p]
+        if country and country != "US":
+            parts.append(country)
+        return ", ".join(parts) if parts else None
+    except Exception:
+        return None
+
+
+def _tavily_search(query: str, max_results: int = 5) -> list[dict]:
+    if not _ASSIST_TAVILY_KEY:
+        return []
+    try:
+        r = http_requests.post(
+            "https://api.tavily.com/search",
+            json={"api_key": _ASSIST_TAVILY_KEY, "query": query, "max_results": max_results},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return [
+            {"title": res.get("title", ""), "url": res.get("url", ""), "content": res.get("content", "")}
+            for res in r.json().get("results", [])
+        ]
+    except Exception:
+        return []
+
+
+_ASSIST_DECISION_SYSTEM = """\
+Decide whether answering this task requires current web data \
+(local businesses, real-time info, current events, prices, reviews, hours, etc.).
+Return ONLY valid JSON — no markdown.
+If search needed: {"search": true, "queries": ["specific query 1", "specific query 2"]}
+If not needed: {"search": false}
+Use 1–3 targeted queries. Include location when relevant (provided in context).
+"""
+
 _ASSIST_SYSTEM = """\
 You are a personal administrative assistant. When given a task and context, you take \
 action — you do not describe what you would do, you just do it.
@@ -594,6 +645,7 @@ Examples of what "taking action" means:
 - Task is a summary → write the summary
 - Task is extracting action items → list them clearly and concisely
 - Task is drafting a document → write the document
+- Task is finding local options → list real options sourced from the search results provided
 
 Rules:
 - Do not explain your reasoning or what you are about to do. Produce the output directly.
@@ -601,24 +653,65 @@ Rules:
 - If the context is a message the user received, the output is addressed to the sender.
 - Keep output concise and professional unless the task implies otherwise.
 - If the context does not contain enough information to act, say so in one sentence.
+- If web search results are provided, use them as your primary source of truth. \
+Cite sources inline as [Title](URL) where useful.
+- Never invent specific facts (business names, addresses, prices, people) that are \
+not present in the context or search results.
 """
 
 
 @router.post("/api/assist/stream")
 def stream_assist(req: schemas.AssistRequest):
+    location_str = None
+    if req.lat is not None and req.lon is not None:
+        location_str = _reverse_geocode(req.lat, req.lon)
+
     user_msg_parts = [f"Task: {req.task_title}"]
     if req.task_description:
         user_msg_parts.append(f"Additional context from task: {req.task_description}")
+    if location_str:
+        user_msg_parts.append(f"User's location: {location_str}")
     user_msg_parts.append(f"\nContext provided by user:\n{req.context}")
     user_msg = "\n".join(user_msg_parts)
 
     def generate():
+        search_context = ""
+        if _ASSIST_TAVILY_KEY:
+            try:
+                decision_resp = llm_client().chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[
+                        {"role": "system", "content": _ASSIST_DECISION_SYSTEM},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    max_tokens=150,
+                    temperature=0,
+                )
+                decision = json.loads(decision_resp.choices[0].message.content.strip())
+                if decision.get("search"):
+                    yield f"data: {json.dumps({'status': 'searching'})}\n\n"
+                    all_results = []
+                    for q in decision.get("queries", [])[:3]:
+                        all_results.extend(_tavily_search(q))
+                    if all_results:
+                        parts = [
+                            f"[{r['title']}]({r['url']})\n{r['content']}"
+                            for r in all_results[:8]
+                        ]
+                        search_context = "\n\n---\n\n".join(parts)
+            except Exception:
+                pass  # fall through to regular generation
+
+        final_user = user_msg
+        if search_context:
+            final_user += f"\n\n--- Web Search Results ---\n{search_context}"
+
         try:
             stream = llm_client().chat.completions.create(
                 model=LLM_MODEL,
                 messages=[
                     {"role": "system", "content": _ASSIST_SYSTEM},
-                    {"role": "user",   "content": user_msg},
+                    {"role": "user",   "content": final_user},
                 ],
                 stream=True,
                 temperature=0.3,

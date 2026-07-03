@@ -8,10 +8,11 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
   const [mode,     setMode]    = useState('assist')  // 'assist' | 'breakdown'
 
   // Assist state
-  const [context,  setContext]  = useState('')
-  const [output,   setOutput]   = useState('')
-  const [status,   setStatus]   = useState('idle') // idle | loading | done | error
-  const [copied,   setCopied]   = useState(false)
+  const [context,    setContext]    = useState('')
+  const [output,     setOutput]     = useState('')
+  const [status,     setStatus]     = useState('idle') // idle | loading | searching | done | error
+  const [searching,  setSearching]  = useState(false)
+  const [copied,     setCopied]     = useState(false)
   const abortRef   = useRef(null)
   const outputRef  = useRef(null)
 
@@ -25,7 +26,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
   useEffect(() => {
     if (open) {
       setMode('assist')
-      setContext(''); setOutput(''); setStatus('idle'); setCopied(false)
+      setContext(''); setOutput(''); setStatus('idle'); setCopied(false); setSearching(false)
       setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
     }
   }, [open, task?.id])
@@ -46,12 +47,23 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
 
   // ── Assist ────────────────────────────────────────────────────────────────
 
+  const getLocation = () =>
+    new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve(null)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        () => resolve(null),
+        { timeout: 5000 },
+      )
+    })
+
   const generate = async () => {
     if (!context.trim()) return
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
     abortRef.current = controller
-    setOutput(''); setStatus('loading')
+    setOutput(''); setStatus('loading'); setSearching(false)
+    const location = await getLocation()
     try {
       const res = await fetch('/api/assist/stream', {
         method: 'POST',
@@ -60,6 +72,8 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
           task_title: task.title,
           task_description: task.description || null,
           context: context.trim(),
+          lat: location?.lat ?? null,
+          lon: location?.lon ?? null,
         }),
         signal: controller.signal,
       })
@@ -80,7 +94,8 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
           try {
             const parsed = JSON.parse(data)
             if (parsed.error) { setStatus('error'); setOutput(parsed.error); return }
-            if (parsed.text)  { acc += parsed.text; setOutput(acc) }
+            if (parsed.status === 'searching') { setSearching(true) }
+            if (parsed.text)  { setSearching(false); acc += parsed.text; setOutput(acc) }
           } catch { /* malformed chunk */ }
         }
       }
@@ -217,7 +232,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
                     ref={outputRef}
                     className={`assist-output${status === 'loading' ? ' assist-output--streaming' : ''}`}
                   >
-                    {output || <span className="assist-output-placeholder">Thinking…</span>}
+                    {output || <span className="assist-output-placeholder">{searching ? 'Searching the web…' : 'Thinking…'}</span>}
                   </div>
                 </div>
               )}
