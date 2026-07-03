@@ -195,7 +195,7 @@ test.describe('today page', () => {
   })
 
   test('unscheduled today items appear in schedule section', async ({ page }) => {
-    await expect(page.getByText('Review pull requests')).toBeVisible()
+    await expect(page.getByText('Review pull requests').first()).toBeVisible()
     await expect(page.getByText('Call dentist')).toBeVisible()
   })
 
@@ -203,50 +203,11 @@ test.describe('today page', () => {
     await expect(page.getByText('Read that article')).toBeVisible()
   })
 
-  test('"Plan my day" trigger button is visible', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /plan my day/i })).toBeVisible()
-  })
-
-  test('daily plan displays times in 12h local format', async ({ page }) => {
-    // The backend normalises LLM output to HH:MM (24h); the frontend converts to 12h.
-    // Blocks are keyed by time string so we can verify each displayed correctly.
-    await page.route('**/api/daily-plan', r => r.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        blocks: [
-          // Clock is frozen at 10:00 — only blocks with time >= "10:00" are shown
-          { time: '10:30', duration: 60,  title: 'Team standup',   type: 'event', fixed: true,  note: null },
-          { time: '10:00', duration: 45,  title: 'Review PRs',     type: 'task',  fixed: false, note: 'Start fresh' },
-          { time: '14:30', duration: 30,  title: 'Exercise',        type: 'habit', fixed: false, note: null },
-          { time: '22:00', duration: 15,  title: 'Late task',       type: 'task',  fixed: false, note: null },
-          { time: '12:00', duration: 60,  title: 'Lunch meeting',   type: 'event', fixed: true,  note: null },
-          { time: null,    duration: 30,  title: 'Overflow item',   type: 'task',  fixed: false, note: null },
-        ]
-      })
-    }))
-
-    await page.getByRole('button', { name: /plan my day/i }).click()
-
-    // Times should display in 12h format, not raw 24h strings
-    await expect(page.getByText('10:30 AM')).toBeVisible()
-    await expect(page.getByText('10 AM')).toBeVisible()
-    await expect(page.getByText('2:30 PM')).toBeVisible()
-    await expect(page.getByText('10 PM')).toBeVisible()  // 22:00
-    await expect(page.getByText('12 PM')).toBeVisible()  // noon
-
-    // Task/event titles visible
-    await expect(page.getByText('Team standup')).toBeVisible()
-    await expect(page.getByText('Review PRs')).toBeVisible()
-    await expect(page.getByText('Exercise')).toBeVisible()
-
-    // Overflow item (null time) appears in "Didn't get to" section
-    await expect(page.getByText("Didn't get to")).toBeVisible()
-    await expect(page.getByText('Overflow item')).toBeVisible()
-
-    // Raw 24h strings must NOT appear
-    await expect(page.getByText('09:00')).not.toBeVisible()
-    await expect(page.getByText('14:30')).not.toBeVisible()
+  test('"Focus next" banner shows highest-priority untimed task', async ({ page }) => {
+    const banner = page.locator('.focus-next')
+    await expect(banner).toBeVisible()
+    await expect(banner.getByText('Focus next')).toBeVisible()
+    await expect(banner.getByText('Review pull requests')).toBeVisible()
   })
 })
 

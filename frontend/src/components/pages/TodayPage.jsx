@@ -4,10 +4,8 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@radix-ui/react-icons
 import TodoCard from '../board/TodoCard'
 import CalendarEventCard from '../board/CalendarEventCard'
 import DailyBriefing from '../shared/DailyBriefing'
-import DailyPlan from '../shared/DailyPlan'
 import InsightsPanel from '../shared/InsightsPanel'
 import { CollapseBody } from '../layout/Collapsible'
-import { useDailyPlan } from '../../hooks/useDailyPlan'
 import './TodayPage.css'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -227,8 +225,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
 
   const catchUpCount  = todos.filter((t) => !t.completed && t.section === 'week').length
 
-  const plan = useDailyPlan(activeTodos, todayEvents, habits)
-
   const overdueScheduleCount = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
                              + untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
 
@@ -283,14 +279,17 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           invalidationKey={briefingKey}
         />
 
-        <DailyPlan
-          status={plan.status}
-          blocks={plan.blocks}
-          isStale={plan.isStale}
-          error={plan.error}
-          onGenerate={plan.generate}
-          onDismiss={plan.dismiss}
-        />
+        {sortedUntimedTasks.length > 0 && (
+          <div className="focus-next">
+            <span className="focus-next-label">Focus next</span>
+            <span className="focus-next-title">{sortedUntimedTasks[0].title}</span>
+            {(sortedUntimedTasks[0].overdue_days ?? 0) > 0 && (
+              <span className="focus-next-overdue">
+                {sortedUntimedTasks[0].overdue_days}d overdue
+              </span>
+            )}
+          </div>
+        )}
 
         <InsightsPanel
           refreshKey={briefingKey}
