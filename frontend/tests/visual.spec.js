@@ -680,6 +680,12 @@ test.describe('workshop page', () => {
 // ---------------------------------------------------------------------------
 // Assistant modal
 // ---------------------------------------------------------------------------
+const ASSIST_LIST_SSE =
+  'data: {"text":"1. Go to the dentist\\n"}\n\n' +
+  'data: {"text":"2. Get a cleaning\\n"}\n\n' +
+  'data: {"text":"3. Schedule follow-up\\n"}\n\n' +
+  'data: [DONE]\n\n'
+
 test.describe('assistant modal', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/board')
@@ -699,6 +705,56 @@ test.describe('assistant modal', () => {
     await expect(page.getByRole('dialog')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Assistant' })).toBeVisible()
     await expect(page.getByRole('button', { name: /generate/i })).toBeVisible()
+  })
+
+  test('"Create tasks" button appears when output contains a list', async ({ page }) => {
+    await page.route('**/api/assist/stream', r => r.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: ASSIST_LIST_SSE,
+    }))
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await page.locator('.assist-context').fill('Help me break this down')
+    await page.getByRole('button', { name: /generate/i }).click()
+    await expect(page.getByRole('button', { name: /create tasks/i })).toBeVisible()
+  })
+
+  test('"Create tasks" shows editable confirm list', async ({ page }) => {
+    await page.route('**/api/assist/stream', r => r.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: ASSIST_LIST_SSE,
+    }))
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await page.locator('.assist-context').fill('Help me break this down')
+    await page.getByRole('button', { name: /generate/i }).click()
+    await page.getByRole('button', { name: /create tasks/i }).click()
+    await expect(page.locator('.assist-bd-input').nth(0)).toHaveValue('Go to the dentist')
+    await expect(page.locator('.assist-bd-input').nth(1)).toHaveValue('Get a cleaning')
+    await expect(page.locator('.assist-bd-input').nth(2)).toHaveValue('Schedule follow-up')
+    await expect(page.getByRole('button', { name: /add 3 tasks/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
+  })
+
+  test('"Create tasks" Back button returns to output view', async ({ page }) => {
+    await page.route('**/api/assist/stream', r => r.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: ASSIST_LIST_SSE,
+    }))
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    await card.getByRole('button', { name: /assistant/i }).click()
+    await page.locator('.assist-context').fill('Help me break this down')
+    await page.getByRole('button', { name: /generate/i }).click()
+    await page.getByRole('button', { name: /create tasks/i }).click()
+    await page.getByRole('button', { name: /back/i }).click()
+    await expect(page.locator('.assist-output')).toBeVisible()
+    await expect(page.getByRole('button', { name: /create tasks/i })).toBeVisible()
   })
 })
 
@@ -822,6 +878,144 @@ test.describe('breakdown', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Mobile assistant modal
+// ---------------------------------------------------------------------------
+test.describe('mobile assistant modal', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('"✦ Assist" button is visible in the card sheet footer', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    const sheet = page.locator('.card-sheet')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /assist/i })).toBeVisible()
+  })
+
+  test('"✦ Assist" button opens the assistant modal', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await page.locator('.card-sheet').getByRole('button', { name: /assist/i }).click()
+    await expect(page.locator('.assist-modal')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assistant' })).toBeVisible()
+    await expect(page.locator('.assist-tabs')).toBeVisible()
+  })
+
+  test('assistant modal is full-screen on mobile', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await page.locator('.card-sheet').getByRole('button', { name: /assist/i }).click()
+    const modal = page.locator('.assist-modal')
+    await expect(modal).toBeVisible()
+    const box = await modal.boundingBox()
+    // Full-screen: should span the full viewport width and start at x=0
+    expect(box.x).toBe(0)
+    expect(box.width).toBeCloseTo(390, -1)
+    // And should be taller than a typical centered modal
+    expect(box.height).toBeGreaterThan(600)
+  })
+
+  test('"Break down" tab is accessible from the mobile card sheet', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', r =>
+      r.fulfill({ json: { subtasks: [], tag_name: 'Project: Call dentist' } }))
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
+    await page.locator('.card-sheet').getByRole('button', { name: /assist/i }).click()
+    await expect(page.getByRole('button', { name: /^break down$/i })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Project tag visibility
+// ---------------------------------------------------------------------------
+test.describe('project tag visibility', () => {
+  const PROJECT_TAG_DONE   = { id: 10, name: 'Project: Done Project',   color: '#059669' }
+  const PROJECT_TAG_ACTIVE = { id: 11, name: 'Project: Active Project', color: '#2563eb' }
+
+  test('completed project tags are hidden from the sidebar', async ({ page }) => {
+    const completedCard = {
+      id: 20, title: 'Finished task', section: 'today', completed: true,
+      description: null, position: 6, overdue_days: 0, tags: [PROJECT_TAG_DONE],
+    }
+    await page.route('**/api/tags',  r => r.fulfill({ json: [...TAGS, PROJECT_TAG_DONE] }))
+    await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, completedCard] }))
+    await page.goto('/board')
+    await waitForApp(page)
+    await expect(page.getByRole('button', { name: 'Project: Done Project', exact: true }))
+      .toHaveCount(0)
+  })
+
+  test('archived project tags are hidden from the sidebar', async ({ page }) => {
+    const archivedCard = {
+      id: 21, title: 'Archived task', section: 'today', completed: false, archived: true,
+      description: null, position: 6, overdue_days: 0, tags: [PROJECT_TAG_DONE],
+    }
+    await page.route('**/api/tags',  r => r.fulfill({ json: [...TAGS, PROJECT_TAG_DONE] }))
+    await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, archivedCard] }))
+    await page.goto('/board')
+    await waitForApp(page)
+    await expect(page.getByRole('button', { name: 'Project: Done Project', exact: true }))
+      .toHaveCount(0)
+  })
+
+  test('project tags with at least one active card remain visible', async ({ page }) => {
+    const activeCard = {
+      id: 22, title: 'Ongoing task', section: 'today', completed: false, archived: false,
+      description: null, position: 6, overdue_days: 0, tags: [PROJECT_TAG_ACTIVE],
+    }
+    await page.route('**/api/tags',  r => r.fulfill({ json: [...TAGS, PROJECT_TAG_ACTIVE] }))
+    await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, activeCard] }))
+    await page.goto('/board')
+    await waitForApp(page)
+    await expect(page.getByRole('button', { name: 'Project: Active Project', exact: true }))
+      .toBeVisible()
+  })
+
+  test('non-project tags are always visible regardless of card state', async ({ page }) => {
+    // "work" tag has completed todos in the mock but should still show
+    await page.goto('/board')
+    await waitForApp(page)
+    await expect(page.getByRole('button', { name: 'work', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'personal', exact: true })).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Focus next banner — project name prefix
+// ---------------------------------------------------------------------------
+test.describe('focus next banner', () => {
+  test('shows project name prefix when focused task has a Project: tag', async ({ page }) => {
+    const projectTag = { id: 12, name: 'Project: Brunch Planning', color: '#d97706' }
+    // Card 2 ("Review pull requests") is the first unscheduled today card — it becomes focus next
+    const todosWithProject = ALL_TODOS.map(t =>
+      t.id === 2 ? { ...t, tags: [projectTag] } : t
+    )
+    await page.route('**/api/tags',  r => r.fulfill({ json: [...TAGS, projectTag] }))
+    await page.route('**/api/cards', r => r.fulfill({ json: todosWithProject }))
+    await page.goto('/today')
+    await waitForApp(page)
+    const banner = page.locator('.focus-next')
+    await expect(banner).toBeVisible()
+    await expect(banner.locator('.focus-next-project')).toHaveText('Brunch Planning ›')
+    await expect(banner.getByText('Review pull requests')).toBeVisible()
+  })
+
+  test('shows no project prefix when focused task has no Project: tag', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    const banner = page.locator('.focus-next')
+    await expect(banner).toBeVisible()
+    await expect(banner.locator('.focus-next-project')).toHaveCount(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// edit modal scheduled_at
+// ---------------------------------------------------------------------------
 test.describe('edit modal scheduled_at', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/board')
