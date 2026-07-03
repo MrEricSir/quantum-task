@@ -607,12 +607,16 @@ export default function App() {
   }
 
   const handleBreakdownCommit = ({ tag, cards, archived_card }) => {
-    setTags((prev) => {
-      if (prev.some((t) => t.id === tag.id)) return prev
-      return [...prev, tag].sort((a, b) => a.name.localeCompare(b.name))
-    })
+    if (tag) {
+      setTags((prev) => {
+        if (prev.some((t) => t.id === tag.id)) return prev
+        return [...prev, tag].sort((a, b) => a.name.localeCompare(b.name))
+      })
+    }
     setTodos((prev) => {
-      const updated = prev.map((t) => (t.id === archived_card.id ? archived_card : t))
+      const updated = archived_card
+        ? prev.map((t) => (t.id === archived_card.id ? archived_card : t))
+        : prev
       return [...updated, ...cards]
     })
   }
