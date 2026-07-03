@@ -222,6 +222,17 @@
   color: #f87171;
 }
 
+.card-sheet-btn--assist {
+  flex: 1;
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.card-sheet-btn--assist:hover {
+  background: rgba(139, 92, 246, 0.25);
+}
+
 .card-sheet-btn--secondary {
   background: none;
   border: 1px solid var(--border);

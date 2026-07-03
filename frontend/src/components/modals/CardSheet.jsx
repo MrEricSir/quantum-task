@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import CardForm, { isoToLocal } from './CardForm'
+import AssistModal from './AssistModal'
 import './AddTodoModal.css'
 import './CardSheet.css'
 
@@ -16,9 +17,10 @@ function parseGitHubUrl(str) {
 }
 
 // card=null means "new card" mode (starts directly in edit mode)
-export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove }) {
+export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove, onBreakdown }) {
   const isNew = !card?.id
   const [mode, setMode] = useState(isNew ? 'edit' : 'view')
+  const [showAssist, setShowAssist] = useState(false)
   const [title, setTitle] = useState(card?.title ?? '')
   const [description, setDescription] = useState(card?.description ?? '')
   const [section, setSection] = useState(card?.section ?? defaultSection)
@@ -140,6 +142,9 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
               <button className="card-sheet-btn card-sheet-btn--edit" onClick={() => setMode('edit')}>
                 Edit
               </button>
+              <button className="card-sheet-btn card-sheet-btn--assist" onClick={() => setShowAssist(true)}>
+                ✦ Assist
+              </button>
             </div>
           </>
         ) : (
@@ -182,6 +187,15 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
           </form>
         )}
       </div>
+
+      {card && !isNew && (
+        <AssistModal
+          open={showAssist}
+          onClose={() => setShowAssist(false)}
+          task={card}
+          onBreakdown={onBreakdown}
+        />
+      )}
     </div>,
     document.body
   )

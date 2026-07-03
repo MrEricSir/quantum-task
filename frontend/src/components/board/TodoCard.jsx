@@ -213,6 +213,7 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
           onArchive={onArchive}
           onToggle={onToggle}
           onMove={onMove}
+          onBreakdown={onBreakdown}
         />
       )}
     </div>

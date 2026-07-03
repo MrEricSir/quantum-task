@@ -120,15 +120,26 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
 
   const parseOutputItems = (text) => {
     const items = []
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim()
-      if (!/^[\d]+[.)]\s|^[-•*]\s/.test(trimmed)) continue
-      const stripped = trimmed
-        .replace(/^[\d]+[.)]\s+/, '')
-        .replace(/^[-•*]\s+/, '')
-        .replace(/\*\*(.+?)\*\*/g, '$1')
+    const clean = (raw) =>
+      raw
+        .replace(/\*\*(.+?)\*\*/g, '$1')   // **bold**
+        .replace(/\*(.+?)\*/g, '$1')         // *italic*
+        .replace(/\[(.+?)\]\(.+?\)/g, '$1') // [link](url)
+        .replace(/^[:#–—-]+\s*/, '')         // leading punctuation
         .trim()
-      if (stripped.length >= 5 && stripped.length <= 200) items.push(stripped)
+
+    for (const line of text.split('\n')) {
+      const t = line.trim()
+      if (!t) continue
+      let m
+      // Numbered list: "1. " or "1) "
+      if ((m = t.match(/^[\d]+[.)]\s+(.+)/)))      { const c = clean(m[1]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      // Bulleted: "- " "• " "* "
+      if ((m = t.match(/^[-•*]\s+(.+)/)))           { const c = clean(m[1]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      // Markdown heading: "## Name" or "### Name"
+      if ((m = t.match(/^#{1,3}\s+(.+)/)))          { const c = clean(m[1]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
+      // Bold-first line used as heading: "**Name**" or "**Name** - desc"
+      if ((m = t.match(/^\*\*(.+?)\*\*(.*)$/)))     { const c = clean(m[1] + m[2]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
     }
     return items
   }

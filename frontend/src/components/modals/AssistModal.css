@@ -28,6 +28,24 @@
   gap: 16px;
 }
 
+@media (max-width: 640px) {
+  .assist-modal {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    min-height: unset;
+    max-height: unset;
+    border-radius: 0;
+    border: none;
+    padding: 20px 16px;
+    padding-top: max(20px, env(safe-area-inset-top));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+}
+
 /* ── Header ── */
 .assist-header {
   display: flex;
