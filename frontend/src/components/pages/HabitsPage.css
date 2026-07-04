@@ -30,6 +30,72 @@
   color: var(--text-muted);
 }
 
+.habits-add-btn {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.habits-add-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.habits-new-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.habits-new-input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  outline: none;
+}
+
+.habits-new-input:focus {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.habits-new-save {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  cursor: pointer;
+}
+
+.habits-new-save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.habits-new-cancel {
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 /* ── Tag filter ── */
 .habits-tag-filter {
   display: flex;

@@ -311,7 +311,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         <>
           <Dialog.Title asChild><h2>Quick Add</h2></Dialog.Title>
           <p className="quick-hint">
-            Describe a task, habit, or stash item in plain language. Put multiple items on separate lines to add them all at once.
+            Describe a task, habit, food log entry, or health goal in plain language. Put multiple items on separate lines to add them all at once.
           </p>
           <div className="quick-input-wrap">
             <textarea

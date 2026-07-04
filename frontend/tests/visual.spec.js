@@ -299,6 +299,24 @@ test.describe('habits page', () => {
     // No archived habits in mock → section should not render
     await expect(page.locator('.habits-archive')).toHaveCount(0)
   })
+
+  test('"+ New" button is visible in the header', async ({ page }) => {
+    await expect(page.locator('.habits-add-btn')).toBeVisible()
+  })
+
+  test('clicking "+ New" reveals inline add form', async ({ page }) => {
+    await page.locator('.habits-add-btn').click()
+    await expect(page.locator('.habits-new-input')).toBeVisible()
+    await expect(page.locator('.habits-new-save')).toBeVisible()
+    await expect(page.locator('.habits-new-cancel')).toBeVisible()
+  })
+
+  test('inline add form is dismissed on Cancel', async ({ page }) => {
+    await page.locator('.habits-add-btn').click()
+    await expect(page.locator('.habits-new-input')).toBeVisible()
+    await page.locator('.habits-new-cancel').click()
+    await expect(page.locator('.habits-new-input')).toHaveCount(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -313,6 +331,17 @@ test.describe('quick-add modal', () => {
     await page.locator('button.btn-primary').first().click()
     await expect(page.locator('.quick-modal')).toBeVisible()
     await expect(page.getByRole('textbox')).toBeVisible()
+  })
+
+  test('hint text mentions tasks, habits, food, and health goals', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button.btn-primary').first().click()
+    const hint = page.locator('.quick-hint')
+    await expect(hint).toContainText('task')
+    await expect(hint).toContainText('habit')
+    await expect(hint).toContainText('food')
+    await expect(hint).toContainText('health goal')
   })
 
   test('has Cancel and Add footer buttons, no X button', async ({ page }) => {

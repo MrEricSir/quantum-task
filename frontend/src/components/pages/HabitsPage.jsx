@@ -61,12 +61,27 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
   const [editMetric, setEditMetric] = useState('')
   const [editGoal, setEditGoal] = useState('')
   const [poppingId, setPoppingId] = useState(null)
+  const [addingNew, setAddingNew] = useState(false)
+  const [newName, setNewName] = useState('')
   const editInputRef = useRef(null)
+  const newInputRef = useRef(null)
   const popTimer = useRef(null)
 
   useEffect(() => {
     if (editingId !== null) editInputRef.current?.focus()
   }, [editingId])
+
+  useEffect(() => {
+    if (addingNew) newInputRef.current?.focus()
+  }, [addingNew])
+
+  const handleAddSubmit = async () => {
+    const name = newName.trim()
+    if (!name) { setAddingNew(false); return }
+    await onAdd({ name, tag_ids: [] })
+    setNewName('')
+    setAddingNew(false)
+  }
 
   const startEdit = (habit) => {
     setEditingId(habit.id)
@@ -108,9 +123,30 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
             <span className="habits-page-progress">{done} / {visibleHabits.length} today</span>
           )}
         </div>
+        <button className="habits-add-btn" onClick={() => setAddingNew(true)} aria-label="Add habit">
+          + New
+        </button>
       </div>
 
-      {visibleHabits.length === 0 ? (
+      {addingNew && (
+        <div className="habits-new-row">
+          <input
+            ref={newInputRef}
+            className="habits-new-input"
+            placeholder="Habit name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAddSubmit()
+              if (e.key === 'Escape') { setAddingNew(false); setNewName('') }
+            }}
+          />
+          <button className="habits-new-save" onClick={handleAddSubmit} disabled={!newName.trim()}>Add</button>
+          <button className="habits-new-cancel" onClick={() => { setAddingNew(false); setNewName('') }}>Cancel</button>
+        </div>
+      )}
+
+      {visibleHabits.length === 0 && !addingNew ? (
         <div className="habits-empty">
           {selectedTagId !== null
             ? 'No habits with this tag.'
