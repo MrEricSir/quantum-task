@@ -199,10 +199,6 @@ test.describe('today page', () => {
     await expect(page.getByText('Call dentist')).toBeVisible()
   })
 
-  test('stash section shows section=later items', async ({ page }) => {
-    await expect(page.getByText('Read that article')).toBeVisible()
-  })
-
   test('"Focus next" banner shows highest-priority untimed task', async ({ page }) => {
     const banner = page.locator('.focus-next')
     await expect(banner).toBeVisible()

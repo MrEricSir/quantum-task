@@ -632,6 +632,13 @@
   opacity: 0.5;
 }
 
+@media (hover: none) {
+  /* Prevent iOS Safari from zooming into the input on focus */
+  .food-input {
+    font-size: 16px;
+  }
+}
+
 .food-add-btn {
   padding: 8px 16px;
   background: rgba(255, 255, 255, 0.07);

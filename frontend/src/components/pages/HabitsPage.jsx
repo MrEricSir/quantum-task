@@ -87,9 +87,15 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     setEditingId(null)
   }
 
-  const visibleHabits = selectedTagId === null
+  const visibleHabits = (selectedTagId === null
     ? habits
     : habits.filter((h) => h.tags.some((t) => t.id === selectedTagId))
+  ).slice().sort((a, b) => {
+    const aAuto = !!(a.withings_metric || a.is_experiment)
+    const bAuto = !!(b.withings_metric || b.is_experiment)
+    if (aAuto !== bAuto) return aAuto ? 1 : -1
+    return a.name.localeCompare(b.name)
+  })
 
   const done = visibleHabits.filter((h) => h.completed_today).length
 

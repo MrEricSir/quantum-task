@@ -189,11 +189,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
     return a.time - b.time
   })
 
-  // Stash: section='later' or 'none', not completed, not archived
-  const stashTodos = todos
-    .filter((t) => (t.section === 'later' || t.section === 'none') && !t.completed && !t.archived)
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-
   const hasScheduleOrTasks = scheduleItems.length > 0 || sortedUntimedTasks.length > 0
 
   // Build a map of metric → today's value from healthData
@@ -231,7 +226,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
   const allClear = scheduleItems.length === 0 && untimedTasks.length === 0 && habitsPending === 0
 
   const [habitsOpen, setHabitsOpen] = useState(!habitsAllDone)
-  const [stashOpen,  setStashOpen]  = useState(true)
 
   useEffect(() => { if (habitsAllDone) setHabitsOpen(false) }, [habitsAllDone])
 
@@ -413,37 +407,6 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
           </section>
         )}
 
-        <section className="today-section">
-          <SectionHeader
-            title="Stash"
-            status={stashTodos.length === 0 ? 'Empty' : `${stashTodos.length}`}
-            open={stashOpen}
-            onToggle={() => setStashOpen((v) => !v)}
-            toggleable
-          />
-          <CollapseBody open={stashOpen}>
-            {stashTodos.length === 0 ? (
-              <div className="today-empty">Nothing in your stash.</div>
-            ) : (
-              <div className="today-cards">
-                {stashTodos.map((todo) => (
-                  <TodoCard
-                    key={todo.id}
-                    todo={todo}
-                    onEdit={onEdit}
-                    onSave={onSave}
-                    onDelete={onDelete}
-                    onArchive={onArchive}
-                    onToggle={onToggle}
-                    onMove={onMove}
-                    allTags={allTags}
-                    isMobile
-                  />
-                ))}
-              </div>
-            )}
-          </CollapseBody>
-        </section>
       </div>
     </DndContext>
   )
