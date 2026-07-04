@@ -1,6 +1,27 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { fetchInsights, updateCard } from '../../api'
 import './InsightsPanel.css'
+
+// ── Habit snooze via localStorage ─────────────────────────────────────────────
+const SNOOZE_KEY = 'insights_snooze'
+
+function getSnoozed() {
+  try { return JSON.parse(localStorage.getItem(SNOOZE_KEY) || '{}') } catch { return {} }
+}
+
+function snoozeHabitInsight(key, days) {
+  const map = getSnoozed()
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  map[key] = d.toISOString().slice(0, 10)
+  localStorage.setItem(SNOOZE_KEY, JSON.stringify(map))
+}
+
+function isHabitSnoozed(key) {
+  const exp = getSnoozed()[key]
+  if (!exp) return false
+  return exp >= new Date().toISOString().slice(0, 10)
+}
 
 const SNOOZE_OPTIONS = [
   { label: '3 days', days: 3 },
@@ -22,9 +43,10 @@ function addDays(days) {
 }
 
 function insightKey(ins) {
-  if (ins.type === 'stuck_task') return `task-${ins.card.id}`
-  if (ins.type === 'habit_trend') return `habit-${ins.habit_id}`
-  return `health-${ins.metric}-${ins.type}` // health_trend | health_no_data
+  if (ins.type === 'stuck_task')        return `task-${ins.card.id}`
+  if (ins.type === 'habit_trend')       return `habit-${ins.habit_id}`
+  if (ins.type === 'completion_pattern') return `pattern-${ins.peak_window}`
+  return `health-${ins.metric}-${ins.type}` // health_trend | health_no_data | health_bp
 }
 
 function StuckTaskInsight({ insight, onDismiss, onArchive }) {
@@ -161,8 +183,21 @@ function StuckTaskInsight({ insight, onDismiss, onArchive }) {
   )
 }
 
+const HABIT_SNOOZE_OPTIONS = [
+  { label: 'Tomorrow', days: 1 },
+  { label: '3 days', days: 3 },
+]
+
 function HabitInsight({ insight, onDismiss }) {
   const { habit_name, text, completions_last_7 } = insight
+  const key = insightKey(insight)
+  const [showSnooze, setShowSnooze] = useState(false)
+
+  const handleSnooze = (days) => {
+    snoozeHabitInsight(key, days)
+    onDismiss(key)
+  }
+
   return (
     <div className="insight-card insight-card--habit">
       <div className="insight-header">
@@ -173,7 +208,49 @@ function HabitInsight({ insight, onDismiss }) {
         </div>
         <button
           className="insight-dismiss"
-          onClick={() => onDismiss(insightKey(insight))}
+          onClick={() => setShowSnooze((v) => !v)}
+          title="Snooze options"
+        >
+          &#10005;
+        </button>
+      </div>
+      {showSnooze && (
+        <div className="insight-actions">
+          {HABIT_SNOOZE_OPTIONS.map((opt) => (
+            <button
+              key={opt.days}
+              className="insight-btn insight-btn--snooze"
+              onClick={() => handleSnooze(opt.days)}
+            >
+              Snooze {opt.label}
+            </button>
+          ))}
+          <button className="insight-btn" onClick={() => onDismiss(key)}>
+            Dismiss
+          </button>
+          <button className="insight-btn insight-btn--cancel" onClick={() => setShowSnooze(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CompletionPatternInsight({ insight, onDismiss }) {
+  const { text, peak_window } = insight
+  const key = insightKey(insight)
+  return (
+    <div className="insight-card insight-card--pattern">
+      <div className="insight-header">
+        <span className="insight-icon">&#9200;</span>
+        <div className="insight-body">
+          <p className="insight-text">{text}</p>
+          <p className="insight-meta">Based on your recent completions</p>
+        </div>
+        <button
+          className="insight-dismiss"
+          onClick={() => onDismiss(key)}
           title="Dismiss"
         >
           &#10005;
@@ -215,7 +292,7 @@ export default function InsightsPanel({ refreshKey, onArchive }) {
     try {
       const data = await fetchInsights()
       setInsights(data)
-      setDismissed(new Set())
+      // Don't reset dismissed — keep session dismissals across refreshes
     } catch {
       // silently fail — insights are non-critical
     } finally {
@@ -234,13 +311,20 @@ export default function InsightsPanel({ refreshKey, onArchive }) {
     await onArchive(insight.card)
   }, [onArchive])
 
-  const visible = insights.filter(ins => !dismissed.has(insightKey(ins)))
+  const visible = useMemo(() =>
+    insights.filter((ins) => {
+      if (dismissed.has(insightKey(ins))) return false
+      if (ins.type === 'habit_trend' && isHabitSnoozed(insightKey(ins))) return false
+      return true
+    }),
+    [insights, dismissed]
+  )
 
   if (loading || visible.length === 0) return null
 
   return (
     <section className="insights-panel">
-      <h3 className="insights-title">Needs attention</h3>
+      <h3 className="insights-title">Insights</h3>
       <div className="insights-list">
         {visible.map((ins) => {
           const key = insightKey(ins)
@@ -249,6 +333,9 @@ export default function InsightsPanel({ refreshKey, onArchive }) {
           )
           if (ins.type === 'habit_trend') return (
             <HabitInsight key={key} insight={ins} onDismiss={handleDismiss} />
+          )
+          if (ins.type === 'completion_pattern') return (
+            <CompletionPatternInsight key={key} insight={ins} onDismiss={handleDismiss} />
           )
           return (
             <HealthInsight key={key} insight={ins} onDismiss={handleDismiss} />

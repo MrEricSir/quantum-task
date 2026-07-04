@@ -1302,6 +1302,98 @@ test.describe('assistant modal — create tasks error', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Insights panel — habit snooze
+// ---------------------------------------------------------------------------
+test.describe('insights panel — habit snooze', () => {
+  const HABIT_INSIGHT = {
+    type: 'habit_trend',
+    text: 'Evening walk completed only 2/7 days — try to build consistency.',
+    completions_last_7: 2,
+    habit_id: 2,
+    habit_name: 'Evening walk',
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/insights', r => r.fulfill({ json: [HABIT_INSIGHT] }))
+    await page.addInitScript(() => localStorage.removeItem('insights_snooze'))
+    await page.goto('/today')
+    await waitForApp(page)
+  })
+
+  test('habit insight is shown with dismiss button', async ({ page }) => {
+    await expect(page.locator('.insight-card--habit')).toBeVisible()
+    await expect(page.locator('.insight-card--habit .insight-dismiss')).toBeVisible()
+  })
+
+  test('clicking dismiss reveals snooze options', async ({ page }) => {
+    await page.locator('.insight-card--habit .insight-dismiss').click()
+    await expect(page.getByRole('button', { name: /snooze tomorrow/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /snooze 3 days/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^dismiss$/i })).toBeVisible()
+  })
+
+  test('clicking "Dismiss" hides the insight for the session', async ({ page }) => {
+    await page.locator('.insight-card--habit .insight-dismiss').click()
+    await page.getByRole('button', { name: /^dismiss$/i }).click()
+    await expect(page.locator('.insight-card--habit')).toHaveCount(0)
+  })
+
+  test('snoozing hides insight and persists to localStorage', async ({ page }) => {
+    await page.locator('.insight-card--habit .insight-dismiss').click()
+    await page.getByRole('button', { name: /snooze tomorrow/i }).click()
+    await expect(page.locator('.insight-card--habit')).toHaveCount(0)
+    const stored = await page.evaluate(() => localStorage.getItem('insights_snooze'))
+    expect(stored).not.toBeNull()
+    const parsed = JSON.parse(stored)
+    expect(Object.keys(parsed)).toContain('habit-2')
+  })
+
+  test('snoozed habit insight does not reappear on page reload', async ({ page }) => {
+    const futureDate = new Date()
+    futureDate.setDate(futureDate.getDate() + 3)
+    const exp = futureDate.toISOString().slice(0, 10)
+    // Register AFTER the beforeEach removeItem script so it runs second and wins
+    await page.addInitScript((exp) => {
+      localStorage.setItem('insights_snooze', JSON.stringify({ 'habit-2': exp }))
+    }, exp)
+    await page.goto('/today')
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--habit')).toHaveCount(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Insights panel — completion pattern insight
+// ---------------------------------------------------------------------------
+test.describe('insights panel — completion pattern', () => {
+  test('completion pattern insight is shown with green accent', async ({ page }) => {
+    await page.route('**/api/insights', r => r.fulfill({ json: [{
+      type: 'completion_pattern',
+      text: 'You finish most tasks before noon — protect your mornings from meetings.',
+      peak_window: 'morning',
+      peak_pct: 0.62,
+    }]}))
+    await page.goto('/today')
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--pattern')).toBeVisible()
+    await expect(page.getByText(/protect your mornings/i)).toBeVisible()
+  })
+
+  test('completion pattern insight can be dismissed', async ({ page }) => {
+    await page.route('**/api/insights', r => r.fulfill({ json: [{
+      type: 'completion_pattern',
+      text: 'You finish most tasks before noon — protect your mornings from meetings.',
+      peak_window: 'morning',
+      peak_pct: 0.62,
+    }]}))
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('.insight-card--pattern .insight-dismiss').click()
+    await expect(page.locator('.insight-card--pattern')).toHaveCount(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // GitHub / Engineering settings modal
 // ---------------------------------------------------------------------------
 test.describe('github settings modal', () => {

@@ -36,6 +36,10 @@
   border-left: 3px solid #06b6d4;
 }
 
+.insight-card--pattern {
+  border-left: 3px solid #10b981;
+}
+
 .insight-header {
   display: flex;
   gap: 0.6rem;

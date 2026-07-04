@@ -14,6 +14,7 @@ import schemas
 from deps import get_db, llm_client, LLM_MODEL, local_date
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
+from routers.insights import invalidate_insights_cache
 
 router = APIRouter()
 
@@ -44,6 +45,8 @@ def _auto_migrate_sections(db: Session, today) -> None:
         else:
             target = "later"
         if _SECTION_ORDER[target] < _SECTION_ORDER.get(card.section, 3):
+            if target == "today" and card.section != "today":
+                card.today_since = datetime.now(timezone.utc)
             card.section = target
             changed = True
     if changed:
@@ -112,6 +115,8 @@ def create_card(card: schemas.CardCreate, db: Session = Depends(get_db)):
     tag_ids = data.pop("tag_ids", [])
     now = datetime.now(timezone.utc)
     db_card = models.Card(**data, position=count, updated_at=now)
+    if db_card.section == "today":
+        db_card.today_since = now
     if tag_ids:
         db_card.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
     db.add(db_card)
@@ -122,9 +127,14 @@ def create_card(card: schemas.CardCreate, db: Session = Depends(get_db)):
 
 @router.post("/api/cards/reorder")
 def reorder_cards(updates: List[schemas.CardReorderItem], db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
     for item in updates:
         db_card = db.query(models.Card).filter(models.Card.id == item.id).first()
         if db_card:
+            if item.section == "today" and db_card.section != "today":
+                db_card.today_since = now
+            elif item.section != "today":
+                db_card.today_since = None
             db_card.section = item.section
             db_card.position = item.position
     db.commit()
@@ -295,6 +305,11 @@ def update_card(request: Request, card_id: int, card: schemas.CardUpdate, db: Se
             db_card.completed_at = None
     if "archived" in data:
         data["archived_at"] = now if data["archived"] else None
+    new_section = data.get("section")
+    if new_section == "today" and db_card.section != "today":
+        data["today_since"] = now
+    elif new_section is not None and new_section != "today":
+        data["today_since"] = None
     for key, value in data.items():
         setattr(db_card, key, value)
     db_card.updated_at = now
@@ -322,6 +337,7 @@ def update_card(request: Request, card_id: int, card: schemas.CardUpdate, db: Se
 
     db.commit()
     db.refresh(db_card)
+    invalidate_insights_cache()
     return db_card
 
 
@@ -451,7 +467,8 @@ def commit_breakdown(card_id: int, req: schemas.BreakdownCommit, db: Session = D
             if not t:
                 continue
             c = models.Card(title=t, section=card.section, position=base_pos + i,
-                            completed=False, updated_at=now)
+                            completed=False, updated_at=now,
+                            today_since=now if card.section == "today" else None)
             c.tags = [tag]
             db.add(c)
             db.flush()

@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import or_
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 import models
@@ -29,6 +29,8 @@ router = APIRouter()
 
 _STUCK_DAYS = 3   # days in Today before a task is considered stuck
 _NO_DATA_DAYS = 3  # days without a measurement before we remind the user
+_RESPONSE_CACHE_TTL = 300  # 5 minutes — full response cache keyed by date string
+_response_cache: dict[str, tuple[float, list]] = {}
 
 _SYSTEM_PROMPT = """\
 You generate brief, actionable insights about a user's task and habit patterns.
@@ -273,12 +275,66 @@ def _health_insights(db: Session, today: date) -> list[dict]:
     return results
 
 
+def _completion_time_insight(db: Session) -> dict | None:
+    """Surface the user's peak task-completion window (morning/afternoon/evening).
+    Requires 20+ completions to avoid noise."""
+    ninety_ago = datetime.now(timezone.utc) - timedelta(days=90)
+    completed = (
+        db.query(models.Card.completed_at)
+        .filter(
+            models.Card.completed == True,       # noqa: E712
+            models.Card.completed_at >= ninety_ago,
+            models.Card.completed_at.isnot(None),
+        )
+        .all()
+    )
+    hours = [row.completed_at.hour for row in completed]
+    if len(hours) < 20:
+        return None
+
+    windows = {
+        "morning":   sum(1 for h in hours if 5 <= h < 12),
+        "afternoon": sum(1 for h in hours if 12 <= h < 18),
+        "evening":   sum(1 for h in hours if 18 <= h <= 23),
+    }
+    total = sum(windows.values())
+    if total < 20:
+        return None
+
+    peak = max(windows, key=windows.get)
+    if windows[peak] / total < 0.50:
+        return None  # no clear dominant window
+
+    texts = {
+        "morning":   "You finish most tasks before noon — protect your mornings from meetings.",
+        "afternoon": "You do your best completing work in the afternoon — batch tasks 12–6 pm.",
+        "evening":   "You tend to finish tasks in the evening — plan a focused end-of-day session.",
+    }
+    return {
+        "type": "completion_pattern",
+        "text": texts[peak],
+        "peak_window": peak,
+        "peak_pct": round(windows[peak] / total, 2),
+    }
+
+
+def invalidate_insights_cache() -> None:
+    """Clear the response cache — call after any mutation that affects insight output."""
+    _response_cache.clear()
+
+
 @router.get("/api/insights")
 def get_insights(request: Request, db: Session = Depends(get_db)):
     today = local_date(request)
     today_str = today.isoformat()
 
+    # ── Full-response cache (5-minute TTL) ────────────────────────────────────
+    cached = _response_cache.get(today_str)
+    if cached and time.monotonic() - cached[0] < _RESPONSE_CACHE_TTL:
+        return cached[1]
+
     # ── Stuck tasks ───────────────────────────────────────────────────────────
+    # Use today_since when available (accurate entry time); fall back to created_at.
     stuck_cutoff = datetime(
         *(today - timedelta(days=_STUCK_DAYS)).timetuple()[:3],
         tzinfo=timezone.utc,
@@ -289,9 +345,12 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
             models.Card.section == "today",
             models.Card.completed == False,       # noqa: E712
             models.Card.archived == False,        # noqa: E712
-            models.Card.created_at <= stuck_cutoff,
             or_(
-                models.Card.snoozed_until == None,   # noqa: E711
+                and_(models.Card.today_since.isnot(None), models.Card.today_since <= stuck_cutoff),
+                and_(models.Card.today_since.is_(None),  models.Card.created_at  <= stuck_cutoff),
+            ),
+            or_(
+                models.Card.snoozed_until.is_(None),
                 models.Card.snoozed_until < today_str,
             ),
         )
@@ -309,7 +368,7 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
         db.query(models.Habit)
         .filter(
             models.Habit.archived == False,       # noqa: E712
-            models.Habit.withings_metric == None, # noqa: E711 — auto-checked habits excluded
+            models.Habit.withings_metric.is_(None),  # auto-checked habits excluded
             models.Habit.created_at <= habit_cutoff,
         )
         .all()
@@ -332,13 +391,18 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
     # ── Health goal alerts (template text — no LLM) ───────────────────────────
     health = _health_insights(db, today)
 
-    if not stuck_cards and not low_habits and not health:
+    # ── Completion time pattern (template text — no LLM) ─────────────────────
+    pattern = _completion_time_insight(db)
+
+    if not stuck_cards and not low_habits and not health and not pattern:
+        _response_cache[today_str] = (time.monotonic(), [])
         return []
 
     # ── LLM texts for task/habit patterns ────────────────────────────────────
     patterns = []
     for card in stuck_cards:
-        days = (today - card.created_at.date()).days
+        entry_date = (card.today_since or card.created_at).date()
+        days = (today - entry_date).days
         patterns.append(f'Task "{card.title}" has been in Today for {days} days without progress')
     for habit, count in low_habits:
         patterns.append(f'Habit "{habit.name}" completed only {count}/7 days this past week')
@@ -350,7 +414,8 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
     idx = 0
 
     for card in stuck_cards:
-        days = (today - card.created_at.date()).days
+        entry_date = (card.today_since or card.created_at).date()
+        days = (today - entry_date).days
         text = texts[idx] if idx < len(texts) else ""
         results.append({
             "type": "stuck_task",
@@ -372,4 +437,8 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
         idx += 1
 
     results.extend(health)
+    if pattern:
+        results.append(pattern)
+
+    _response_cache[today_str] = (time.monotonic(), results)
     return results
