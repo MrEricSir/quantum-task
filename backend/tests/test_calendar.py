@@ -295,8 +295,10 @@ class _MockResponse:
     """Minimal requests.Response stub for patching gcal.requests.get."""
     status_code = 200
 
-    def __init__(self, content: bytes):
+    def __init__(self, content: bytes, url: str = "http://test/test.ics"):
         self.content = content
+        self.url = url
+        self.headers = {"Content-Type": "text/calendar"}
 
     def raise_for_status(self):
         pass
