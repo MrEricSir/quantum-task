@@ -1,7 +1,28 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { UpdateIcon, ChevronLeftIcon, ChevronRightIcon } from '@radix-ui/react-icons'
+import DOMPurify from 'dompurify'
 import CalendarEventCard from '../board/CalendarEventCard'
+import { fetchDiscoveryEvents, fetchDiscoveryFeedback, saveDiscoveryFeedback, createCard } from '../../api'
 import './CalendarPage.css'
+
+const _HTML_RE = /<[a-z][\s\S]*?>/i
+const _URL_RE = /(https?:\/\/[^\s<>"]+)/g
+
+function descriptionToHtml(text) {
+  if (!text) return ''
+  if (_HTML_RE.test(text)) {
+    return DOMPurify.sanitize(text, { ADD_ATTR: ['target', 'rel'] })
+  }
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+    .replace(_URL_RE, (url) => {
+      const safeHref = url.replace(/"/g, '%22')
+      return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${url}</a>`
+    })
+}
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAY_HEADERS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
@@ -94,7 +115,220 @@ function buildMonthCells(year, month) {
   return cells
 }
 
-export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing }) {
+function formatDiscoveryDate(isoStr) {
+  const d = new Date(isoStr)
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+function formatDiscoveryTime(isoStr, allDay) {
+  if (allDay) return null
+  return new Date(isoStr).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+function DiscoveryPanel({ onOpenSettings, refreshTrigger }) {
+  const [events, setEvents] = useState(null)  // null = not yet loaded
+  const [loading, setLoading] = useState(false)
+  // feedback: { [event_uid]: true (liked) | false (disliked) }
+  const [feedback, setFeedback] = useState({})
+  // added: set of event ids added to calendar
+  const [added, setAdded] = useState(new Set())
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [data, fb] = await Promise.all([fetchDiscoveryEvents(), fetchDiscoveryFeedback()])
+      setEvents(data)
+      const fbMap = {}
+      for (const r of fb) fbMap[r.event_uid] = r.interested
+      setFeedback(fbMap)
+    } catch {
+      setEvents([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load, refreshTrigger])
+
+  const handleFeedback = useCallback(async (ev, interested) => {
+    const uid = ev.uid || ev.id
+    // Toggle off if clicking the already-active button
+    const current = feedback[uid]
+    const next = current === interested ? null : interested
+    setFeedback((prev) => ({ ...prev, [uid]: next }))
+    try {
+      if (next === null) {
+        // No backend delete — just leave previous record; next ranking call will use latest
+        return
+      }
+      await saveDiscoveryFeedback(uid, ev.title, ev.description || '', next)
+    } catch {
+      // revert on error
+      setFeedback((prev) => ({ ...prev, [uid]: current }))
+    }
+  }, [feedback])
+
+  const [expanded, setExpanded] = useState(new Set())
+  const toggleExpanded = useCallback((id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }, [])
+
+  const handleAddToCalendar = useCallback(async (ev) => {
+    try {
+      await createCard({
+        title: ev.title,
+        description: ev.url || ev.description || '',
+        scheduled_at: ev.start,
+        section: 'later',
+      })
+      setAdded((prev) => new Set([...prev, ev.id]))
+    } catch {
+      // silently ignore
+    }
+  }, [])
+
+  const hasInterests = events?.some((e) => e.score != null)
+
+  return (
+    <>
+      <div className="disc-view">
+        {loading && events === null && (
+          <div className="disc-loading-row">Loading…</div>
+        )}
+
+        {!loading && events !== null && events.length === 0 && (
+          <div className="disc-empty">
+            {hasInterests === false
+              ? 'No upcoming events found in your discovery feeds.'
+              : 'Add discovery feeds and describe your interests to get AI-ranked recommendations.'}
+            <button className="disc-empty-settings" onClick={onOpenSettings}>
+              Open settings
+            </button>
+          </div>
+        )}
+
+        {events && events.length > 0 && (
+          <div className="disc-event-list">
+            {!hasInterests && (
+              <p className="disc-no-interests-hint">
+                Add a description of your interests in{' '}
+                <button className="disc-inline-link" onClick={onOpenSettings}>
+                  settings
+                </button>{' '}
+                to get AI-ranked recommendations.
+              </p>
+            )}
+                {events.map((ev) => {
+                  const time = formatDiscoveryTime(ev.start, ev.all_day)
+                  const endTime = ev.end ? formatDiscoveryTime(ev.end, ev.all_day) : null
+                  const uid = ev.uid || ev.id
+                  const liked = feedback[uid]
+                  const isAdded = added.has(ev.id)
+                  const isExpanded = expanded.has(ev.id)
+                  return (
+                    <div key={ev.id} className={`disc-event-card${liked === false ? ' disc-event-card--dismissed' : ''}`}>
+                      <div className="disc-event-header">
+                        {ev.score != null && (
+                          <span className={`disc-score-badge disc-score-badge--${ev.score >= 8 ? 'high' : 'mid'}`}>
+                            {ev.score >= 8 ? 'Great match' : 'Good match'}
+                          </span>
+                        )}
+                        {ev.feed_name && (
+                          <span className="disc-feed-badge">{ev.feed_name}</span>
+                        )}
+                        <div className="disc-event-actions">
+                          <button
+                            className={`disc-feedback-btn${liked === true ? ' disc-feedback-btn--active-like' : ''}`}
+                            onClick={() => handleFeedback(ev, true)}
+                            title="Interested"
+                            aria-label="Mark as interested"
+                          >👍</button>
+                          <button
+                            className={`disc-feedback-btn${liked === false ? ' disc-feedback-btn--active-dislike' : ''}`}
+                            onClick={() => handleFeedback(ev, false)}
+                            title="Not interested"
+                            aria-label="Mark as not interested"
+                          >👎</button>
+                        </div>
+                      </div>
+
+                      <div
+                        className="disc-event-body"
+                        onClick={() => toggleExpanded(ev.id)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === 'Enter' && toggleExpanded(ev.id)}
+                        aria-expanded={isExpanded}
+                      >
+                        <div className="disc-event-title">
+                          <span>{ev.title}</span>
+                          <span className={`disc-expand-chevron${isExpanded ? ' disc-expand-chevron--open' : ''}`}>›</span>
+                        </div>
+                        <div className="disc-event-meta">
+                          <span>{formatDiscoveryDate(ev.start)}{time ? ` · ${time}` : ''}{endTime && endTime !== time ? `–${endTime}` : ''}</span>
+                          {ev.location && <span> · {ev.location}</span>}
+                        </div>
+                        {ev.reason && !isExpanded && (
+                          <div className="disc-event-reason">{ev.reason}</div>
+                        )}
+                      </div>
+
+                      {isExpanded && (
+                        <div className="disc-event-detail">
+                          {ev.reason && (
+                            <div className="disc-detail-reason">{ev.reason}</div>
+                          )}
+                          {ev.description && (
+                            <div
+                              className="disc-detail-description"
+                              dangerouslySetInnerHTML={{ __html: descriptionToHtml(ev.description) }}
+                            />
+                          )}
+                          {ev.location && (
+                            <div className="disc-detail-row">
+                              <span className="disc-detail-label">Location</span>
+                              <span>{ev.location}</span>
+                            </div>
+                          )}
+                          {ev.url && (
+                            <a
+                              href={ev.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="disc-detail-link"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Visit event page →
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      {liked === true && (
+                        <div className="disc-event-footer">
+                          {isAdded
+                            ? <span className="disc-added-confirm">Added to calendar ✓</span>
+                            : <button className="disc-add-cal-btn" onClick={() => handleAddToCalendar(ev)}>
+                                + Add to calendar
+                              </button>
+                          }
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+      </div>
+    </>
+  )
+}
+
+export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing, onOpenSettings }) {
   const todayDate = new Date()
   todayDate.setHours(0, 0, 0, 0)
   const todayKey = toDateKey(todayDate)
@@ -102,6 +336,7 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
   const [view, setView] = useState('list')
   const [monthYear, setMonthYear] = useState({ year: todayDate.getFullYear(), month: todayDate.getMonth() })
   const [selectedDate, setSelectedDate] = useState(todayKey)
+  const [discoveryRefreshTrigger, setDiscoveryRefreshTrigger] = useState(0)
 
   const activeTodos = useMemo(() => todos.filter((t) => !t.completed && t.scheduled_at), [todos])
   const dayMap = useMemo(() => buildDayMap(events, activeTodos), [events, activeTodos])
@@ -131,19 +366,35 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
           <button className={`calp-view-btn${view === 'month' ? ' calp-view-btn--active' : ''}`} onClick={() => setView('month')}>
             Month
           </button>
+          <button className={`calp-view-btn${view === 'discover' ? ' calp-view-btn--active' : ''}`} onClick={() => setView('discover')}>
+            Discover
+          </button>
         </div>
         <div className="calp-meta">
-          {lastRefreshed && (
-            <span className="calp-updated">Updated {formatLastUpdated(lastRefreshed)}</span>
+          {view === 'discover' ? (
+            <button
+              className="calp-refresh"
+              onClick={() => setDiscoveryRefreshTrigger((n) => n + 1)}
+              title="Refresh discovery"
+              aria-label="Refresh discovery events"
+            >
+              <UpdateIcon />
+            </button>
+          ) : (
+            <>
+              {lastRefreshed && (
+                <span className="calp-updated">Updated {formatLastUpdated(lastRefreshed)}</span>
+              )}
+              <button
+                className={`calp-refresh${refreshing ? ' calp-refresh--spinning' : ''}`}
+                onClick={onRefresh}
+                disabled={refreshing}
+                title="Refresh calendar"
+              >
+                <UpdateIcon />
+              </button>
+            </>
           )}
-          <button
-            className={`calp-refresh${refreshing ? ' calp-refresh--spinning' : ''}`}
-            onClick={onRefresh}
-            disabled={refreshing}
-            title="Refresh calendar"
-          >
-            <UpdateIcon />
-          </button>
         </div>
       </div>
 
@@ -186,7 +437,7 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
             )
           })}
         </div>
-      ) : (
+      ) : view === 'month' ? (
         <div className="calp-month-view">
           <div className="calp-month-nav">
             <button className="calp-month-nav-btn" onClick={prevMonth} aria-label="Previous month">
@@ -263,6 +514,13 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
             )}
           </div>
         </div>
+      ) : null}
+
+      {view === 'discover' && (
+        <DiscoveryPanel
+          onOpenSettings={onOpenSettings}
+          refreshTrigger={discoveryRefreshTrigger}
+        />
       )}
     </div>
   )

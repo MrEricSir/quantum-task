@@ -203,6 +203,66 @@ export async function fetchCalendarEvents() {
   return res.json()
 }
 
+export async function fetchDiscoveryFeeds() {
+  const res = await apiFetch('/api/discovery/feeds')
+  if (!res.ok) throw new Error('Failed to fetch discovery feeds')
+  return res.json()
+}
+
+export async function saveDiscoveryFeeds(feeds) {
+  const res = await apiFetch('/api/discovery/feeds', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(feeds),
+  })
+  if (!res.ok) throw new Error('Failed to save discovery feeds')
+  return res.json()
+}
+
+export async function fetchDiscoveryInterests() {
+  const res = await apiFetch('/api/discovery/interests')
+  if (!res.ok) throw new Error('Failed to fetch discovery interests')
+  return res.json()
+}
+
+export async function saveDiscoveryInterests(interests) {
+  const res = await apiFetch('/api/discovery/interests', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ interests }),
+  })
+  if (!res.ok) throw new Error('Failed to save discovery interests')
+  return res.json()
+}
+
+export async function fetchDiscoveryEvents() {
+  const res = await apiFetch('/api/discovery/events')
+  if (!res.ok) throw new Error('Failed to fetch discovery events')
+  return res.json()
+}
+
+export async function testDiscoveryFeeds() {
+  const res = await apiFetch('/api/discovery/test-feeds')
+  if (!res.ok) throw new Error('Failed to test feeds')
+  return res.json()
+}
+
+export async function fetchDiscoveryFeedback() {
+  const res = await apiFetch('/api/discovery/feedback')
+  if (!res.ok) throw new Error('Failed to fetch discovery feedback')
+  return res.json()
+}
+
+export async function saveDiscoveryFeedback(eventUid, eventTitle, eventDescription, interested) {
+  const res = await apiFetch('/api/discovery/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_uid: eventUid, event_title: eventTitle, event_description: eventDescription, interested }),
+  })
+  if (!res.ok) throw new Error('Failed to save feedback')
+  return res.json()
+}
+
 export async function fetchExportToken() {
   const res = await apiFetch('/api/settings/export-token')
   if (!res.ok) throw new Error('Failed to fetch export token')

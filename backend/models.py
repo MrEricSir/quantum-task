@@ -63,6 +63,28 @@ class CalendarMapping(Base):
     name = Column(String, nullable=False, default="")
 
 
+class EventDiscoveryFeed(Base):
+    """Public iCal feeds used for event discovery (not personal calendars)."""
+    __tablename__ = "event_discovery_feeds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, default="")
+    ical_url = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class DiscoveryFeedback(Base):
+    """User thumbs-up / thumbs-down on discovered events, used to train the LLM ranker."""
+    __tablename__ = "discovery_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_uid = Column(String, nullable=False, unique=True, index=True)
+    event_title = Column(String, nullable=False)
+    event_description = Column(String, nullable=True)
+    interested = Column(Boolean, nullable=False)  # True = liked, False = not interested
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 habit_tags = Table(
     "habit_tags",
     Base.metadata,

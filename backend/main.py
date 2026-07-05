@@ -26,7 +26,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search, insights, correlations, food
+from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search, insights, correlations, food, discovery
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -283,6 +283,7 @@ app.include_router(search.router)
 app.include_router(insights.router)
 app.include_router(correlations.router)
 app.include_router(food.router)
+app.include_router(discovery.router)
 
 # Serve bundled frontend for all non-API routes (must be last).
 # Using an explicit catch-all route instead of StaticFiles mount to avoid

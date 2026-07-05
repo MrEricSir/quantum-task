@@ -112,6 +112,10 @@ async function mockAPIs(page) {
 
   await page.route('**/api/insights', r => r.fulfill({ json: [] }))
 
+  await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [] }))
+  await page.route('**/api/discovery/interests', r => r.fulfill({ json: { interests: '' } }))
+  await page.route('**/api/discovery/events', r => r.fulfill({ json: [] }))
+
   await page.route('**/api/withings/status', r =>
     r.fulfill({ json: { connected: false, last_synced: null } }))
   await page.route('**/api/withings/goals', r =>
@@ -1125,6 +1129,75 @@ test.describe('calendar page', () => {
     for (const day of ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']) {
       await expect(page.locator('.calp-grid-dow', { hasText: day })).toBeVisible()
     }
+  })
+
+  test('discovery panel is visible with title', async ({ page }) => {
+    await expect(page.locator('.disc-panel')).toBeVisible()
+    await expect(page.locator('.disc-panel-title')).toContainText('Discover Events')
+  })
+
+  test('discovery panel settings button opens modal', async ({ page }) => {
+    await page.locator('[aria-label="Discovery settings"]').click()
+    await expect(page.getByRole('heading', { name: 'Event Discovery' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /save/i })).toBeVisible()
+  })
+
+  test('discovery panel shows ranked events with match badge', async ({ page }) => {
+    await page.route('**/api/discovery/events', r => r.fulfill({ json: [
+      {
+        id: 'feed1::ev1',
+        title: 'Photography Workshop',
+        description: 'Learn portrait lighting',
+        location: 'Community Arts Center',
+        url: null,
+        start: '2026-06-06T10:00:00Z',
+        end: '2026-06-06T12:00:00Z',
+        all_day: false,
+        feed_name: 'Meetup SF',
+        score: 9,
+        reason: 'Hands-on creative workshop, great for meeting artists.',
+      },
+    ]}))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await expect(page.getByText('Photography Workshop')).toBeVisible()
+    await expect(page.locator('.disc-score-badge--high')).toBeVisible()
+    await expect(page.getByText('Hands-on creative workshop, great for meeting artists.')).toBeVisible()
+  })
+
+  test('discovery panel shows hint to add interests when no score present', async ({ page }) => {
+    await page.route('**/api/discovery/events', r => r.fulfill({ json: [
+      {
+        id: 'feed1::ev1',
+        title: 'Board Game Night',
+        description: null,
+        location: null,
+        url: null,
+        start: '2026-06-07T19:00:00Z',
+        end: null,
+        all_day: false,
+        feed_name: 'Local Events',
+        score: null,
+        reason: null,
+      },
+    ]}))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await expect(page.getByText('Board Game Night')).toBeVisible()
+    await expect(page.locator('.disc-no-interests-hint')).toBeVisible()
+  })
+
+  test('discovery settings modal shows feed inputs and interests textarea', async ({ page }) => {
+    await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [
+      { id: 1, name: 'Meetup SF', ical_url: 'https://example.com/meetup.ics' },
+    ]}))
+    await page.route('**/api/discovery/interests', r => r.fulfill({ json: { interests: 'Tech meetups and workshops' } }))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await page.locator('[aria-label="Discovery settings"]').click()
+    await expect(page.locator('.disc-feed-name')).toBeVisible()
+    await expect(page.locator('.disc-feed-url')).toBeVisible()
+    await expect(page.locator('.disc-interests-input')).toHaveValue('Tech meetups and workshops')
   })
 })
 

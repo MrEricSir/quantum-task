@@ -855,6 +855,7 @@ export default function App() {
             onRefresh={handleRefreshCalendar}
             lastRefreshed={lastRefreshed}
             refreshing={calendarRefreshing}
+            onOpenSettings={() => setShowCalendarSettings(true)}
           />
         ) : isHealthPage ? (
           <HealthPage
@@ -929,6 +930,7 @@ export default function App() {
             setShowCalendarSettings(false)
             handleRefreshCalendar()
           }}
+          onDiscoverySaved={handleRefreshCalendar}
         />
       )}
 

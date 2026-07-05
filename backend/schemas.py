@@ -154,6 +154,29 @@ class CalendarMappingItem(BaseModel):
     name: str = ""
 
 
+class DiscoveryFeed(BaseModel):
+    id: Optional[int] = None
+    name: str = ""
+    ical_url: str
+
+    model_config = {"from_attributes": True}
+
+
+class DiscoveryEventOut(BaseModel):
+    id: str
+    uid: Optional[str] = None     # raw iCal UID, used as feedback key
+    title: str
+    description: Optional[str] = None
+    location: Optional[str] = None
+    url: Optional[str] = None
+    start: datetime
+    end: Optional[datetime] = None
+    all_day: bool = False
+    feed_name: Optional[str] = None
+    score: Optional[int] = None   # 1–10 from LLM; None when no interests set
+    reason: Optional[str] = None  # one-sentence LLM explanation
+
+
 class CalendarEvent(BaseModel):
     id: str
     title: str

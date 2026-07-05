@@ -48,6 +48,46 @@ def _google_calendar_event_url(uid: str, start_dt: datetime, ical_url: str, ev=N
     return f"https://calendar.google.com/calendar/u/0/r/event?action=VIEW&eid={eid}"
 
 
+def normalize_ical_url(url: str) -> str:
+    """Normalize various calendar URL formats to a fetchable https:// iCal URL.
+
+    Handles:
+    - webcal:// / webcals:// → https://
+    - Google Calendar embed viewer URLs → iCal feed URL
+    """
+    if url.startswith("webcal://"):
+        url = "https://" + url[9:]
+    elif url.startswith("webcals://"):
+        url = "https://" + url[10:]
+
+    # Convert Google Calendar embed viewer URLs to iCal feed URLs.
+    # e.g. https://calendar.google.com/calendar/embed?src=CALID&ctz=...
+    #   → https://calendar.google.com/calendar/ical/CALID/public/basic.ics
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname == "calendar.google.com" and parsed.path == "/calendar/embed":
+        params = urllib.parse.parse_qs(parsed.query)
+        src_list = params.get("src", [])
+        if src_list:
+            # Re-encode the calendar ID (parse_qs decodes it) for use in the path.
+            calendar_id = urllib.parse.quote(src_list[0], safe="@")
+            return f"https://calendar.google.com/calendar/ical/{calendar_id}/public/basic.ics"
+
+    return url
+
+
+_FETCH_HEADERS = {
+    "Accept": "text/calendar, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    # A realistic UA avoids being blocked by servers that filter python-requests
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
+
 def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
     """Fetch and expand events from an iCal URL in [start, end).
 
@@ -56,8 +96,24 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
 
     Each dict: id, title, description, start (datetime), end (datetime|None), all_day (bool)
     """
-    response = requests.get(ical_url, timeout=15, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
+    ical_url = normalize_ical_url(ical_url)
+    response = requests.get(ical_url, timeout=(10, 45), headers=_FETCH_HEADERS)
     response.raise_for_status()
+
+    # Detect when the server redirected to a login/auth page instead of returning iCal data.
+    final_url = response.url
+    content_type = response.headers.get("Content-Type", "")
+    if "text/html" in content_type:
+        if "accounts.google.com" in final_url:
+            raise ValueError(
+                "Google redirected to a sign-in page. Use the 'Secret address in iCal format' "
+                "from Google Calendar settings (Settings → [calendar] → Integrate calendar)."
+            )
+        raise ValueError(
+            f"Server returned an HTML page instead of iCal data "
+            f"(Content-Type: {content_type}). The feed URL may require authentication "
+            f"or the link may be incorrect."
+        )
 
     cal = icalendar.Calendar.from_ical(response.content)
 
