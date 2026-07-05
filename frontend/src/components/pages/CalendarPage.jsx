@@ -3,6 +3,7 @@ import { UpdateIcon, ChevronLeftIcon, ChevronRightIcon } from '@radix-ui/react-i
 import DOMPurify from 'dompurify'
 import CalendarEventCard from '../board/CalendarEventCard'
 import { fetchDiscoveryEvents, fetchDiscoveryFeedback, saveDiscoveryFeedback, createCard } from '../../api'
+import { useModalContext } from '../../context/ModalContext'
 import './CalendarPage.css'
 
 const _HTML_RE = /<[a-z][\s\S]*?>/i
@@ -125,7 +126,8 @@ function formatDiscoveryTime(isoStr, allDay) {
   return new Date(isoStr).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
-function DiscoveryPanel({ onOpenSettings, refreshTrigger }) {
+function DiscoveryPanel({ refreshTrigger }) {
+  const { openCalendarSettings } = useModalContext()
   const [events, setEvents] = useState(null)  // null = not yet loaded
   const [loading, setLoading] = useState(false)
   // feedback: { [event_uid]: true (liked) | false (disliked) }
@@ -205,7 +207,7 @@ function DiscoveryPanel({ onOpenSettings, refreshTrigger }) {
             {hasInterests === false
               ? 'No upcoming events found in your discovery feeds.'
               : 'Add discovery feeds and describe your interests to get AI-ranked recommendations.'}
-            <button className="disc-empty-settings" onClick={onOpenSettings}>
+            <button className="disc-empty-settings" onClick={openCalendarSettings}>
               Open settings
             </button>
           </div>
@@ -216,7 +218,7 @@ function DiscoveryPanel({ onOpenSettings, refreshTrigger }) {
             {!hasInterests && (
               <p className="disc-no-interests-hint">
                 Add a description of your interests in{' '}
-                <button className="disc-inline-link" onClick={onOpenSettings}>
+                <button className="disc-inline-link" onClick={openCalendarSettings}>
                   settings
                 </button>{' '}
                 to get AI-ranked recommendations.
@@ -328,7 +330,7 @@ function DiscoveryPanel({ onOpenSettings, refreshTrigger }) {
   )
 }
 
-export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing, onOpenSettings }) {
+export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing }) {
   const todayDate = new Date()
   todayDate.setHours(0, 0, 0, 0)
   const todayKey = toDateKey(todayDate)
@@ -518,7 +520,6 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
 
       {view === 'discover' && (
         <DiscoveryPanel
-          onOpenSettings={onOpenSettings}
           refreshTrigger={discoveryRefreshTrigger}
         />
       )}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime } from '../../api'
+import { useModalContext } from '../../context/ModalContext'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -739,7 +740,8 @@ function FoodLog() {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, onOpenSettings, isImperial = false }) {
+export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, isImperial = false }) {
+  const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
 
   const toDisplay = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
@@ -815,7 +817,7 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
               ))}
             </div>
           )}
-          <button className="health-page-settings-btn" onClick={onOpenSettings}>
+          <button className="health-page-settings-btn" onClick={openWithingsSettings}>
             {withingsConnected ? 'Withings settings' : 'Connect Withings'}
           </button>
         </div>
@@ -824,7 +826,7 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
       {!showCharts && (
         <div className="health-not-connected">
           <p>Connect your Withings account to start tracking steps, body fat, and weight.</p>
-          <button className="btn-primary" onClick={onOpenSettings}>Connect Withings</button>
+          <button className="btn-primary" onClick={openWithingsSettings}>Connect Withings</button>
         </div>
       )}
 

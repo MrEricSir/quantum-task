@@ -60,25 +60,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 # ── Startup migrations ────────────────────────────────────────────────────────
 
-def _run_startup_migrations():
-    # Run Alembic migrations to head
-    alembic_cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "alembic.ini"))
-    alembic_cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "alembic"))
-    try:
-        alembic_command.upgrade(alembic_cfg, "head")
-    except Exception as e:
-        print(f"[alembic] migration warning: {e}")
-
-    # Migrate calendar_mappings to current schema (v1 had calendar_id; v2 lacked name column)
+def _patch_pre_alembic_schema():
+    """Fix schema states that pre-date Alembic and can't be expressed as simple ADD COLUMN."""
     with engine.connect() as conn:
+        # calendar_mappings v1 had a calendar_id column — drop and let create_all rebuild it
         try:
             conn.execute(text("SELECT calendar_id FROM calendar_mappings LIMIT 1"))
             conn.execute(text("DROP TABLE calendar_mappings"))
             conn.commit()
+            print("[startup] dropped legacy calendar_mappings (v1 schema with calendar_id)")
         except Exception:
-            pass
+            pass  # not v1 schema — expected
 
-    with engine.connect() as conn:
+        # calendar_mappings v2 was missing the name column — recreate with correct schema
         table_exists = conn.execute(text(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_mappings'"
         )).fetchone()
@@ -86,65 +80,56 @@ def _run_startup_migrations():
             try:
                 conn.execute(text("SELECT name FROM calendar_mappings LIMIT 1"))
             except Exception:
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS calendar_mappings_new (
-                        id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                        tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                        ical_url TEXT NOT NULL,
-                        name    TEXT NOT NULL DEFAULT ''
-                    )
-                """))
-                conn.execute(text("""
-                    INSERT INTO calendar_mappings_new (id, tag_id, ical_url, name)
-                    SELECT id, tag_id, ical_url, '' FROM calendar_mappings
-                """))
-                conn.execute(text("DROP TABLE calendar_mappings"))
-                conn.execute(text("ALTER TABLE calendar_mappings_new RENAME TO calendar_mappings"))
-                conn.commit()
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS calendar_mappings_new (
+                            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                            tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                            ical_url TEXT NOT NULL,
+                            name     TEXT NOT NULL DEFAULT ''
+                        )
+                    """))
+                    conn.execute(text("""
+                        INSERT INTO calendar_mappings_new (id, tag_id, ical_url, name)
+                        SELECT id, tag_id, ical_url, '' FROM calendar_mappings
+                    """))
+                    conn.execute(text("DROP TABLE calendar_mappings"))
+                    conn.execute(text("ALTER TABLE calendar_mappings_new RENAME TO calendar_mappings"))
+                    conn.commit()
+                    print("[startup] migrated calendar_mappings to v3 schema (added name column)")
+                except Exception as e:
+                    print(f"[startup] calendar_mappings migration failed: {e}")
 
-    # Create all tables not yet handled by Alembic
-    models.Base.metadata.create_all(bind=engine)
-
-    # Legacy column additions (idempotent — all wrapped in try/except)
-    with engine.connect() as conn:
-        for stmt in [
-            "ALTER TABLE cards ADD COLUMN completed_at DATETIME",
-            "ALTER TABLE cards ADD COLUMN raw_input TEXT",
-            "ALTER TABLE cards ADD COLUMN recurrence_rule TEXT",
-            "ALTER TABLE cards ADD COLUMN external_id TEXT",
-            "ALTER TABLE habits ADD COLUMN archived BOOLEAN DEFAULT 0",
-            "ALTER TABLE habits ADD COLUMN archived_at DATETIME",
-            "ALTER TABLE notes ADD COLUMN archived BOOLEAN DEFAULT 0",
-            "ALTER TABLE notes ADD COLUMN archived_at DATETIME",
-            "ALTER TABLE cards ADD COLUMN body TEXT",
-            "ALTER TABLE cards ADD COLUMN updated_at DATETIME",
-            "ALTER TABLE cards ADD COLUMN archived BOOLEAN DEFAULT 0",
-            "ALTER TABLE cards ADD COLUMN archived_at DATETIME",
-        ]:
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass
-
-        # Migrate briefing_cache to per-section schema (old schema had today_text/week_text columns)
+        # briefing_cache v1 had today_text/week_text columns — drop so create_all rebuilds it
         try:
             conn.execute(text("SELECT today_text FROM briefing_cache LIMIT 1"))
             conn.execute(text("DROP TABLE briefing_cache"))
             conn.commit()
+            print("[startup] dropped legacy briefing_cache (pre-section schema)")
         except Exception:
-            pass
+            pass  # not old schema — expected
 
-    # Seed default tags
-    with SessionLocal() as db:
-        for name, color in [("personal", "#8b5cf6"), ("work", "#3b82f6")]:
-            if not db.query(models.Tag).filter_by(name=name).first():
-                db.add(models.Tag(name=name, color=color))
-        db.commit()
 
-    # Migrate notes → cards (section="none") — idempotent via app_settings flag
-    with SessionLocal() as db:
-        if not db.query(models.AppSetting).filter_by(key="notes_migrated_v1").first():
+def _seed_defaults():
+    """Seed default tags if they don't exist yet."""
+    try:
+        with SessionLocal() as db:
+            for name, color in [("personal", "#8b5cf6"), ("work", "#3b82f6")]:
+                if not db.query(models.Tag).filter_by(name=name).first():
+                    db.add(models.Tag(name=name, color=color))
+                    print(f"[startup] seeded default tag: {name}")
+            db.commit()
+    except Exception as e:
+        print(f"[startup] seed_defaults failed: {e}")
+
+
+def _migrate_notes_to_cards():
+    """One-time migration: convert Note rows to Card rows with section='none'."""
+    try:
+        with SessionLocal() as db:
+            if db.query(models.AppSetting).filter_by(key="notes_migrated_v1").first():
+                return
+            migrated = 0
             for note in db.query(models.Note).all():
                 first_line = note.content.split('\n')[0][:120].strip() if note.content else ""
                 title = note.title or first_line or "Untitled"
@@ -160,20 +145,60 @@ def _run_startup_migrations():
                 )
                 db_card.tags = list(note.tags)
                 db.add(db_card)
+                migrated += 1
             db.add(models.AppSetting(key="notes_migrated_v1", value="1"))
             db.commit()
+            print(f"[startup] migrated {migrated} notes to cards")
+    except Exception as e:
+        print(f"[startup] migrate_notes_to_cards failed: {e}")
 
-    # Ensure VAPID keys exist
-    with SessionLocal() as db:
-        push_lib.ensure_vapid_keys(db)
 
-    # Populate habit_streak_days for all habits (one-time, guarded by flag)
-    with SessionLocal() as db:
-        if not db.query(models.AppSetting).filter_by(key="streak_days_v1").first():
+def _backfill_streak_days():
+    """One-time backfill: populate habit_streak_days for all existing habits."""
+    try:
+        with SessionLocal() as db:
+            if db.query(models.AppSetting).filter_by(key="streak_days_v1").first():
+                return
             from streak import recompute_all_habits
             recompute_all_habits(db)
             db.add(models.AppSetting(key="streak_days_v1", value="1"))
             db.commit()
+            print("[startup] backfilled habit streak days")
+    except Exception as e:
+        print(f"[startup] backfill_streak_days failed: {e}")
+
+
+def _ensure_vapid_keys():
+    """Ensure VAPID keys exist for push notifications."""
+    try:
+        with SessionLocal() as db:
+            push_lib.ensure_vapid_keys(db)
+    except Exception as e:
+        print(f"[startup] ensure_vapid_keys failed: {e}")
+
+
+def _run_startup_migrations():
+    # 1. Run Alembic migrations to head
+    alembic_cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "alembic"))
+    try:
+        alembic_command.upgrade(alembic_cfg, "head")
+    except Exception as e:
+        print(f"[startup] alembic upgrade failed: {e}")
+
+    # 2. Fix schema states that pre-date Alembic
+    _patch_pre_alembic_schema()
+
+    # 3. Create any tables not yet managed by Alembic
+    models.Base.metadata.create_all(bind=engine)
+
+    # 4. Seed default data
+    _seed_defaults()
+
+    # 5. One-time data migrations (each guarded by an AppSetting flag)
+    _migrate_notes_to_cards()
+    _backfill_streak_days()
+    _ensure_vapid_keys()
 
 
 # ── Push notification scheduler ───────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { UpdateIcon } from '@radix-ui/react-icons'
+import { useModalContext } from '../../context/ModalContext'
 import './EngineeringPage.css'
 
 function formatSynced(date) {
@@ -38,7 +39,8 @@ function ItemCard({ item, onAddToBoard, isAdded }) {
   )
 }
 
-export default function EngineeringPage({ items, todos = [], lastSynced, syncing, onSync, onOpenSettings, onAddToBoard }) {
+export default function EngineeringPage({ items, todos = [], lastSynced, syncing, onSync, onAddToBoard }) {
+  const { openGithubSettings } = useModalContext()
   const prs    = items.filter((i) => i.item_type === 'pr')
   const issues = items.filter((i) => i.item_type === 'issue')
   const noConfig = items.length === 0 && !syncing
@@ -69,7 +71,7 @@ export default function EngineeringPage({ items, todos = [], lastSynced, syncing
       {noConfig && (
         <div className="eng-empty">
           No open items.{' '}
-          <button className="eng-configure-link" onClick={onOpenSettings}>
+          <button className="eng-configure-link" onClick={openGithubSettings}>
             Configure GitHub
           </button>{' '}
           in Settings to get started.

@@ -6,9 +6,12 @@ import {
   deleteCard,
   addTagToCard,
   removeTagFromCard,
+  updateTag,
+  deleteTag,
+  replaceTag,
 } from '../api'
 
-export function useCards({ authed, tags, invalidateBriefing }) {
+export function useCards({ authed, tags, setTags, invalidateBriefing }) {
   const [todos, setTodos] = useState([])
   const [loading, setLoading] = useState(true)
   const todosRef = useRef(todos)
@@ -77,6 +80,37 @@ export function useCards({ authed, tags, invalidateBriefing }) {
 
   const handleUnarchiveCard = (id) => handleUpdateTodo(id, { archived: false })
 
+  const handleUpdateTag = async (tagId, data) => {
+    const updated = await updateTag(tagId, data)
+    setTags((prev) => prev.map((t) => (t.id === tagId ? updated : t)).sort((a, b) => a.name.localeCompare(b.name)))
+    setTodos((prev) =>
+      prev.map((t) => ({ ...t, tags: (t.tags ?? []).map((tg) => (tg.id === tagId ? updated : tg)) }))
+    )
+  }
+
+  const handleDeleteTag = async (tagId) => {
+    await deleteTag(tagId)
+    setTags((prev) => prev.filter((t) => t.id !== tagId))
+    setTodos((prev) =>
+      prev.map((t) => ({ ...t, tags: (t.tags ?? []).filter((tg) => tg.id !== tagId) }))
+    )
+  }
+
+  const handleReplaceTag = async (fromTagId, toTagId) => {
+    await replaceTag(fromTagId, toTagId)
+    const toTag = tags.find((t) => t.id === toTagId)
+    setTags((prev) => prev.filter((t) => t.id !== fromTagId))
+    setTodos((prev) =>
+      prev.map((todo) => {
+        const hasFrom = (todo.tags ?? []).some((tg) => tg.id === fromTagId)
+        if (!hasFrom) return todo
+        const hasTo = (todo.tags ?? []).some((tg) => tg.id === toTagId)
+        const filtered = (todo.tags ?? []).filter((tg) => tg.id !== fromTagId)
+        return { ...todo, tags: hasTo ? filtered : [...filtered, toTag] }
+      })
+    )
+  }
+
   return {
     todos,
     setTodos,
@@ -93,5 +127,8 @@ export function useCards({ authed, tags, invalidateBriefing }) {
     handleDeleteCard,
     handleArchiveCard,
     handleUnarchiveCard,
+    handleUpdateTag,
+    handleDeleteTag,
+    handleReplaceTag,
   }
 }

@@ -1131,21 +1131,20 @@ test.describe('calendar page', () => {
     }
   })
 
-  test('discovery panel is visible with title', async ({ page }) => {
-    await expect(page.locator('.disc-panel')).toBeVisible()
-    await expect(page.locator('.disc-panel-title')).toContainText('Discover Events')
+  test('discover tab button is visible', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /^discover$/i })).toBeVisible()
   })
 
-  test('discovery panel settings button opens modal', async ({ page }) => {
-    await page.locator('[aria-label="Discovery settings"]').click()
-    await expect(page.getByRole('heading', { name: 'Event Discovery' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /save/i })).toBeVisible()
+  test('discover tab shows discovery content when clicked', async ({ page }) => {
+    await page.getByRole('button', { name: /^discover$/i }).click()
+    await expect(page.locator('.disc-view')).toBeVisible()
   })
 
   test('discovery panel shows ranked events with match badge', async ({ page }) => {
     await page.route('**/api/discovery/events', r => r.fulfill({ json: [
       {
         id: 'feed1::ev1',
+        uid: 'feed1::ev1',
         title: 'Photography Workshop',
         description: 'Learn portrait lighting',
         location: 'Community Arts Center',
@@ -1160,15 +1159,16 @@ test.describe('calendar page', () => {
     ]}))
     await page.goto('/calendar')
     await waitForApp(page)
+    await page.getByRole('button', { name: /^discover$/i }).click()
     await expect(page.getByText('Photography Workshop')).toBeVisible()
     await expect(page.locator('.disc-score-badge--high')).toBeVisible()
-    await expect(page.getByText('Hands-on creative workshop, great for meeting artists.')).toBeVisible()
   })
 
   test('discovery panel shows hint to add interests when no score present', async ({ page }) => {
     await page.route('**/api/discovery/events', r => r.fulfill({ json: [
       {
         id: 'feed1::ev1',
+        uid: 'feed1::ev1',
         title: 'Board Game Night',
         description: null,
         location: null,
@@ -1183,21 +1183,26 @@ test.describe('calendar page', () => {
     ]}))
     await page.goto('/calendar')
     await waitForApp(page)
+    await page.getByRole('button', { name: /^discover$/i }).click()
     await expect(page.getByText('Board Game Night')).toBeVisible()
     await expect(page.locator('.disc-no-interests-hint')).toBeVisible()
   })
 
-  test('discovery settings modal shows feed inputs and interests textarea', async ({ page }) => {
+  test('calendar settings modal shows discovery feed inputs and interests textarea', async ({ page }) => {
+    await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
+    await page.route('**/api/calendar/export-token', r => r.fulfill({ json: '' }))
     await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [
       { id: 1, name: 'Meetup SF', ical_url: 'https://example.com/meetup.ics' },
     ]}))
     await page.route('**/api/discovery/interests', r => r.fulfill({ json: { interests: 'Tech meetups and workshops' } }))
     await page.goto('/calendar')
     await waitForApp(page)
-    await page.locator('[aria-label="Discovery settings"]').click()
-    await expect(page.locator('.disc-feed-name')).toBeVisible()
-    await expect(page.locator('.disc-feed-url')).toBeVisible()
-    await expect(page.locator('.disc-interests-input')).toHaveValue('Tech meetups and workshops')
+    // Open settings via header gear → Calendar
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+    await expect(page.locator('.cal-feed-name-input').first()).toBeVisible()
+    await expect(page.locator('.cal-url-input').first()).toBeVisible()
+    await expect(page.locator('.cal-disc-interests')).toHaveValue('Tech meetups and workshops')
   })
 })
 

@@ -39,14 +39,16 @@ import { useCards } from './hooks/useCards'
 import { useHabits } from './hooks/useHabits'
 import { useCalendar } from './hooks/useCalendar'
 import { useWithings } from './hooks/useWithings'
+import { useEngineering } from './hooks/useEngineering'
+import { useModals } from './hooks/useModals'
+import { ModalContext } from './context/ModalContext'
 import {
   fetchTags,
   fetchCards,
   reorderCards,
-  createTag, updateTag, deleteTag, replaceTag,
+  createTag,
   parseCard,
   checkAuth, logout,
-  syncEngineering, fetchEngineeringItems,
   createFoodEntry,
 } from './api'
 import './App.css'
@@ -73,29 +75,30 @@ export default function App() {
   const [tagsLoading, setTagsLoading] = useState(true)
   const [briefingKey, setBriefingKey] = useState(0)
   const invalidateBriefing = useCallback(() => setBriefingKey((k) => k + 1), [])
-  const [showModal, setShowModal] = useState(false)
-  const [showQuickAdd, setShowQuickAdd] = useState(false)
-  const [quickAddInitialText, setQuickAddInitialText] = useState('')
-  const [showSearch, setShowSearch] = useState(false)
-  const [showTagManager, setShowTagManager] = useState(false)
-  const [showCalendarSettings, setShowCalendarSettings] = useState(false)
-  const [showGithubSettings, setShowGithubSettings] = useState(false)
-  const [showWithingsSettings, setShowWithingsSettings] = useState(false)
-  const [showShortcuts, setShowShortcuts] = useState(false)
-  const [editingTodo, setEditingTodo] = useState(null)
+  const {
+    showModal,
+    showQuickAdd, setShowQuickAdd,
+    quickAddInitialText, setQuickAddInitialText,
+    showSearch, setShowSearch,
+    showTagManager, setShowTagManager,
+    showCalendarSettings, setShowCalendarSettings,
+    showGithubSettings, setShowGithubSettings,
+    showWithingsSettings, setShowWithingsSettings,
+    showShortcuts, setShowShortcuts,
+    editingTodo,
+    defaultSection, showNewSheet, setShowNewSheet,
+    openEdit, openNewCard, closeModal,
+  } = useModals()
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
   const [weather, setWeather] = useState(null)
-  const [engineeringItems, setEngineeringItems] = useState([])
-  const [lastEngineeringSynced, setLastEngineeringSynced] = useState(null)
-  const [engineeringSyncing, setEngineeringSyncing] = useState(false)
-
   const {
     todos, setTodos, loading: cardsLoading, todosRef,
     handleAddTodo, handleUpdateTodo, handleDeleteTodo, handleToggle,
     handleAddTag, handleRemoveTag, handleAddCard, handleUpdateCard,
     handleDeleteCard, handleArchiveCard, handleUnarchiveCard,
-  } = useCards({ authed, tags, invalidateBriefing })
+    handleUpdateTag, handleDeleteTag, handleReplaceTag,
+  } = useCards({ authed, tags, setTags, invalidateBriefing })
 
   const {
     habits, archivedHabits,
@@ -106,6 +109,8 @@ export default function App() {
   const {
     calendarEvents, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
   } = useCalendar({ authed, invalidateBriefing })
+
+  const { engineeringItems, lastEngineeringSynced, engineeringSyncing, refreshEngineeringItems } = useEngineering({ authed })
 
   const {
     status: withingsStatus,
@@ -323,29 +328,6 @@ export default function App() {
     }
   }, [todos])
 
-  const refreshEngineeringItems = useCallback(() => {
-    setEngineeringSyncing(true)
-    syncEngineering()
-      .catch(() => {})  // silently ignore if not configured
-      .finally(() => {
-        fetchEngineeringItems()
-          .then((items) => { setEngineeringItems(items); setLastEngineeringSynced(new Date()) })
-          .catch(() => {})
-          .finally(() => setEngineeringSyncing(false))
-      })
-  }, [])
-
-  // Sync engineering on login, then poll every 15 minutes
-  useEffect(() => {
-    if (!authed) return
-    refreshEngineeringItems()
-  }, [authed]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    const id = setInterval(refreshEngineeringItems, 15 * 60 * 1000)
-    return () => clearInterval(id)
-  }, [refreshEngineeringItems])
-
   // Fetch tags on login
   useEffect(() => {
     if (!authed) return
@@ -487,40 +469,6 @@ export default function App() {
     setTags((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
   }
 
-  const handleUpdateTag = async (tagId, data) => {
-    const updated = await updateTag(tagId, data)
-    setTags((prev) => prev.map((t) => (t.id === tagId ? updated : t)).sort((a, b) => a.name.localeCompare(b.name)))
-    setTodos((prev) =>
-      prev.map((t) => ({
-        ...t,
-        tags: (t.tags ?? []).map((tg) => (tg.id === tagId ? updated : tg)),
-      }))
-    )
-  }
-
-  const handleDeleteTag = async (tagId) => {
-    await deleteTag(tagId)
-    setTags((prev) => prev.filter((t) => t.id !== tagId))
-    setTodos((prev) =>
-      prev.map((t) => ({ ...t, tags: (t.tags ?? []).filter((tg) => tg.id !== tagId) }))
-    )
-  }
-
-  const handleReplaceTag = async (fromTagId, toTagId) => {
-    await replaceTag(fromTagId, toTagId)
-    const toTag = tags.find((t) => t.id === toTagId)
-    setTags((prev) => prev.filter((t) => t.id !== fromTagId))
-    setTodos((prev) =>
-      prev.map((todo) => {
-        const hasfrom = (todo.tags ?? []).some((tg) => tg.id === fromTagId)
-        if (!hasfrom) return todo
-        const hasTo = (todo.tags ?? []).some((tg) => tg.id === toTagId)
-        const filtered = (todo.tags ?? []).filter((tg) => tg.id !== fromTagId)
-        return { ...todo, tags: hasTo ? filtered : [...filtered, toTag] }
-      })
-    )
-  }
-
   const processQueueItem = (id, text) => {
     parseCard(text)
       .then(async (result) => {
@@ -585,30 +533,6 @@ export default function App() {
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 
-  const [defaultSection, setDefaultSection] = useState('today')
-  const [showNewSheet, setShowNewSheet] = useState(false)
-
-  const openEdit = (todo) => {
-    setDefaultSection(todo?.section ?? 'today')
-    setEditingTodo(todo)
-    setShowModal(true)
-  }
-
-  const openNewCard = (section = 'today') => {
-    setDefaultSection(section)
-    if (window.matchMedia('(max-width: 640px)').matches) {
-      setShowNewSheet(true)
-    } else {
-      setEditingTodo(null)
-      setShowModal(true)
-    }
-  }
-
-  const closeModal = () => {
-    setShowModal(false)
-    setEditingTodo(null)
-  }
-
   const handleBreakdownCommit = ({ tag, cards, archived_card }) => {
     if (tag) {
       setTags((prev) => {
@@ -636,7 +560,15 @@ export default function App() {
   if (authed === null) return null
   if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />
 
+  const modalContextValue = {
+    openCalendarSettings: () => setShowCalendarSettings(true),
+    openGithubSettings: () => setShowGithubSettings(true),
+    openWithingsSettings: () => setShowWithingsSettings(true),
+    openEdit,
+  }
+
   return (
+    <ModalContext.Provider value={modalContextValue}>
     <div className="app">
       <video className="app-bg-video" autoPlay muted loop playsInline disablePictureInPicture>
         <source src="/bg.webm" type="video/webm" />
@@ -855,7 +787,6 @@ export default function App() {
             onRefresh={handleRefreshCalendar}
             lastRefreshed={lastRefreshed}
             refreshing={calendarRefreshing}
-            onOpenSettings={() => setShowCalendarSettings(true)}
           />
         ) : isHealthPage ? (
           <HealthPage
@@ -863,7 +794,6 @@ export default function App() {
             healthData={healthData}
             healthGoals={healthGoals}
             withingsConnected={withingsStatus?.connected ?? false}
-            onOpenSettings={() => setShowWithingsSettings(true)}
             isImperial={isImperial}
             onToggleUnit={toggleUnit}
           />
@@ -880,7 +810,6 @@ export default function App() {
             lastSynced={lastEngineeringSynced}
             syncing={engineeringSyncing}
             onSync={refreshEngineeringItems}
-            onOpenSettings={() => setShowGithubSettings(true)}
             onAddToBoard={async (item) => {
               await handleAddTodo({
                 title: item.item_type === 'pr'
@@ -997,5 +926,6 @@ export default function App() {
       )}
 
     </div>
+    </ModalContext.Provider>
   )
 }
