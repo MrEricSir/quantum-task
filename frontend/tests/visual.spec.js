@@ -115,6 +115,7 @@ async function mockAPIs(page) {
   await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [] }))
   await page.route('**/api/discovery/interests', r => r.fulfill({ json: { interests: '' } }))
   await page.route('**/api/discovery/events', r => r.fulfill({ json: [] }))
+  await page.route('**/api/discovery/feedback', r => r.fulfill({ json: [] }))
 
   await page.route('**/api/withings/status', r =>
     r.fulfill({ json: { connected: false, last_synced: null } }))
