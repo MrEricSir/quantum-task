@@ -1,10 +1,11 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon } from '@radix-ui/react-icons'
 import './DailyBriefing.css'
 
 export default function DailyBriefing({ todos, calendarEvents, habits = [], tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
   const [sections, setSections] = useState({ today: '', week: '' })
   const [status, setStatus] = useState('idle') // idle | loading | done | error
+  const [showSpinner, setShowSpinner] = useState(false)
   const [error, setError] = useState('')
   const [speaking, setSpeaking] = useState(false)
   const abortRef = useRef(null)
@@ -20,15 +21,25 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   const containerRef = useRef(null)
   const prevHeightRef = useRef(0)
 
-  const getLocation = () =>
-    new Promise((resolve) => {
-      if (!navigator.geolocation) return resolve(null)
+  const getLocation = useCallback(() => {
+    // Refresh the cached location in the background so the next call is current.
+    if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-        () => resolve(null),
-        { timeout: 5000 },
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lon: pos.coords.longitude }
+          try { localStorage.setItem('briefing-last-location', JSON.stringify(loc)) } catch {}
+        },
+        () => {},
+        { timeout: 10000 },
       )
-    })
+    }
+    // Resolve immediately with the cached value so the fetch isn't blocked.
+    try {
+      const cached = localStorage.getItem('briefing-last-location')
+      if (cached) return Promise.resolve(JSON.parse(cached))
+    } catch {}
+    return Promise.resolve(null)
+  }, [])
 
   const generate = async (force = false) => {
     if (abortRef.current) abortRef.current.abort()
@@ -106,6 +117,14 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
 
   generateRef.current = generate
 
+  // Only show the spinner after 400 ms — cached responses arrive before that,
+  // so they appear directly without any spinner flash.
+  useEffect(() => {
+    if (status !== 'loading') { setShowSpinner(false); return }
+    const t = setTimeout(() => setShowSpinner(true), 400)
+    return () => clearTimeout(t)
+  }, [status])
+
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -171,6 +190,7 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   }
 
   if (status === 'idle') return null
+  if (status === 'loading' && !hasContent && !showSpinner) return null
 
   if (status === 'error') return (
     <div className="briefing briefing--error">
@@ -183,7 +203,7 @@ export default function DailyBriefing({ todos, calendarEvents, habits = [], tagI
   return (
     <div className="briefing" ref={containerRef}>
       <div className="briefing-sections">
-        {status === 'loading' && !hasContent
+        {showSpinner && !hasContent
           ? <span className="briefing-spinner" />
           : <>
               {sections.today && (
