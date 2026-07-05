@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Table, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, Table, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from database import Base
@@ -71,6 +71,9 @@ class EventDiscoveryFeed(Base):
     name = Column(String, nullable=False, default="")
     ical_url = Column(String, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # iCal fetch cache — refreshed every ~3 hours
+    last_fetched = Column(DateTime, nullable=True)   # naive UTC
+    cached_events = Column(Text, nullable=True)       # JSON-serialized event list
 
 
 class DiscoveryFeedback(Base):
