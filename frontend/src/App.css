@@ -22,9 +22,6 @@
   transform: rotate(180deg);
 }
 
-@media (display-mode: standalone) {
-  .app-bg-video { display: none; }
-}
 
 /* ── Offline banner ── */
 .offline-banner {

@@ -130,8 +130,10 @@ function DiscoveryPanel({ refreshTrigger }) {
   const { openCalendarSettings } = useModalContext()
   const [events, setEvents] = useState(null)  // null = not yet loaded
   const [loading, setLoading] = useState(false)
-  // feedback: { [event_uid]: true (liked) | false (disliked) }
+  // feedback: { [event_uid]: true (liked) | false (disliked) | null (cleared) }
   const [feedback, setFeedback] = useState({})
+  // UIDs that were already disliked when the view loaded — hidden from the list entirely
+  const [initialDisliked, setInitialDisliked] = useState(new Set())
   // added: set of event ids added to calendar
   const [added, setAdded] = useState(new Set())
 
@@ -139,9 +141,15 @@ function DiscoveryPanel({ refreshTrigger }) {
     setLoading(true)
     try {
       const [data, fb] = await Promise.all([fetchDiscoveryEvents(), fetchDiscoveryFeedback()])
-      setEvents(data)
       const fbMap = {}
-      for (const r of fb) fbMap[r.event_uid] = r.interested
+      const disliked = new Set()
+      for (const r of fb) {
+        fbMap[r.event_uid] = r.interested
+        if (!r.interested) disliked.add(r.event_uid)
+      }
+      setInitialDisliked(disliked)
+      // Strip events the user already disliked in a previous session
+      setEvents(data.filter(ev => !disliked.has(ev.uid || ev.id)))
       setFeedback(fbMap)
     } catch {
       setEvents([])
@@ -229,10 +237,19 @@ function DiscoveryPanel({ refreshTrigger }) {
                   const endTime = ev.end ? formatDiscoveryTime(ev.end, ev.all_day) : null
                   const uid = ev.uid || ev.id
                   const liked = feedback[uid]
+                  const isDismissed = liked === false
                   const isAdded = added.has(ev.id)
                   const isExpanded = expanded.has(ev.id)
+
+                  if (isDismissed) return (
+                    <div key={ev.id} className="disc-event-card disc-event-card--dismissed">
+                      <span className="disc-dismissed-label">Dismissed</span>
+                      <button className="disc-undo-btn" onClick={() => handleFeedback(ev, false)}>Undo</button>
+                    </div>
+                  )
+
                   return (
-                    <div key={ev.id} className={`disc-event-card${liked === false ? ' disc-event-card--dismissed' : ''}`}>
+                    <div key={ev.id} className="disc-event-card">
                       <div className="disc-event-header">
                         {ev.score != null && (
                           <span className={`disc-score-badge disc-score-badge--${ev.score >= 8 ? 'high' : 'mid'}`}>
