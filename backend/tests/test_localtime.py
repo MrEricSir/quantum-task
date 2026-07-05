@@ -29,7 +29,7 @@ from database import Base
 from main import app
 from deps import get_db, local_date as _local_date
 from routers.cards import _section_for_date
-from routers.briefing import _fmt_time
+from briefing_context import fmt_time as _fmt_time
 from streak import recompute_from
 
 # ── In-memory test database ───────────────────────────────────────────────────

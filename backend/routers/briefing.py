@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import requests as http_requests
@@ -16,6 +17,84 @@ from health_context import build_health_context
 from weather import fetch_weather
 
 router = APIRouter()
+
+
+# ── Daily-plan helpers ────────────────────────────────────────────────────────
+
+def _fmt_time_24h(dt: datetime, utc_offset_minutes: int = 0) -> str:
+    """Convert a datetime to local HH:MM (24h). Naive datetimes pass through unchanged."""
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None) - timedelta(minutes=utc_offset_minutes)
+    return dt.strftime("%H:%M")
+
+
+def _normalize_plan_time(s: str | None) -> str | None:
+    """Normalise various time formats to 'HH:MM' (24h). Returns None if unparseable."""
+    if not s:
+        return None
+    s = s.strip()
+    # HH:MM:SS
+    m = re.fullmatch(r"(\d{1,2}):(\d{2}):\d{2}", s)
+    if m:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+    # HH:MM
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", s)
+    if m:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+    # H:MM AM/PM
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})\s*(am|pm)", s, re.IGNORECASE)
+    if m:
+        h, mn, period = int(m.group(1)), m.group(2), m.group(3).lower()
+        if period == "pm" and h != 12:
+            h += 12
+        elif period == "am" and h == 12:
+            h = 0
+        return f"{h:02d}:{mn}"
+    # H AM/PM (no minutes)
+    m = re.fullmatch(r"(\d{1,2})\s*(am|pm)", s, re.IGNORECASE)
+    if m:
+        h, period = int(m.group(1)), m.group(2).lower()
+        if period == "pm" and h != 12:
+            h += 12
+        elif period == "am" and h == 12:
+            h = 0
+        return f"{h:02d}:00"
+    return None
+
+
+def _build_daily_plan_context(
+    today,
+    cal_events: list,
+    todos: list,
+    habits: list,
+    utc_offset_minutes: int = 0,
+) -> str:
+    """Build a structured context string for the daily-plan LLM prompt."""
+    from datetime import date as _date
+    today_str = today.strftime("%A, %B %d, %Y") if hasattr(today, "strftime") else str(today)
+    lines = [f"Date: {today_str}"]
+
+    fixed = [(t, _fmt_time_24h(t.scheduled_at, utc_offset_minutes)) for t in todos if t.scheduled_at]
+    unscheduled = [t for t in todos if not t.scheduled_at]
+
+    if cal_events or fixed:
+        lines.append("\nEvents and tasks with fixed start time:")
+        for e in cal_events:
+            time_str = _fmt_time_24h(e.start, utc_offset_minutes)
+            if e.end:
+                end_str = _fmt_time_24h(e.end, utc_offset_minutes)
+                lines.append(f"  - {e.title}: {time_str}–{end_str}")
+            else:
+                lines.append(f"  - {e.title}: {time_str}")
+        for t, time_str in fixed:
+            lines.append(f"  - {t.title} (starts at {time_str})")
+
+    if unscheduled:
+        lines.append("\nUnscheduled tasks (flexible):")
+        for t in unscheduled:
+            lines.append(f"  - {t.title}")
+
+    return "\n".join(lines)
 
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
