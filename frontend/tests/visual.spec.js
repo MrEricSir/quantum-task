@@ -1191,7 +1191,7 @@ test.describe('calendar page', () => {
 
   test('calendar settings modal shows discovery feed inputs and interests textarea', async ({ page }) => {
     await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
-    await page.route('**/api/calendar/export-token', r => r.fulfill({ json: '' }))
+    await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
     await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [
       { id: 1, name: 'Meetup SF', ical_url: 'https://example.com/meetup.ics' },
     ]}))
