@@ -1,39 +1,31 @@
-import { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchCalendarEvents } from '../api'
 
+export const CALENDAR_QUERY_KEY = ['calendar']
+
 export function useCalendar({ authed, invalidateBriefing }) {
-  const [calendarEvents, setCalendarEvents] = useState([])
-  const [lastRefreshed, setLastRefreshed] = useState(null)
-  const [calendarRefreshing, setCalendarRefreshing] = useState(false)
+  const queryClient = useQueryClient()
 
-  useEffect(() => {
-    if (!authed) return
-    fetchCalendarEvents()
-      .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
-      .catch(() => {})
-  }, [authed])
+  const {
+    data: calendarEvents = [],
+    dataUpdatedAt,
+    isFetching: calendarRefreshing,
+    refetch,
+  } = useQuery({
+    queryKey: CALENDAR_QUERY_KEY,
+    queryFn: fetchCalendarEvents,
+    enabled: !!authed,
+    refetchInterval: 15 * 60 * 1000,
+  })
 
-  // Poll for calendar updates every 15 minutes
-  useEffect(() => {
-    const id = setInterval(() => {
-      fetchCalendarEvents()
-        .then((events) => { setCalendarEvents(events); setLastRefreshed(new Date()) })
-        .catch(() => {})
-    }, 15 * 60 * 1000)
-    return () => clearInterval(id)
-  }, [])
+  const lastRefreshed = dataUpdatedAt ? new Date(dataUpdatedAt) : null
 
   const handleRefreshCalendar = async () => {
-    setCalendarRefreshing(true)
     try {
-      const events = await fetchCalendarEvents()
-      setCalendarEvents(events)
-      setLastRefreshed(new Date())
+      await refetch()
       invalidateBriefing?.()
     } catch {
       // ignore
-    } finally {
-      setCalendarRefreshing(false)
     }
   }
 

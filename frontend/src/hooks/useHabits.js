@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useCallback } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchHabits,
   fetchArchivedHabits,
@@ -11,56 +12,98 @@ import {
   unarchiveHabit,
 } from '../api'
 
-export function useHabits({ authed, invalidateBriefing }) {
-  const [habits, setHabits] = useState([])
-  const [archivedHabits, setArchivedHabits] = useState([])
+export const HABITS_QUERY_KEY = ['habits']
+export const ARCHIVED_HABITS_QUERY_KEY = ['habits', 'archived']
 
-  useEffect(() => {
-    if (!authed) return
-    fetchHabits().then(setHabits).catch(() => {})
-    fetchArchivedHabits().then(setArchivedHabits).catch(() => {})
-  }, [authed])
+export function useHabits({ authed, invalidateBriefing }) {
+  const queryClient = useQueryClient()
+
+  const { data: habits = [] } = useQuery({
+    queryKey: HABITS_QUERY_KEY,
+    queryFn: fetchHabits,
+    enabled: !!authed,
+  })
+
+  const { data: archivedHabits = [] } = useQuery({
+    queryKey: ARCHIVED_HABITS_QUERY_KEY,
+    queryFn: fetchArchivedHabits,
+    enabled: !!authed,
+  })
+
+  const setHabits = useCallback(
+    (updater) => queryClient.setQueryData(HABITS_QUERY_KEY, updater),
+    [queryClient],
+  )
+
+  const setArchivedHabits = useCallback(
+    (updater) => queryClient.setQueryData(ARCHIVED_HABITS_QUERY_KEY, updater),
+    [queryClient],
+  )
 
   const handleAddHabit = async (data) => {
     const habit = await createHabit(data)
-    setHabits((prev) => [...prev, habit])
+    queryClient.setQueryData(HABITS_QUERY_KEY, (prev) => [...(prev ?? []), habit])
     return habit
   }
 
   const handleUpdateHabit = async (id, data) => {
     const updated = await updateHabit(id, data)
-    setHabits((prev) => prev.map((h) => (h.id === id ? updated : h)))
+    queryClient.setQueryData(HABITS_QUERY_KEY, (prev) =>
+      (prev ?? []).map((h) => (h.id === id ? updated : h)),
+    )
     return updated
   }
 
   const handleDeleteHabit = async (id) => {
-    setHabits((prev) => prev.filter((h) => h.id !== id))
-    setArchivedHabits((prev) => prev.filter((h) => h.id !== id))
+    queryClient.setQueryData(HABITS_QUERY_KEY, (prev) =>
+      (prev ?? []).filter((h) => h.id !== id),
+    )
+    queryClient.setQueryData(ARCHIVED_HABITS_QUERY_KEY, (prev) =>
+      (prev ?? []).filter((h) => h.id !== id),
+    )
     await deleteHabit(id)
   }
 
   const handleArchiveHabit = async (id) => {
     await archiveHabit(id)
     const habit = habits.find((h) => h.id === id)
-    setHabits((prev) => prev.filter((h) => h.id !== id))
-    if (habit) setArchivedHabits((prev) => [...prev, { ...habit, archived: true }])
+    queryClient.setQueryData(HABITS_QUERY_KEY, (prev) =>
+      (prev ?? []).filter((h) => h.id !== id),
+    )
+    if (habit) {
+      queryClient.setQueryData(ARCHIVED_HABITS_QUERY_KEY, (prev) => [
+        ...(prev ?? []),
+        { ...habit, archived: true },
+      ])
+    }
   }
 
   const handleUnarchiveHabit = async (id) => {
     await unarchiveHabit(id)
     const habit = archivedHabits.find((h) => h.id === id)
-    setArchivedHabits((prev) => prev.filter((h) => h.id !== id))
-    if (habit) setHabits((prev) => [...prev, { ...habit, archived: false }])
+    queryClient.setQueryData(ARCHIVED_HABITS_QUERY_KEY, (prev) =>
+      (prev ?? []).filter((h) => h.id !== id),
+    )
+    if (habit) {
+      queryClient.setQueryData(HABITS_QUERY_KEY, (prev) => [
+        ...(prev ?? []),
+        { ...habit, archived: false },
+      ])
+    }
   }
 
   const handleToggleHabit = async (habit) => {
     const wasChecked = habit.completed_today
-    setHabits((prev) =>
-      prev.map((h) =>
+    queryClient.setQueryData(HABITS_QUERY_KEY, (prev) =>
+      (prev ?? []).map((h) =>
         h.id === habit.id
-          ? { ...h, completed_today: !wasChecked, streak: !wasChecked ? h.streak + 1 : Math.max(0, h.streak - 1) }
-          : h
-      )
+          ? {
+              ...h,
+              completed_today: !wasChecked,
+              streak: !wasChecked ? h.streak + 1 : Math.max(0, h.streak - 1),
+            }
+          : h,
+      ),
     )
     try {
       if (wasChecked) {
@@ -69,10 +112,12 @@ export function useHabits({ authed, invalidateBriefing }) {
         await checkHabit(habit.id)
       }
       const updated = await fetchHabits()
-      setHabits(updated)
+      queryClient.setQueryData(HABITS_QUERY_KEY, updated)
       invalidateBriefing?.()
     } catch {
-      setHabits((prev) => prev.map((h) => (h.id === habit.id ? habit : h)))
+      queryClient.setQueryData(HABITS_QUERY_KEY, (prev) =>
+        (prev ?? []).map((h) => (h.id === habit.id ? habit : h)),
+      )
     }
   }
 

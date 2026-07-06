@@ -21,6 +21,7 @@ from starlette.requests import Request
 
 import models
 import push as push_lib
+import app_setting_keys as setting_keys
 from alembic.config import Config as AlembicConfig
 from alembic import command as alembic_command
 from database import SessionLocal, engine
@@ -127,11 +128,11 @@ def _backfill_streak_days():
     """One-time backfill: populate habit_streak_days for all existing habits."""
     try:
         with SessionLocal() as db:
-            if db.query(models.AppSetting).filter_by(key="streak_days_v1").first():
+            if db.query(models.AppSetting).filter_by(key=setting_keys.STREAK_DAYS_V1).first():
                 return
             from streak import recompute_all_habits
             recompute_all_habits(db)
-            db.add(models.AppSetting(key="streak_days_v1", value="1"))
+            db.add(models.AppSetting(key=setting_keys.STREAK_DAYS_V1, value="1"))
             db.commit()
             print("[startup] backfilled habit streak days")
     except Exception as e:
@@ -190,7 +191,7 @@ def _fire_due_push_notifications() -> None:
         subs = db.query(models.PushSubscription).all()
         if not subs:
             return
-        private_key = db.query(models.AppSetting).filter_by(key="vapid_private_key").first()
+        private_key = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PRIVATE_KEY).first()
         if not private_key or not private_key.value:
             return
         priv = private_key.value
@@ -232,8 +233,7 @@ async def _withings_scheduler() -> None:
         try:
             from routers.withings import do_sync
             with SessionLocal() as db:
-                row = db.query(models.AppSetting).filter_by(key="withings_credentials").first()
-                if row:
+                if db.query(models.WithingsCredentials).first():
                     do_sync(db)
         except Exception as e:
             print(f"[withings] scheduler error: {e}")

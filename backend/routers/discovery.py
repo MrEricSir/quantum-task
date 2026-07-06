@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 import gcal as gcal_lib
 import models
 import schemas
+import app_setting_keys as setting_keys
 from deps import LLM_MODEL, get_db, llm_client, local_date
 
 router = APIRouter()
@@ -114,7 +115,7 @@ def set_discovery_feeds(
 
 @router.get("/api/discovery/interests")
 def get_discovery_interests(db: Session = Depends(get_db)):
-    row = db.query(models.AppSetting).filter_by(key="event_discovery_interests").first()
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
     return {"interests": row.value if row else ""}
 
 
@@ -124,11 +125,11 @@ def set_discovery_interests(
     db: Session = Depends(get_db),
 ):
     text = (body.get("interests") or "").strip()
-    row = db.query(models.AppSetting).filter_by(key="event_discovery_interests").first()
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
     if row:
         row.value = text
     else:
-        db.add(models.AppSetting(key="event_discovery_interests", value=text))
+        db.add(models.AppSetting(key=setting_keys.DISCOVERY_INTERESTS, value=text))
     db.commit()
     _ranking_cache.clear()
     return {"ok": True}
@@ -246,7 +247,7 @@ def get_discovery_events(request: Request, db: Session = Depends(get_db)):
     events = sorted(seen.values(), key=lambda e: e["start"])
 
     # Load interests
-    row = db.query(models.AppSetting).filter_by(key="event_discovery_interests").first()
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
     interests = (row.value or "").strip() if row else ""
 
     if not interests or not events:

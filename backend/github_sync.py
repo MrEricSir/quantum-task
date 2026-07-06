@@ -13,14 +13,15 @@ import requests
 from sqlalchemy.orm import Session
 
 import models
+import app_setting_keys as setting_keys
 
 GITHUB_API = "https://api.github.com"
 
 
 def get_config(db: Session) -> tuple[str | None, list[str]]:
     """Return (token, repos) from AppSettings. repos is [] for all accessible repos."""
-    token_row = db.query(models.AppSetting).filter_by(key="github_token").first()
-    repos_row = db.query(models.AppSetting).filter_by(key="github_repos").first()
+    token_row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_TOKEN).first()
+    repos_row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_REPOS).first()
     token = token_row.value.strip() if token_row and token_row.value else None
     repos = (
         [r.strip() for r in repos_row.value.splitlines() if r.strip()]
@@ -31,7 +32,7 @@ def get_config(db: Session) -> tuple[str | None, list[str]]:
 
 
 def save_config(db: Session, token: str | None, repos: list[str]) -> None:
-    for key, value in [("github_token", token or ""), ("github_repos", "\n".join(repos))]:
+    for key, value in [(setting_keys.GITHUB_TOKEN, token or ""), (setting_keys.GITHUB_REPOS, "\n".join(repos))]:
         row = db.query(models.AppSetting).filter_by(key=key).first()
         if row:
             row.value = value

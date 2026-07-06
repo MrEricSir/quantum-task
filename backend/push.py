@@ -19,6 +19,7 @@ except ImportError:
 from sqlalchemy.orm import Session
 
 import models
+import app_setting_keys as setting_keys
 
 log = logging.getLogger(__name__)
 
@@ -41,8 +42,8 @@ def ensure_vapid_keys(db: Session) -> None:
     if not _PUSH_AVAILABLE:
         return
 
-    priv_row = db.query(models.AppSetting).filter_by(key="vapid_private_key").first()
-    pub_row  = db.query(models.AppSetting).filter_by(key="vapid_public_key").first()
+    priv_row = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PRIVATE_KEY).first()
+    pub_row  = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PUBLIC_KEY).first()
     if priv_row and pub_row and priv_row.value and pub_row.value:
         return
 
@@ -51,7 +52,7 @@ def ensure_vapid_keys(db: Session) -> None:
     private_pem = _priv_to_pem(v)
     public_b64  = _pub_to_b64(v)
 
-    for key, value in [("vapid_private_key", private_pem), ("vapid_public_key", public_b64)]:
+    for key, value in [(setting_keys.VAPID_PRIVATE_KEY, private_pem), (setting_keys.VAPID_PUBLIC_KEY, public_b64)]:
         row = db.query(models.AppSetting).filter_by(key=key).first()
         if row:
             row.value = value
@@ -61,7 +62,7 @@ def ensure_vapid_keys(db: Session) -> None:
 
 
 def get_vapid_public_key(db: Session) -> str | None:
-    row = db.query(models.AppSetting).filter_by(key="vapid_public_key").first()
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PUBLIC_KEY).first()
     return row.value if row and row.value else None
 
 

@@ -45,37 +45,66 @@ METRICS = {"steps", "fat_ratio", "weight"}
 
 # ── Credential helpers ────────────────────────────────────────────────────────
 
-def _save_credentials(db: Session, creds) -> None:
-    """Persist Credentials2 object to app_settings."""
-    payload = json.dumps({
-        "access_token": creds.access_token,
-        "token_type": creds.token_type,
-        "refresh_token": creds.refresh_token,
-        "userid": creds.userid,
-        "client_id": creds.client_id,
-        "consumer_secret": creds.consumer_secret,
-        "expires_in": creds.expires_in,
-    })
-    db.merge(models.AppSetting(key="withings_credentials", value=payload))
+def _save_credentials_from_dict(db: Session, data: dict) -> None:
+    """Persist a credentials dict to the WithingsCredentials table (upsert)."""
+    row = db.query(models.WithingsCredentials).first()
+    if row is None:
+        row = models.WithingsCredentials()
+        db.add(row)
+    row.access_token    = data["access_token"]
+    row.token_type      = data.get("token_type", "Bearer")
+    row.refresh_token   = data["refresh_token"]
+    row.userid          = int(data["userid"])
+    row.client_id       = data.get("client_id", "")
+    row.consumer_secret = data.get("consumer_secret", "")
+    row.expires_in      = int(data.get("expires_in", 10800))
     db.commit()
+
+
+def _save_credentials(db: Session, creds) -> None:
+    """Persist a Credentials2 object to the WithingsCredentials table."""
+    _save_credentials_from_dict(db, {
+        "access_token":    creds.access_token,
+        "token_type":      creds.token_type,
+        "refresh_token":   creds.refresh_token,
+        "userid":          creds.userid,
+        "client_id":       creds.client_id,
+        "consumer_secret": creds.consumer_secret,
+        "expires_in":      creds.expires_in,
+    })
+
+
+def _load_credentials_dict(db: Session) -> dict | None:
+    """Load credentials as a plain dict for use in API calls, or None if not connected."""
+    row = db.query(models.WithingsCredentials).first()
+    if not row:
+        return None
+    return {
+        "access_token":    row.access_token,
+        "token_type":      row.token_type,
+        "refresh_token":   row.refresh_token,
+        "userid":          row.userid,
+        "client_id":       row.client_id,
+        "consumer_secret": row.consumer_secret,
+        "expires_in":      row.expires_in,
+    }
 
 
 def _load_credentials(db: Session):
     """Load stored Credentials2, or None if not connected."""
     from withings_api.common import Credentials2
-    row = db.query(models.AppSetting).filter_by(key="withings_credentials").first()
+    row = db.query(models.WithingsCredentials).first()
     if not row:
         return None
     try:
-        data = json.loads(row.value)
         return Credentials2(
-            access_token=data["access_token"],
-            token_type=data["token_type"],
-            refresh_token=data["refresh_token"],
-            userid=data["userid"],
-            client_id=data["client_id"],
-            consumer_secret=data["consumer_secret"],
-            expires_in=data["expires_in"],
+            access_token=row.access_token,
+            token_type=row.token_type,
+            refresh_token=row.refresh_token,
+            userid=row.userid,
+            client_id=row.client_id,
+            consumer_secret=row.consumer_secret,
+            expires_in=row.expires_in,
             # 'created' uses ArrowType (pydantic v1) which conflicts with pydantic v2;
             # omit it so it defaults to arrow.utcnow() — fine since tokens auto-refresh.
         )
@@ -173,22 +202,16 @@ def _refresh_token(creds_data: dict, db: Session) -> dict:
         "refresh_token": body["refresh_token"],
         "expires_in": body.get("expires_in", 10800),
     }
-    db.merge(models.AppSetting(key="withings_credentials", value=json.dumps(new_creds)))
-    db.commit()
+    _save_credentials_from_dict(db, new_creds)
     return new_creds
 
 
 def do_sync(db: Session) -> dict:
     """Fetch recent Withings data and upsert into withings_measurements.
     Returns a summary dict."""
-    row = db.query(models.AppSetting).filter_by(key="withings_credentials").first()
-    if not row:
+    creds_data = _load_credentials_dict(db)
+    if not creds_data:
         return {"ok": False, "error": "not_connected"}
-
-    try:
-        creds_data = json.loads(row.value)
-    except Exception:
-        return {"ok": False, "error": "invalid_credentials"}
 
     # Proactively refresh the access token before syncing.
     # Withings tokens expire after ~3 hours; refresh ensures we always have a
@@ -294,11 +317,10 @@ def do_sync(db: Session) -> dict:
     _auto_check_habits(db, today)
     db.commit()
 
-    db.merge(models.AppSetting(
-        key="withings_last_synced",
-        value=datetime.now(timezone.utc).isoformat(),
-    ))
-    db.commit()
+    creds_row = db.query(models.WithingsCredentials).first()
+    if creds_row:
+        creds_row.last_synced = datetime.now(timezone.utc)
+        db.commit()
 
     result: dict = {"ok": True, "synced": synced}
     if errors:
@@ -310,11 +332,10 @@ def do_sync(db: Session) -> dict:
 
 @router.get("/api/withings/status", response_model=schemas.WithingsStatus)
 def withings_status(db: Session = Depends(get_db)):
-    creds = _load_credentials(db)
-    last_row = db.query(models.AppSetting).filter_by(key="withings_last_synced").first()
+    row = db.query(models.WithingsCredentials).first()
     return schemas.WithingsStatus(
-        connected=creds is not None,
-        last_synced=last_row.value if last_row else None,
+        connected=row is not None,
+        last_synced=row.last_synced.isoformat() if row and row.last_synced else None,
     )
 
 
@@ -385,7 +406,8 @@ def withings_sync(db: Session = Depends(get_db)):
     return do_sync(db)
 
 
-_GOALS_KEY = "withings_health_goals"
+import app_setting_keys as setting_keys
+_GOALS_KEY = setting_keys.WITHINGS_HEALTH_GOALS
 _ALL_METRICS = ("steps", "fat_ratio", "weight")
 
 
@@ -420,10 +442,7 @@ def withings_set_goals(payload: dict, db: Session = Depends(get_db)):
 @router.delete("/api/withings/disconnect")
 def withings_disconnect(db: Session = Depends(get_db)):
     """Remove stored Withings credentials."""
-    for key in ("withings_credentials", "withings_last_synced"):
-        row = db.query(models.AppSetting).filter_by(key=key).first()
-        if row:
-            db.delete(row)
+    db.query(models.WithingsCredentials).delete()
     db.commit()
     return {"ok": True}
 

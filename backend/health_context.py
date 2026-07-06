@@ -15,8 +15,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 import models
+import app_setting_keys as setting_keys
 
-_GOALS_KEY = "withings_health_goals"
+_GOALS_KEY = setting_keys.WITHINGS_HEALTH_GOALS
 
 
 def _load_standalone_goals(db: "Session") -> dict:

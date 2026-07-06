@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 import gcal as gcal_lib
 import models
 import schemas
+import app_setting_keys as setting_keys
 from deps import get_db, local_date
 
 router = APIRouter()
@@ -25,11 +26,11 @@ _RRULE_MAP = {
 
 def _get_export_token(db: Session) -> str:
     """Return the current export token, creating one if it doesn't exist."""
-    row = db.query(models.AppSetting).filter_by(key="export_token").first()
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.EXPORT_TOKEN).first()
     if row:
         return row.value
     token = secrets.token_hex(24)
-    db.add(models.AppSetting(key="export_token", value=token))
+    db.add(models.AppSetting(key=setting_keys.EXPORT_TOKEN, value=token))
     db.commit()
     return token
 
@@ -58,11 +59,11 @@ def get_export_token(db: Session = Depends(get_db)):
 @router.post("/api/settings/export-token/rotate")
 def rotate_export_token(db: Session = Depends(get_db)):
     token = secrets.token_hex(24)
-    row = db.query(models.AppSetting).filter_by(key="export_token").first()
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.EXPORT_TOKEN).first()
     if row:
         row.value = token
     else:
-        db.add(models.AppSetting(key="export_token", value=token))
+        db.add(models.AppSetting(key=setting_keys.EXPORT_TOKEN, value=token))
     db.commit()
     return {"token": token}
 

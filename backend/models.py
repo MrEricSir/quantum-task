@@ -184,6 +184,26 @@ class WithingsMeasurement(Base):
 
 
 
+class WithingsCredentials(Base):
+    """Single-row table for Withings OAuth credentials.
+
+    Replaces the JSON blob previously stored in AppSetting under key
+    ``withings_credentials``.  ``last_synced`` replaces the old
+    ``withings_last_synced`` AppSetting key.
+    """
+    __tablename__ = "withings_credentials"
+
+    id              = Column(Integer, primary_key=True)
+    access_token    = Column(String, nullable=False)
+    token_type      = Column(String, nullable=False, default="Bearer")
+    refresh_token   = Column(String, nullable=False)
+    userid          = Column(Integer, nullable=False)
+    client_id       = Column(String, nullable=False)
+    consumer_secret = Column(String, nullable=False)
+    expires_in      = Column(Integer, nullable=False, default=10800)
+    last_synced     = Column(DateTime, nullable=True)
+
+
 class PushSubscription(Base):
     """Web Push subscription for a browser/device."""
     __tablename__ = "push_subscriptions"
