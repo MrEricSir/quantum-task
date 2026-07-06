@@ -12,7 +12,7 @@
   transform: translate(-50%, -50%);
   width: min(560px, calc(100vw - 32px));
   min-height: 380px;
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   background: rgba(14, 8, 30, 0.97);
   backdrop-filter: blur(24px);

@@ -1,29 +1,10 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { UpdateIcon, ChevronLeftIcon, ChevronRightIcon } from '@radix-ui/react-icons'
-import DOMPurify from 'dompurify'
 import CalendarEventCard from '../board/CalendarEventCard'
 import { fetchDiscoveryEvents, fetchDiscoveryFeedback, saveDiscoveryFeedback, createCard } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
+import descriptionToHtml from '../../lib/descriptionToHtml'
 import './CalendarPage.css'
-
-const _HTML_RE = /<[a-z][\s\S]*?>/i
-const _URL_RE = /(https?:\/\/[^\s<>"]+)/g
-
-function descriptionToHtml(text) {
-  if (!text) return ''
-  if (_HTML_RE.test(text)) {
-    return DOMPurify.sanitize(text, { ADD_ATTR: ['target', 'rel'] })
-  }
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>')
-    .replace(_URL_RE, (url) => {
-      const safeHref = url.replace(/"/g, '%22')
-      return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${url}</a>`
-    })
-}
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAY_HEADERS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']

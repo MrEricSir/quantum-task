@@ -183,28 +183,6 @@ class WithingsMeasurement(Base):
     synced_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-# Legacy — migrated to cards (section="none") via notes_migrated_v1 AppSetting flag.
-# Table kept in DB; model kept read-only for historical reference.
-note_tags = Table(
-    "note_tags",
-    Base.metadata,
-    Column("note_id", Integer, ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True),
-    Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
-)
-
-
-class Note(Base):
-    __tablename__ = "notes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, nullable=True)
-    content = Column(String, nullable=False, default="")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    archived = Column(Boolean, default=False)
-    archived_at = Column(DateTime, nullable=True)
-    tags = relationship("Tag", secondary="note_tags", lazy="joined")
-
 
 class PushSubscription(Base):
     """Web Push subscription for a browser/device."""

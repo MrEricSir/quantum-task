@@ -123,36 +123,6 @@ def _seed_defaults():
         print(f"[startup] seed_defaults failed: {e}")
 
 
-def _migrate_notes_to_cards():
-    """One-time migration: convert Note rows to Card rows with section='none'."""
-    try:
-        with SessionLocal() as db:
-            if db.query(models.AppSetting).filter_by(key="notes_migrated_v1").first():
-                return
-            migrated = 0
-            for note in db.query(models.Note).all():
-                first_line = note.content.split('\n')[0][:120].strip() if note.content else ""
-                title = note.title or first_line or "Untitled"
-                db_card = models.Card(
-                    title=title,
-                    body=note.content or None,
-                    section="none",
-                    position=0,
-                    archived=note.archived,
-                    archived_at=note.archived_at,
-                    created_at=note.created_at,
-                    updated_at=note.updated_at,
-                )
-                db_card.tags = list(note.tags)
-                db.add(db_card)
-                migrated += 1
-            db.add(models.AppSetting(key="notes_migrated_v1", value="1"))
-            db.commit()
-            print(f"[startup] migrated {migrated} notes to cards")
-    except Exception as e:
-        print(f"[startup] migrate_notes_to_cards failed: {e}")
-
-
 def _backfill_streak_days():
     """One-time backfill: populate habit_streak_days for all existing habits."""
     try:
@@ -196,7 +166,6 @@ def _run_startup_migrations():
     _seed_defaults()
 
     # 5. One-time data migrations (each guarded by an AppSetting flag)
-    _migrate_notes_to_cards()
     _backfill_streak_days()
     _ensure_vapid_keys()
 

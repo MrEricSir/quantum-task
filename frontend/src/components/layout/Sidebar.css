@@ -8,7 +8,7 @@
   padding: 12px 8px;
   position: sticky;
   top: 58px; /* header height */
-  height: calc(100vh - 58px);
+  height: calc(100dvh - 58px);
   overflow-y: auto;
 }
 
