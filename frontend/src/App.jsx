@@ -52,14 +52,9 @@ import {
   createFoodEntry,
 } from './api'
 import './App.css'
+import { SECTIONS, SECTION_LABELS } from './lib/sections'
 
-export const SECTIONS = ['today', 'week', 'month', 'later']
-export const SECTION_LABELS = {
-  today: 'Today',
-  week: 'This Week',
-  month: 'This Month',
-  later: 'Stash',
-}
+export { SECTIONS, SECTION_LABELS }
 const SECTION_COLORS = {
   today: 'var(--color-today)',
   week: 'var(--color-week)',

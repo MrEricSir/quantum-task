@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+from card_sections import CardSection
 from deps import get_db, llm_client, LLM_MODEL, local_date
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
@@ -18,7 +19,12 @@ from routers.insights import invalidate_insights_cache
 
 router = APIRouter()
 
-_SECTION_ORDER = {"today": 0, "week": 1, "month": 2, "later": 3}
+_SECTION_ORDER = {
+    CardSection.TODAY: 0,
+    CardSection.WEEK:  1,
+    CardSection.MONTH: 2,
+    CardSection.LATER: 3,
+}
 
 
 def _auto_migrate_sections(db: Session, today) -> None:

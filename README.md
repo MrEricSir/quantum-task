@@ -4,7 +4,7 @@ A personal productivity dashboard with AI-powered quick add, calendar integratio
 
 ## Stack
 
-- **Frontend**: React + Vite + Radix UI + @dnd-kit
+- **Frontend**: React + Vite + Radix UI + @dnd-kit + React Query
 - **Backend**: Python FastAPI
 - **Database**: SQLite (via SQLAlchemy) — swappable via env var
 - **AI**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
@@ -100,21 +100,25 @@ cd frontend && npm run dev
 
 `./dev.sh test` runs three suites in sequence:
 
-**Backend unit tests** (`test_calendar.py`, `test_briefing.py`, `test_plugins.py`) — no external services required:
-- Calendar feed CRUD, section assignment, past-event filtering, tag attachment
-- iCal export/import, UID deduplication, timezone handling
-- Plugin post-processing: deterministic section/type overrides from input text
+**Backend unit tests** — no external services required:
+- Calendar feed CRUD, timezone handling, iCal export/import, UID deduplication
+- Briefing context builders (`build_today_context`, `build_week_context`, `compute_observations`)
+- Weather fetch + WMO code mapping
+- Habit streak computation (`recompute_from`, `recompute_all`, `get_current_streak`)
+- Withings goal detection, `_auto_check_habits`, health metric regex
+- AppSetting constants + `WithingsCredentials` model save/load
+- Daily plan helpers, recurring card scheduling, food entry parsing
+- Plugin post-processing: section/type overrides, tag suggestions
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
 - `type` field (task / habit), habit recurrence detection
-- Regression tests
 
 Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
 
 **Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
-- 41 Playwright tests verifying key elements are visible on each page
-- Covers: app shell, today page, tasks board, cards, habits, quick-add modal (input + confirm screen), settings modals, engineering, recurring calendar events, offline banner
+- 114 Playwright tests verifying key elements are visible on each page
+- Covers: app shell, today page, tasks board, cards, habits, quick-add modal, settings modals (tag manager, calendar, GitHub, Withings), engineering page, discovery panel, archive, search, insights, offline banner
 - All API calls are mocked; runs against a production build (`npm run build`)
 
 ## Features
@@ -179,6 +183,12 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Events appear in the Today schedule and daily briefing
 - Export your tasks as an iCal feed to subscribe from any calendar app
 - Past timed events are automatically hidden
+
+### Event Discovery
+- Add public iCal feeds (local events, conferences, sports schedules) as discovery sources
+- AI ranks upcoming events against your stated interests and past feedback
+- Thumbs-up / thumbs-down per event trains the ranker; dismissed events are hidden on next load with an in-session undo option
+- iCal feeds are cached for ~3 hours; LLM rankings are cached until interests or feedback change
 
 ### Tags
 - Create and manage color-coded tags
@@ -288,34 +298,51 @@ See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitH
 ```
 todo/
   backend/
-    main.py            # FastAPI app: startup migrations, middleware, router mounts
-    models.py          # SQLAlchemy models
-    schemas.py         # Pydantic schemas
-    database.py        # DB engine, reads DATABASE_URL from env
-    deps.py            # Shared dependencies: DB session, LLM client, auth constants
-    streak.py          # Habit streak computation
-    push.py            # Web Push / VAPID helpers
-    routers/           # One file per feature area
-      auth.py          # Login/logout, session management
-      cards.py         # Tasks + reference cards CRUD, AI parse, iOS Shortcut download
-      habits.py        # Habits CRUD, completion toggle
-      calendar.py      # iCal feed sync, export
-      briefing.py      # Daily briefing, AI assist, daily plan
-      jobs.py          # Workshop jobs + agentic research
-      withings.py      # Withings OAuth, sync, health data
-      tags.py          # Tag CRUD
-      engineering.py   # GitHub engineering feed
-      push.py          # Push subscription management
-      search.py        # Cross-entity search
-    model_plugins/     # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini)
-    alembic/           # Database migrations
+    main.py              # FastAPI app: startup migrations, middleware, router mounts
+    models.py            # SQLAlchemy models
+    schemas.py           # Pydantic schemas
+    database.py          # DB engine, reads DATABASE_URL from env
+    deps.py              # Shared dependencies: DB session, LLM client, auth constants
+    app_setting_keys.py  # Constants for all AppSetting key strings
+    streak.py            # Habit streak computation
+    push.py              # Web Push / VAPID helpers
+    weather.py           # Open-Meteo fetch + WMO condition helpers
+    briefing_context.py  # Today/week context builders for AI briefing
+    health_context.py    # Health data context builder (Withings + goals)
+    github_sync.py       # GitHub issue/PR sync logic
+    gcal.py              # iCal/ICS parsing helpers
+    routers/             # One file per feature area
+      auth.py            # Login/logout, session management
+      cards.py           # Tasks + reference cards CRUD, AI parse, iOS Shortcut
+      habits.py          # Habits CRUD, completion toggle
+      calendar.py        # iCal feed sync, export
+      briefing.py        # Daily briefing SSE, AI assist, daily plan
+      jobs.py            # Workshop jobs + agentic research
+      withings.py        # Withings OAuth, sync, health data
+      discovery.py       # Public iCal discovery feeds + LLM ranking
+      food.py            # Food/drink logging + nutritional assessment
+      insights.py        # Habit insights and health experiment suggestions
+      correlations.py    # Health experiment tracking
+      tags.py            # Tag CRUD
+      engineering.py     # GitHub engineering feed
+      push.py            # Push subscription management
+      search.py          # Cross-entity search
+    model_plugins/       # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini)
+    alembic/             # Database migrations (00001–00012)
     tests/
-      test_calendar.py # Calendar feed CRUD, timezone, iCal export/import
-      test_briefing.py # Daily briefing unit tests
-      test_plugins.py  # Post-processing: section overrides, type detection
-      test_localtime.py# Local date header handling
-      test_parse.py    # Quick Add parse integration tests (requires Ollama)
-      benchmark.py     # Parse quality benchmark across Ollama models
+      test_calendar.py       # Calendar feed CRUD, timezone, iCal export/import
+      test_briefing.py       # Briefing SSE unit tests
+      test_briefing_context.py # Today/week context builders
+      test_weather.py        # Weather fetch + WMO mapping
+      test_plugins.py        # Post-processing: section overrides, type detection
+      test_withings.py       # Withings goal detection, habit auto-check, streak
+      test_app_settings.py   # AppSetting constants + WithingsCredentials model
+      test_daily_plan.py     # Daily plan time normalization helpers
+      test_recurring.py      # Recurring card scheduling
+      test_localtime.py      # Local date header handling
+      test_food.py           # Food entry parsing
+      test_parse.py          # Quick Add parse integration tests (requires Ollama)
+      benchmark.py           # Parse quality benchmark across Ollama models
     Dockerfile
     requirements.txt
   frontend/
@@ -326,19 +353,27 @@ todo/
     src/
       App.jsx          # Root component, routing, global state
       api.js           # All API calls
-      hooks/           # useCards, useHabits, useCalendar, useWithings, useNotifications
+      main.jsx         # React root with QueryClientProvider + BrowserRouter
+      lib/
+        descriptionToHtml.js  # Shared HTML sanitizer for calendar event descriptions
+      hooks/           # useCards, useHabits, useCalendar, useEngineering,
+                       # useWithings, useModals, useNotifications
+      context/
+        ModalContext.jsx  # Context for opening modals from nested components
       components/
         pages/         # TodayPage, BoardPage, CardsPage, HabitsPage, CalendarPage,
                        # EngineeringPage, WorkshopPage, HealthPage, LoginPage
-        board/         # Column, TodoCard, Archive
+        board/         # Column, TodoCard, CalendarEventCard, Archive
         layout/        # Sidebar, MobileNav, TagFilterBar
-        modals/        # QuickAddModal, CardSheet, CalendarSettings, WithingsSettings, ...
+        modals/        # QuickAddModal, CardSheet, CalendarSettings, GithubSettings,
+                       # WithingsSettings, TagManager, AssistModal, ...
         shared/        # QueueIndicator and other shared components
     tests/
-      visual.spec.js   # Playwright functional tests (all APIs mocked)
+      visual.spec.js   # Playwright functional tests (all APIs mocked, 114 tests)
     dist/              # Production build output (gitignored)
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide
+  ARCHITECTURE.md      # Architecture decisions and refactor tracking
   IDEAS.md             # Feature ideas and brainstorm
   dev.sh               # Development helper script
 ```

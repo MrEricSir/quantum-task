@@ -3,13 +3,8 @@
  * Used by both AddTodoModal and QuickAddModal's confirm/bulk-edit steps.
  */
 
-export const ALL_SECTIONS = [
-  { value: 'today', label: 'Today' },
-  { value: 'week',  label: 'This Week' },
-  { value: 'month', label: 'This Month' },
-  { value: 'later', label: 'Stash' },
-  { value: 'none',  label: 'Reference card' },
-]
+import { ALL_SECTIONS } from '../../lib/sections'
+export { ALL_SECTIONS }
 
 // Compute which board section a scheduled date falls into
 function sectionFromScheduledAt(dateStr) {

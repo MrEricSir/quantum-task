@@ -3,8 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { searchCards } from '../../api'
 import './SearchModal.css'
-
-const SECTION_LABELS = { today: 'Today', week: 'This Week', month: 'This Month', later: 'Later', none: 'Card' }
+import { SECTION_LABELS } from '../../lib/sections'
 const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280', none: '#374151' }
 
 export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabit }) {

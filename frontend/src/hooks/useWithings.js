@@ -9,7 +9,11 @@ export function useWithings({ authed }) {
   const [syncError, setSyncError] = useState(null)
 
   const loadStatus = useCallback(() => {
-    fetchWithingsStatus().then(setStatus).catch(() => {})
+    fetchWithingsStatus().then((s) => {
+      setStatus(s)
+      // Clear a stale sync error if the connection is confirmed good
+      if (s?.connected) setSyncError(null)
+    }).catch(() => {})
   }, [])
 
   const loadHealthData = useCallback(() => {

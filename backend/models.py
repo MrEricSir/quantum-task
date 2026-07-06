@@ -1,3 +1,25 @@
+"""
+SQLAlchemy models for the Quantum Task backend.
+
+Date/time storage convention
+─────────────────────────────
+Two patterns are used, intentionally:
+
+• ``DateTime`` columns (e.g. ``Card.created_at``, ``Card.scheduled_at``,
+  ``WithingsCredentials.last_synced``) — store Python ``datetime`` objects.
+  SQLite serialises these as ISO-8601 strings.  All values are UTC; naive
+  datetimes are treated as UTC by convention.
+
+• ``String`` columns holding YYYY-MM-DD dates (e.g. ``HabitCompletion.date``,
+  ``HabitStreakDay.date``, ``WithingsMeasurement.date``) — store date-only
+  values as plain strings.  SQLite has no native DATE type; using String avoids
+  timezone ambiguity for calendar dates that are inherently tz-agnostic (a
+  habit "completed on 2026-06-20" is the same regardless of tz).
+
+New models should follow the same convention:
+  - Use ``DateTime`` for timestamps (created_at, updated_at, etc.)
+  - Use ``String`` (YYYY-MM-DD) for calendar date keys with no time component.
+"""
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, Table, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone

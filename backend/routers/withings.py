@@ -9,9 +9,8 @@ OAuth flow:
   4. POST /api/withings/sync     → manual or scheduled sync
   5. GET /api/withings/health-data → measurements + per-habit completion history
 
-Credentials are stored as JSON in the app_settings table under key
-"withings_credentials". Last-sync timestamp is stored under
-"withings_last_synced".
+Credentials are stored in the withings_credentials table (typed columns).
+Last-sync timestamp is stored in the last_synced column on that same row.
 """
 
 import json
@@ -163,6 +162,10 @@ def _auto_check_habits(db: Session, today: date) -> None:
                 recompute_from(db, habit.id, today)
 
 
+class _TokenAuthError(Exception):
+    """Raised when Withings explicitly rejects the OAuth token (must reconnect)."""
+
+
 def _withings_get(creds_data: dict, path: str, params: dict) -> dict:
     """Make an authenticated GET request to the Withings API."""
     resp = _requests.get(
@@ -191,10 +194,19 @@ def _refresh_token(creds_data: dict, db: Session) -> dict:
         },
         timeout=30,
     )
+    # HTTP 401/403 = token explicitly rejected by server
+    if resp.status_code in (401, 403):
+        raise _TokenAuthError(f"Token rejected: HTTP {resp.status_code}")
     resp.raise_for_status()
     payload = resp.json()
-    if payload.get("status") != 0:
-        raise RuntimeError(f"Token refresh failed: status={payload.get('status')} {payload.get('error', '')}")
+    status_code = payload.get("status", 0)
+    if status_code != 0:
+        # Withings status 401 = invalid_token, 293 = access_token_expired, etc.
+        # Treat any OAuth/auth status as a hard auth failure; other errors are transient.
+        _AUTH_STATUSES = {401, 293, 342, 343}
+        if status_code in _AUTH_STATUSES:
+            raise _TokenAuthError(f"Token refresh failed: status={status_code} {payload.get('error', '')}")
+        raise RuntimeError(f"Token refresh failed: status={status_code} {payload.get('error', '')}")
     body = payload["body"]
     new_creds = {
         **creds_data,
@@ -220,9 +232,12 @@ def do_sync(db: Session) -> dict:
     if WITHINGS_CLIENT_ID and WITHINGS_SECRET:
         try:
             creds_data = _refresh_token(creds_data, db)
-        except Exception as exc:
-            print(f"[withings] token refresh failed: {exc}", flush=True)
+        except _TokenAuthError as exc:
+            print(f"[withings] token rejected (reconnect required): {exc}", flush=True)
             return {"ok": False, "error": "invalid_token"}
+        except Exception as exc:
+            print(f"[withings] token refresh transient error: {exc}", flush=True)
+            return {"ok": False, "error": "sync_failed"}
 
     today = date.today()
     start = today - timedelta(days=89)
