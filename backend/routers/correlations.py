@@ -416,7 +416,9 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         withings_goal = None
 
     habit_id = None
-    if needs_habit and action:
+    if action:
+        # Always create a tracking habit — even for non-Withings experiments it
+        # serves as a daily reminder and shows up in the Health & Habits section.
         habit_name = f"🧪 {action[:60]}"
         habit = models.Habit(
             name=habit_name,
@@ -557,10 +559,43 @@ def get_health_correlations(request: Request, db: Session = Depends(get_db)):
     }
 
 
+def auto_expire_stale_experiments(db: Session, current_week: str, today: date) -> None:
+    """Archive habits and dismiss any active experiments from previous weeks.
+
+    Called automatically when the frontend fetches the current experiment so
+    that week-rollover cleanup happens even when the user never clicks
+    'Dismiss & generate new'.
+    """
+    stale = (
+        db.query(models.HealthExperiment)
+        .filter(
+            models.HealthExperiment.status == "active",
+            models.HealthExperiment.week != current_week,
+        )
+        .all()
+    )
+    for exp in stale:
+        _record_outcome(exp, db, today)
+        exp.status       = "dismissed"
+        exp.dismissed_at = datetime.now(timezone.utc)
+        if exp.habit_id:
+            habit = db.query(models.Habit).filter_by(id=exp.habit_id).first()
+            if habit and not habit.archived:
+                habit.archived    = True
+                habit.archived_at = datetime.now(timezone.utc)
+    if stale:
+        db.commit()
+
+
 @router.get("/api/health/experiment")
 def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     """Return the active experiment for the current week, generating one if needed."""
     current_week = _current_isoweek()
+    today = local_date(request)
+
+    # Archive habits and expire any active experiments from previous weeks so
+    # week-rollover cleanup happens automatically (not just on explicit dismiss).
+    auto_expire_stale_experiments(db, current_week, today)
 
     # Check table for an active experiment this week
     exp = (
@@ -577,7 +612,6 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
         return _exp_to_dict(exp)
 
     # Generate a new experiment
-    today = local_date(request)
     weight_obs, fat_obs = _load_weekly_obs(db, today)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
     exp = _generate_experiment(correlations, db)

@@ -240,14 +240,35 @@ async def _withings_scheduler() -> None:
         await asyncio.sleep(7200)
 
 
+def _expire_stale_experiments() -> None:
+    """Archive habits and dismiss active experiments from previous weeks."""
+    try:
+        from datetime import date
+        from routers.correlations import auto_expire_stale_experiments, _current_isoweek
+        with SessionLocal() as db:
+            auto_expire_stale_experiments(db, _current_isoweek(), date.today())
+    except Exception as e:
+        print(f"[experiments] cleanup error: {e}")
+
+
+async def _experiment_cleanup_scheduler() -> None:
+    """Run experiment cleanup once a day so stale habits are archived promptly."""
+    while True:
+        await asyncio.sleep(86400)  # 24 hours
+        await asyncio.get_event_loop().run_in_executor(None, _expire_stale_experiments)
+
+
 @asynccontextmanager
 async def lifespan(app):
     _run_startup_migrations()
+    _expire_stale_experiments()  # run once at startup to catch any backlog
     task = asyncio.create_task(_push_scheduler())
     wtask = asyncio.create_task(_withings_scheduler())
+    etask = asyncio.create_task(_experiment_cleanup_scheduler())
     yield
     task.cancel()
     wtask.cancel()
+    etask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
