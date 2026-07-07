@@ -118,7 +118,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     <div className="habits-page">
       <div className="habits-page-header">
         <div className="habits-page-title-row">
-          <h2 className="habits-page-title">Habits</h2>
+          <h3 className="habits-page-title">Habits</h3>
           {visibleHabits.length > 0 && (
             <span className="habits-page-progress">{done} / {visibleHabits.length} today</span>
           )}

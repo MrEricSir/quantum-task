@@ -27,7 +27,7 @@ class TagReplacement(BaseModel):
 
 class CardCreate(BaseModel):
     title: str
-    # description: optional context — for reference cards (section="none") this is the full text content
+    # description: optional context or extra detail from the user's input
     description: Optional[str] = None
     section: str = "today"
     scheduled_at: Optional[datetime] = None
@@ -62,11 +62,9 @@ class ParsedTodo(BaseModel):
     type: Literal["task", "habit", "goal"] = "task"
     title: str
     # description: optional short context from the user's input
-    #   board cards: shown in the detail modal as extra context
-    #   reference cards (section="none"): serves as the card's text content
     description: Optional[str] = None
-    # section: "none" = reference card (Cards page only), otherwise board column
-    section: Literal["today", "week", "month", "later", "none"] = "later"
+    # section: board column for the card
+    section: Literal["today", "week", "month", "later"] = "later"
     scheduled_at: Optional[datetime] = None
     suggested_tags: List[str] = []
     recurrence_rule: Optional[Literal["daily", "weekly", "monthly", "yearly"]] = None

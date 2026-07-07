@@ -48,14 +48,10 @@ class Card(Base):
     id = Column(Integer, primary_key=True, index=True)
     # title: headline shown everywhere — required for all cards
     title = Column(String, nullable=False)
-    # description: optional text content
-    #   - board cards (section=today/week/month/later): short optional context shown in the detail modal
-    #   - reference cards (section=none): the card's full text content
-    #   - set by the LLM parser or manually in the add/edit modals
+    # description: optional text content — short context shown in the detail modal
+    #   set by the LLM parser or manually in the add/edit modals
     description = Column(String, nullable=True)
-    # section: which board column the card belongs to
-    #   today | week | month | later = shown on the board
-    #   none                         = reference card, shown only on the Cards page
+    # section: which board column the card belongs to — today | week | month | later
     section = Column(String, nullable=False, default="today")
     scheduled_at = Column(DateTime, nullable=True)
     completed = Column(Boolean, default=False)

@@ -103,48 +103,26 @@ class TestSectionOverrides:
         assert result.section == "week"
 
 
-# ── Reference-section overrides from capture prefixes ─────────────────────────
+# ── Capture-prefix inputs go to Stash ('later') ───────────────────────────────
 
 class TestNoteTypeOverrides:
     """
-    Inputs that start with capture phrases must always produce section='none'
-    (reference card) regardless of what the LLM returned.
-    The 'note' type was merged into tasks; capture-prefix inputs now become
-    type='task' with section='none'.
+    Capture-prefix inputs ("note:", "idea:", etc.) are ordinary tasks that
+    default to 'later' (Stash).  Reference cards no longer exist.
     """
-
-    @pytest.mark.parametrize("prefix,text", [
-        ("idea:",     "idea: build a habit tracker with streaks"),
-        ("note:",     "note: remember to water the plants"),
-        ("thought:",  "thought: maybe switch to Postgres"),
-        ("remember:", "remember: Sarah's birthday is June 12"),
-        ("jot down",  "jot down my wifi password"),
-        ("write down","write down the recipe"),
-    ])
-    def test_prefix_forces_reference_section(self, prefix, text):
-        result = _pp(text, type="task")
-        assert result.section == "none", \
-            f"Prefix {prefix!r} must force section='none', got {result.section!r}"
-        assert result.type == "task"
-
-    def test_note_prefix_populates_description_when_missing(self):
-        result = _pp("idea: build a habit tracker", type="task")
-        assert result.description is not None
-        assert "habit tracker" in result.description
-
-    def test_note_prefix_preserves_existing_description(self):
-        result = _pp("idea: build a habit tracker", type="task", description="already set")
-        assert result.description == "already set"
 
     def test_non_prefix_task_type_unchanged(self):
         result = _pp("buy groceries", type="task")
         assert result.type == "task"
 
-    def test_list_input_becomes_reference_section(self):
-        # List-like inputs are routed to section='none' regardless of LLM output.
-        result = _pp("packing list for the trip", type="task", description="- [ ] passport")
-        assert result.section == "none"
-        assert result.type == "task"
+    def test_note_type_from_llm_becomes_stash_task(self):
+        # 'note' type is an old schema artefact — normalize_raw converts it to task/later.
+        from model_plugins.base import BaseModelPlugin
+        plugin = BaseModelPlugin()
+        raw = plugin.normalize_raw({"type": "note", "title": "wifi password", "note_content": "hunter2"})
+        assert raw["type"] == "task"
+        assert raw["section"] == "later"
+        assert raw["description"] == "hunter2"
 
 
 # ── Recurrence section fix (pre-existing behaviour) ──────────────────────────

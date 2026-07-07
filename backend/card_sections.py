@@ -10,7 +10,6 @@ Valid values:
     week   — "This Week" column
     month  — "This Month" column
     later  — "Stash" column
-    none   — reference card; shown only on the Cards page, never on the board
 """
 
 import enum
@@ -21,10 +20,9 @@ class CardSection(str, enum.Enum):
     WEEK  = "week"
     MONTH = "month"
     LATER = "later"
-    NONE  = "none"   # reference card
 
 
-# Convenience tuple of board sections (excludes NONE).
+# Convenience tuple of board sections in display order.
 BOARD_SECTIONS = (
     CardSection.TODAY,
     CardSection.WEEK,

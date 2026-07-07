@@ -8,6 +8,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-top: 28px;
   margin-bottom: 20px;
   gap: 12px;
 }
@@ -146,12 +147,6 @@
   opacity: 0.7;
 }
 
-.health-page-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
 
 .health-page-settings-btn {
   font-size: 13px;

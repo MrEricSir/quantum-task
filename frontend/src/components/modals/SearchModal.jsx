@@ -4,7 +4,7 @@ import { MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { searchCards } from '../../api'
 import './SearchModal.css'
 import { SECTION_LABELS } from '../../lib/sections'
-const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280', none: '#374151' }
+const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
 
 export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabit }) {
   const [query, setQuery] = useState('')

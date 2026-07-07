@@ -35,7 +35,6 @@ def _auto_migrate_sections(db: Session, today) -> None:
         .filter(
             models.Card.completed == False,  # noqa: E712
             models.Card.scheduled_at.isnot(None),
-            models.Card.section != "none",  # reference cards are never auto-migrated
         )
         .all()
     )

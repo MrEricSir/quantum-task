@@ -6,7 +6,7 @@ describe('SECTIONS', () => {
     expect(SECTIONS).toEqual(['today', 'week', 'month', 'later'])
   })
 
-  it('does not include "none" (reference cards are not a board section)', () => {
+  it('does not include "none"', () => {
     expect(SECTIONS).not.toContain('none')
   })
 })
@@ -19,10 +19,6 @@ describe('SECTION_LABELS', () => {
     expect(SECTION_LABELS.later).toBe('Stash')
   })
 
-  it('maps "none" for use in search/badge contexts', () => {
-    expect(SECTION_LABELS.none).toBe('Card')
-  })
-
   it('has a label for every SECTIONS entry', () => {
     for (const s of SECTIONS) {
       expect(SECTION_LABELS[s]).toBeTruthy()
@@ -31,10 +27,10 @@ describe('SECTION_LABELS', () => {
 })
 
 describe('ALL_SECTIONS', () => {
-  it('contains five entries including "none"', () => {
-    expect(ALL_SECTIONS).toHaveLength(5)
+  it('contains exactly four entries', () => {
+    expect(ALL_SECTIONS).toHaveLength(4)
     const values = ALL_SECTIONS.map((s) => s.value)
-    expect(values).toContain('none')
+    expect(values).not.toContain('none')
   })
 
   it('each entry has a non-empty value and label', () => {
@@ -44,19 +40,13 @@ describe('ALL_SECTIONS', () => {
     }
   })
 
-  it('board sections appear before "none"', () => {
-    const values = ALL_SECTIONS.map((s) => s.value)
-    const noneIndex = values.indexOf('none')
-    expect(noneIndex).toBe(values.length - 1)
-  })
-
   it('"later" is labelled "Stash"', () => {
     const later = ALL_SECTIONS.find((s) => s.value === 'later')
     expect(later?.label).toBe('Stash')
   })
 
-  it('values are consistent with SECTIONS (excluding none)', () => {
-    const allValues = ALL_SECTIONS.map((s) => s.value).filter((v) => v !== 'none')
+  it('values are consistent with SECTIONS', () => {
+    const allValues = ALL_SECTIONS.map((s) => s.value)
     expect(allValues).toEqual(SECTIONS)
   })
 })

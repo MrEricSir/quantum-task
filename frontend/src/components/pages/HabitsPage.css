@@ -1,6 +1,4 @@
 .habits-page {
-  max-width: 720px;
-  margin: 0 auto;
   padding: 8px 0;
 }
 
@@ -19,14 +17,14 @@
 }
 
 .habits-page-title {
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
   margin: 0;
 }
 
 .habits-page-progress {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 

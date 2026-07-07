@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
+import HabitsPage from './HabitsPage'
 import './HealthPage.css'
 
 // ── SVG chart primitives ──────────────────────────────────────────────────────
@@ -740,7 +741,7 @@ function FoodLog() {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function HealthPage({ habits = [], healthData, healthGoals, withingsConnected, isImperial = false }) {
+export default function HealthPage({ habits = [], archivedHabits = [], onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false }) {
   const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
 
@@ -803,8 +804,21 @@ export default function HealthPage({ habits = [], healthData, healthGoals, withi
 
   return (
     <div className="health-page">
+
+      <HabitsPage
+        habits={habits}
+        archivedHabits={archivedHabits}
+        onToggle={onToggleHabit}
+        onAdd={onAddHabit}
+        onUpdate={onUpdateHabit}
+        onDelete={onDeleteHabit}
+        onArchive={onArchiveHabit}
+        onUnarchive={onUnarchiveHabit}
+        isImperial={isImperial}
+      />
+
       <div className="health-page-header">
-        <h2 className="health-page-title">Health</h2>
+        <h3 className="health-section-title">Health</h3>
         <div className="health-page-controls">
           {showCharts && (
             <div className="health-range-toggle">

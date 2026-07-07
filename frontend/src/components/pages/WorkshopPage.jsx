@@ -375,7 +375,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     const card = await onAddCard({
       title: title || 'AI output',
       description: output,
-      section: 'none',
+      section: 'later',
     })
     if (card?.id) {
       const updated = await updateJob(selectedId, { output_card_id: card.id })

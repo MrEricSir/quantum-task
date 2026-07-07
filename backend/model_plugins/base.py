@@ -54,21 +54,16 @@ Fields:
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
                   NEVER generate, compose, or invent content here.
-                  For reference cards (section="none"): put the full captured text here.
-  section       — "today" | "week" | "month" | "later" | "none"
+  section       — "today" | "week" | "month" | "later"
                     later  = DEFAULT for tasks; use when no date or deadline is mentioned
                     today  = explicitly due today
                     week   = due in 1-7 days (tomorrow, this week, this Friday, next few days)
                     month  = due in 8-30 days (in two weeks, in three weeks, next month)
-                    none   = reference card — not an action, just information to capture.
-                             Use when input starts with "note:", "idea:", "thought:",
-                             "remember:", "jot down", "write down", or when input is clearly
-                             informational (lists, facts, addresses, quotes, reference material).
                     IMPORTANT: if no deadline is stated for a task, always use "later", never "week"
   scheduled_at  — ISO 8601 datetime string (YYYY-MM-DDTHH:MM:SS) only when the input
                   contains an explicit clock time (e.g. "at 3pm", "at noon", "morning",
                   "evening"). null if no time-of-day is mentioned at all.
-                  If section is "later" or "none", scheduled_at MUST be null.
+                  If section is "later", scheduled_at MUST be null.
                   NEVER put natural language here — always resolve to a real date.
                   Common times: noon=12:00:00, midnight=00:00:00, morning=09:00:00,
                   afternoon=14:00:00, evening=18:00:00
@@ -104,7 +99,7 @@ IMPORTANT — MULTIPLE ITEMS:
 - Parse EACH distinct action or event as its own item in the array.
 - EXCEPTION: if the input is clearly a shopping/grocery list — e.g. "buy X, Y, and Z" \
 with 3+ items, or a store name followed by food items on separate lines — group ALL of \
-them into ONE item with type="task", section="none", and each item on its own line in description.
+them into ONE item with type="task", section="later", and each item on its own line in description.
 - For each item, include "source_text": the verbatim fragment of the user's input that this item was parsed from (copy the exact words, do not paraphrase).
 Return ONLY valid JSON: {{"items": [<ParsedTodo>, ...]}} — no prose, no explanation.\
 """
@@ -329,7 +324,7 @@ class BaseModelPlugin:
         "someday": "later",
         "future": "later",
     }
-    _VALID_SECTIONS = {"today", "week", "month", "later", "none"}
+    _VALID_SECTIONS = {"today", "week", "month", "later"}
 
     _VALID_RECURRENCES = {"daily", "weekly", "monthly", "yearly"}
     _RECURRENCE_ALIASES = {
@@ -378,10 +373,10 @@ class BaseModelPlugin:
 
         type_val = str(raw.get("type", "task")).strip().lower()
         if type_val == "note":
-            # Old LLM response using the previous schema — convert to a reference card.
+            # Old LLM response using the previous schema — convert to a stash task.
             # Preserve note_content (if present) in description so no text is lost.
             raw["type"] = "task"
-            raw["section"] = "none"
+            raw["section"] = "later"
             if not raw.get("description") and raw.get("note_content"):
                 raw["description"] = raw["note_content"]
         else:
@@ -426,21 +421,9 @@ class BaseModelPlugin:
         (re.compile(r'\bin three weeks\b'), "month"),
     ]
 
-    # Input prefixes that signal reference/capture intent → section="none"
-    _REFERENCE_PREFIXES = ("note:", "idea:", "thought:", "remember:", "jot down", "write down")
-
     # "add a habit to X" / "create a habit for X" → type=habit, title=X
     _ADD_HABIT_RE = re.compile(
         r'^(?:add|create|make|start|set up|track)\s+(?:a\s+|an\s+|the\s+)?habit\s+(?:to\s+|of\s+|for\s+|about\s+)?(.+)$',
-        re.I,
-    )
-
-    # Patterns that reliably signal list/note intent — enforced even if LLM says "task".
-    _LIST_RE = re.compile(
-        r'\b(?:shopping|grocery|groceries|packing|to-?do|check(?:list)?)\s+list\b'
-        r'|\blist\s+of\b'
-        r'|\blist:'
-        r'|\bbuy\b.+,.+,.+',   # "buy X, Y, and Z" with 3+ items (2+ commas)
         re.I,
     )
 
@@ -468,22 +451,6 @@ class BaseModelPlugin:
                 parsed.recurrence_rule = "daily"
             if parsed.section == "later":
                 parsed.section = self._RECURRENCE_SECTION.get(parsed.recurrence_rule, "today")
-
-        # Force section="none" for capture-phrase prefixes regardless of LLM output.
-        if parsed.section != "none" and any(lowered.startswith(p) for p in self._REFERENCE_PREFIXES):
-            parsed.section = "none"
-            # Preserve the captured text in description if the LLM left it empty.
-            if not parsed.description:
-                for p in self._REFERENCE_PREFIXES:
-                    if lowered.startswith(p):
-                        parsed.description = text[len(p):].strip()
-                        break
-
-        # Force section="none" for list-like inputs regardless of LLM classification.
-        if parsed.section != "none" and self._LIST_RE.search(lowered):
-            parsed.section = "none"
-            if not parsed.description:
-                parsed.description = text.strip()
 
         # Recurring tasks default to "later" from the LLM because there's no
         # specific deadline — override with a section that matches the cadence.

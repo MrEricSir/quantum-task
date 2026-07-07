@@ -112,8 +112,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         setDetectedType(result.type ?? 'task')
         setTitle(result.title ?? '')
         setDescription(result.description ?? '')
-        // Map 'none' → 'later' (Stash) to align with edit modal behaviour
-        setSection(result.section === 'none' ? 'later' : (result.section ?? 'later'))
+        setSection(result.section ?? 'later')
         setScheduledAt(result.scheduled_at ? isoToLocal(result.scheduled_at) : '')
         setRecurrenceRule(result.recurrence_rule ?? '')
         setSelectedTagIds(tagIds)
@@ -170,7 +169,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     setDetectedType(item.type ?? 'task')
     setTitle(item.title ?? '')
     setDescription(item.description ?? '')
-    setSection(item.section === 'none' ? 'later' : (item.section ?? 'later'))
+    setSection(item.section ?? 'later')
     setScheduledAt(item.scheduled_at ? isoToLocal(item.scheduled_at) : '')
     setRecurrenceRule(item.recurrence_rule ?? '')
     setSelectedTagIds(item._tag_ids ?? (item.suggested_tags ?? [])
@@ -261,7 +260,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           await onSaveTask({
             title: item.title,
             description: item.description || null,
-            section: item.section === 'none' ? 'later' : (item.section ?? 'later'),
+            section: item.section ?? 'later',
             scheduled_at: item.scheduled_at || null,
             recurrence_rule: item.recurrence_rule || null,
             tag_ids: tagIds,

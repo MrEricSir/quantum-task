@@ -162,7 +162,6 @@ def run_job(job_id: int, db: Session = Depends(get_db)):
     active_count = db.query(models.Card).filter(
         models.Card.completed == False,  # noqa: E712
         models.Card.archived == False,
-        models.Card.section != "none",
     ).count()
     background_parts.append(f"Active tasks on board: {active_count}")
 

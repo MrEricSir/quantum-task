@@ -75,14 +75,14 @@ const CARDS = [
   {
     id: 7, title: 'Shopping list',
     description: 'Milk\nEggs\nBread\nCoffee',
-    section: 'none', completed: false, archived: false, position: 0,
+    section: 'later', completed: false, archived: false, position: 0,
     tags: [{ id: 2, name: 'personal', color: '#10b981' }],
     updated_at: '2026-06-03T08:00:00Z', created_at: '2026-06-03T08:00:00Z',
   },
   {
     id: 8, title: 'Sprint ideas',
     description: 'Next sprint candidates:\n\nImprove search\nAdd dark mode option\nPerformance pass',
-    section: 'none', completed: false, archived: false, position: 1,
+    section: 'later', completed: false, archived: false, position: 1,
     tags: [{ id: 1, name: 'work', color: '#3b82f6' }],
     updated_at: '2026-06-02T16:00:00Z', created_at: '2026-06-02T16:00:00Z',
   },
@@ -248,7 +248,7 @@ test.describe('cards page', () => {
     await expect(page.locator('.column-label', { hasText: 'Stash' })).toBeVisible()
   })
 
-  test('cards with section=none appear in the Stash column', async ({ page }) => {
+  test('cards with section=later appear in the Stash column', async ({ page }) => {
     await expect(page.getByText('Shopping list')).toBeVisible()
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
@@ -270,16 +270,16 @@ test.describe('cards page', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Habits page
+// Habits (now embedded in Health page)
 // ---------------------------------------------------------------------------
 test.describe('habits page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/habits')
+    await page.goto('/health')
     await waitForApp(page)
   })
 
-  test('page heading is visible', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Habits' })).toBeVisible()
+  test('habits section heading is visible', async ({ page }) => {
+    await expect(page.locator('.habits-page-title')).toBeVisible()
   })
 
   test('habit cards are rendered', async ({ page }) => {
@@ -588,9 +588,9 @@ test.describe('keyboard shortcuts', () => {
     await expect(page).toHaveURL(/\/board/)
   })
 
-  test('h navigates to habits page', async ({ page }) => {
+  test('h navigates to health page', async ({ page }) => {
     await page.keyboard.press('h')
-    await expect(page).toHaveURL(/\/habits/)
+    await expect(page).toHaveURL(/\/health/)
   })
 
   test('c navigates to calendar page', async ({ page }) => {

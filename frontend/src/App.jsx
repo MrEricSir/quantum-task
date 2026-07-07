@@ -24,7 +24,6 @@ import TagManagerModal from './components/modals/TagManagerModal'
 import CalendarSettings from './components/modals/CalendarSettings'
 import GithubSettings from './components/modals/GithubSettings'
 import TodayPage from './components/pages/TodayPage'
-import HabitsPage from './components/pages/HabitsPage'
 import CalendarPage from './components/pages/CalendarPage'
 import EngineeringPage from './components/pages/EngineeringPage'
 import WorkshopPage from './components/pages/WorkshopPage'
@@ -151,17 +150,16 @@ export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const isTodayPage       = location.pathname === '/today'       || location.pathname.startsWith('/today/tag/')
-  const isHabitsPage      = location.pathname === '/habits'      || location.pathname.startsWith('/habits/tag/')
   const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
   const isWorkshopPage    = location.pathname === '/workshop'
-  const isHealthPage      = location.pathname === '/health'
-  const currentPage       = isTodayPage ? 'today' : isHabitsPage ? 'habits' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isWorkshopPage ? 'workshop' : isHealthPage ? 'health' : 'today'
+  // /habits is a legacy URL — treat it as the health page
+  const isHealthPage      = location.pathname === '/health' || location.pathname === '/habits' || location.pathname.startsWith('/habits/')
+  const currentPage       = isTodayPage ? 'today' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isWorkshopPage ? 'workshop' : isHealthPage ? 'health' : 'today'
 
   const tagMatch =
     location.pathname.match(/^\/today\/tag\/(\d+)$/)    ||
-    location.pathname.match(/^\/habits\/tag\/(\d+)$/)   ||
     location.pathname.match(/^\/board\/tag\/(\d+)$/)    ||
     location.pathname.match(/^\/calendar\/tag\/(\d+)$/)
   const selectedTagId = tagMatch ? parseInt(tagMatch[1]) : null
@@ -189,11 +187,10 @@ export default function App() {
     { key: '?', label: 'Keyboard shortcuts',group: 'action', action: ()  => setShowShortcuts(true) },
     { key: 't', label: 'Today',             group: 'nav',    action: ()  => navigate('/today') },
     { key: 'b', label: 'Board',             group: 'nav',    action: ()  => navigate('/board') },
-    { key: 'h', label: 'Habits',            group: 'nav',    action: ()  => navigate('/habits') },
+    { key: 'h', label: 'Health & Habits',   group: 'nav',    action: ()  => navigate('/health') },
     { key: 'c', label: 'Calendar',          group: 'nav',    action: ()  => navigate('/calendar') },
     { key: 'e', label: 'Engineering',       group: 'nav',    action: ()  => navigate('/engineering') },
     { key: 'w', label: 'Workshop',          group: 'nav',    action: ()  => navigate('/workshop') },
-    { key: 'H', label: 'Health',            group: 'nav',    action: ()  => navigate('/health') },
   ]
 
   useEffect(() => {
@@ -332,7 +329,7 @@ export default function App() {
       .finally(() => setTagsLoading(false))
   }, [authed])
 
-  const activeTodos = todos.filter((t) => !t.completed && !t.archived && t.section !== 'none')
+  const activeTodos = todos.filter((t) => !t.completed && !t.archived)
   const completedTodos = todos.filter((t) => t.completed && !t.archived)
 
   const visibleTags = useMemo(() =>
@@ -352,17 +349,9 @@ export default function App() {
     : activeTodos.filter((t) => (t.tags ?? []).some((tag) => tag.id === selectedTagId))
 
   const todosBySection = SECTIONS.reduce((acc, s) => {
-    if (s === 'later') {
-      // "Stash" column shows both 'later' and legacy 'none' (reference) cards
-      acc[s] = todos
-        .filter((t) => (t.section === 'later' || t.section === 'none') && !t.completed && !t.archived &&
-          (selectedTagId === null || (t.tags ?? []).some((tag) => tag.id === selectedTagId)))
-        .sort((a, b) => a.position - b.position)
-    } else {
-      acc[s] = visibleActiveTodos
-        .filter((t) => t.section === s)
-        .sort((a, b) => a.position - b.position)
-    }
+    acc[s] = visibleActiveTodos
+      .filter((t) => t.section === s)
+      .sort((a, b) => a.position - b.position)
     return acc
   }, {})
 
@@ -383,13 +372,11 @@ export default function App() {
     if (dragged.completed) return
 
     const activeSection = dragged.section
-    // Treat 'none' and 'later' as the same section for drag purposes
-    const normalizeSection = (s) => (s === 'none' ? 'later' : s)
     const overSection = SECTIONS.includes(String(over.id))
       ? String(over.id)
-      : normalizeSection(current.find((t) => t.id === over.id)?.section)
+      : current.find((t) => t.id === over.id)?.section
 
-    if (!overSection || normalizeSection(activeSection) === overSection) return
+    if (!overSection || activeSection === overSection) return
 
     setTodos((prev) =>
       prev.map((t) => (t.id === active.id ? { ...t, section: overSection } : t))
@@ -429,14 +416,14 @@ export default function App() {
     // Normal board-to-board reordering
     const section = dragged.section
     const sectionTodos = current
-      .filter((t) => (section === 'later' ? (t.section === 'later' || t.section === 'none') : t.section === section))
+      .filter((t) => t.section === section)
       .sort((a, b) => a.position - b.position)
 
     let reordered = sectionTodos
 
     // Reorder within section if dropped on a sibling card
     if (!SECTIONS.includes(String(over.id))) {
-      if (overCard && (overCard.section === section || (section === 'later' && overCard.section === 'none'))) {
+      if (overCard && overCard.section === section) {
         const fromIdx = sectionTodos.findIndex((t) => t.id === active.id)
         const toIdx = sectionTodos.findIndex((t) => t.id === over.id)
         if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
@@ -447,9 +434,7 @@ export default function App() {
 
     const updatedSection = reordered.map((t, i) => ({ ...t, position: i }))
     const newTodos = [
-      ...current.filter((t) => section === 'later'
-        ? (t.section !== 'later' && t.section !== 'none')
-        : t.section !== section),
+      ...current.filter((t) => t.section !== section),
       ...updatedSection,
     ]
 
@@ -524,7 +509,7 @@ export default function App() {
     if (page === 'engineering') return navigate('/engineering')
     if (page === 'workshop')    return navigate('/workshop')
     if (page === 'health')      return navigate('/health')
-    if (page === 'habits')      return navigate(tagId ? `/habits/tag/${tagId}` : '/habits')
+    if (page === 'habits')      return navigate('/health')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 
@@ -704,20 +689,6 @@ export default function App() {
             healthGoals={healthGoals}
             isImperial={isImperial}
           />
-        ) : isHabitsPage ? (
-          <HabitsPage
-            habits={habits}
-            archivedHabits={archivedHabits}
-            allTags={tags}
-            selectedTagId={selectedTagId}
-            onToggle={handleToggleHabit}
-            onAdd={handleAddHabit}
-            onUpdate={handleUpdateHabit}
-            onDelete={handleDeleteHabit}
-            onArchive={handleArchiveHabit}
-            onUnarchive={handleUnarchiveHabit}
-            isImperial={isImperial}
-          />
         ) : isBoardPage ? (
           <>
             <div className="mobile-tabs">
@@ -786,6 +757,13 @@ export default function App() {
         ) : isHealthPage ? (
           <HealthPage
             habits={habits}
+            archivedHabits={archivedHabits}
+            onToggleHabit={handleToggleHabit}
+            onAddHabit={handleAddHabit}
+            onUpdateHabit={handleUpdateHabit}
+            onDeleteHabit={handleDeleteHabit}
+            onArchiveHabit={handleArchiveHabit}
+            onUnarchiveHabit={handleUnarchiveHabit}
             healthData={healthData}
             healthGoals={healthGoals}
             withingsConnected={withingsStatus?.connected ?? false}
@@ -896,7 +874,7 @@ export default function App() {
           onClose={() => setShowSearch(false)}
           onEdit={(todo) => openEdit(todo)}
           habits={habits}
-          onSelectHabit={() => { setShowSearch(false); navigate('/habits') }}
+          onSelectHabit={() => { setShowSearch(false); navigate('/health') }}
         />
       )}
 
