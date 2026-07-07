@@ -55,11 +55,19 @@ const HABITS = [
     id: 1, name: 'Morning meditation', completed_today: true, streak: 7,
     tags: [], recurrence_rule: 'daily',
     recent_completions: [true, true, true, true, false, true, true],
+    withings_metric: null, is_experiment: false,
   },
   {
     id: 2, name: 'Evening walk', completed_today: false, streak: 3,
     tags: [{ id: 2, name: 'personal', color: '#10b981' }], recurrence_rule: 'daily',
     recent_completions: [false, false, false, false, true, true, false],
+    withings_metric: null, is_experiment: false,
+  },
+  {
+    id: 3, name: '🧪 1 hour screen-free time', completed_today: false, streak: 0,
+    tags: [], recurrence_rule: 'daily',
+    recent_completions: [false, false, false, false, false, false, false],
+    withings_metric: null, is_experiment: true,
   },
 ]
 
@@ -289,7 +297,20 @@ test.describe('habits page', () => {
 
   test('completion toggle buttons are present', async ({ page }) => {
     await expect(page.getByRole('button', { name: /mark incomplete/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /mark complete/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /mark complete/i }).first()).toBeVisible()
+  })
+
+  test('experiment habit (is_experiment=true, no withings_metric) has an enabled check button', async ({ page }) => {
+    const btn = page.locator('.habit-card', { hasText: '🧪 1 hour screen-free time' })
+      .getByRole('button', { name: /mark complete/i })
+    await expect(btn).toBeVisible()
+    await expect(btn).toBeEnabled()
+  })
+
+  test('experiment habit check button does not have the auto-sync dashed style', async ({ page }) => {
+    const btn = page.locator('.habit-card', { hasText: '🧪 1 hour screen-free time' })
+      .getByRole('button', { name: /mark complete/i })
+    await expect(btn).not.toHaveClass(/check--auto/)
   })
 
   test('edit button is present on habit cards', async ({ page }) => {

@@ -10,7 +10,7 @@ function HabitsArchive({ habits, onUnarchive, onDelete }) {
   if (habits.length === 0) return null
   return (
     <div className="habits-archive">
-      <Collapsible label="Habit Archive" count={habits.length} defaultOpen={true}>
+      <Collapsible label="Habit Archive" count={habits.length}>
         <div className="habits-archive-list">
           {habits.map((habit) => (
             <div key={habit.id} className="habits-archive-row">
@@ -106,8 +106,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     ? habits
     : habits.filter((h) => h.tags.some((t) => t.id === selectedTagId))
   ).slice().sort((a, b) => {
-    const aAuto = !!(a.withings_metric || a.is_experiment)
-    const bAuto = !!(b.withings_metric || b.is_experiment)
+    const aAuto = !!a.withings_metric
+    const bAuto = !!b.withings_metric
     if (aAuto !== bAuto) return aAuto ? 1 : -1
     return a.name.localeCompare(b.name)
   })
@@ -157,7 +157,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
           {visibleHabits.map((habit) => (
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
               {(() => {
-                const isAuto = !!habit.withings_metric || !!habit.is_experiment
+                const isAuto = !!habit.withings_metric
                 return (
                   <button
                     type="button"

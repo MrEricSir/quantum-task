@@ -345,10 +345,15 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 needs_habit should be true only when the experiment requires a specific daily \
 effort to track (e.g. hitting a step target). Set false for passive observation.
 
-withings_metric/withings_goal: set when the goal maps directly to a Withings \
-measurement — e.g. withings_metric="steps", withings_goal=8000 auto-checks the \
-habit when synced. Supported: "steps" (met when >= goal), "fat_ratio"/"weight" \
-(met when <= goal). Null for non-Withings experiments.\
+withings_metric/withings_goal: ONLY set these when the experiment's primary \
+measurable outcome is literally one of the three Withings-tracked metrics: step \
+count, body fat percentage, or body weight. Examples where you SHOULD set it: \
+"Walk 8,000 steps every day" → withings_metric="steps", withings_goal=8000. \
+"Reduce body fat to 18%" → withings_metric="fat_ratio", withings_goal=18. \
+Examples where you must leave it null: "1 hour of screen-free time", "read \
+before bed", "meditate 10 minutes", "no alcohol", "sleep by 10pm" — these are \
+behavioral habits that cannot be verified by a Withings device, so \
+withings_metric MUST be null. When in doubt, set null.\
 """
 
 

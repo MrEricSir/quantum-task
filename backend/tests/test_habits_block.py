@@ -1,11 +1,9 @@
 """
 Tests for the manual-check guard on auto-tracked habits (routers/habits.py).
 
-Habits are blocked from manual check/uncheck if:
-  - They have withings_metric set (Withings auto-tracks them), OR
-  - They are linked to an *active* HealthExperiment via habit_id
-
-Habits linked to a *dismissed* experiment must NOT be blocked.
+Habits are blocked from manual check/uncheck ONLY if they have withings_metric
+set (Withings auto-tracks them).  Experiment habits (is_experiment=True, but no
+withings_metric) are manually checkable — the user must mark them done.
 """
 import sys
 import os
@@ -90,21 +88,17 @@ class TestCheckHabit:
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 403
 
-    def test_experiment_habit_blocked_by_habit_id(self, client, db_session):
-        """
-        A habit linked to an active HealthExperiment via habit_id must be blocked
-        even if it has no withings_metric and no 🧪 prefix.
-        (This is the bug: currently only the 🧪 name prefix is checked.)
-        """
-        h = _habit(db_session, "Do something daily")  # no withings_metric, no 🧪
+    def test_experiment_habit_without_withings_can_be_checked(self, client, db_session):
+        """Experiment habits with no withings_metric are manually checkable."""
+        h = _habit(db_session, "🧪 1 hour screen-free time")  # no withings_metric
         _experiment(db_session, habit_id=h.id, status="active")
         db_session.commit()
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
-        assert r.status_code == 403
+        assert r.status_code == 200
 
     def test_dismissed_experiment_habit_can_be_checked(self, client, db_session):
-        """Once experiment is dismissed, its linked habit becomes manually checkable."""
-        h = _habit(db_session, "Do something daily")
+        """Dismissed experiment habits also remain manually checkable."""
+        h = _habit(db_session, "🧪 1 hour screen-free time")
         _experiment(db_session, habit_id=h.id, status="dismissed")
         db_session.commit()
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
@@ -133,17 +127,18 @@ class TestUncheckHabit:
         r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 403
 
-    def test_experiment_habit_blocked_by_habit_id(self, client, db_session):
-        """Same guard applies on uncheck."""
-        h = _habit(db_session, "Do something daily")
+    def test_experiment_habit_without_withings_can_be_unchecked(self, client, db_session):
+        """Experiment habits with no withings_metric are manually uncheckable."""
+        h = _habit(db_session, "🧪 1 hour screen-free time")  # no withings_metric
         _experiment(db_session, habit_id=h.id, status="active")
         db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
         db_session.commit()
         r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)
-        assert r.status_code == 403
+        assert r.status_code == 200
 
     def test_dismissed_experiment_habit_can_be_unchecked(self, client, db_session):
-        h = _habit(db_session, "Do something daily")
+        """Dismissed experiment habits also remain manually uncheckable."""
+        h = _habit(db_session, "🧪 1 hour screen-free time")
         _experiment(db_session, habit_id=h.id, status="dismissed")
         db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
         db_session.commit()
