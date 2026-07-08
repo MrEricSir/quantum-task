@@ -19,7 +19,6 @@ import AddTodoModal from './components/modals/AddTodoModal'
 import CardSheet from './components/modals/CardSheet'
 import QuickAddModal from './components/modals/QuickAddModal'
 import SearchModal from './components/modals/SearchModal'
-import GlobalAssistModal from './components/modals/GlobalAssistModal'
 import KeyboardShortcutsModal from './components/modals/KeyboardShortcutsModal'
 import TagManagerModal from './components/modals/TagManagerModal'
 import CalendarSettings from './components/modals/CalendarSettings'
@@ -84,7 +83,7 @@ export default function App() {
     defaultSection, showNewSheet, setShowNewSheet,
     openEdit, openNewCard, closeModal,
   } = useModals()
-  const [showGlobalAssist, setShowGlobalAssist] = useState(false)
+  const [quickAddDefaultTab, setQuickAddDefaultTab] = useState('add')
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
   const [weather, setWeather] = useState(null)
@@ -184,8 +183,8 @@ export default function App() {
 
   const shortcutsRef = useRef([])
   shortcutsRef.current = [
-    { key: 'n', label: 'New card',          group: 'action', action: ()  => setShowQuickAdd(true) },
-    { key: 'a', label: 'Assist',            group: 'action', action: ()  => setShowGlobalAssist(true) },
+    { key: 'n', label: 'New card',          group: 'action', action: ()  => { setQuickAddDefaultTab('add'); setShowQuickAdd(true) } },
+    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { setQuickAddDefaultTab('assist'); setShowQuickAdd(true) } },
     { key: '/', label: 'Search',            group: 'action', action: (e) => { e.preventDefault(); setShowSearch(true) } },
     { key: '?', label: 'Keyboard shortcuts',group: 'action', action: ()  => setShowShortcuts(true) },
     { key: 't', label: 'Today',             group: 'nav',    action: ()  => navigate('/today') },
@@ -574,7 +573,7 @@ export default function App() {
           <div className="header-actions">
             <button
               className="btn-ghost"
-              onClick={() => setShowGlobalAssist(true)}
+              onClick={() => { setQuickAddDefaultTab('assist'); setShowQuickAdd(true) }}
               title="Assist (press A)"
               aria-label="Assist"
               style={{ fontSize: 16, padding: '7px 10px', fontWeight: 600 }}
@@ -599,7 +598,7 @@ export default function App() {
               }}
               onClearErrors={() => setParseQueue((prev) => prev.filter((i) => i.status === 'pending'))}
             />
-            <button className="btn-primary" onClick={() => setShowQuickAdd(true)}>
+            <button className="btn-primary" onClick={() => { setQuickAddDefaultTab('add'); setShowQuickAdd(true) }}>
               + Add
             </button>
             <DropdownMenu.Root>
@@ -890,12 +889,6 @@ export default function App() {
         />
       )}
 
-      <GlobalAssistModal
-        open={showGlobalAssist}
-        onClose={() => setShowGlobalAssist(false)}
-        tags={visibleTags}
-      />
-
       <KeyboardShortcutsModal
         open={showShortcuts}
         onClose={() => setShowShortcuts(false)}
@@ -905,6 +898,8 @@ export default function App() {
       {showQuickAdd && (
         <QuickAddModal
           allTags={tags}
+          visibleTags={visibleTags}
+          defaultTab={quickAddDefaultTab}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}

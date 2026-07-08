@@ -193,25 +193,26 @@ test.describe('global assist modal', () => {
   })
 
   test('clicking Assist button opens the modal', async ({ page }) => {
-    await page.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /assist/i }).first().click()
     await expect(page.getByRole('dialog')).toBeVisible()
-    await expect(page.getByRole('heading', { name: /assist/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
   })
 
   test('modal has context selector and prompt textarea', async ({ page }) => {
-    await page.getByRole('button', { name: /assist/i }).click()
-    await expect(page.locator('#ga-context')).toBeVisible()
-    await expect(page.locator('.global-assist-prompt')).toBeVisible()
+    await page.getByRole('button', { name: /assist/i }).first().click()
+    await expect(page.locator('#qa-assist-context')).toBeVisible()
+    await expect(page.locator('.quick-assist-prompt')).toBeVisible()
   })
 
   test('Generate button is disabled when prompt is empty', async ({ page }) => {
-    await page.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /assist/i }).first().click()
     await expect(page.getByRole('button', { name: /generate/i })).toBeDisabled()
   })
 
-  test('pressing A key opens the modal', async ({ page }) => {
+  test('pressing A key opens the assist tab', async ({ page }) => {
     await page.keyboard.press('a')
     await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.locator('.quick-tab--active', { hasText: /assist/i })).toBeVisible()
   })
 })
 
@@ -412,7 +413,7 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /add/i })).toBeVisible()
+    await expect(page.locator('.modal-footer .btn-save')).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
@@ -426,7 +427,7 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('Call dentist next week')
-    await page.getByRole('button', { name: /^add$/i }).click()
+    await page.locator('.modal-footer .btn-save').click()
     // Confirm screen
     await expect(page.getByRole('heading', { name: /confirm/i })).toBeVisible()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
@@ -445,7 +446,7 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('Morning run every day')
-    await page.getByRole('button', { name: /^add$/i }).click()
+    await page.locator('.modal-footer .btn-save').click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     // Override to habit
     await page.locator('.quick-type-tab', { hasText: 'Habit' }).click()
@@ -463,7 +464,7 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('grocery list: milk eggs')
-    await page.getByRole('button', { name: /^add$/i }).click()
+    await page.locator('.modal-footer .btn-save').click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     await page.getByRole('button', { name: /back/i }).click()
     await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()

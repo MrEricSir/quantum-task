@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { parseBulkCards, localDateTime } from '../../api'
+import { parseBulkCards, localDateTime, createCard } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
 import './QuickAddModal.css'
@@ -19,10 +19,45 @@ function MicIcon() {
 }
 
 const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log' }
-
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
-
 const KG_TO_LBS = 2.20462
+
+const SECTION_OPTIONS = [
+  { value: 'section:today', label: 'Today' },
+  { value: 'section:week', label: 'This Week' },
+  { value: 'section:month', label: 'This Month' },
+  { value: 'section:later', label: 'Stash' },
+]
+
+const HISTORY_KEY = 'globalAssistHistory'
+const HISTORY_MAX = 5
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') } catch { return [] }
+}
+
+function saveToHistory(entry) {
+  const prev = loadHistory()
+  const next = [entry, ...prev.filter((e) => e.prompt !== entry.prompt)].slice(0, HISTORY_MAX)
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next))
+}
+
+function timeAgo(iso) {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+function parseContext(value) {
+  if (!value) return { section: null, tag_id: null }
+  if (value.startsWith('section:')) return { section: value.slice(8), tag_id: null }
+  if (value.startsWith('tag:')) return { section: null, tag_id: parseInt(value.slice(4)) }
+  return { section: null, tag_id: null }
+}
 
 function formatGoalDisplay(metric, goal, isImperial) {
   if (goal == null) return '—'
@@ -35,7 +70,22 @@ function formatGoalDisplay(metric, goal, isImperial) {
   return String(goal)
 }
 
-export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, onSaveFood, isImperial = false, initialText = '' }) {
+export default function QuickAddModal({
+  allTags = [],
+  visibleTags = [],
+  onClose,
+  onSaveTask,
+  onSaveHabit,
+  onSaveGoals,
+  onSaveStepGoal,
+  onSaveFood,
+  isImperial = false,
+  initialText = '',
+  defaultTab = 'add',
+}) {
+  // ── Tab ──
+  const [tab, setTab] = useState(defaultTab)
+
   // ── Input step ──
   const [text, setText] = useState(initialText)
   const [parsing, setParsing] = useState(false)
@@ -65,6 +115,20 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const [splittingIdx, setSplittingIdx] = useState(null)
   const [splitText, setSplitText] = useState('')
   const [reparseLoading, setReparseLoading] = useState(false)
+
+  // ── Assist tab ──
+  const [contextType, setContextType] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [output, setOutput] = useState('')
+  const [assistStatus, setAssistStatus] = useState('idle') // 'idle' | 'running' | 'done' | 'error'
+  const [searching, setSearching] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [savedAsCard, setSavedAsCard] = useState(false)
+  const [history, setHistory] = useState(() => loadHistory())
+  const abortRef = useRef(null)
+  const outputRef = useRef(null)
+
+  // ── Add tab handlers ──
 
   const toggleTag = (id) =>
     setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
@@ -303,12 +367,107 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     />
   )
 
+  // ── Assist tab handlers ──
+
+  const runAssist = async () => {
+    if (!prompt.trim() || assistStatus === 'running') return
+    setAssistStatus('running')
+    setOutput('')
+    setSearching(false)
+    setSavedAsCard(false)
+    setCopied(false)
+    const controller = new AbortController()
+    abortRef.current = controller
+    const ctx = parseContext(contextType)
+    try {
+      const resp = await fetch('/api/assist/global', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: prompt.trim(), ...ctx }),
+        signal: controller.signal,
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let text = ''
+      let done = false
+      while (!done) {
+        const { done: d, value } = await reader.read()
+        done = d
+        if (value) buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop()
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (data === '[DONE]') { done = true; break }
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.searching) { setSearching(true); continue }
+            if (parsed.text) {
+              text += parsed.text
+              setOutput(text)
+              if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight
+            }
+          } catch {}
+        }
+      }
+      if (text) {
+        saveToHistory({ prompt: prompt.trim(), output: text, ts: new Date().toISOString() })
+        setHistory(loadHistory())
+      }
+      setAssistStatus('done')
+    } catch (e) {
+      if (e.name !== 'AbortError') setAssistStatus('error')
+      else setAssistStatus('idle')
+    }
+  }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(output).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const handleSaveAsCard = async () => {
+    if (!output || savedAsCard) return
+    try {
+      await createCard({
+        title: prompt.trim().slice(0, 80),
+        description: output,
+        section: 'later',
+        tag_ids: [],
+      })
+      setSavedAsCard(true)
+    } catch {}
+  }
+
+  const showTabs = tab === 'assist' || step === 'input'
+
   return (
     <Modal onClose={onClose} className="modal--md quick-modal">
 
-      {step === 'input' && (
+      {/* Tab switcher — shown on the input step and on the assist tab */}
+      {showTabs && (
+        <div className="quick-tabs">
+          <button
+            className={`quick-tab${tab === 'add' ? ' quick-tab--active' : ''}`}
+            onClick={() => setTab('add')}
+          >Create</button>
+          <button
+            className={`quick-tab${tab === 'assist' ? ' quick-tab--active' : ''}`}
+            onClick={() => setTab('assist')}
+          >✦ Assist</button>
+        </div>
+      )}
+
+      {/* ── Add tab ── */}
+
+      {tab === 'add' && step === 'input' && (
         <>
-          <Dialog.Title asChild><h2>Quick Add</h2></Dialog.Title>
+          <Dialog.Title asChild><h2 className="quick-add-title">Quick Add</h2></Dialog.Title>
           <p className="quick-hint">
             Describe a task, habit, food log entry, or health goal in plain language. Put multiple items on separate lines to add them all at once.
           </p>
@@ -319,8 +478,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleParse() }}
-              autoFocus
-              rows={4}
+              autoFocus={defaultTab === 'add'}
+              rows={6}
             />
             {SR && (
               <button
@@ -346,7 +505,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         </>
       )}
 
-      {step === 'bulk-confirm' && (() => {
+      {tab === 'add' && step === 'bulk-confirm' && (() => {
         const visible = bulkItems.filter((i) => !i._removed)
         return (
           <>
@@ -432,7 +591,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         )
       })()}
 
-      {step === 'bulk-edit' && (
+      {tab === 'add' && step === 'bulk-edit' && (
         <>
           <Dialog.Title asChild><h2>Edit Item</h2></Dialog.Title>
 
@@ -466,7 +625,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         </>
       )}
 
-      {step === 'confirm' && (
+      {tab === 'add' && step === 'confirm' && (
         <>
           <Dialog.Title asChild><h2>Confirm</h2></Dialog.Title>
 
@@ -530,6 +689,126 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
               {saving ? 'Saving…' : detectedType === 'goal' ? 'Set Goal' : detectedType === 'food' ? 'Log Food' : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
           </div>
+        </>
+      )}
+
+      {/* ── Assist tab ── */}
+
+      {tab === 'assist' && (
+        <>
+          <Dialog.Title asChild><h2 className="quick-add-title">✦ Assist</h2></Dialog.Title>
+
+          {/* Context selector */}
+          <div className="quick-assist-context-row">
+            <label className="quick-assist-context-label" htmlFor="qa-assist-context">Cards</label>
+            <select
+              id="qa-assist-context"
+              className="quick-assist-context-select"
+              value={contextType}
+              onChange={(e) => setContextType(e.target.value)}
+            >
+              <option value="">No cards</option>
+              <optgroup label="By section">
+                {SECTION_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+              {visibleTags.length > 0 && (
+                <optgroup label="By tag">
+                  {visibleTags.map((t) => (
+                    <option key={t.id} value={`tag:${t.id}`}>{t.name}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+
+          {/* Prompt */}
+          <textarea
+            className="quick-textarea quick-assist-prompt"
+            placeholder="What would you like help with?"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runAssist() }}
+            rows={5}
+            autoFocus
+          />
+
+          {/* Output */}
+          {(output || assistStatus === 'running') && (
+            <div className="quick-assist-output-section">
+              <div className="quick-assist-output-header">
+                <span className="quick-assist-output-label">Output</span>
+                {output && (
+                  <div className="quick-assist-actions">
+                    <button className="quick-assist-action-btn" onClick={handleCopy}>
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                    <button className="quick-assist-action-btn" onClick={handleSaveAsCard} disabled={savedAsCard}>
+                      {savedAsCard ? 'Saved' : 'Save as card'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div
+                className={`quick-assist-output${assistStatus === 'running' ? ' quick-assist-output--streaming' : ''}`}
+                ref={outputRef}
+              >
+                {output || (
+                  <span className="quick-assist-placeholder">
+                    {searching ? 'Searching the web…' : 'Thinking…'}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {assistStatus === 'error' && (
+            <p className="quick-parse-error">Something went wrong. Check your connection and try again.</p>
+          )}
+
+          {/* Footer */}
+          <div className="modal-footer">
+            <button className="btn-cancel" onClick={onClose}>Cancel</button>
+            <button
+              className="btn-save"
+              onClick={runAssist}
+              disabled={!prompt.trim() || assistStatus === 'running'}
+              aria-label="Generate"
+            >
+              {assistStatus === 'running'
+                ? <><span className="quick-spinner" style={{ display: 'inline-block', marginRight: 6 }} />Generating…</>
+                : 'Generate'}
+            </button>
+          </div>
+
+          {/* History dropdown */}
+          {history.length > 0 && (
+            <div className="quick-assist-history-row">
+              <label className="quick-assist-context-label" htmlFor="qa-assist-recent">Recent</label>
+              <select
+                id="qa-assist-recent"
+                className="quick-assist-context-select"
+                value=""
+                onChange={(e) => {
+                  if (!e.target.value) return
+                  const entry = history[parseInt(e.target.value)]
+                  if (entry) {
+                    setPrompt(entry.prompt)
+                    setOutput(entry.output)
+                    setAssistStatus('done')
+                  }
+                }}
+              >
+                <option value="">Choose a previous query…</option>
+                {history.map((entry, i) => (
+                  <option key={i} value={i}>
+                    {entry.prompt.length > 55 ? entry.prompt.slice(0, 55) + '…' : entry.prompt} · {timeAgo(entry.ts)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </>
       )}
 
