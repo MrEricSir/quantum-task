@@ -170,11 +170,48 @@ test.describe('app shell', () => {
     await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /search/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /assist/i })).toBeVisible()
 
     // Sidebar nav (desktop) or mobile nav
     for (const label of ['Today', 'Board', 'Calendar', 'Habits', 'Engineering']) {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Global Assist modal
+// ---------------------------------------------------------------------------
+test.describe('global assist modal', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+  })
+
+  test('Assist button is visible in the header', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /assist/i })).toBeVisible()
+  })
+
+  test('clicking Assist button opens the modal', async ({ page }) => {
+    await page.getByRole('button', { name: /assist/i }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('heading', { name: /assist/i })).toBeVisible()
+  })
+
+  test('modal has context selector and prompt textarea', async ({ page }) => {
+    await page.getByRole('button', { name: /assist/i }).click()
+    await expect(page.locator('#ga-context')).toBeVisible()
+    await expect(page.locator('.global-assist-prompt')).toBeVisible()
+  })
+
+  test('Generate button is disabled when prompt is empty', async ({ page }) => {
+    await page.getByRole('button', { name: /assist/i }).click()
+    await expect(page.getByRole('button', { name: /generate/i })).toBeDisabled()
+  })
+
+  test('pressing A key opens the modal', async ({ page }) => {
+    await page.keyboard.press('a')
+    await expect(page.getByRole('dialog')).toBeVisible()
   })
 })
 
@@ -698,8 +735,8 @@ test.describe('workshop page', () => {
     await waitForApp(page)
   })
 
-  test('Workshop nav item is visible in sidebar', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /workshop/i }).first()).toBeVisible()
+  test('Workshop is not in the primary sidebar nav', async ({ page }) => {
+    await expect(page.locator('.sidebar-item', { hasText: /^workshop$/i })).toHaveCount(0)
   })
 
   test('"New Job" button is visible', async ({ page }) => {

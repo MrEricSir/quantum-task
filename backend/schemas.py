@@ -283,6 +283,14 @@ class AssistRequest(BaseModel):
     lon: Optional[float] = None
 
 
+class GlobalAssistRequest(BaseModel):
+    prompt: str
+    section: Optional[str] = None   # "today" | "week" | "month" | "later"
+    tag_id: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
 class BriefingRequest(BaseModel):
     todos: List['Card'] = []
     calendar_events: List[CalendarEvent] = []
