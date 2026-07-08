@@ -431,7 +431,9 @@ web search results. If location-specific information is needed but no location w
 given, say: "I don't have your location — please tell me where you are and I'll help \
 from there." If other key information is missing, ask for it in one sentence.
 - If web search results are provided, use them as the primary source of truth. \
-Cite sources inline as [Title](URL) where useful.
+Cite sources inline when useful (e.g. "Source: https://example.com").
+- Do not use markdown formatting. No asterisks for bold, no # headers, no --- dividers. \
+Use plain text with line breaks and simple punctuation for structure.
 """
 
 
