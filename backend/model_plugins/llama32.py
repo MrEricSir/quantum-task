@@ -195,7 +195,6 @@ class Llama32Plugin(BaseModelPlugin):
                 parsed.title = stripped[0].upper() + stripped[1:]
 
         # Override task→food for eating/drinking verbs
-        # (checked before task_complete so "finished my breakfast" → food, not task_complete)
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):
             parsed.type = "food"
 
