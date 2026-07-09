@@ -19,6 +19,14 @@ _TIME_RE = re.compile(
     re.I,
 )
 
+# Past-tense / present-progressive eating/drinking verbs — override task→food
+# when the model misclassifies a food log entry.
+_FOOD_RE = re.compile(
+    r'^(?:i\s+)?(?:ate|eating|had|having|drank|drinking|'
+    r'consumed|grabbed|ordered|finished|just\s+had|snacked\s+on|tasted)\b',
+    re.I,
+)
+
 
 class Llama31_8bPlugin(BaseModelPlugin):
     model_name = "llama-3.1-8b-instant"
@@ -72,6 +80,19 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '{{"type":"habit","title":"Meditate","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":"daily","note_content":null}}',
+        ),
+        # food — eating/drinking log
+        (
+            "had a yogurt",
+            '{{"type":"food","title":"Yogurt","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
+        ),
+        (
+            "ate a bowl of oatmeal for breakfast",
+            '{{"type":"food","title":"Bowl of oatmeal","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
         ),
         # note
         (
@@ -127,6 +148,10 @@ class Llama31_8bPlugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
+        # Override task→food when input clearly starts with an eating/drinking verb
+        if parsed.type == "task" and _FOOD_RE.match(text.strip()):
+            parsed.type = "food"
+
         # Strip fabricated scheduled_at for vague day phrases with no stated clock time
         if parsed.scheduled_at and parsed.section in ("week", "month"):
             if not _TIME_RE.search(text):

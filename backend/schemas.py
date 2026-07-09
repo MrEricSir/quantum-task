@@ -59,7 +59,8 @@ class ParseRequest(BaseModel):
 class ParsedTodo(BaseModel):
     # type: "task" = completable item; "habit" = ongoing recurring behaviour
     #       "goal" = update a standalone health goal (not a habit or task)
-    type: Literal["task", "habit", "goal"] = "task"
+    #       "food" = log something eaten or drunk
+    type: Literal["task", "habit", "goal", "food"] = "task"
     title: str
     # description: optional short context from the user's input
     description: Optional[str] = None
@@ -79,7 +80,9 @@ class ParsedTodo(BaseModel):
     @field_validator('scheduled_at', 'description', 'source_text', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
-        return None if v == '' else v
+        if isinstance(v, str) and v.strip().lower() in ('', 'null', 'none'):
+            return None
+        return v
 
 
 class BulkParseResponse(BaseModel):

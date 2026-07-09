@@ -20,6 +20,15 @@ _TIME_RE = re.compile(
     re.I,
 )
 
+# First-person eating/drinking verbs that llama3.2 under-classifies as "task".
+# Only clear past tense / present progressive — avoids false positives on
+# habits like "drink more water daily" or imperatives like "eat less sugar".
+_FOOD_RE = re.compile(
+    r'^(?:i\s+)?(?:ate|eating|had|having|drank|drinking|'
+    r'consumed|grabbed|ordered|finished|just\s+had|snacked\s+on|tasted)\b',
+    re.I,
+)
+
 
 class Llama32Plugin(BaseModelPlugin):
     model_name = "llama3.2"
@@ -55,6 +64,17 @@ class Llama32Plugin(BaseModelPlugin):
             '{{"type":"habit","title":"Meditate","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":"daily","note_content":null}}',
+        ),
+        # food — eating/drinking log (past or present tense)
+        (
+            "had a cup of sugar-free yogurt",
+            '{{"type":"food","title":"Cup of sugar-free yogurt","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
+        ),
+        (
+            "ate a banana and drank some coffee",
+            '{{"type":"food","title":"Banana and coffee","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
         ),
         # note — explicit "note:" prefix
         (
@@ -94,6 +114,16 @@ class Llama32Plugin(BaseModelPlugin):
             '"scheduled_at":"{today}T19:00:00","suggested_tags":[],"note_content":null}}'
             ']}}',
         ),
+        # food + task together → separate items
+        (
+            "had oatmeal for breakfast, call dentist tomorrow",
+            '{{"items":['
+            '{{"type":"food","title":"Oatmeal","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],"note_content":null}},'
+            '{{"type":"task","title":"Call dentist","description":null,"section":"week",'
+            '"scheduled_at":null,"suggested_tags":[],"note_content":null}}'
+            ']}}',
+        ),
         # "buy X, Y, and Z" with multiple items → single note
         (
             "buy eggs, fish, and apple juice",
@@ -111,6 +141,11 @@ class Llama32Plugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
+        # llama3.2 under-classifies food entries as tasks — override when the
+        # input clearly starts with a first-person eating/drinking verb.
+        if parsed.type == "task" and _FOOD_RE.match(text.strip()):
+            parsed.type = "food"
+
         # llama3.2 invents a scheduled_at for vague day phrases ("next week",
         # "this Friday") even when no clock time was stated.  If no time word
         # appears in the input, any scheduled_at on a week/month task is

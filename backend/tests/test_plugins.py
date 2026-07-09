@@ -10,6 +10,7 @@ import pytest
 from datetime import date, datetime
 from model_plugins.base import BaseModelPlugin, resolve_dates
 from model_plugins.llama31_8b import Llama31_8bPlugin
+from model_plugins.llama32 import Llama32Plugin
 from schemas import ParsedTodo
 
 plugin = BaseModelPlugin()
@@ -236,3 +237,101 @@ class TestBulkTimestampParsing:
         result = _full_pipeline(_task(title=raw_title, description=description))
         assert not re.search(r'\d{4}-\d{2}-\d{2}', result.title), \
             f"ISO date fragment in title for input {raw_title!r}: got {result.title!r}"
+
+
+# ── Food type detection ────────────────────────────────────────────────────────
+
+_llama32 = Llama32Plugin()
+
+
+def _food_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedTodo:
+    """normalize_raw → post_process for food-detection tests (no date resolution needed)."""
+    raw = plugin.normalize_raw(raw)
+    return plugin.post_process(ParsedTodo.model_validate(raw), text=text)
+
+
+class TestFoodTypeDetection:
+    """
+    Regression suite for the food log classification bug.
+
+    Root causes that were fixed:
+      1. ParsedTodo.type Literal excluded "food", so Pydantic silently coerced
+         any LLM-returned "food" back to the default "task".
+      2. Both model plugins lacked a _FOOD_RE post_process override to catch the
+         case where the LLM misclassifies an eating/drinking log as a task.
+    """
+
+    # ── Schema regression ──────────────────────────────────────────────────────
+
+    def test_schema_accepts_food_type(self):
+        """ParsedTodo must accept type='food' without validation error."""
+        p = ParsedTodo(type="food", title="Yogurt", section="today")
+        assert p.type == "food"
+
+    def test_schema_food_not_coerced_to_task(self):
+        """Before the fix, type='food' was silently dropped to 'task'."""
+        p = ParsedTodo.model_validate(
+            {"type": "food", "title": "Yogurt", "section": "today"}
+        )
+        assert p.type == "food", "type='food' must not be coerced to 'task'"
+
+    # ── Plugin override: llama-3.1-8b-instant ─────────────────────────────────
+
+    @pytest.mark.parametrize("text", [
+        "had a yogurt",
+        "had a cup of sugar-free yogurt",
+        "ate a banana",
+        "eating some chips",
+        "drank a coffee",
+        "drinking a smoothie",
+        "just had lunch",
+        "I had some oatmeal",
+        "grabbed a snack",
+        "finished my breakfast",
+    ])
+    def test_llama31_food_verbs_override_task(self, text):
+        """LLM returning task for food input must be corrected to food."""
+        result = _food_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "food", f"Expected food for {text!r}, got {result.type!r}"
+
+    @pytest.mark.parametrize("text", [
+        "call dentist tomorrow",
+        "buy groceries",
+        "drink more water daily",   # habit, not a log entry
+        "eat less sugar",           # imperative/goal, not a log entry
+        "have a meeting at 2pm",    # "have" used for appointment
+    ])
+    def test_llama31_non_food_inputs_not_overridden(self, text):
+        """Task inputs that happen to contain food-adjacent words must stay as task."""
+        result = _food_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "task", f"Expected task for {text!r}, got {result.type!r}"
+
+    def test_llama31_habit_type_not_overridden(self):
+        """The override must only fire for type=task, not type=habit."""
+        result = _food_pipeline(
+            _llama,
+            _task(type="habit", recurrence_rule="daily"),
+            text="had a yogurt",
+        )
+        assert result.type == "habit"
+
+    # ── Plugin override: llama3.2 ──────────────────────────────────────────────
+
+    @pytest.mark.parametrize("text", [
+        "had a yogurt",
+        "ate a bowl of oatmeal",
+        "drank a glass of water",
+        "eating leftovers",
+    ])
+    def test_llama32_food_verbs_override_task(self, text):
+        result = _food_pipeline(_llama32, _task(type="task"), text=text)
+        assert result.type == "food", f"Expected food for {text!r}, got {result.type!r}"
+
+    @pytest.mark.parametrize("text", [
+        "drink more water daily",
+        "eat less processed food",
+        "call dentist",
+    ])
+    def test_llama32_non_food_inputs_not_overridden(self, text):
+        result = _food_pipeline(_llama32, _task(type="task"), text=text)
+        assert result.type == "task", f"Expected task for {text!r}, got {result.type!r}"

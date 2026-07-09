@@ -636,16 +636,16 @@ export default function QuickAddModal({
             </div>
           )}
 
-          {detectedType !== 'food' && (
+          {detectedType !== 'goal' && (
             <div className="quick-type-row">
               <span className="quick-type-label">Detected as</span>
               <div className="quick-type-tabs">
-                {(detectedType === 'goal' ? ['goal'] : ['task', 'habit']).map((t) => (
+                {['task', 'habit', 'food'].map((t) => (
                   <button
                     key={t}
                     type="button"
                     className={`quick-type-tab${detectedType === t ? ' quick-type-tab--active' : ''}`}
-                    onClick={() => t !== 'goal' && setDetectedType(t)}
+                    onClick={() => setDetectedType(t)}
                   >
                     {TYPE_LABELS[t]}
                   </button>

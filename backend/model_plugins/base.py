@@ -46,10 +46,16 @@ Fields:
                           Use when the input explicitly says "set/change/update my X goal to Y"
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
                           Always set withings_metric and withings_goal when type="goal"
-                  food  = logging something eaten or drunk, right now or very recently
-                          (e.g. "I ate a donut", "just had coffee", "about to drink green tea",
-                          "had a chicken salad for lunch", "drinking a beer")
-                          When type is "food", set title to the food/drink name only
+                  food  = logging something eaten or drunk (past, present, or imminent)
+                          Trigger on ANY first- or second-person eating/drinking verb:
+                          ate, eat, eating, had, have, having, drank, drink, drinking,
+                          consumed, grabbed, picked up, ordered, finished, just had, etc.
+                          Examples: "I ate a donut", "had a cup of yogurt",
+                          "ate sugar-free yogurt", "just had coffee", "drinking a beer",
+                          "had a chicken salad for lunch", "grabbed a snack"
+                          Do NOT classify food as a task or goal just because it mentions
+                          a health attribute (e.g. "sugar-free", "low-cal", "protein shake").
+                          When type is "food", set title to the food/drink description only
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
