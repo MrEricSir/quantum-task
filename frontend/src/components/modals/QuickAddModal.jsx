@@ -18,7 +18,7 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log' }
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off' }
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
 const KG_TO_LBS = 2.20462
 
@@ -40,6 +40,15 @@ function saveToHistory(entry) {
   const prev = loadHistory()
   const next = [entry, ...prev.filter((e) => e.prompt !== entry.prompt)].slice(0, HISTORY_MAX)
   localStorage.setItem(HISTORY_KEY, JSON.stringify(next))
+}
+
+function findBestHabitMatch(title, habits) {
+  if (!habits?.length || !title) return null
+  const q = title.toLowerCase()
+  const manual = habits.filter((h) => !h.archived && !h.withings_metric)
+  return manual.find((h) => h.name.toLowerCase() === q)
+    ?? manual.find((h) => h.name.toLowerCase().includes(q) || q.includes(h.name.toLowerCase()))
+    ?? null
 }
 
 function timeAgo(iso) {
@@ -73,12 +82,14 @@ function formatGoalDisplay(metric, goal, isImperial) {
 export default function QuickAddModal({
   allTags = [],
   visibleTags = [],
+  habits = [],
   onClose,
   onSaveTask,
   onSaveHabit,
   onSaveGoals,
   onSaveStepGoal,
   onSaveFood,
+  onToggleHabit,
   isImperial = false,
   initialText = '',
   defaultTab = 'add',
@@ -103,6 +114,7 @@ export default function QuickAddModal({
   const [clarificationQuestion, setClarificationQuestion] = useState('')
   const [withingsMetric, setWithingsMetric] = useState(null)
   const [withingsGoal, setWithingsGoal] = useState(null)
+  const [habitCheckId, setHabitCheckId] = useState(null)
   const [saving, setSaving] = useState(false)
 
   // ── Voice input ──
@@ -183,6 +195,10 @@ export default function QuickAddModal({
         setClarificationQuestion(result.clarification_question ?? '')
         setWithingsMetric(result.withings_metric ?? null)
         setWithingsGoal(result.withings_goal ?? null)
+        if (result.type === 'habit_check') {
+          const match = findBestHabitMatch(result.title ?? '', habits)
+          setHabitCheckId(match?.id ?? null)
+        }
         setStep('confirm')
       } else {
         setBulkItems(items.map((item, i) => ({ ...item, _key: i })))
@@ -212,6 +228,9 @@ export default function QuickAddModal({
         await onSaveStepGoal(withingsGoal)
       } else if (detectedType === 'goal' && withingsMetric) {
         await onSaveGoals({ [withingsMetric]: withingsGoal })
+      } else if (detectedType === 'habit_check') {
+        const habit = habits.find((h) => h.id === habitCheckId)
+        if (habit) await onToggleHabit(habit)
       } else if (detectedType === 'habit') {
         await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else if (detectedType === 'food') {
@@ -316,6 +335,9 @@ export default function QuickAddModal({
           await onSaveStepGoal(item.withings_goal)
         } else if (item.type === 'goal' && item.withings_metric) {
           await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
+        } else if (item.type === 'habit_check') {
+          const match = findBestHabitMatch(item.title, habits)
+          if (match) await onToggleHabit(match)
         } else if (item.type === 'habit') {
           await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
         } else if (item.type === 'food') {
@@ -344,7 +366,9 @@ export default function QuickAddModal({
       ? (!withingsMetric || withingsGoal == null)
       : detectedType === 'food'
         ? !text.trim()
-        : !title.trim()
+        : detectedType === 'habit_check'
+          ? !habitCheckId
+          : !title.trim()
   )
 
   const renderCardFields = (idPrefix) => (
@@ -640,7 +664,7 @@ export default function QuickAddModal({
             <div className="quick-type-row">
               <span className="quick-type-label">Detected as</span>
               <div className="quick-type-tabs">
-                {['task', 'habit', 'food'].map((t) => (
+                {['task', 'habit', 'food', 'habit_check'].map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -683,10 +707,34 @@ export default function QuickAddModal({
             </div>
           )}
 
+          {detectedType === 'habit_check' && (
+            <div className="form-group">
+              <label htmlFor="qa-habit-check">Habit</label>
+              {habits.length === 0 ? (
+                <p className="quick-hint">No habits found. Add a habit first.</p>
+              ) : (
+                <select
+                  id="qa-habit-check"
+                  value={habitCheckId ?? ''}
+                  onChange={(e) => setHabitCheckId(e.target.value ? parseInt(e.target.value) : null)}
+                >
+                  <option value="">Select a habit…</option>
+                  {habits.filter((h) => !h.archived && !h.withings_metric).map((h) => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
           <div className="modal-footer">
             <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
             <button className="btn-save" onClick={handleConfirm} disabled={confirmDisabled}>
-              {saving ? 'Saving…' : detectedType === 'goal' ? 'Set Goal' : detectedType === 'food' ? 'Log Food' : `Add ${TYPE_LABELS[detectedType]}`}
+              {saving ? 'Saving…'
+                : detectedType === 'goal' ? 'Set Goal'
+                : detectedType === 'food' ? 'Log Food'
+                : detectedType === 'habit_check' ? 'Mark Done'
+                : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
           </div>
         </>

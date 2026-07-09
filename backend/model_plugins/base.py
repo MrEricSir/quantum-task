@@ -36,7 +36,7 @@ Reference dates:
 {tags_section}
 
 Fields:
-  type          — "task" | "habit" | "goal" | "food"
+  type          — "task" | "habit" | "goal" | "food" | "habit_check"
                   task  = a discrete, completable item with a clear done state
                           (e.g. "send Bob the report", "dentist appointment", "buy groceries")
                   habit = something you do repeatedly on an ongoing, indefinite basis with
@@ -56,6 +56,12 @@ Fields:
                           Do NOT classify food as a task or goal just because it mentions
                           a health attribute (e.g. "sugar-free", "low-cal", "protein shake").
                           When type is "food", set title to the food/drink description only
+                  habit_check = marking an existing habit as completed today
+                          Use when the input describes a habit in the past tense:
+                          (e.g. "did my meditation", "completed my morning run",
+                          "finished my walk", "checked off yoga", "done with exercise")
+                          When type is "habit_check", set title to just the activity
+                          (strip "did", "completed", "finished", "checked off", etc.)
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;

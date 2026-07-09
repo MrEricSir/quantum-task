@@ -20,10 +20,22 @@ _TIME_RE = re.compile(
 )
 
 # Past-tense / present-progressive eating/drinking verbs — override task→food
-# when the model misclassifies a food log entry.
 _FOOD_RE = re.compile(
     r'^(?:i\s+)?(?:ate|eating|had|having|drank|drinking|'
     r'consumed|grabbed|ordered|finished|just\s+had|snacked\s+on|tasted)\b',
+    re.I,
+)
+
+# Past-tense habit completion verbs — override task/habit → habit_check
+_HABIT_CHECK_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)\b',
+    re.I,
+)
+
+# Strip the trigger verb + optional possessive to extract the activity title
+_HABIT_CHECK_STRIP_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)'
+    r'(?:\s+(?:my|the|a|an))?\s+',
     re.I,
 )
 
@@ -80,6 +92,19 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '{{"type":"habit","title":"Meditate","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":"daily","note_content":null}}',
+        ),
+        # habit_check — past-tense habit completion
+        (
+            "did my meditation",
+            '{{"type":"habit_check","title":"Meditation","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
+        ),
+        (
+            "completed my morning run",
+            '{{"type":"habit_check","title":"Morning run","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
         ),
         # food — eating/drinking log
         (
@@ -148,6 +173,14 @@ class Llama31_8bPlugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
+        # Override task→habit_check when input starts with a past-tense completion verb
+        if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
+            parsed.type = "habit_check"
+            # Clean the title: strip the trigger verb if the LLM left it in
+            stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
+            if stripped:
+                parsed.title = stripped[0].upper() + stripped[1:]
+
         # Override task→food when input clearly starts with an eating/drinking verb
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):
             parsed.type = "food"

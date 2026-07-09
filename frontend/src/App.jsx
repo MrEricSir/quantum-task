@@ -899,6 +899,7 @@ export default function App() {
         <QuickAddModal
           allTags={tags}
           visibleTags={visibleTags}
+          habits={habits}
           defaultTab={quickAddDefaultTab}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
@@ -906,6 +907,7 @@ export default function App() {
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
           onSaveFood={createFoodEntry}
+          onToggleHabit={handleToggleHabit}
           isImperial={isImperial}
           initialText={quickAddInitialText}
         />

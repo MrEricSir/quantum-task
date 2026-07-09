@@ -60,7 +60,8 @@ class ParsedTodo(BaseModel):
     # type: "task" = completable item; "habit" = ongoing recurring behaviour
     #       "goal" = update a standalone health goal (not a habit or task)
     #       "food" = log something eaten or drunk
-    type: Literal["task", "habit", "goal", "food"] = "task"
+    #       "habit_check" = mark an existing habit as done today
+    type: Literal["task", "habit", "goal", "food", "habit_check"] = "task"
     title: str
     # description: optional short context from the user's input
     description: Optional[str] = None

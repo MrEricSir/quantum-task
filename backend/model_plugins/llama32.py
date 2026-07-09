@@ -29,6 +29,18 @@ _FOOD_RE = re.compile(
     re.I,
 )
 
+# Past-tense habit completion verbs — override task/habit → habit_check
+_HABIT_CHECK_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)\b',
+    re.I,
+)
+
+_HABIT_CHECK_STRIP_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)'
+    r'(?:\s+(?:my|the|a|an))?\s+',
+    re.I,
+)
+
 
 class Llama32Plugin(BaseModelPlugin):
     model_name = "llama3.2"
@@ -64,6 +76,17 @@ class Llama32Plugin(BaseModelPlugin):
             '{{"type":"habit","title":"Meditate","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":"daily","note_content":null}}',
+        ),
+        # habit_check — past-tense habit completion
+        (
+            "did my meditation",
+            '{{"type":"habit_check","title":"Meditation","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
+        ),
+        (
+            "finished my evening walk",
+            '{{"type":"habit_check","title":"Evening walk","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
         ),
         # food — eating/drinking log (past or present tense)
         (
@@ -141,8 +164,14 @@ class Llama32Plugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
-        # llama3.2 under-classifies food entries as tasks — override when the
-        # input clearly starts with a first-person eating/drinking verb.
+        # Override task/habit → habit_check for past-tense completion phrases
+        if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
+            parsed.type = "habit_check"
+            stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
+            if stripped:
+                parsed.title = stripped[0].upper() + stripped[1:]
+
+        # Override task→food for eating/drinking verbs
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):
             parsed.type = "food"
 
