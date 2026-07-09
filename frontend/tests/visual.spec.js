@@ -209,10 +209,10 @@ test.describe('global assist modal', () => {
     await expect(page.getByRole('button', { name: /generate/i })).toBeDisabled()
   })
 
-  test('pressing A key opens the assist tab', async ({ page }) => {
+  test('pressing A key opens the assist modal', async ({ page }) => {
     await page.keyboard.press('a')
     await expect(page.getByRole('dialog')).toBeVisible()
-    await expect(page.locator('.quick-tab--active', { hasText: /assist/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
   })
 })
 
@@ -397,27 +397,17 @@ test.describe('quick-add modal', () => {
     await expect(page.getByRole('textbox')).toBeVisible()
   })
 
-  test('hint text mentions tasks, habits, food, and health goals', async ({ page }) => {
-    await page.goto('/today')
-    await waitForApp(page)
-    await page.locator('button.btn-primary').first().click()
-    const hint = page.locator('.quick-hint')
-    await expect(hint).toContainText('task')
-    await expect(hint).toContainText('habit')
-    await expect(hint).toContainText('food')
-    await expect(hint).toContainText('health goal')
-  })
-
-  test('has Cancel and Add footer buttons, no X button', async ({ page }) => {
+  test('has Cancel, Continue, and Assist footer buttons, no X button', async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.locator('.modal-footer .btn-save')).toBeVisible()
+    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
+    await expect(page.locator('.btn-assist')).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
-  test('confirm screen shows detected type and Back/Add buttons', async ({ page }) => {
+  test('confirm screen shows detected type tabs and Back/Add buttons', async ({ page }) => {
     await page.route('**/api/cards/parse-bulk', r =>
       r.fulfill({ json: { items: [{
         type: 'task', title: 'Call dentist', description: null,
@@ -427,9 +417,7 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('Call dentist next week')
-    await page.locator('.modal-footer .btn-save').click()
-    // Confirm screen
-    await expect(page.getByRole('heading', { name: /confirm/i })).toBeVisible()
+    await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     await expect(page.locator('.quick-type-tabs')).toBeVisible()
     await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
@@ -446,9 +434,8 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('Morning run every day')
-    await page.locator('.modal-footer .btn-save').click()
+    await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
-    // Override to habit
     await page.locator('.quick-type-tab', { hasText: 'Habit' }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Habit')
     await expect(page.getByRole('button', { name: /add habit/i })).toBeVisible()
@@ -464,10 +451,10 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('grocery list: milk eggs')
-    await page.locator('.modal-footer .btn-save').click()
+    await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     await page.getByRole('button', { name: /back/i }).click()
-    await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
   })
 })
 

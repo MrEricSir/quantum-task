@@ -359,8 +359,11 @@ class TestHabitCheckDetection:
     @pytest.mark.parametrize("text,expected_title", [
         ("did my meditation",      "Meditation"),
         ("completed my morning run", "Morning run"),
+        ("complete my morning run", "Morning run"),
         ("finished my walk",       "Walk"),
+        ("finish my walk",         "Walk"),
         ("checked off yoga",       "Yoga"),
+        ("check off yoga",         "Yoga"),
         ("done with exercise",     "Exercise"),
     ])
     def test_llama31_habit_becomes_habit_check(self, text, expected_title):
@@ -380,11 +383,20 @@ class TestHabitCheckDetection:
         assert result.title.lower() == expected_title.lower(), \
             f"Title should be {expected_title!r}, got {result.title!r}"
 
-    def test_task_type_does_not_become_habit_check(self):
-        """Completion verbs on a task should yield task_complete, not habit_check."""
-        result = _habit_pipeline(_llama, _task(type="task"), text="finished the report")
-        assert result.type == "task_complete", \
-            f"task + completion verb should be task_complete, got {result.type!r}"
+    @pytest.mark.parametrize("text", [
+        "did my duolingo",
+        "finish duolingo",
+        "finished the report",
+        "finish the report",
+        "complete the dentist appointment",
+        "completed the dentist appointment",
+        "done with my walk",
+    ])
+    def test_task_with_completion_verb_becomes_habit_check(self, text):
+        """Any completion verb on a task type → habit_check; frontend resolves habit vs task."""
+        result = _habit_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "habit_check", \
+            f"task + completion verb should be habit_check, got {result.type!r}"
 
     def test_non_completion_habit_unchanged(self):
         result = _habit_pipeline(_llama, _habit_raw(), text="meditate every morning")
@@ -400,29 +412,16 @@ class TestTaskCompleteDetection:
     """
 
     @pytest.mark.parametrize("text,expected_title", [
-        ("finished the dentist appointment", "Dentist appointment"),
-        ("completed the report",             "Report"),
-        ("done with the meeting",            "Meeting"),
-        ("archived the project proposal",    "Project proposal"),
-        ("archive the old notes",            "Old notes"),
-        ("checked off the oil change",       "Oil change"),
+        ("archived the project proposal", "Project proposal"),
+        ("archive the old notes",         "Old notes"),
     ])
-    def test_llama31_task_becomes_task_complete(self, text, expected_title):
+    def test_archive_keyword_becomes_task_complete(self, text, expected_title):
+        """"archive" is the only regex trigger for task_complete."""
         result = _habit_pipeline(_llama, _task(type="task"), text=text)
         assert result.type == "task_complete", \
             f"Expected task_complete for {text!r}, got {result.type!r}"
         assert result.title.lower() == expected_title.lower(), \
             f"Title should be {expected_title!r}, got {result.title!r}"
-
-    @pytest.mark.parametrize("text,expected_title", [
-        ("finished the dentist appointment", "Dentist appointment"),
-        ("completed the report",             "Report"),
-        ("archive the project proposal",     "Project proposal"),
-    ])
-    def test_llama32_task_becomes_task_complete(self, text, expected_title):
-        result = _habit_pipeline(_llama32, _task(type="task"), text=text)
-        assert result.type == "task_complete", \
-            f"Expected task_complete for {text!r}, got {result.type!r}"
 
     @pytest.mark.parametrize("text", [
         "had a yogurt",
@@ -432,20 +431,7 @@ class TestTaskCompleteDetection:
         "call dentist tomorrow",
         "buy groceries",
     ])
-    def test_llama31_non_completion_tasks_unchanged(self, text):
+    def test_non_completion_tasks_unchanged(self, text):
         result = _habit_pipeline(_llama, _task(type="task"), text=text)
-        assert result.type != "task_complete", \
-            f"Expected not task_complete for {text!r}, got {result.type!r}"
-
-    def test_finished_without_food_verb_becomes_task_complete(self):
-        """'finished my breakfast' has no remaining food verb so falls to task_complete.
-        In practice the LLM returns food directly; the regex is only a fallback for task."""
-        result = _habit_pipeline(_llama, _task(type="task"), text="finished my breakfast")
-        assert result.type == "task_complete", \
-            f"Expected task_complete for LLM-misclassified 'finished' input, got {result.type!r}"
-
-    def test_habit_type_not_affected_by_task_complete(self):
-        """task_complete override only fires for type=task, not type=habit."""
-        result = _habit_pipeline(_llama, _habit_raw(), text="finished the dentist")
-        assert result.type == "habit_check", \
-            f"habit + completion verb should be habit_check (not task_complete), got {result.type!r}"
+        assert result.type not in ("task_complete", "habit_check"), \
+            f"Unexpected completion type for {text!r}: {result.type!r}"

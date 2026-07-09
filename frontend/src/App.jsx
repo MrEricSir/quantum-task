@@ -83,7 +83,7 @@ export default function App() {
     defaultSection, showNewSheet, setShowNewSheet,
     openEdit, openNewCard, closeModal,
   } = useModals()
-  const [quickAddDefaultTab, setQuickAddDefaultTab] = useState('add')
+  const [quickAddMode, setQuickAddMode] = useState('quick')
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
   const [weather, setWeather] = useState(null)
@@ -183,8 +183,8 @@ export default function App() {
 
   const shortcutsRef = useRef([])
   shortcutsRef.current = [
-    { key: 'n', label: 'New card',          group: 'action', action: ()  => { setQuickAddDefaultTab('add'); setShowQuickAdd(true) } },
-    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { setQuickAddDefaultTab('assist'); setShowQuickAdd(true) } },
+    { key: 'n', label: 'New card',          group: 'action', action: ()  => { setQuickAddMode('quick'); setShowQuickAdd(true) } },
+    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { setQuickAddMode('assist'); setShowQuickAdd(true) } },
     { key: '/', label: 'Search',            group: 'action', action: (e) => { e.preventDefault(); setShowSearch(true) } },
     { key: '?', label: 'Keyboard shortcuts',group: 'action', action: ()  => setShowShortcuts(true) },
     { key: 't', label: 'Today',             group: 'nav',    action: ()  => navigate('/today') },
@@ -573,7 +573,7 @@ export default function App() {
           <div className="header-actions">
             <button
               className="btn-ghost"
-              onClick={() => { setQuickAddDefaultTab('assist'); setShowQuickAdd(true) }}
+              onClick={() => { setQuickAddMode('assist'); setShowQuickAdd(true) }}
               title="Assist (press A)"
               aria-label="Assist"
               style={{ fontSize: 16, padding: '7px 10px', fontWeight: 600 }}
@@ -598,7 +598,7 @@ export default function App() {
               }}
               onClearErrors={() => setParseQueue((prev) => prev.filter((i) => i.status === 'pending'))}
             />
-            <button className="btn-primary" onClick={() => { setQuickAddDefaultTab('add'); setShowQuickAdd(true) }}>
+            <button className="btn-primary" onClick={() => { setQuickAddMode('quick'); setShowQuickAdd(true) }}>
               + Add
             </button>
             <DropdownMenu.Root>
@@ -901,7 +901,7 @@ export default function App() {
           visibleTags={visibleTags}
           habits={habits}
           cards={todos}
-          defaultTab={quickAddDefaultTab}
+          defaultMode={quickAddMode}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}

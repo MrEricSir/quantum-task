@@ -29,28 +29,24 @@ _FOOD_RE = re.compile(
     re.I,
 )
 
-# Past-tense habit completion verbs — override habit → habit_check
+# Past-tense completion verbs — override task/habit → habit_check
+# Frontend handles habit vs task disambiguation via unified picker
 _HABIT_CHECK_RE = re.compile(
-    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)\b',
+    r'^(?:i\s+)?(?:did|complete(?:d)?|finish(?:ed)?|check(?:ed)?\s+off|done\s+with)\b',
     re.I,
 )
 
 _HABIT_CHECK_STRIP_RE = re.compile(
-    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)'
+    r'^(?:i\s+)?(?:did|complete(?:d)?|finish(?:ed)?|check(?:ed)?\s+off|done\s+with)'
     r'(?:\s+(?:my|the|a|an))?\s+',
     re.I,
 )
 
-# Past-tense task completion / archive verbs — override task → task_complete
-_TASK_COMPLETE_RE = re.compile(
-    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with|archived?)\b',
-    re.I,
-)
+# "archive" is the only explicit task_complete signal at the regex level
+_TASK_COMPLETE_RE = re.compile(r'^(?:i\s+)?archived?\b', re.I)
 
 _TASK_COMPLETE_STRIP_RE = re.compile(
-    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with|archived?)'
-    r'(?:\s+(?:my|the|a|an))?\s+',
-    re.I,
+    r'^(?:i\s+)?archived?(?:\s+(?:the|a|an))?\s+', re.I
 )
 
 
@@ -187,8 +183,9 @@ class Llama32Plugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
-        # Override habit → habit_check for past-tense completion of a recurring habit
-        if parsed.type == "habit" and _HABIT_CHECK_RE.match(text.strip()):
+        # Override task/habit → habit_check for past-tense completion verbs
+        # Frontend resolves whether it's a habit or task via unified picker
+        if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
             parsed.type = "habit_check"
             stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
             if stripped:
@@ -198,7 +195,7 @@ class Llama32Plugin(BaseModelPlugin):
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):
             parsed.type = "food"
 
-        # Override task → task_complete for past-tense completion of a one-time task
+        # "archive" is the only regex-level trigger for task_complete
         if parsed.type == "task" and _TASK_COMPLETE_RE.match(text.strip()):
             parsed.type = "task_complete"
             stripped = _TASK_COMPLETE_STRIP_RE.sub("", text.strip()).strip()
