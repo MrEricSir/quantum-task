@@ -18,7 +18,7 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off' }
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off', task_complete: 'Complete Task' }
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
 const KG_TO_LBS = 2.20462
 
@@ -40,6 +40,14 @@ function saveToHistory(entry) {
   const prev = loadHistory()
   const next = [entry, ...prev.filter((e) => e.prompt !== entry.prompt)].slice(0, HISTORY_MAX)
   localStorage.setItem(HISTORY_KEY, JSON.stringify(next))
+}
+
+function findBestCardMatch(title, cards) {
+  if (!cards?.length || !title) return null
+  const q = title.toLowerCase()
+  return cards.find((c) => c.title.toLowerCase() === q)
+    ?? cards.find((c) => c.title.toLowerCase().includes(q) || q.includes(c.title.toLowerCase()))
+    ?? null
 }
 
 function findBestHabitMatch(title, habits) {
@@ -83,6 +91,7 @@ export default function QuickAddModal({
   allTags = [],
   visibleTags = [],
   habits = [],
+  cards = [],
   onClose,
   onSaveTask,
   onSaveHabit,
@@ -90,6 +99,7 @@ export default function QuickAddModal({
   onSaveStepGoal,
   onSaveFood,
   onToggleHabit,
+  onCompleteTask,
   isImperial = false,
   initialText = '',
   defaultTab = 'add',
@@ -115,6 +125,7 @@ export default function QuickAddModal({
   const [withingsMetric, setWithingsMetric] = useState(null)
   const [withingsGoal, setWithingsGoal] = useState(null)
   const [habitCheckId, setHabitCheckId] = useState(null)
+  const [taskCompleteId, setTaskCompleteId] = useState(null)
   const [saving, setSaving] = useState(false)
 
   // ── Voice input ──
@@ -199,6 +210,11 @@ export default function QuickAddModal({
           const match = findBestHabitMatch(result.title ?? '', habits)
           setHabitCheckId(match?.id ?? null)
         }
+        if (result.type === 'task_complete') {
+          const activeTasks = cards.filter((c) => !c.completed && !c.archived)
+          const match = findBestCardMatch(result.title ?? '', activeTasks)
+          setTaskCompleteId(match?.id ?? null)
+        }
         setStep('confirm')
       } else {
         setBulkItems(items.map((item, i) => ({ ...item, _key: i })))
@@ -228,6 +244,8 @@ export default function QuickAddModal({
         await onSaveStepGoal(withingsGoal)
       } else if (detectedType === 'goal' && withingsMetric) {
         await onSaveGoals({ [withingsMetric]: withingsGoal })
+      } else if (detectedType === 'task_complete') {
+        if (taskCompleteId) await onCompleteTask(taskCompleteId)
       } else if (detectedType === 'habit_check') {
         const habit = habits.find((h) => h.id === habitCheckId)
         if (habit) await onToggleHabit(habit)
@@ -335,6 +353,10 @@ export default function QuickAddModal({
           await onSaveStepGoal(item.withings_goal)
         } else if (item.type === 'goal' && item.withings_metric) {
           await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
+        } else if (item.type === 'task_complete') {
+          const activeTasks = cards.filter((c) => !c.completed && !c.archived)
+          const match = findBestCardMatch(item.title, activeTasks)
+          if (match) await onCompleteTask(match.id)
         } else if (item.type === 'habit_check') {
           const match = findBestHabitMatch(item.title, habits)
           if (match) await onToggleHabit(match)
@@ -368,7 +390,9 @@ export default function QuickAddModal({
         ? !text.trim()
         : detectedType === 'habit_check'
           ? !habitCheckId
-          : !title.trim()
+          : detectedType === 'task_complete'
+            ? !taskCompleteId
+            : !title.trim()
   )
 
   const renderCardFields = (idPrefix) => (
@@ -664,7 +688,7 @@ export default function QuickAddModal({
             <div className="quick-type-row">
               <span className="quick-type-label">Detected as</span>
               <div className="quick-type-tabs">
-                {['task', 'habit', 'food', 'habit_check'].map((t) => (
+                {['task', 'habit', 'food', 'habit_check', 'task_complete'].map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -707,6 +731,29 @@ export default function QuickAddModal({
             </div>
           )}
 
+          {detectedType === 'task_complete' && (() => {
+            const activeTasks = cards.filter((c) => !c.completed && !c.archived)
+            return (
+              <div className="form-group">
+                <label htmlFor="qa-task-complete">Task</label>
+                {activeTasks.length === 0 ? (
+                  <p className="quick-hint">No active tasks found.</p>
+                ) : (
+                  <select
+                    id="qa-task-complete"
+                    value={taskCompleteId ?? ''}
+                    onChange={(e) => setTaskCompleteId(e.target.value ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">Select a task…</option>
+                    {activeTasks.map((c) => (
+                      <option key={c.id} value={c.id}>{c.title}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )
+          })()}
+
           {detectedType === 'habit_check' && (
             <div className="form-group">
               <label htmlFor="qa-habit-check">Habit</label>
@@ -734,6 +781,7 @@ export default function QuickAddModal({
                 : detectedType === 'goal' ? 'Set Goal'
                 : detectedType === 'food' ? 'Log Food'
                 : detectedType === 'habit_check' ? 'Mark Done'
+                : detectedType === 'task_complete' ? 'Mark Complete'
                 : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
           </div>

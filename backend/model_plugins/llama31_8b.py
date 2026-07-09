@@ -22,11 +22,11 @@ _TIME_RE = re.compile(
 # Past-tense / present-progressive eating/drinking verbs — override task→food
 _FOOD_RE = re.compile(
     r'^(?:i\s+)?(?:ate|eating|had|having|drank|drinking|'
-    r'consumed|grabbed|ordered|finished|just\s+had|snacked\s+on|tasted)\b',
+    r'consumed|grabbed|ordered|just\s+had|snacked\s+on|tasted)\b',
     re.I,
 )
 
-# Past-tense habit completion verbs — override task/habit → habit_check
+# Past-tense habit completion verbs — override habit → habit_check
 _HABIT_CHECK_RE = re.compile(
     r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)\b',
     re.I,
@@ -35,6 +35,18 @@ _HABIT_CHECK_RE = re.compile(
 # Strip the trigger verb + optional possessive to extract the activity title
 _HABIT_CHECK_STRIP_RE = re.compile(
     r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)'
+    r'(?:\s+(?:my|the|a|an))?\s+',
+    re.I,
+)
+
+# Past-tense task completion / archive verbs — override task → task_complete
+_TASK_COMPLETE_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with|archived?)\b',
+    re.I,
+)
+
+_TASK_COMPLETE_STRIP_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with|archived?)'
     r'(?:\s+(?:my|the|a|an))?\s+',
     re.I,
 )
@@ -119,6 +131,19 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":null,"note_content":null}}',
         ),
+        # task_complete — marking a one-time task as done
+        (
+            "finished the dentist appointment",
+            '{{\"type\":\"task_complete\",\"title\":\"Dentist appointment\",\"description\":null,'\
+            '\"section\":\"today\",\"scheduled_at\":null,\"suggested_tags\":[],'\
+            '\"recurrence_rule\":null,\"note_content\":null}}',
+        ),
+        (
+            "archive the project proposal",
+            '{{\"type\":\"task_complete\",\"title\":\"Project proposal\",\"description\":null,'\
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'\
+            '\"recurrence_rule\":null,\"note_content\":null}}',
+        ),
         # note
         (
             "note: wifi password is quantum42",
@@ -173,17 +198,24 @@ class Llama31_8bPlugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
-        # Override task→habit_check when input starts with a past-tense completion verb
-        if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
+        # Override habit → habit_check for past-tense completion of a recurring habit
+        if parsed.type == "habit" and _HABIT_CHECK_RE.match(text.strip()):
             parsed.type = "habit_check"
-            # Clean the title: strip the trigger verb if the LLM left it in
             stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
             if stripped:
                 parsed.title = stripped[0].upper() + stripped[1:]
 
         # Override task→food when input clearly starts with an eating/drinking verb
+        # (checked before task_complete so "finished my breakfast" → food, not task_complete)
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):
             parsed.type = "food"
+
+        # Override task → task_complete for past-tense completion of a one-time task
+        if parsed.type == "task" and _TASK_COMPLETE_RE.match(text.strip()):
+            parsed.type = "task_complete"
+            stripped = _TASK_COMPLETE_STRIP_RE.sub("", text.strip()).strip()
+            if stripped:
+                parsed.title = stripped[0].upper() + stripped[1:]
 
         # Strip fabricated scheduled_at for vague day phrases with no stated clock time
         if parsed.scheduled_at and parsed.section in ("week", "month"):

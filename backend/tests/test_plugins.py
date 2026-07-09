@@ -287,7 +287,6 @@ class TestFoodTypeDetection:
         "just had lunch",
         "I had some oatmeal",
         "grabbed a snack",
-        "finished my breakfast",
     ])
     def test_llama31_food_verbs_override_task(self, text):
         """LLM returning task for food input must be corrected to food."""

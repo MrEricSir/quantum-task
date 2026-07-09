@@ -900,6 +900,7 @@ export default function App() {
           allTags={tags}
           visibleTags={visibleTags}
           habits={habits}
+          cards={todos}
           defaultTab={quickAddDefaultTab}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
@@ -908,6 +909,7 @@ export default function App() {
           onSaveStepGoal={handleSaveStepGoal}
           onSaveFood={createFoodEntry}
           onToggleHabit={handleToggleHabit}
+          onCompleteTask={async (id) => { await handleUpdateTodo(id, { completed: true }) }}
           isImperial={isImperial}
           initialText={quickAddInitialText}
         />

@@ -61,7 +61,7 @@ class ParsedTodo(BaseModel):
     #       "goal" = update a standalone health goal (not a habit or task)
     #       "food" = log something eaten or drunk
     #       "habit_check" = mark an existing habit as done today
-    type: Literal["task", "habit", "goal", "food", "habit_check"] = "task"
+    type: Literal["task", "habit", "goal", "food", "habit_check", "task_complete"] = "task"
     title: str
     # description: optional short context from the user's input
     description: Optional[str] = None

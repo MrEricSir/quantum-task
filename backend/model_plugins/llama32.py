@@ -25,11 +25,11 @@ _TIME_RE = re.compile(
 # habits like "drink more water daily" or imperatives like "eat less sugar".
 _FOOD_RE = re.compile(
     r'^(?:i\s+)?(?:ate|eating|had|having|drank|drinking|'
-    r'consumed|grabbed|ordered|finished|just\s+had|snacked\s+on|tasted)\b',
+    r'consumed|grabbed|ordered|just\s+had|snacked\s+on|tasted)\b',
     re.I,
 )
 
-# Past-tense habit completion verbs — override task/habit → habit_check
+# Past-tense habit completion verbs — override habit → habit_check
 _HABIT_CHECK_RE = re.compile(
     r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)\b',
     re.I,
@@ -37,6 +37,18 @@ _HABIT_CHECK_RE = re.compile(
 
 _HABIT_CHECK_STRIP_RE = re.compile(
     r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with)'
+    r'(?:\s+(?:my|the|a|an))?\s+',
+    re.I,
+)
+
+# Past-tense task completion / archive verbs — override task → task_complete
+_TASK_COMPLETE_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with|archived?)\b',
+    re.I,
+)
+
+_TASK_COMPLETE_STRIP_RE = re.compile(
+    r'^(?:i\s+)?(?:did|completed|finished|checked\s+off|done\s+with|archived?)'
     r'(?:\s+(?:my|the|a|an))?\s+',
     re.I,
 )
@@ -98,6 +110,17 @@ class Llama32Plugin(BaseModelPlugin):
             "ate a banana and drank some coffee",
             '{{"type":"food","title":"Banana and coffee","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
+        ),
+        # task_complete — marking a one-time task as done
+        (
+            "finished the dentist appointment",
+            '{{"type":"task_complete","title":"Dentist appointment","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
+        ),
+        (
+            "archive the project proposal",
+            '{{"type":"task_complete","title":"Project proposal","description":null,'
+            '"section":"later","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
         ),
         # note — explicit "note:" prefix
         (
@@ -164,16 +187,24 @@ class Llama32Plugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
-        # Override task/habit → habit_check for past-tense completion phrases
-        if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
+        # Override habit → habit_check for past-tense completion of a recurring habit
+        if parsed.type == "habit" and _HABIT_CHECK_RE.match(text.strip()):
             parsed.type = "habit_check"
             stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
             if stripped:
                 parsed.title = stripped[0].upper() + stripped[1:]
 
         # Override task→food for eating/drinking verbs
+        # (checked before task_complete so "finished my breakfast" → food, not task_complete)
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):
             parsed.type = "food"
+
+        # Override task → task_complete for past-tense completion of a one-time task
+        if parsed.type == "task" and _TASK_COMPLETE_RE.match(text.strip()):
+            parsed.type = "task_complete"
+            stripped = _TASK_COMPLETE_STRIP_RE.sub("", text.strip()).strip()
+            if stripped:
+                parsed.title = stripped[0].upper() + stripped[1:]
 
         # llama3.2 invents a scheduled_at for vague day phrases ("next week",
         # "this Friday") even when no clock time was stated.  If no time word
