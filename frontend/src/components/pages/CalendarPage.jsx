@@ -34,19 +34,19 @@ function sortItems(items) {
   })
 }
 
-function CalendarTaskRow({ todo, onToggle, onEdit }) {
+function CalendarTaskRow({ card, onToggle, onEdit }) {
   return (
-    <div className="calp-task-row" onClick={() => onEdit(todo)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onEdit(todo)}>
+    <div className="calp-task-row" onClick={() => onEdit(card)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onEdit(card)}>
       <button
         type="button"
         className="calp-task-check"
-        onClick={(e) => { e.stopPropagation(); onToggle(todo) }}
+        onClick={(e) => { e.stopPropagation(); onToggle(card) }}
         aria-label="Toggle complete"
       />
-      <span className="calp-task-time">{formatTime(todo.scheduled_at)}</span>
-      <span className="calp-task-title">{todo.title}</span>
+      <span className="calp-task-time">{formatTime(card.scheduled_at)}</span>
+      <span className="calp-task-title">{card.title}</span>
       <div className="calp-task-tags">
-        {(todo.tags ?? []).map((tag) => (
+        {(card.tags ?? []).map((tag) => (
           <span key={tag.id} className="calp-task-dot" style={{ background: tag.color }} title={tag.name} />
         ))}
       </div>
@@ -437,7 +437,7 @@ export default function CalendarPage({ events, cards, onToggle, onEdit, onRefres
                           onHighlightClear={onHighlightClear}
                         />
                       ) : (
-                        <CalendarTaskRow key={`task-${item.data.id}`} todo={item.data} onToggle={onToggle} onEdit={onEdit} />
+                        <CalendarTaskRow key={`task-${item.data.id}`} card={item.data} onToggle={onToggle} onEdit={onEdit} />
                       )
                     )
                   )}
@@ -516,7 +516,7 @@ export default function CalendarPage({ events, cards, onToggle, onEdit, onRefres
                   item.type === 'event' ? (
                     <CalendarEventCard key={`ev-${item.data.id}`} event={item.data} />
                   ) : (
-                    <CalendarTaskRow key={`task-${item.data.id}`} todo={item.data} onToggle={onToggle} onEdit={onEdit} />
+                    <CalendarTaskRow key={`task-${item.data.id}`} card={item.data} onToggle={onToggle} onEdit={onEdit} />
                   )
                 )}
               </div>

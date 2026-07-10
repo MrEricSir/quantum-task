@@ -111,18 +111,18 @@ export function useNotifications(cards, onOpenTodo) {
       const now = Date.now()
       const cutoff = now + LEAD_MINUTES * 60_000
 
-      cards.forEach((todo) => {
-        if (!todo.scheduled_at || todo.completed) return
-        const t = new Date(todo.scheduled_at).getTime()
+      cards.forEach((card) => {
+        if (!card.scheduled_at || card.completed) return
+        const t = new Date(card.scheduled_at).getTime()
         if (t < now || t > cutoff) return
 
-        const key = `${todo.id}:${todo.scheduled_at}`
+        const key = `${card.id}:${card.scheduled_at}`
         if (shownRef.current.has(key)) return
         shownRef.current.add(key)
         saveShown(shownRef.current)
 
         const mins = Math.round((t - now) / 60_000)
-        const notif = new Notification(todo.title, {
+        const notif = new Notification(card.title, {
           body: mins <= 1 ? 'Due now' : `Due in ${mins} minute${mins !== 1 ? 's' : ''}`,
           icon: '/icon.svg',
           tag: key,
@@ -130,7 +130,7 @@ export function useNotifications(cards, onOpenTodo) {
         notif.onclick = () => {
           window.focus()
           if (channelRef.current) {
-            channelRef.current.postMessage({ type: 'open_card', cardId: todo.id })
+            channelRef.current.postMessage({ type: 'open_card', cardId: card.id })
           }
         }
       })

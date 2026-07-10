@@ -64,9 +64,9 @@ def parse_sse(text: str) -> list[dict]:
     return results
 
 
-def post_briefing(client, habits=None, todos=None, calendar_events=None):
+def post_briefing(client, habits=None, cards=None, calendar_events=None):
     return client.post("/api/briefing/stream", json={
-        "todos": todos or [],
+        "cards": cards or [],
         "calendar_events": calendar_events or [],
         "habits": habits or [],
         "force": True,   # bypass cache so every call hits the generation path
@@ -113,6 +113,23 @@ class TestBriefingHallucinationGuard:
         mock_client.chat.completions.create.return_value = iter([])
         with patch("routers.briefing.llm_client", return_value=mock_client):
             res = post_briefing(client, habits=habits)
+
+        assert res.status_code == 200
+        mock_client.chat.completions.create.assert_called_once()
+
+    def test_today_card_calls_llm(self, client):
+        """A card in the 'today' section → LLM is called (not the static no-content path)."""
+        cards = [{"id": 1, "title": "Write tests", "section": "today",
+                  "description": None, "body": None, "scheduled_at": None,
+                  "completed": False, "completed_at": None, "position": 0,
+                  "created_at": "2026-01-01T00:00:00", "updated_at": None,
+                  "archived": False, "archived_at": None, "raw_input": None,
+                  "recurrence_rule": None, "external_id": None,
+                  "snoozed_until": None, "waiting_reason": None, "tags": []}]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = iter([])
+        with patch("routers.briefing.llm_client", return_value=mock_client):
+            res = post_briefing(client, cards=cards)
 
         assert res.status_code == 200
         mock_client.chat.completions.create.assert_called_once()

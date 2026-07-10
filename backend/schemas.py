@@ -280,8 +280,8 @@ class Job(BaseModel):
 
 
 class AssistRequest(BaseModel):
-    task_title: str
-    task_description: Optional[str] = None
+    card_title: str
+    card_description: Optional[str] = None
     context: str  # user-pasted content: emails, messages, documents, etc.
     lat: Optional[float] = None
     lon: Optional[float] = None

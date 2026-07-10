@@ -74,8 +74,8 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          task_title: task.title,
-          task_description: task.description || null,
+          card_title: task.title,
+          card_description: task.description || null,
           context: context.trim(),
           lat: location?.lat ?? null,
           lon: location?.lon ?? null,

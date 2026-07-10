@@ -369,7 +369,7 @@ def _reverse_geocode(lat: float, lon: float) -> str | None:
         r = http_requests.get(
             "https://nominatim.openstreetmap.org/reverse",
             params={"lat": lat, "lon": lon, "format": "json"},
-            headers={"User-Agent": "personal-todo-app/1.0"},
+            headers={"User-Agent": "quantum-task/1.0"},
             timeout=5,
         )
         addr = r.json().get("address", {})
@@ -454,9 +454,9 @@ def stream_assist(req: schemas.AssistRequest):
     if req.lat is not None and req.lon is not None:
         location_str = _reverse_geocode(req.lat, req.lon)
 
-    user_msg_parts = [f"Task: {req.task_title}"]
-    if req.task_description:
-        user_msg_parts.append(f"Additional context from task: {req.task_description}")
+    user_msg_parts = [f"Task: {req.card_title}"]
+    if req.card_description:
+        user_msg_parts.append(f"Additional context from card: {req.card_description}")
     if location_str:
         user_msg_parts.append(f"User's location: {location_str}")
     user_msg_parts.append(f"\nContext provided by user:\n{req.context}")
