@@ -1,4 +1,4 @@
-/* Shared base lives in EventCard.css — imported alongside this file in TodoCard.jsx */
+/* Shared base lives in EventCard.css — imported alongside this file in Card.jsx */
 
 /* ── Done state ── */
 .event-card--done .event-title {

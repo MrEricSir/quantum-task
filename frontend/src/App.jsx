@@ -10,12 +10,12 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove } from '@dnd-kit/sortable'
 import Column from './components/board/Column'
-import TodoCard from './components/board/TodoCard'
+import Card from './components/board/Card'
 import Archive from './components/board/Archive'
 import Sidebar from './components/layout/Sidebar'
 import MobileNav from './components/layout/MobileNav'
 import TagFilterBar from './components/layout/TagFilterBar'
-import AddTodoModal from './components/modals/AddTodoModal'
+import CardModal from './components/modals/CardModal'
 import CardSheet from './components/modals/CardSheet'
 import QuickAddModal from './components/modals/QuickAddModal'
 import SearchModal from './components/modals/SearchModal'
@@ -80,12 +80,12 @@ export default function App() {
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
     showShortcuts, setShowShortcuts,
-    editingTodo,
+    editingCard,
     defaultSection, showNewSheet, setShowNewSheet,
     openEdit, openNewCard, closeModal,
   } = useModals()
   const [quickAddStep, setQuickAddStep] = useState('input')
-  const [activeTodo, setActiveTodo] = useState(null)
+  const [activeCard, setActiveCard] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
   const [highlightCalendarEventId, setHighlightCalendarEventId] = useState(null)
   const [weather, setWeather] = useState(() => {
@@ -99,10 +99,10 @@ export default function App() {
     try { sessionStorage.setItem('weather', JSON.stringify(w)) } catch {}
   }
   const {
-    todos, setTodos, loading: cardsLoading, todosRef,
-    handleAddTodo, handleUpdateTodo, handleDeleteTodo, handleToggle,
-    handleAddTag, handleRemoveTag, handleAddCard, handleUpdateCard,
-    handleDeleteCard, handleArchiveCard, handleUnarchiveCard,
+    cards, setCards, loading: cardsLoading, cardsRef,
+    handleAddCard, handleUpdateCard, handleDeleteCard, handleToggle,
+    handleAddTag, handleRemoveTag,
+    handleArchiveCard, handleUnarchiveCard,
     handleUpdateTag, handleDeleteTag, handleReplaceTag,
   } = useCards({ authed, tags, setTags, invalidateBriefing })
 
@@ -152,9 +152,9 @@ export default function App() {
   const loading = cardsLoading || tagsLoading
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
-    todos,
+    cards,
     (todoId) => {
-      const todo = todosRef.current.find((t) => t.id === todoId)
+      const todo = cardsRef.current.find((t) => t.id === todoId)
       if (todo) openEdit(todo)
     }
   )
@@ -333,13 +333,13 @@ export default function App() {
   // App badge: count of overdue tasks
   useEffect(() => {
     if (!('setAppBadge' in navigator)) return
-    const overdue = todos.filter((t) => !t.completed && (t.overdue_days ?? 0) > 0).length
+    const overdue = cards.filter((t) => !t.completed && (t.overdue_days ?? 0) > 0).length
     if (overdue > 0) {
       navigator.setAppBadge(overdue).catch(() => {})
     } else {
       navigator.clearAppBadge().catch(() => {})
     }
-  }, [todos])
+  }, [cards])
 
   // Fetch tags on login
   useEffect(() => {
@@ -350,42 +350,42 @@ export default function App() {
       .finally(() => setTagsLoading(false))
   }, [authed])
 
-  const activeTodos = todos.filter((t) => !t.completed && !t.archived)
-  const completedTodos = todos.filter((t) => t.completed && !t.archived)
+  const activeCards = cards.filter((t) => !t.completed && !t.archived)
+  const completedCards = cards.filter((t) => t.completed && !t.archived)
 
   const visibleTags = useMemo(() =>
     tags.filter((tag) => {
       if (!tag.name.startsWith('Project: ')) return true
-      return todos.some((t) => !t.completed && !t.archived && (t.tags ?? []).some((tg) => tg.id === tag.id))
+      return cards.some((t) => !t.completed && !t.archived && (t.tags ?? []).some((tg) => tg.id === tag.id))
     }),
-    [tags, todos]
+    [tags, cards]
   )
 
   const visibleCalendarEvents = selectedTagId === null
     ? calendarEvents
     : calendarEvents.filter((e) => e.tag_id === selectedTagId)
 
-  const visibleActiveTodos = selectedTagId === null
-    ? activeTodos
-    : activeTodos.filter((t) => (t.tags ?? []).some((tag) => tag.id === selectedTagId))
+  const visibleActiveCards = selectedTagId === null
+    ? activeCards
+    : activeCards.filter((t) => (t.tags ?? []).some((tag) => tag.id === selectedTagId))
 
-  const todosBySection = SECTIONS.reduce((acc, s) => {
-    acc[s] = visibleActiveTodos
+  const cardsBySection = SECTIONS.reduce((acc, s) => {
+    acc[s] = visibleActiveCards
       .filter((t) => t.section === s)
       .sort((a, b) => a.position - b.position)
     return acc
   }, {})
 
   const handleDragStart = useCallback((event) => {
-    const todo = todosRef.current.find((t) => t.id === event.active.id)
-    setActiveTodo(todo ?? null)
+    const todo = cardsRef.current.find((t) => t.id === event.active.id)
+    setActiveCard(todo ?? null)
   }, [])
 
   const handleDragOver = useCallback((event) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
 
-    const current = todosRef.current
+    const current = cardsRef.current
     const dragged = current.find((t) => t.id === active.id)
     if (!dragged) return
 
@@ -399,17 +399,17 @@ export default function App() {
 
     if (!overSection || activeSection === overSection) return
 
-    setTodos((prev) =>
+    setCards((prev) =>
       prev.map((t) => (t.id === active.id ? { ...t, section: overSection } : t))
     )
   }, [])
 
   const handleDragEnd = useCallback((event) => {
     const { active, over } = event
-    setActiveTodo(null)
+    setActiveCard(null)
     if (!over) return
 
-    const current = todosRef.current
+    const current = cardsRef.current
     const dragged = current.find((t) => t.id === active.id)
     if (!dragged) return
 
@@ -417,7 +417,7 @@ export default function App() {
 
     // Archive drop: board card → archive (mark complete)
     if (!dragged.completed && (over.id === 'archive' || overCard?.completed === true)) {
-      handleUpdateTodo(dragged.id, { completed: true })
+      handleUpdateCard(dragged.id, { completed: true })
       invalidateBriefing()
       return
     }
@@ -428,7 +428,7 @@ export default function App() {
         ? String(over.id)
         : (overCard && !overCard.completed ? overCard.section : null)
       if (overSection) {
-        handleUpdateTodo(dragged.id, { completed: false, section: overSection })
+        handleUpdateCard(dragged.id, { completed: false, section: overSection })
         invalidateBriefing()
       }
       return
@@ -454,12 +454,12 @@ export default function App() {
     }
 
     const updatedSection = reordered.map((t, i) => ({ ...t, position: i }))
-    const newTodos = [
+    const newCards = [
       ...current.filter((t) => t.section !== section),
       ...updatedSection,
     ]
 
-    setTodos(newTodos)
+    setCards(newCards)
     reorderCards(
       updatedSection.map(({ id, section, position }) => ({ id, section, position }))
     )
@@ -480,7 +480,7 @@ export default function App() {
           if (result.type === 'habit') {
             await handleAddHabit({ name: result.title, tag_ids: tagIds })
           } else {
-            await handleAddTodo({
+            await handleAddCard({
               title: result.title,
               description: text,
               section: result.section,
@@ -521,7 +521,7 @@ export default function App() {
   }
 
   const handleMoveSection = async (todoId, newSection) => {
-    await handleUpdateTodo(todoId, { section: newSection })
+    await handleUpdateCard(todoId, { section: newSection })
     setActiveSection(newSection)
   }
 
@@ -541,7 +541,7 @@ export default function App() {
         return [...prev, tag].sort((a, b) => a.name.localeCompare(b.name))
       })
     }
-    setTodos((prev) => {
+    setCards((prev) => {
       const updated = archived_card
         ? prev.map((t) => (t.id === archived_card.id ? archived_card : t))
         : prev
@@ -550,10 +550,10 @@ export default function App() {
   }
 
   const handleModalSave = async (data) => {
-    if (editingTodo) {
-      await handleUpdateTodo(editingTodo.id, data)
+    if (editingCard) {
+      await handleUpdateCard(editingCard.id, data)
     } else {
-      await handleAddTodo(data)
+      await handleAddCard(data)
     }
     closeModal()
   }
@@ -692,14 +692,14 @@ export default function App() {
           <div className="loading">Loading...</div>
         ) : isTodayPage ? (
           <TodayPage
-            todos={selectedTagId ? todos.filter((t) => (t.tags ?? []).some((tg) => tg.id === selectedTagId)) : todos}
+            cards={selectedTagId ? cards.filter((t) => (t.tags ?? []).some((tg) => tg.id === selectedTagId)) : cards}
             calendarEvents={visibleCalendarEvents}
             habits={selectedTagId ? habits.filter((h) => (h.tags ?? []).some((tg) => tg.id === selectedTagId)) : habits}
             onToggle={handleToggle}
             onToggleHabit={handleToggleHabit}
             onEdit={openEdit}
-            onSave={handleUpdateTodo}
-            onDelete={handleDeleteTodo}
+            onSave={handleUpdateCard}
+            onDelete={handleDeleteCard}
             onArchive={handleArchiveCard}
             onMove={handleMoveSection}
             allTags={tags}
@@ -721,7 +721,7 @@ export default function App() {
                   onClick={() => setActiveSection(s)}
                 >
                   {SECTION_LABELS[s]}
-                  <span className="mobile-tab-count">{todosBySection[s].length}</span>
+                  <span className="mobile-tab-count">{cardsBySection[s].length}</span>
                 </button>
               ))}
             </div>
@@ -739,12 +739,12 @@ export default function App() {
                     key={section}
                     section={section}
                     label={SECTION_LABELS[section]}
-                    todos={todosBySection[section]}
+                    cards={cardsBySection[section]}
                     isActive={section === activeSection}
                     isMobile={isMobile}
                     onEdit={openEdit}
-                    onSave={handleUpdateTodo}
-                    onDelete={handleDeleteTodo}
+                    onSave={handleUpdateCard}
+                    onDelete={handleDeleteCard}
                     onArchive={handleArchiveCard}
                     onToggle={handleToggle}
                     onMove={handleMoveSection}
@@ -755,12 +755,12 @@ export default function App() {
                 ))}
               </div>
               <DragOverlay dropAnimation={null}>
-                {activeTodo ? <TodoCard todo={activeTodo} isOverlay /> : null}
+                {activeCard ? <Card card={activeCard} isOverlay /> : null}
               </DragOverlay>
               <Archive
-                todos={completedTodos}
+                cards={completedCards}
                 onEdit={openEdit}
-                onDelete={handleDeleteTodo}
+                onDelete={handleDeleteCard}
                 onToggle={handleToggle}
               />
             </DndContext>
@@ -768,7 +768,7 @@ export default function App() {
         ) : isCalendarPage ? (
           <CalendarPage
             events={visibleCalendarEvents}
-            todos={visibleActiveTodos}
+            cards={visibleActiveCards}
             onToggle={handleToggle}
             onEdit={openEdit}
             onRefresh={handleRefreshCalendar}
@@ -795,19 +795,19 @@ export default function App() {
           />
         ) : isWorkshopPage ? (
           <WorkshopPage
-            todos={todos.filter(t => !t.archived && !t.completed)}
+            cards={cards.filter(t => !t.archived && !t.completed)}
             tags={tags}
             onAddCard={handleAddCard}
           />
         ) : isEngineeringPage ? (
           <EngineeringPage
             items={engineeringItems}
-            todos={todos}
+            cards={cards}
             lastSynced={lastEngineeringSynced}
             syncing={engineeringSyncing}
             onSync={refreshEngineeringItems}
             onAddToBoard={async (item) => {
-              await handleAddTodo({
+              await handleAddCard({
                 title: item.item_type === 'pr'
                   ? `GitHub PR: ${item.title}`
                   : `GitHub Issue: ${item.title}`,
@@ -828,14 +828,14 @@ export default function App() {
       />
 
       {showModal && (
-        <AddTodoModal
-          card={editingTodo}
+        <CardModal
+          card={editingCard}
           defaultSection={defaultSection}
           allTags={tags}
           onClose={closeModal}
           onSave={handleModalSave}
-          onDelete={editingTodo ? async () => { await handleDeleteTodo(editingTodo.id); closeModal() } : undefined}
-          onArchive={editingTodo ? async () => { await handleArchiveCard(editingTodo.id); closeModal() } : undefined}
+          onDelete={editingCard ? async () => { await handleDeleteCard(editingCard.id); closeModal() } : undefined}
+          onArchive={editingCard ? async () => { await handleArchiveCard(editingCard.id); closeModal() } : undefined}
         />
       )}
 
@@ -844,7 +844,7 @@ export default function App() {
           defaultSection={defaultSection}
           allTags={tags}
           onClose={() => setShowNewSheet(false)}
-          onCreate={handleAddTodo}
+          onCreate={handleAddCard}
         />
       )}
 
@@ -862,7 +862,7 @@ export default function App() {
       {showGithubSettings && (
         <GithubSettings
           onClose={() => setShowGithubSettings(false)}
-          onSynced={() => fetchCards().then(setTodos).catch(() => {})}
+          onSynced={() => fetchCards().then(setCards).catch(() => {})}
         />
       )}
 
@@ -884,7 +884,7 @@ export default function App() {
         <TagManagerModal
           tags={tags}
           onClose={() => setShowTagManager(false)}
-          todos={todos}
+          cards={cards}
           onCreate={handleCreateTag}
           onUpdate={handleUpdateTag}
           onDelete={handleDeleteTag}
@@ -914,16 +914,16 @@ export default function App() {
           allTags={visibleTags}
           visibleTags={visibleTags}
           habits={habits}
-          cards={todos}
+          cards={cards}
           initialStep={quickAddStep}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
-          onSaveTask={async (data) => { await handleAddTodo(data) }}
+          onSaveCard={async (data) => { await handleAddCard(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
           onSaveFood={createFoodEntry}
           onToggleHabit={handleToggleHabit}
-          onCompleteTask={async (id) => { await handleUpdateTodo(id, { completed: true }) }}
+          onCompleteTask={async (id) => { await handleUpdateCard(id, { completed: true }) }}
           isImperial={isImperial}
           initialText={quickAddInitialText}
         />

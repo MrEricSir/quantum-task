@@ -29,7 +29,7 @@ function buildSources(cards, tagSources, text, searchSources = [], urlSources = 
   ]
 }
 
-export default function WorkshopPage({ todos, tags, onAddCard }) {
+export default function WorkshopPage({ cards, tags, onAddCard }) {
   const [jobs, setJobs] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const [title, setTitle] = useState('')
@@ -391,7 +391,7 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
     })
   }
 
-  const filteredTodos = todos
+  const filteredCards = cards
     .filter(t =>
       !t.archived && !t.completed &&
       !cardSources.some(s => s.card_id === t.id) &&
@@ -541,9 +541,9 @@ export default function WorkshopPage({ todos, tags, onAddCard }) {
                       autoFocus
                     />
                     <div className="workshop-picker-list">
-                      {filteredTodos.length === 0 ? (
+                      {filteredCards.length === 0 ? (
                         <div className="workshop-picker-empty">No cards found</div>
-                      ) : filteredTodos.map(t => (
+                      ) : filteredCards.map(t => (
                         <button
                           key={t.id}
                           className="workshop-picker-item"

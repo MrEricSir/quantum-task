@@ -49,7 +49,7 @@ async function registerPushSubscription() {
   }
 }
 
-export function useNotifications(todos, onOpenTodo) {
+export function useNotifications(cards, onOpenTodo) {
   const [permission, setPermission] = useState(
     () => (typeof Notification !== 'undefined' ? Notification.permission : 'denied')
   )
@@ -111,7 +111,7 @@ export function useNotifications(todos, onOpenTodo) {
       const now = Date.now()
       const cutoff = now + LEAD_MINUTES * 60_000
 
-      todos.forEach((todo) => {
+      cards.forEach((todo) => {
         if (!todo.scheduled_at || todo.completed) return
         const t = new Date(todo.scheduled_at).getTime()
         if (t < now || t > cutoff) return
@@ -139,7 +139,7 @@ export function useNotifications(todos, onOpenTodo) {
     check()
     const id = setInterval(check, POLL_MS)
     return () => clearInterval(id)
-  }, [permission, enabled, todos])
+  }, [permission, enabled, cards])
 
   return { permission, enabled, setEnabled, requestPermission }
 }

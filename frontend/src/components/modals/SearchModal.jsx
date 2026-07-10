@@ -113,7 +113,7 @@ export default function SearchModal({ onClose, onEdit, habits = [], calendarEven
       <Dialog.Portal>
         <Dialog.Overlay className="modal-overlay" />
         <Dialog.Content className="search-modal" aria-describedby={undefined}>
-          <Dialog.Title className="sr-only">Search tasks</Dialog.Title>
+          <Dialog.Title className="sr-only">Search</Dialog.Title>
           <div className="search-input-wrap">
             <MagnifyingGlassIcon className="search-icon" />
             <input

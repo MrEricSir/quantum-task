@@ -78,7 +78,7 @@ export default function QuickAddModal({
   habits = [],
   cards = [],
   onClose,
-  onSaveTask,
+  onSaveCard,
   onSaveHabit,
   onSaveGoals,
   onSaveStepGoal,
@@ -237,7 +237,7 @@ export default function QuickAddModal({
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
       } else {
-        await onSaveTask(buildCardPayload())
+        await onSaveCard(buildCardPayload())
       }
       onClose()
     } catch {
@@ -349,7 +349,7 @@ export default function QuickAddModal({
         } else if (item.type === 'food') {
           await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
         } else {
-          await onSaveTask({
+          await onSaveCard({
             title: item.title,
             description: item.description || null,
             section: item.section ?? 'later',
@@ -482,7 +482,7 @@ export default function QuickAddModal({
 
       {step === 'input' && (
         <>
-          <Dialog.Title asChild><h2 className="sr-only">Quick Add</h2></Dialog.Title>
+          <Dialog.Title asChild><h2 className="sr-only">Capture</h2></Dialog.Title>
           <div className="quick-input-wrap">
             <textarea
               className="quick-textarea"
@@ -499,7 +499,7 @@ export default function QuickAddModal({
                 className={`quick-mic-btn${listening ? ' quick-mic-btn--listening' : ''}`}
                 onClick={handleMic}
                 title={listening ? 'Stop recording' : 'Dictate'}
-                aria-label={listening ? 'Stop recording' : 'Dictate task'}
+                aria-label={listening ? 'Stop recording' : 'Dictate'}
               >
                 <MicIcon />
               </button>

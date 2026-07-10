@@ -2,14 +2,14 @@ import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import Modal from './Modal'
 import CardForm, { ALL_SECTIONS, isoToLocal } from './CardForm'
-import './AddTodoModal.css'
+import './CardModal.css'
 
 function formatDate(iso) {
   if (!iso) return null
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function AddTodoModal({ card, defaultSection = 'today', allTags = [], onClose, onSave, onDelete, onArchive }) {
+export default function CardModal({ card, defaultSection = 'today', allTags = [], onClose, onSave, onDelete, onArchive }) {
   const isEdit = !!card?.id
 
   const [title, setTitle] = useState(card?.title ?? '')

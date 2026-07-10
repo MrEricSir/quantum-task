@@ -1,5 +1,5 @@
 /* Inherits .modal-overlay, .modal, .form-group, .form-row,
-   .modal-footer, .btn-cancel, .btn-save from AddTodoModal.css
+   .modal-footer, .btn-cancel, .btn-save from CardModal.css
    via shared CSS variables. Only quick-add-specific styles here. */
 
 /* ── Input screen footer ── */
@@ -346,7 +346,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* Tag toggles (same as AddTodoModal) */
+/* Tag toggles (same as CardModal) */
 .quick-modal .tag-toggles {
   display: flex;
   flex-wrap: wrap;
@@ -571,7 +571,7 @@
   color: #f87171;
 }
 
-/* Reuse AddTodoModal form styles */
+/* Reuse CardModal form styles */
 .quick-modal .form-group {
   display: flex;
   flex-direction: column;

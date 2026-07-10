@@ -54,14 +54,14 @@ function CalendarTaskRow({ todo, onToggle, onEdit }) {
   )
 }
 
-function buildDayMap(events, todos) {
+function buildDayMap(events, cards) {
   const map = {}
   for (const e of events) {
     const key = toDateKey(new Date(e.start))
     if (!map[key]) map[key] = { events: [], tasks: [] }
     map[key].events.push(e)
   }
-  for (const t of todos) {
+  for (const t of cards) {
     if (!t.scheduled_at) continue
     const key = toDateKey(new Date(t.scheduled_at))
     if (!map[key]) map[key] = { events: [], tasks: [] }
@@ -328,7 +328,7 @@ function DiscoveryPanel({ refreshTrigger }) {
   )
 }
 
-export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing, highlightEventId, onHighlightClear }) {
+export default function CalendarPage({ events, cards, onToggle, onEdit, onRefresh, lastRefreshed, refreshing, highlightEventId, onHighlightClear }) {
   const todayDate = new Date()
   todayDate.setHours(0, 0, 0, 0)
   const todayKey = toDateKey(todayDate)
@@ -342,8 +342,8 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
   const [selectedDate, setSelectedDate] = useState(todayKey)
   const [discoveryRefreshTrigger, setDiscoveryRefreshTrigger] = useState(0)
 
-  const activeTodos = useMemo(() => todos.filter((t) => !t.completed && t.scheduled_at), [todos])
-  const dayMap = useMemo(() => buildDayMap(events, activeTodos), [events, activeTodos])
+  const activeCards = useMemo(() => cards.filter((t) => !t.completed && t.scheduled_at), [cards])
+  const dayMap = useMemo(() => buildDayMap(events, activeCards), [events, activeCards])
   const listDays = useMemo(() => getListDays(), [])
   const monthCells = useMemo(() => buildMonthCells(monthYear.year, monthYear.month), [monthYear.year, monthYear.month])
 

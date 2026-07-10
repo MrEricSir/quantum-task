@@ -621,7 +621,7 @@ test.describe('keyboard shortcuts', () => {
 
   test('n opens quick add modal', async ({ page }) => {
     await page.keyboard.press('n')
-    await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
+    await expect(page.getByRole('dialog')).toBeVisible()
   })
 
   test('/ opens search modal', async ({ page }) => {

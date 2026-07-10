@@ -15,7 +15,7 @@ const PRESET_COLORS = [
   '#6b7280', // gray
 ]
 
-export default function TagManagerModal({ tags, todos = [], onClose, onCreate, onUpdate, onDelete, onReplace }) {
+export default function TagManagerModal({ tags, cards = [], onClose, onCreate, onUpdate, onDelete, onReplace }) {
   const [name, setName] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0])
   const [saving, setSaving] = useState(false)
@@ -55,11 +55,11 @@ export default function TagManagerModal({ tags, todos = [], onClose, onCreate, o
     }
   }
 
-  const todosForTag = (tagId) =>
-    todos.filter((t) => (t.tags ?? []).some((tg) => tg.id === tagId))
+  const cardsForTag = (tagId) =>
+    cards.filter((t) => (t.tags ?? []).some((tg) => tg.id === tagId))
 
   const handleDeleteClick = (tag) => {
-    const count = todosForTag(tag.id).length
+    const count = cardsForTag(tag.id).length
     if (count === 0) {
       onDelete(tag.id)
     } else {
@@ -110,7 +110,7 @@ export default function TagManagerModal({ tags, todos = [], onClose, onCreate, o
             <p className="tag-mgr-empty">No tags yet.</p>
           )}
           {tags.map((tag) => {
-            const usageCount = todosForTag(tag.id).length
+            const usageCount = cardsForTag(tag.id).length
             if (editingId === tag.id) {
               return (
                 <div key={tag.id} className="tag-mgr-row tag-mgr-row--editing">

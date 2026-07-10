@@ -17,7 +17,7 @@ export const CARDS_QUERY_KEY = ['cards']
 export function useCards({ authed, tags, setTags, invalidateBriefing }) {
   const queryClient = useQueryClient()
 
-  const { data: todos = [], isLoading: loading } = useQuery({
+  const { data: cards = [], isLoading: loading } = useQuery({
     queryKey: CARDS_QUERY_KEY,
     queryFn: fetchCards,
     enabled: !!authed,
@@ -25,22 +25,22 @@ export function useCards({ authed, tags, setTags, invalidateBriefing }) {
 
   // Keep a ref so memoized DnD callbacks can access fresh state without
   // re-creating the callbacks on every render.
-  const todosRef = useRef(todos)
-  todosRef.current = todos
+  const cardsRef = useRef(cards)
+  cardsRef.current = cards
 
-  const setTodos = useCallback(
+  const setCards = useCallback(
     (updater) => queryClient.setQueryData(CARDS_QUERY_KEY, updater),
     [queryClient],
   )
 
-  const handleAddTodo = async (data) => {
-    const created = await createCard(data)
+  const handleAddCard = async (data) => {
+    const created = await createCard({ ...data, section: data.section ?? 'later' })
     queryClient.setQueryData(CARDS_QUERY_KEY, (prev) => [...(prev ?? []), created])
     invalidateBriefing?.()
     return created
   }
 
-  const handleUpdateTodo = async (id, data) => {
+  const handleUpdateCard = async (id, data) => {
     const updated = await updateCard(id, data)
     queryClient.setQueryData(CARDS_QUERY_KEY, (prev) =>
       (prev ?? []).map((t) => (t.id === id ? updated : t)),
@@ -48,46 +48,40 @@ export function useCards({ authed, tags, setTags, invalidateBriefing }) {
     return updated
   }
 
-  const handleDeleteTodo = async (id) => {
+  const handleDeleteCard = async (id) => {
     await deleteCard(id)
     queryClient.setQueryData(CARDS_QUERY_KEY, (prev) =>
       (prev ?? []).filter((t) => t.id !== id),
     )
   }
 
-  const handleToggle = async (todo) => {
-    await handleUpdateTodo(todo.id, { completed: !todo.completed })
+  const handleToggle = async (card) => {
+    await handleUpdateCard(card.id, { completed: !card.completed })
     invalidateBriefing?.()
   }
 
-  const handleAddTag = async (todoId, tagId) => {
-    await addTagToCard(todoId, tagId)
+  const handleAddTag = async (cardId, tagId) => {
+    await addTagToCard(cardId, tagId)
     const tag = tags.find((t) => t.id === tagId)
     if (!tag) return
     queryClient.setQueryData(CARDS_QUERY_KEY, (prev) =>
       (prev ?? []).map((t) =>
-        t.id === todoId ? { ...t, tags: [...(t.tags ?? []), tag] } : t,
+        t.id === cardId ? { ...t, tags: [...(t.tags ?? []), tag] } : t,
       ),
     )
   }
 
-  const handleRemoveTag = async (todoId, tagId) => {
-    await removeTagFromCard(todoId, tagId)
+  const handleRemoveTag = async (cardId, tagId) => {
+    await removeTagFromCard(cardId, tagId)
     queryClient.setQueryData(CARDS_QUERY_KEY, (prev) =>
       (prev ?? []).map((t) =>
-        t.id === todoId ? { ...t, tags: (t.tags ?? []).filter((tg) => tg.id !== tagId) } : t,
+        t.id === cardId ? { ...t, tags: (t.tags ?? []).filter((tg) => tg.id !== tagId) } : t,
       ),
     )
   }
 
-  const handleAddCard = async (data) => {
-    return handleAddTodo({ ...data, section: data.section ?? 'later' })
-  }
-
-  const handleUpdateCard = (id, data) => handleUpdateTodo(id, data)
-  const handleDeleteCard = (id) => handleDeleteTodo(id)
-  const handleArchiveCard = (id) => handleUpdateTodo(id, { archived: true })
-  const handleUnarchiveCard = (id) => handleUpdateTodo(id, { archived: false })
+  const handleArchiveCard = (id) => handleUpdateCard(id, { archived: true })
+  const handleUnarchiveCard = (id) => handleUpdateCard(id, { archived: false })
 
   const handleUpdateTag = async (tagId, data) => {
     const updated = await updateTag(tagId, data)
@@ -129,19 +123,16 @@ export function useCards({ authed, tags, setTags, invalidateBriefing }) {
   }
 
   return {
-    todos,
-    setTodos,
+    cards,
+    setCards,
     loading,
-    todosRef,
-    handleAddTodo,
-    handleUpdateTodo,
-    handleDeleteTodo,
-    handleToggle,
-    handleAddTag,
-    handleRemoveTag,
+    cardsRef,
     handleAddCard,
     handleUpdateCard,
     handleDeleteCard,
+    handleToggle,
+    handleAddTag,
+    handleRemoveTag,
     handleArchiveCard,
     handleUnarchiveCard,
     handleUpdateTag,

@@ -10,13 +10,13 @@ export function useModals() {
   const [showGithubSettings, setShowGithubSettings] = useState(false)
   const [showWithingsSettings, setShowWithingsSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [editingTodo, setEditingTodo] = useState(null)
+  const [editingCard, setEditingCard] = useState(null)
   const [defaultSection, setDefaultSection] = useState('today')
   const [showNewSheet, setShowNewSheet] = useState(false)
 
   const openEdit = (todo) => {
     setDefaultSection(todo?.section ?? 'today')
-    setEditingTodo(todo)
+    setEditingCard(todo)
     setShowModal(true)
   }
 
@@ -25,14 +25,14 @@ export function useModals() {
     if (window.matchMedia('(max-width: 640px)').matches) {
       setShowNewSheet(true)
     } else {
-      setEditingTodo(null)
+      setEditingCard(null)
       setShowModal(true)
     }
   }
 
   const closeModal = () => {
     setShowModal(false)
-    setEditingTodo(null)
+    setEditingCard(null)
   }
 
   return {
@@ -45,7 +45,7 @@ export function useModals() {
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
     showShortcuts, setShowShortcuts,
-    editingTodo,
+    editingCard,
     defaultSection,
     showNewSheet, setShowNewSheet,
     openEdit, openNewCard, closeModal,
