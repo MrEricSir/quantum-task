@@ -1326,6 +1326,13 @@ test.describe('search modal', () => {
     await page.keyboard.type('meditation')
     await expect(page.getByText('Morning meditation')).toBeVisible()
   })
+
+  test('calendar events appear in search results when title matches', async ({ page }) => {
+    // Calendar events are client-side filtered from the calendarEvents prop
+    await page.keyboard.type('product review')
+    await expect(page.getByText('Product Review')).toBeVisible()
+    await expect(page.getByText('Event')).toBeVisible()
+  })
 })
 
 // ---------------------------------------------------------------------------

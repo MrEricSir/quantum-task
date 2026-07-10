@@ -328,12 +328,16 @@ function DiscoveryPanel({ refreshTrigger }) {
   )
 }
 
-export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing }) {
+export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing, highlightEventId, onHighlightClear }) {
   const todayDate = new Date()
   todayDate.setHours(0, 0, 0, 0)
   const todayKey = toDateKey(todayDate)
 
   const [view, setView] = useState('list')
+
+  useEffect(() => {
+    if (highlightEventId) setView('list')
+  }, [highlightEventId])
   const [monthYear, setMonthYear] = useState({ year: todayDate.getFullYear(), month: todayDate.getMonth() })
   const [selectedDate, setSelectedDate] = useState(todayKey)
   const [discoveryRefreshTrigger, setDiscoveryRefreshTrigger] = useState(0)
@@ -426,7 +430,12 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
                   ) : (
                     items.map((item) =>
                       item.type === 'event' ? (
-                        <CalendarEventCard key={`ev-${item.data.id}`} event={item.data} />
+                        <CalendarEventCard
+                          key={`ev-${item.data.id}`}
+                          event={item.data}
+                          highlighted={item.data.id === highlightEventId}
+                          onHighlightClear={onHighlightClear}
+                        />
                       ) : (
                         <CalendarTaskRow key={`task-${item.data.id}`} todo={item.data} onToggle={onToggle} onEdit={onEdit} />
                       )

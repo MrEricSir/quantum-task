@@ -87,6 +87,7 @@ export default function App() {
   const [quickAddStep, setQuickAddStep] = useState('input')
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
+  const [highlightCalendarEventId, setHighlightCalendarEventId] = useState(null)
   const [weather, setWeather] = useState(() => {
     try {
       const cached = sessionStorage.getItem('weather')
@@ -773,6 +774,8 @@ export default function App() {
             onRefresh={handleRefreshCalendar}
             lastRefreshed={lastRefreshed}
             refreshing={calendarRefreshing}
+            highlightEventId={highlightCalendarEventId}
+            onHighlightClear={() => setHighlightCalendarEventId(null)}
           />
         ) : isHealthPage ? (
           <HealthPage
@@ -894,7 +897,9 @@ export default function App() {
           onClose={() => setShowSearch(false)}
           onEdit={(todo) => openEdit(todo)}
           habits={habits}
+          calendarEvents={calendarEvents}
           onSelectHabit={() => { setShowSearch(false); navigate('/health') }}
+          onSelectCalendarEvent={(ev) => { setShowSearch(false); setHighlightCalendarEventId(ev.id); navigate('/calendar') }}
         />
       )}
 

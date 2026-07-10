@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { CalendarIcon, ChevronUpIcon, ChevronDownIcon } from '@radix-ui/react-icons'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './EventCard.css'
@@ -19,13 +19,23 @@ function formatDateRange(start, end, allDay) {
   return `${startTime} – ${formatTime(end)}`
 }
 
-export default function CalendarEventCard({ event }) {
-  const [expanded, setExpanded] = useState(false)
+export default function CalendarEventCard({ event, highlighted = false, onHighlightClear }) {
+  const [expanded, setExpanded] = useState(highlighted)
+  const [flash, setFlash] = useState(highlighted)
+  const cardRef = useRef(null)
   const borderColor = event.tag_color ?? '#6b7280'
+
+  useEffect(() => {
+    if (!highlighted) return
+    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const t = setTimeout(() => { setFlash(false); onHighlightClear?.() }, 1800)
+    return () => clearTimeout(t)
+  }, [highlighted]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div
-      className={`event-card ${expanded ? 'event-card--expanded' : ''}`}
+      ref={cardRef}
+      className={`event-card${expanded ? ' event-card--expanded' : ''}${flash ? ' event-card--highlight' : ''}`}
       style={{ borderLeftColor: borderColor }}
       onClick={() => setExpanded((v) => !v)}
       role="button"

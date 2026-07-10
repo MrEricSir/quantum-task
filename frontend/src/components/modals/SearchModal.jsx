@@ -6,7 +6,15 @@ import './SearchModal.css'
 import { SECTION_LABELS } from '../../lib/sections'
 const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
 
-export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabit }) {
+const EVENT_COLOR = '#0ea5e9'
+
+function fmtEventDate(start) {
+  if (!start) return null
+  const d = new Date(start)
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+export default function SearchModal({ onClose, onEdit, habits = [], calendarEvents = [], onSelectHabit, onSelectCalendarEvent }) {
   const [query, setQuery] = useState('')
   const [cardResults, setCardResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -32,9 +40,20 @@ export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabi
     ? habits.filter((h) => !h.archived && h.name.toLowerCase().includes(query.trim().toLowerCase()))
     : []
 
+  const eventResults = query.trim()
+    ? calendarEvents
+        .filter((e) => {
+          const q = query.trim().toLowerCase()
+          return e.title?.toLowerCase().includes(q) || e.description?.toLowerCase().includes(q)
+        })
+        .slice()
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+    : []
+
   const results = [
     ...cardResults.map((r) => ({ ...r, _type: 'card' })),
     ...habitResults.map((h) => ({ ...h, _type: 'habit' })),
+    ...eventResults.map((e) => ({ ...e, _type: 'event' })),
   ]
 
   useEffect(() => {
@@ -66,6 +85,8 @@ export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabi
   const handleSelect = (result) => {
     if (result._type === 'habit') {
       onSelectHabit?.(result)
+    } else if (result._type === 'event') {
+      onSelectCalendarEvent?.(result)
     } else {
       onClose()
       onEdit(result)
@@ -123,6 +144,8 @@ export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabi
                   <div className="search-result-main">
                     {result._type === 'habit' ? (
                       <span className="search-result-section" style={{ background: '#7c3aed' }}>Habit</span>
+                    ) : result._type === 'event' ? (
+                      <span className="search-result-section" style={{ background: EVENT_COLOR }}>Event</span>
                     ) : (
                       <span
                         className="search-result-section"
@@ -132,6 +155,9 @@ export default function SearchModal({ onClose, onEdit, habits = [], onSelectHabi
                       </span>
                     )}
                     <span className="search-result-title">{result._type === 'habit' ? result.name : result.title}</span>
+                    {result._type === 'event' && result.start && (
+                      <span className="search-result-date">{fmtEventDate(result.start)}</span>
+                    )}
                   </div>
                   {result._type === 'card' && result.description && (
                     <span className="search-result-desc">{result.description}</span>
