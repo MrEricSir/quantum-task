@@ -65,7 +65,7 @@ def _normalize_plan_time(s: str | None) -> str | None:
 def _build_daily_plan_context(
     today,
     cal_events: list,
-    todos: list,
+    cards: list,
     habits: list,
     utc_offset_minutes: int = 0,
 ) -> str:
@@ -74,8 +74,8 @@ def _build_daily_plan_context(
     today_str = today.strftime("%A, %B %d, %Y") if hasattr(today, "strftime") else str(today)
     lines = [f"Date: {today_str}"]
 
-    fixed = [(t, _fmt_time_24h(t.scheduled_at, utc_offset_minutes)) for t in todos if t.scheduled_at]
-    unscheduled = [t for t in todos if not t.scheduled_at]
+    fixed = [(t, _fmt_time_24h(t.scheduled_at, utc_offset_minutes)) for t in cards if t.scheduled_at]
+    unscheduled = [t for t in cards if not t.scheduled_at]
 
     if cal_events or fixed:
         lines.append("\nEvents and tasks with fixed start time:")
@@ -112,11 +112,11 @@ def _time_of_day_bucket(local_now: datetime) -> int:
     return 3
 
 
-def _today_hash(todos: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None, steps_today: int | None = None) -> str:
+def _today_hash(cards: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None, steps_today: int | None = None) -> str:
     payload = {
-        "todos": [
+        "cards": [
             {"id": t.id, "title": t.title, "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None}
-            for t in sorted(todos, key=lambda t: t.id)
+            for t in sorted(cards, key=lambda t: t.id)
         ],
         "events": [
             {"id": e.id, "title": e.title, "start": e.start.isoformat(), "all_day": e.all_day}
@@ -133,11 +133,11 @@ def _today_hash(todos: list, events: list, habits: list, has_location: bool, loc
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def _week_hash(todos: list, events: list) -> str:
+def _week_hash(cards: list, events: list) -> str:
     payload = {
-        "todos": [
+        "cards": [
             {"id": t.id, "title": t.title, "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None}
-            for t in sorted(todos, key=lambda t: t.id)
+            for t in sorted(cards, key=lambda t: t.id)
         ],
         "events": [
             {"id": e.id, "title": e.title, "start": e.start.isoformat(), "all_day": e.all_day}
@@ -227,9 +227,9 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     tz_offset = req.utc_offset_minutes or 0
     local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
-    today_todos  = [t for t in req.todos if t.section == "today"]
+    today_cards  = [t for t in req.cards if t.section == "today"]
     today_events = [e for e in req.calendar_events if event_local_date(e, tz_offset) == today_dt and not e.is_ooo]
-    week_todos   = [t for t in req.todos if t.section == "week"]
+    week_cards   = [t for t in req.cards if t.section == "week"]
     week_events  = [e for e in req.calendar_events
                     if today_dt < event_local_date(e, tz_offset) <= today_dt + timedelta(days=7) and not e.is_ooo]
 
@@ -237,8 +237,8 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
         _health_data, _health_ctx = build_health_context(_pre_db, today_dt)
     _steps_today = int(_health_data["today"].get("steps", 0)) or None
 
-    today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None, local_now, _steps_today)
-    week_h  = _week_hash(week_todos, week_events)
+    today_h = _today_hash(today_cards, today_events, req.habits, req.lat is not None, local_now, _steps_today)
+    week_h  = _week_hash(week_cards, week_events)
 
     cached_today = cached_weather = cached_week = None
     if not req.force:
@@ -270,11 +270,11 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     with SessionLocal() as _obs_db:
         observations = compute_observations(_obs_db, today_dt)
         eng_items = _obs_db.query(models.EngineeringItem).filter_by(state="open").all()
-    on_board = {t.description for t in req.todos if t.description}
+    on_board = {t.description for t in req.cards if t.description}
     eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
     eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
-    today_ctx = build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events, health_context=_health_ctx)
-    week_ctx  = build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
+    today_ctx = build_today_context(today_cards, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events, health_context=_health_ctx)
+    week_ctx  = build_week_context(week_cards, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
     def generate():
         weather_raw: str | None = None
@@ -289,7 +289,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
                 yield f"data: {weather_raw}\n\n"
 
             today_acc: list[str] = []
-            if not (today_todos or today_events or pending_habits):
+            if not (today_cards or today_events or pending_habits):
                 text = 'Nothing scheduled today.'
                 yield f"data: {json.dumps({'section': 'today', 'text': text})}\n\n"
                 today_acc.append(text)

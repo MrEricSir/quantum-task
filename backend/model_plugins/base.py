@@ -126,7 +126,7 @@ IMPORTANT — MULTIPLE ITEMS:
 with 3+ items, or a store name followed by food items on separate lines — group ALL of \
 them into ONE item with type="task", section="later", and each item on its own line in description.
 - For each item, include "source_text": the verbatim fragment of the user's input that this item was parsed from (copy the exact words, do not paraphrase).
-Return ONLY valid JSON: {{"items": [<ParsedTodo>, ...]}} — no prose, no explanation.\
+Return ONLY valid JSON: {{"items": [<ParsedCard>, ...]}} — no prose, no explanation.\
 """
 
 # Weekday name → weekday index (Monday=0)
@@ -459,7 +459,7 @@ class BaseModelPlugin:
 
     def post_process(self, parsed: Any, *, text: str = "") -> Any:
         """
-        Called on the validated ParsedTodo after Pydantic.
+        Called on the validated ParsedCard after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
         # Assist items need no further processing — the frontend streams them directly.

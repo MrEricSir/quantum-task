@@ -71,17 +71,17 @@ export function useNotifications(cards, onOpenTodo) {
       const ch = new BroadcastChannel(CHANNEL_NAME)
       channelRef.current = ch
       ch.onmessage = (e) => {
-        if (e.data?.type === 'open_todo' && e.data.todoId) {
+        if (e.data?.type === 'open_card' && e.data.cardId) {
           window.focus()
-          onOpenTodo?.(e.data.todoId)
+          onOpenTodo?.(e.data.cardId)
         }
       }
     }
     // Service worker messages — push notifications
     const swHandler = (e) => {
-      if (e.data?.type === 'open_todo' && e.data.todoId) {
+      if (e.data?.type === 'open_card' && e.data.cardId) {
         window.focus()
-        onOpenTodo?.(e.data.todoId)
+        onOpenTodo?.(e.data.cardId)
       }
     }
     navigator.serviceWorker?.addEventListener('message', swHandler)
@@ -130,7 +130,7 @@ export function useNotifications(cards, onOpenTodo) {
         notif.onclick = () => {
           window.focus()
           if (channelRef.current) {
-            channelRef.current.postMessage({ type: 'open_todo', todoId: todo.id })
+            channelRef.current.postMessage({ type: 'open_card', cardId: todo.id })
           }
         }
       })

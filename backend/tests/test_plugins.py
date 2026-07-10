@@ -11,20 +11,20 @@ from datetime import date, datetime
 from model_plugins.base import BaseModelPlugin, resolve_dates
 from model_plugins.llama31_8b import Llama31_8bPlugin
 from model_plugins.llama32 import Llama32Plugin
-from schemas import ParsedTodo
+from schemas import ParsedCard
 
 plugin = BaseModelPlugin()
 
 
-def _parsed(**kwargs) -> ParsedTodo:
-    """Build a minimal ParsedTodo with sensible defaults."""
+def _parsed(**kwargs) -> ParsedCard:
+    """Build a minimal ParsedCard with sensible defaults."""
     defaults = dict(type="task", title="Test task", section="later")
     defaults.update(kwargs)
-    return ParsedTodo(**defaults)
+    return ParsedCard(**defaults)
 
 
-def _pp(text: str, **kwargs) -> ParsedTodo:
-    """Run post_process on a minimal ParsedTodo with the given input text."""
+def _pp(text: str, **kwargs) -> ParsedCard:
+    """Run post_process on a minimal ParsedCard with the given input text."""
     return plugin.post_process(_parsed(**kwargs), text=text)
 
 
@@ -152,10 +152,10 @@ _llama = Llama31_8bPlugin()
 _TODAY = date(2026, 6, 7)
 
 
-def _full_pipeline(raw: dict, *, text: str = "") -> ParsedTodo:
+def _full_pipeline(raw: dict, *, text: str = "") -> ParsedCard:
     """normalize_raw → post_process → resolve_dates, using the Llama 3.1 8b plugin."""
     raw = _llama.normalize_raw(raw)
-    parsed = _llama.post_process(ParsedTodo.model_validate(raw), text=text)
+    parsed = _llama.post_process(ParsedCard.model_validate(raw), text=text)
     return resolve_dates(parsed, text=text, today=_TODAY)
 
 
@@ -244,10 +244,10 @@ class TestBulkTimestampParsing:
 _llama32 = Llama32Plugin()
 
 
-def _food_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedTodo:
+def _food_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedCard:
     """normalize_raw → post_process for food-detection tests (no date resolution needed)."""
     raw = plugin.normalize_raw(raw)
-    return plugin.post_process(ParsedTodo.model_validate(raw), text=text)
+    return plugin.post_process(ParsedCard.model_validate(raw), text=text)
 
 
 class TestFoodTypeDetection:
@@ -255,7 +255,7 @@ class TestFoodTypeDetection:
     Regression suite for the food log classification bug.
 
     Root causes that were fixed:
-      1. ParsedTodo.type Literal excluded "food", so Pydantic silently coerced
+      1. ParsedCard.type Literal excluded "food", so Pydantic silently coerced
          any LLM-returned "food" back to the default "task".
       2. Both model plugins lacked a _FOOD_RE post_process override to catch the
          case where the LLM misclassifies an eating/drinking log as a task.
@@ -264,13 +264,13 @@ class TestFoodTypeDetection:
     # ── Schema regression ──────────────────────────────────────────────────────
 
     def test_schema_accepts_food_type(self):
-        """ParsedTodo must accept type='food' without validation error."""
-        p = ParsedTodo(type="food", title="Yogurt", section="today")
+        """ParsedCard must accept type='food' without validation error."""
+        p = ParsedCard(type="food", title="Yogurt", section="today")
         assert p.type == "food"
 
     def test_schema_food_not_coerced_to_task(self):
         """Before the fix, type='food' was silently dropped to 'task'."""
-        p = ParsedTodo.model_validate(
+        p = ParsedCard.model_validate(
             {"type": "food", "title": "Yogurt", "section": "today"}
         )
         assert p.type == "food", "type='food' must not be coerced to 'task'"
@@ -338,9 +338,9 @@ class TestFoodTypeDetection:
 
 # ── Habit check-off detection ──────────────────────────────────────────────────
 
-def _habit_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedTodo:
+def _habit_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedCard:
     raw = plugin.normalize_raw(raw)
-    return plugin.post_process(ParsedTodo.model_validate(raw), text=text)
+    return plugin.post_process(ParsedCard.model_validate(raw), text=text)
 
 
 def _habit_raw(**overrides) -> dict:

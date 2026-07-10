@@ -23,7 +23,7 @@ from database import Base
 import models
 from routers.withings import _auto_check_habits
 from model_plugins.base import BaseModelPlugin
-from schemas import ParsedTodo
+from schemas import ParsedCard
 
 # ── DB fixture ────────────────────────────────────────────────────────────────
 
@@ -167,11 +167,11 @@ class TestAutoCheckHabits:
 plugin = BaseModelPlugin()
 
 
-def _habit(text: str, **kwargs) -> ParsedTodo:
-    """Run post_process on a habit ParsedTodo with the given input text."""
+def _habit(text: str, **kwargs) -> ParsedCard:
+    """Run post_process on a habit ParsedCard with the given input text."""
     defaults = dict(type="habit", title=text, section="today", recurrence_rule="daily")
     defaults.update(kwargs)
-    parsed = ParsedTodo(**defaults)
+    parsed = ParsedCard(**defaults)
     return plugin.post_process(parsed, text=text)
 
 
@@ -256,28 +256,28 @@ class TestHealthMetricDetection:
 
     def test_no_metric_for_task(self):
         # type=task should never get a metric even with steps in title
-        parsed = ParsedTodo(type="task", title="buy 10000 steps tracker", section="later")
+        parsed = ParsedCard(type="task", title="buy 10000 steps tracker", section="later")
         result = plugin.post_process(parsed, text="buy 10000 steps tracker")
         assert result.withings_metric is None
 
     # ── Goal-type detection ───────────────────────────────────────────────────
 
     def test_goal_set_weight(self):
-        parsed = ParsedTodo(type="task", title="set weight goal", section="later")
+        parsed = ParsedCard(type="task", title="set weight goal", section="later")
         result = plugin.post_process(parsed, text="set my weight goal to 75 kg")
         assert result.type == "goal"
         assert result.withings_metric == "weight"
         assert result.withings_goal == 75.0
 
     def test_goal_change_steps(self):
-        parsed = ParsedTodo(type="task", title="change step goal", section="later")
+        parsed = ParsedCard(type="task", title="change step goal", section="later")
         result = plugin.post_process(parsed, text="change my step goal to 10,000")
         assert result.type == "goal"
         assert result.withings_metric == "steps"
         assert result.withings_goal == 10_000
 
     def test_goal_update_fat(self):
-        parsed = ParsedTodo(type="task", title="update fat goal", section="later")
+        parsed = ParsedCard(type="task", title="update fat goal", section="later")
         result = plugin.post_process(parsed, text="update my body fat goal to 18%")
         assert result.type == "goal"
         assert result.withings_metric == "fat_ratio"
@@ -292,7 +292,7 @@ class TestHealthMetricDetection:
     # ── LLM-set values are preserved (not overridden by regex) ───────────────
 
     def test_llm_metric_not_overridden(self):
-        parsed = ParsedTodo(
+        parsed = ParsedCard(
             type="habit", title="walk daily", section="today",
             recurrence_rule="daily",
             withings_metric="steps", withings_goal=8_000,

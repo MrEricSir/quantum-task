@@ -37,19 +37,19 @@ self.addEventListener('push', (event) => {
       icon: '/icon.svg',
       badge: '/icon.svg',
       tag: data.tag,
-      data: { todoId: data.todoId },
+      data: { cardId: data.cardId },
     })
   )
 })
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const todoId = event.notification.data?.todoId
+  const cardId = event.notification.data?.cardId
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       for (const client of windowClients) {
         if ('focus' in client) {
-          if (todoId) client.postMessage({ type: 'open_todo', todoId })
+          if (cardId) client.postMessage({ type: 'open_card', cardId })
           return client.focus()
         }
       }

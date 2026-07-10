@@ -56,7 +56,7 @@ class ParseRequest(BaseModel):
     text: str
 
 
-class ParsedTodo(BaseModel):
+class ParsedCard(BaseModel):
     # type: "task" = completable item; "habit" = ongoing recurring behaviour
     #       "goal" = update a standalone health goal (not a habit or task)
     #       "food" = log something eaten or drunk
@@ -87,7 +87,7 @@ class ParsedTodo(BaseModel):
 
 
 class BulkParseResponse(BaseModel):
-    items: List[ParsedTodo]
+    items: List[ParsedCard]
 
 
 class HabitCreate(BaseModel):
@@ -296,7 +296,7 @@ class GlobalAssistRequest(BaseModel):
 
 
 class BriefingRequest(BaseModel):
-    todos: List['Card'] = []
+    cards: List['Card'] = []
     calendar_events: List[CalendarEvent] = []
     habits: List[HabitBriefingItem] = []
     lat: Optional[float] = None

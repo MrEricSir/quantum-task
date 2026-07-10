@@ -153,8 +153,8 @@ export default function App() {
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
     cards,
-    (todoId) => {
-      const todo = cardsRef.current.find((t) => t.id === todoId)
+    (cardId) => {
+      const todo = cardsRef.current.find((t) => t.id === cardId)
       if (todo) openEdit(todo)
     }
   )
@@ -520,8 +520,8 @@ export default function App() {
     setParseQueue((prev) => prev.filter((i) => i.status === 'pending'))
   }
 
-  const handleMoveSection = async (todoId, newSection) => {
-    await handleUpdateCard(todoId, { section: newSection })
+  const handleMoveSection = async (cardId, newSection) => {
+    await handleUpdateCard(cardId, { section: newSection })
     setActiveSection(newSection)
   }
 

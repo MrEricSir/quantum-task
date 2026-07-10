@@ -59,7 +59,7 @@ export default function DailyBriefing({ cards, calendarEvents, habits = [], tagI
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate },
         body: JSON.stringify({
-          todos: cardsRef.current,
+          cards: cardsRef.current,
           calendar_events: calEventsRef.current,
           habits: habitsRef.current.map(({ name, completed_today }) => ({ name, completed_today })),
           force,

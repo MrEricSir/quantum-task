@@ -146,7 +146,7 @@ def reorder_cards(updates: List[schemas.CardReorderItem], db: Session = Depends(
     return {"ok": True}
 
 
-@router.post("/api/cards/parse", response_model=schemas.ParsedTodo)
+@router.post("/api/cards/parse", response_model=schemas.ParsedCard)
 def parse_card(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
     today = local_date(request)
     tomorrow = today + timedelta(days=1)
@@ -174,7 +174,7 @@ def parse_card(request: Request, req: schemas.ParseRequest, db: Session = Depend
             ],
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
-        parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=req.text)
+        parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=req.text)
         parsed = resolve_dates(parsed, text=req.text, today=today)
         return parsed
     except Exception as e:
@@ -223,7 +223,7 @@ def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depend
                 date_hint = line or raw_title
             else:
                 date_hint = raw_title
-            parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=date_hint)
+            parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=date_hint)
             parsed = resolve_dates(parsed, text=date_hint, today=today)
             if (parsed.source_text and not parsed.description
                     and parsed.source_text.lower().strip() != parsed.title.lower().strip()):
@@ -264,7 +264,7 @@ def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depe
             ],
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
-        parsed = plugin.post_process(schemas.ParsedTodo.model_validate(raw), text=req.text)
+        parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=req.text)
         parsed = resolve_dates(parsed, text=req.text, today=today)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM request failed: {e}")
