@@ -341,6 +341,17 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+# ── Standalone weather endpoint ───────────────────────────────────────────────
+
+@router.get("/weather")
+def get_weather(lat: float, lon: float):
+    """Return current weather for the given coordinates."""
+    result = fetch_weather(lat, lon)
+    if result is None:
+        return {}
+    return result
+
+
 # ── Assistant endpoint ────────────────────────────────────────────────────────
 
 _ASSIST_TAVILY_KEY = os.getenv("TAVILY_API_KEY", "")

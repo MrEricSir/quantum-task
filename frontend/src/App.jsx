@@ -44,6 +44,7 @@ import { ModalContext } from './context/ModalContext'
 import {
   fetchTags,
   fetchCards,
+  fetchWeather,
   reorderCards,
   createTag,
   parseCard,
@@ -86,7 +87,16 @@ export default function App() {
   const [quickAddStep, setQuickAddStep] = useState('input')
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
-  const [weather, setWeather] = useState(null)
+  const [weather, setWeather] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('weather')
+      return cached ? JSON.parse(cached) : null
+    } catch { return null }
+  })
+  const handleSetWeather = (w) => {
+    setWeather(w)
+    try { sessionStorage.setItem('weather', JSON.stringify(w)) } catch {}
+  }
   const {
     todos, setTodos, loading: cardsLoading, todosRef,
     handleAddTodo, handleUpdateTodo, handleDeleteTodo, handleToggle,
@@ -171,6 +181,14 @@ export default function App() {
     const handler = (e) => setIsMobile(e.matches)
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  useEffect(() => {
+    if (!navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      const w = await fetchWeather(coords.latitude, coords.longitude)
+      if (w && w.emojis) handleSetWeather(w)
+    }, () => {/* permission denied — weather stays as cached/SSE value */})
   }, [])
 
   useEffect(() => {
@@ -685,7 +703,7 @@ export default function App() {
             onMove={handleMoveSection}
             allTags={tags}
             onBreakdown={handleBreakdownCommit}
-            onWeather={setWeather}
+            onWeather={handleSetWeather}
             briefingKey={briefingKey}
             healthData={healthData}
             healthGoals={healthGoals}

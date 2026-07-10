@@ -142,6 +142,10 @@ async function mockAPIs(page) {
         'data: {"section":"today","text":"A productive day ahead."}\n\n' +
         'data: [DONE]\n\n',
     }))
+
+  // Standalone weather endpoint — registered after the broader briefing** glob so it takes priority
+  await page.route('**/api/briefing/weather**', r =>
+    r.fulfill({ json: { emojis: '⛅', high: 72, low: 58, description: 'partly cloudy', windy: false, umbrella: false, snow: false, cold: false } }))
 }
 
 async function waitForApp(page) {

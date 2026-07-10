@@ -24,6 +24,12 @@ function apiFetch(url, opts = {}) {
   return fetch(url, { ...opts, headers })
 }
 
+export async function fetchWeather(lat, lon) {
+  const res = await apiFetch(`/api/briefing/weather?lat=${lat}&lon=${lon}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
 export async function fetchTags() {
   const res = await apiFetch(TAGS_BASE)
   if (!res.ok) throw new Error('Failed to fetch tags')
