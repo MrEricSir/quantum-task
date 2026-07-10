@@ -83,7 +83,7 @@ export default function App() {
     defaultSection, showNewSheet, setShowNewSheet,
     openEdit, openNewCard, closeModal,
   } = useModals()
-  const [quickAddMode, setQuickAddMode] = useState('quick')
+  const [quickAddStep, setQuickAddStep] = useState('input')
   const [activeTodo, setActiveTodo] = useState(null)
   const [activeSection, setActiveSection] = useState('today')
   const [weather, setWeather] = useState(null)
@@ -183,8 +183,8 @@ export default function App() {
 
   const shortcutsRef = useRef([])
   shortcutsRef.current = [
-    { key: 'n', label: 'New card',          group: 'action', action: ()  => { setQuickAddMode('quick'); setShowQuickAdd(true) } },
-    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { setQuickAddMode('assist'); setShowQuickAdd(true) } },
+    { key: 'n', label: 'Capture',           group: 'action', action: ()  => { setQuickAddStep('input'); setShowQuickAdd(true) } },
+    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { setQuickAddStep('assist'); setShowQuickAdd(true) } },
     { key: '/', label: 'Search',            group: 'action', action: (e) => { e.preventDefault(); setShowSearch(true) } },
     { key: '?', label: 'Keyboard shortcuts',group: 'action', action: ()  => setShowShortcuts(true) },
     { key: 't', label: 'Today',             group: 'nav',    action: ()  => navigate('/today') },
@@ -573,15 +573,6 @@ export default function App() {
           <div className="header-actions">
             <button
               className="btn-ghost"
-              onClick={() => { setQuickAddMode('assist'); setShowQuickAdd(true) }}
-              title="Assist (press A)"
-              aria-label="Assist"
-              style={{ fontSize: 16, padding: '7px 10px', fontWeight: 600 }}
-            >
-              ✦
-            </button>
-            <button
-              className="btn-ghost"
               onClick={() => setShowSearch(true)}
               title="Search (press /)"
               aria-label="Search"
@@ -598,8 +589,8 @@ export default function App() {
               }}
               onClearErrors={() => setParseQueue((prev) => prev.filter((i) => i.status === 'pending'))}
             />
-            <button className="btn-primary" onClick={() => { setQuickAddMode('quick'); setShowQuickAdd(true) }}>
-              + Add
+            <button className="btn-primary" onClick={() => { setQuickAddStep('input'); setShowQuickAdd(true) }}>
+              Capture
             </button>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
@@ -897,11 +888,11 @@ export default function App() {
 
       {showQuickAdd && (
         <QuickAddModal
-          allTags={tags}
+          allTags={visibleTags}
           visibleTags={visibleTags}
           habits={habits}
           cards={todos}
-          defaultMode={quickAddMode}
+          initialStep={quickAddStep}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
           onSaveTask={async (data) => { await handleAddTodo(data) }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}

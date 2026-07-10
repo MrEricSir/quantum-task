@@ -87,18 +87,15 @@ export default function QuickAddModal({
   onCompleteTask,
   isImperial = false,
   initialText = '',
-  defaultMode = 'quick',
+  initialStep = 'input',
 }) {
-  // ── Mode: 'quick' | 'assist' ──
-  const [mode, setMode] = useState(defaultMode)
-
   // ── Input step ──
   const [text, setText] = useState(initialText)
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState('')
 
-  // ── Confirm / bulk-edit step ──
-  const [step, setStep] = useState('input') // 'input' | 'confirm' | 'bulk-confirm' | 'bulk-edit'
+  // ── Confirm / bulk-edit / assist step ──
+  const [step, setStep] = useState(initialStep) // 'input' | 'confirm' | 'bulk-confirm' | 'bulk-edit' | 'assist'
   const [detectedType, setDetectedType] = useState('task')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -177,6 +174,12 @@ export default function QuickAddModal({
       const { items } = await parseBulkCards(text.trim())
       if (items.length === 1) {
         const result = items[0]
+        if (result.type === 'assist') {
+          setPrompt(text.trim())
+          setStep('assist')
+          runAssist(text.trim())
+          return
+        }
         const tagIds = (result.suggested_tags ?? [])
           .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
           .filter(Boolean)
@@ -396,8 +399,9 @@ export default function QuickAddModal({
 
   // ── Assist tab handlers ──
 
-  const runAssist = async () => {
-    if (!prompt.trim() || assistStatus === 'running') return
+  const runAssist = async (overrideText) => {
+    const p = (overrideText !== undefined ? overrideText : prompt).trim()
+    if (!p || assistStatus === 'running') return
     setAssistStatus('running')
     setOutput('')
     setSearching(false)
@@ -410,7 +414,7 @@ export default function QuickAddModal({
       const resp = await fetch('/api/assist/global', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), ...ctx }),
+        body: JSON.stringify({ prompt: p, ...ctx }),
         signal: controller.signal,
       })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -441,7 +445,7 @@ export default function QuickAddModal({
         }
       }
       if (text) {
-        saveToHistory({ prompt: prompt.trim(), output: text, ts: new Date().toISOString() })
+        saveToHistory({ prompt: p, output: text, ts: new Date().toISOString() })
         setHistory(loadHistory())
       }
       setAssistStatus('done')
@@ -476,7 +480,7 @@ export default function QuickAddModal({
 
       {/* ── Quick input ── */}
 
-      {mode !== 'assist' && step === 'input' && (
+      {step === 'input' && (
         <>
           <Dialog.Title asChild><h2 className="sr-only">Quick Add</h2></Dialog.Title>
           <div className="quick-input-wrap">
@@ -486,7 +490,7 @@ export default function QuickAddModal({
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleParse() }}
-              autoFocus={defaultMode === 'quick'}
+              autoFocus={initialStep === 'input'}
               rows={6}
             />
             {SR && (
@@ -505,7 +509,7 @@ export default function QuickAddModal({
             <p className="quick-parse-error">{parseError}</p>
           )}
           <div className="quick-input-footer">
-            <button className="btn-assist" onClick={() => setMode('assist')}>✦ Assist</button>
+            <button className="btn-assist" onClick={() => { setPrompt(text.trim()); setStep('assist') }}>✦ Assist</button>
             <div className="quick-input-footer-actions">
               <button className="btn-cancel" onClick={onClose}>Cancel</button>
               <button className="btn-save" onClick={handleParse} disabled={!text.trim() || parsing}>
@@ -755,9 +759,9 @@ export default function QuickAddModal({
         </>
       )}
 
-      {/* ── Assist mode ── */}
+      {/* ── Assist step ── */}
 
-      {mode === 'assist' && (
+      {step === 'assist' && (
         <>
           <Dialog.Title asChild><h2 className="quick-add-title">✦ Assist</h2></Dialog.Title>
 
@@ -832,10 +836,10 @@ export default function QuickAddModal({
 
           {/* Footer */}
           <div className="modal-footer">
-            <button className="btn-cancel" onClick={() => setMode('quick')}>← Back</button>
+            <button className="btn-cancel" onClick={() => setStep('input')}>← Back</button>
             <button
               className="btn-save"
-              onClick={runAssist}
+              onClick={() => runAssist()}
               disabled={!prompt.trim() || assistStatus === 'running'}
               aria-label="Generate"
             >

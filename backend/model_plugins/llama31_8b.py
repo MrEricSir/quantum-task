@@ -139,6 +139,19 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'\
             '\"recurrence_rule\":null,\"note_content\":null}}',
         ),
+        # assist — conversational/planning request, not a structured item
+        (
+            "help me plan my week",
+            '{{\"type\":\"assist\",\"title\":\"Help me plan my week\",\"description\":null,'
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'
+            '\"recurrence_rule\":null}}',
+        ),
+        (
+            "what should I focus on today?",
+            '{{\"type\":\"assist\",\"title\":\"What should I focus on today?\",\"description\":null,'
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'
+            '\"recurrence_rule\":null}}',
+        ),
         # note
         (
             "note: wifi password is quantum42",
@@ -193,6 +206,9 @@ class Llama31_8bPlugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
+        if parsed.type == "assist":
+            return parsed
+
         # Override task/habit → habit_check for past-tense completion verbs
         # Frontend resolves whether it's a habit or task via unified picker
         if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):

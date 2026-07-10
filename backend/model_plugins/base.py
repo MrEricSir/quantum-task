@@ -36,7 +36,7 @@ Reference dates:
 {tags_section}
 
 Fields:
-  type          — "task" | "habit" | "goal" | "food" | "habit_check" | "task_complete"
+  type          — "task" | "habit" | "goal" | "food" | "habit_check" | "task_complete" | "assist"
                   task  = a discrete, completable item with a clear done state
                           (e.g. "send Bob the report", "dentist appointment", "buy groceries")
                   habit = something you do repeatedly on an ongoing, indefinite basis with
@@ -68,6 +68,13 @@ Fields:
                           "done with the meeting", "archive the project proposal",
                           "I finished the oil change")
                           Set title to the task name, stripping the completion verb.
+                  assist = a conversational or planning request — NOT a specific item to capture
+                          Use when the input is a question, request for help, or anything that
+                          does not map cleanly to a task, habit, food log, or completion.
+                          Examples: "help me plan my week", "what should I focus on today?",
+                          "can you suggest tasks for my project", "how should I prioritize?"
+                          Do NOT use for imperative statements like "call dentist" or
+                          "meditate daily" — those are tasks/habits even if phrased as requests.
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
@@ -350,7 +357,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit", "goal"}
+    _VALID_TYPES = {"task", "habit", "goal", "assist"}
 
     def normalize_raw(self, raw: dict) -> dict:
         """
@@ -397,8 +404,13 @@ class BaseModelPlugin:
             raw["section"] = "later"
             if not raw.get("description") and raw.get("note_content"):
                 raw["description"] = raw["note_content"]
+        elif type_val in self._VALID_TYPES:
+            raw["type"] = type_val
+            # Ensure a non-empty title for assist items (other fields unused by frontend)
+            if type_val == "assist" and not raw.get("title"):
+                raw["title"] = "Assist"
         else:
-            raw["type"] = type_val if type_val in self._VALID_TYPES else "task"
+            raw["type"] = "task"
 
         section = raw.get("section", "")
         if isinstance(section, str):
@@ -450,6 +462,10 @@ class BaseModelPlugin:
         Called on the validated ParsedTodo after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
+        # Assist items need no further processing — the frontend streams them directly.
+        if parsed.type == "assist":
+            return parsed
+
         lowered = text.strip().lower()
 
         # Enforce section from explicit temporal phrases in the input text.

@@ -167,10 +167,9 @@ test.describe('app shell', () => {
     await waitForApp(page)
 
     // Header
-    await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /capture/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /search/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /assist/i })).toBeVisible()
 
     // Sidebar nav (desktop) or mobile nav
     for (const label of ['Today', 'Board', 'Calendar', 'Habits', 'Engineering']) {
@@ -180,39 +179,43 @@ test.describe('app shell', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Global Assist modal
+// Assist step (within quick-add modal)
 // ---------------------------------------------------------------------------
-test.describe('global assist modal', () => {
+test.describe('assist step', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
   })
 
-  test('Assist button is visible in the header', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /assist/i })).toBeVisible()
-  })
-
-  test('clicking Assist button opens the modal', async ({ page }) => {
-    await page.getByRole('button', { name: /assist/i }).first().click()
+  test('pressing A key opens modal in assist step', async ({ page }) => {
+    await page.keyboard.press('a')
     await expect(page.getByRole('dialog')).toBeVisible()
     await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
   })
 
-  test('modal has context selector and prompt textarea', async ({ page }) => {
-    await page.getByRole('button', { name: /assist/i }).first().click()
+  test('clicking ✦ Assist in quick modal switches to assist step', async ({ page }) => {
+    await page.locator('button.btn-primary').first().click()
+    await page.locator('.btn-assist').click()
+    await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
+  })
+
+  test('assist step has context selector and prompt textarea', async ({ page }) => {
+    await page.keyboard.press('a')
     await expect(page.locator('#qa-assist-context')).toBeVisible()
     await expect(page.locator('.quick-assist-prompt')).toBeVisible()
   })
 
   test('Generate button is disabled when prompt is empty', async ({ page }) => {
-    await page.getByRole('button', { name: /assist/i }).first().click()
+    await page.locator('button.btn-primary').first().click()
+    await page.locator('.btn-assist').click()
     await expect(page.getByRole('button', { name: /generate/i })).toBeDisabled()
   })
 
-  test('pressing A key opens the assist modal', async ({ page }) => {
+  test('Back button returns to input step', async ({ page }) => {
     await page.keyboard.press('a')
-    await expect(page.getByRole('dialog')).toBeVisible()
     await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
+    await page.getByRole('button', { name: /back/i }).click()
+    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
   })
 })
 
@@ -491,7 +494,7 @@ test.describe('mobile header layout', () => {
     expect(box.height).toBeGreaterThan(40)
 
     // Action buttons must be reachable (not hidden behind notch area)
-    await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /capture/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
   })
 })

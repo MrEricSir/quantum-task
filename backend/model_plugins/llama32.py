@@ -118,6 +118,17 @@ class Llama32Plugin(BaseModelPlugin):
             '{{"type":"task_complete","title":"Project proposal","description":null,'
             '"section":"later","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
         ),
+        # assist — conversational/planning request, not a structured item
+        (
+            "help me plan my week",
+            '{{\"type\":\"assist\",\"title\":\"Help me plan my week\",\"description\":null,'
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[]}}',
+        ),
+        (
+            "what should I focus on today?",
+            '{{\"type\":\"assist\",\"title\":\"What should I focus on today?\",\"description\":null,'
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[]}}',
+        ),
         # note — explicit "note:" prefix
         (
             "note: the meeting room code is 4821",
@@ -183,6 +194,9 @@ class Llama32Plugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
+        if parsed.type == "assist":
+            return parsed
+
         # Override task/habit → habit_check for past-tense completion verbs
         # Frontend resolves whether it's a habit or task via unified picker
         if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
