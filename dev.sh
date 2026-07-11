@@ -391,6 +391,63 @@ gcp_deploy() {
   gcloud run services describe "$GCP_SERVICE_NAME" \
     --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
     --format 'value(status.url)'
+
+  gcp_setup_scheduler
+}
+
+gcp_setup_scheduler() {
+  _gcp_prereqs
+  _load_gcp_config
+
+  local SERVICE_URL
+  SERVICE_URL=$(gcloud run services describe "$GCP_SERVICE_NAME" \
+    --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+    --format 'value(status.url)' 2>/dev/null)
+
+  if [[ -z "$SERVICE_URL" ]]; then
+    echo "ERROR: Could not find service URL for $GCP_SERVICE_NAME."
+    echo "  Make sure the service is deployed first: ./dev.sh gcp-deploy"
+    exit 1
+  fi
+
+  local ENDPOINT="$SERVICE_URL/api/telegram/daily-briefing"
+  local JOB_NAME="telegram-daily-briefing"
+
+  echo "==> Enabling Cloud Scheduler API..."
+  gcloud services enable cloudscheduler.googleapis.com \
+    --project "$GCP_PROJECT_ID" --quiet
+
+  echo "==> Setting up Cloud Scheduler job: $JOB_NAME"
+  echo "    Target  : POST $ENDPOINT"
+  echo "    Schedule: hourly (UTC)"
+  echo ""
+
+  if gcloud scheduler jobs describe "$JOB_NAME" \
+      --location "$GCP_REGION" --project "$GCP_PROJECT_ID" &>/dev/null; then
+    gcloud scheduler jobs update http "$JOB_NAME" \
+      --location "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --schedule "0 * * * *" \
+      --uri "$ENDPOINT" \
+      --http-method POST \
+      --headers "Authorization:Bearer ${AUTH_PASSWORD}" \
+      --quiet
+    echo "==> Updated existing scheduler job."
+  else
+    gcloud scheduler jobs create http "$JOB_NAME" \
+      --location "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --schedule "0 * * * *" \
+      --uri "$ENDPOINT" \
+      --http-method POST \
+      --headers "Authorization:Bearer ${AUTH_PASSWORD}" \
+      --quiet
+    echo "==> Created scheduler job."
+  fi
+
+  echo ""
+  echo "The briefing will be sent at your configured time (±15 min)."
+  echo "Configure time and credentials in Settings > Telegram Briefing."
 }
 
 gcp_logs() {
@@ -442,10 +499,11 @@ case "${1:-}" in
   test)           test ;;
   test-frontend)  test_frontend ;;
   benchmark)      benchmark "$@" ;;
-  gcp-setup)      gcp_setup ;;
-  gcp-deploy)     gcp_deploy ;;
-  gcp-update-env) gcp_update_env ;;
-  gcp-logs)       gcp_logs "$@" ;;
+  gcp-setup)            gcp_setup ;;
+  gcp-deploy)           gcp_deploy ;;
+  gcp-update-env)       gcp_update_env ;;
+  gcp-logs)             gcp_logs "$@" ;;
+  gcp-setup-scheduler)  gcp_setup_scheduler ;;
   *)
     echo "Usage: ./dev.sh <command>"
     echo ""
@@ -460,10 +518,11 @@ case "${1:-}" in
     echo "  benchmark  Run tests across all models and write benchmark_report.md"
     echo ""
     echo "GCP deployment:"
-    echo "  gcp-setup       One-time GCP infrastructure setup + initial deploy"
-    echo "  gcp-deploy      Build and deploy manually"
-    echo "  gcp-update-env  Push updated env vars from .gcp-config to Cloud Run"
-    echo "  gcp-logs [N] [grep]  Fetch last N log lines (default 100), optionally grepped"
+    echo "  gcp-setup              One-time GCP infrastructure setup + initial deploy"
+    echo "  gcp-deploy             Build and deploy manually"
+    echo "  gcp-update-env         Push updated env vars from .gcp-config to Cloud Run"
+    echo "  gcp-logs [N] [grep]    Fetch last N log lines (default 100), optionally grepped"
+    echo "  gcp-setup-scheduler    Create Cloud Scheduler job for Telegram daily briefing"
     exit 1
     ;;
 esac

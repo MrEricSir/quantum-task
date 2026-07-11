@@ -38,6 +38,8 @@ TELEGRAM_CHAT_ID = "telegram_chat_id"
 BRIEFING_SCHEDULE_TIME = "briefing_schedule_time"
 # User's UTC offset in minutes using JS convention (UTC+10 → -600, UTC-5 → +300).
 BRIEFING_TZ_OFFSET = "briefing_tz_offset"
+# ISO date string (YYYY-MM-DD) of the last day a briefing was successfully sent.
+BRIEFING_LAST_SENT = "briefing_last_sent"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.

@@ -53,6 +53,54 @@ def save_telegram_config(body: _TelegramConfig, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/api/telegram/daily-briefing")
+def daily_briefing(db: Session = Depends(get_db)):
+    """Called by Cloud Scheduler hourly. Sends the briefing during the configured hour."""
+    token   = _get(db, setting_keys.TELEGRAM_BOT_TOKEN)
+    chat_id = _get(db, setting_keys.TELEGRAM_CHAT_ID)
+    if not token or not chat_id:
+        return {"ok": False, "skipped": True, "reason": "not configured"}
+
+    schedule_time = _get(db, setting_keys.BRIEFING_SCHEDULE_TIME, "07:30")
+    tz_offset     = int(_get(db, setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
+
+    now_local = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset))
+    today     = now_local.date()
+
+    try:
+        sh = int(schedule_time.split(":")[0])
+    except Exception:
+        sh = 7
+
+    if now_local.hour != sh:
+        return {"ok": False, "skipped": True, "reason": "outside send window"}
+
+    # DB-backed dedup — prevents double-send on concurrent invocations / cold starts
+    last_sent = _get(db, setting_keys.BRIEFING_LAST_SENT)
+    if last_sent == today.isoformat():
+        return {"ok": False, "skipped": True, "reason": "already sent today"}
+
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_LAST_SENT).first()
+    if row:
+        row.value = today.isoformat()
+    else:
+        db.add(models.AppSetting(key=setting_keys.BRIEFING_LAST_SENT, value=today.isoformat()))
+    db.commit()
+
+    try:
+        text = generate_today_briefing(today, tz_offset)
+    except Exception as e:
+        return {"ok": False, "error": f"Briefing generation error: {e}"}
+
+    if not text:
+        return {"ok": False, "error": "Could not generate briefing (LLM error)."}
+
+    ok = telegram_notify.send_message(token, chat_id, text)
+    if not ok:
+        return {"ok": False, "error": "Message failed. Check bot token and chat ID."}
+    return {"ok": True}
+
+
 @router.post("/api/telegram/test")
 def test_telegram(db: Session = Depends(get_db)):
     """Send the today briefing immediately as a test."""
@@ -67,8 +115,6 @@ def test_telegram(db: Session = Depends(get_db)):
     try:
         text = generate_today_briefing(today, tz_offset)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return {"ok": False, "error": f"Briefing generation error: {e}"}
 
     if not text:

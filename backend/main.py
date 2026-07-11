@@ -260,34 +260,38 @@ async def _experiment_cleanup_scheduler() -> None:
 
 # ── Telegram briefing scheduler ───────────────────────────────────────────────
 
-_telegram_briefing_sent: set[str] = set()  # ISO dates already briefed this process
-
-
 def _check_telegram_briefing() -> None:
-    from datetime import date
     with SessionLocal() as db:
-        token_row    = db.query(models.AppSetting).filter_by(key=setting_keys.TELEGRAM_BOT_TOKEN).first()
-        chat_row     = db.query(models.AppSetting).filter_by(key=setting_keys.TELEGRAM_CHAT_ID).first()
-        time_row     = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_SCHEDULE_TIME).first()
-        offset_row   = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_TZ_OFFSET).first()
+        def _g(key, default=""):
+            row = db.query(models.AppSetting).filter_by(key=key).first()
+            return row.value if row and row.value else default
 
-    token   = token_row.value   if token_row   and token_row.value   else ""
-    chat_id = chat_row.value    if chat_row    and chat_row.value    else ""
-    if not token or not chat_id:
-        return
+        token   = _g(setting_keys.TELEGRAM_BOT_TOKEN)
+        chat_id = _g(setting_keys.TELEGRAM_CHAT_ID)
+        if not token or not chat_id:
+            return
 
-    schedule_time = time_row.value  if time_row  and time_row.value  else "07:30"
-    tz_offset     = int(offset_row.value) if offset_row and offset_row.value else 0
+        schedule_time = _g(setting_keys.BRIEFING_SCHEDULE_TIME, "07:30")
+        tz_offset     = int(_g(setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
 
-    now_utc   = datetime.now(timezone.utc)
-    local_now = now_utc.replace(tzinfo=None) - timedelta(minutes=tz_offset)
-    today     = local_now.date()
+        now_utc   = datetime.now(timezone.utc)
+        local_now = now_utc.replace(tzinfo=None) - timedelta(minutes=tz_offset)
+        today     = local_now.date()
 
-    if local_now.strftime("%H:%M") != schedule_time:
-        return
-    if today.isoformat() in _telegram_briefing_sent:
-        return
-    _telegram_briefing_sent.add(today.isoformat())
+        if local_now.strftime("%H:%M") != schedule_time:
+            return
+
+        # DB-backed dedup so cold-start instances don't double-send
+        last_sent = _g(setting_keys.BRIEFING_LAST_SENT)
+        if last_sent == today.isoformat():
+            return
+
+        row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_LAST_SENT).first()
+        if row:
+            row.value = today.isoformat()
+        else:
+            db.add(models.AppSetting(key=setting_keys.BRIEFING_LAST_SENT, value=today.isoformat()))
+        db.commit()
 
     from routers.briefing import generate_today_briefing
     import telegram_notify

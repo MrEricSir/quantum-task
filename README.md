@@ -173,6 +173,17 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Auto-refreshes with a 10-second debounce after any meaningful data change
 - Force-regenerate anytime with the refresh button
 
+### Telegram Push Briefing
+- Receive your daily briefing as a Telegram message — no need to open the app
+- Configure via **Settings → Telegram Briefing**: paste your bot token, chat ID, and pick a delivery hour
+- A **Send test now** button sends the briefing immediately to verify your setup
+
+**Setup (one-time):**
+1. Message **@BotFather** on Telegram, send `/newbot`, and copy the token it gives you
+2. Send any message to your new bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` — your numeric chat ID appears in the response
+3. Paste both into **Settings → Telegram Briefing**, pick a delivery hour, and save
+4. (Production) Run `./dev.sh gcp-setup-scheduler` once to create the Cloud Scheduler job that pings the app hourly
+
 ### Calendar
 - Subscribe to any iCal/ICS feed (e.g. Google Calendar, Apple Calendar)
 - Events appear in the Today schedule and daily briefing
@@ -288,6 +299,14 @@ Compares parse quality and speed across all locally available Ollama models and 
 
 See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitHub secrets, LLM provider options, and CI/CD details.
 
+After deploying, run this once to set up the Telegram briefing cron job:
+
+```bash
+./dev.sh gcp-setup-scheduler
+```
+
+This creates a Cloud Scheduler job that hits the app hourly. The app checks whether the current local hour matches your configured send time and skips silently otherwise. The job is automatically updated on every subsequent `./dev.sh gcp-deploy`.
+
 ## Project structure
 
 ```
@@ -301,6 +320,7 @@ todo/
     app_setting_keys.py  # Constants for all AppSetting key strings
     streak.py            # Habit streak computation
     push.py              # Web Push / VAPID helpers
+    telegram_notify.py   # Telegram Bot API send helper
     weather.py           # Open-Meteo fetch + WMO condition helpers
     briefing_context.py  # Today/week context builders for AI briefing
     health_context.py    # Health data context builder (Withings + goals)
@@ -318,6 +338,7 @@ todo/
       food.py            # Food/drink logging + nutritional assessment
       insights.py        # Habit insights and health experiment suggestions
       correlations.py    # Health experiment tracking
+      telegram.py        # Telegram config, test, and Cloud Scheduler endpoint
       tags.py            # Tag CRUD
       engineering.py     # GitHub engineering feed
       push.py            # Push subscription management
@@ -336,6 +357,7 @@ todo/
       test_recurring.py      # Recurring card scheduling
       test_localtime.py      # Local date header handling
       test_food.py           # Food entry parsing
+      test_telegram.py       # Telegram config, test, and daily-briefing endpoints
       test_parse.py          # Quick Add parse integration tests (requires Ollama)
       benchmark.py           # Parse quality benchmark across Ollama models
     Dockerfile

@@ -8,7 +8,7 @@ export default function TelegramSettings({ onClose }) {
   const [config, setConfig] = useState({
     bot_token: '',
     chat_id: '',
-    schedule_time: '07:30',
+    schedule_hour: 7,
     tz_offset: new Date().getTimezoneOffset(),
   })
   const [loading, setLoading] = useState(true)
@@ -19,16 +19,24 @@ export default function TelegramSettings({ onClose }) {
 
   useEffect(() => {
     fetchTelegramConfig()
-      .then(data => setConfig(c => ({ ...c, ...data })))
+      .then(data => {
+        const hour = data.schedule_time ? parseInt(data.schedule_time.split(':')[0], 10) : 7
+        setConfig(c => ({ ...c, ...data, schedule_hour: isNaN(hour) ? 7 : hour }))
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  const toApiConfig = () => ({
+    ...config,
+    schedule_time: `${String(config.schedule_hour).padStart(2, '0')}:00`,
+  })
 
   const handleSave = async () => {
     setSaving(true)
     setSaved(false)
     try {
-      await saveTelegramConfig(config)
+      await saveTelegramConfig(toApiConfig())
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -40,7 +48,7 @@ export default function TelegramSettings({ onClose }) {
     setTesting(true)
     setTestResult(null)
     try {
-      await saveTelegramConfig(config)
+      await saveTelegramConfig(toApiConfig())
     } catch (e) {
       setTestResult({ ok: false, error: `Could not save config: ${e.message}` })
       setTesting(false)
@@ -116,12 +124,16 @@ export default function TelegramSettings({ onClose }) {
 
           <label className="telegram-label">
             Send time (local)
-            <input
-              className="telegram-input telegram-input--time"
-              type="time"
-              value={config.schedule_time}
-              onChange={e => setConfig(c => ({ ...c, schedule_time: e.target.value }))}
-            />
+            <select
+              className="telegram-input telegram-input--select"
+              value={config.schedule_hour}
+              onChange={e => setConfig(c => ({ ...c, schedule_hour: parseInt(e.target.value, 10) }))}
+            >
+              {Array.from({ length: 24 }, (_, h) => {
+                const label = h === 0 ? '12 AM (midnight)' : h < 12 ? `${h} AM` : h === 12 ? '12 PM (noon)' : `${h - 12} PM`
+                return <option key={h} value={h}>{label}</option>
+              })}
+            </select>
           </label>
         </div>
       )}
