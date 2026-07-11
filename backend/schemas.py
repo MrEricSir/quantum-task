@@ -296,9 +296,6 @@ class GlobalAssistRequest(BaseModel):
 
 
 class BriefingRequest(BaseModel):
-    cards: List['Card'] = []
-    calendar_events: List[CalendarEvent] = []
-    habits: List[HabitBriefingItem] = []
     lat: Optional[float] = None
     lon: Optional[float] = None
     force: bool = False

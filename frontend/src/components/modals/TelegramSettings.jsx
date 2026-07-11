@@ -28,8 +28,10 @@ export default function TelegramSettings({ onClose }) {
   }, [])
 
   const toApiConfig = () => ({
-    ...config,
+    bot_token: config.bot_token,
+    chat_id: config.chat_id,
     schedule_time: `${String(config.schedule_hour).padStart(2, '0')}:00`,
+    tz_offset: new Date().getTimezoneOffset(),  // always use current browser tz, never a stale stored value
   })
 
   const handleSave = async () => {

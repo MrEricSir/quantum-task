@@ -40,6 +40,9 @@ BRIEFING_SCHEDULE_TIME = "briefing_schedule_time"
 BRIEFING_TZ_OFFSET = "briefing_tz_offset"
 # ISO date string (YYYY-MM-DD) of the last day a briefing was successfully sent.
 BRIEFING_LAST_SENT = "briefing_last_sent"
+# Last known device location for weather in scheduled/Telegram briefings.
+LAST_KNOWN_LAT = "last_known_lat"
+LAST_KNOWN_LON = "last_known_lon"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.

@@ -64,14 +64,25 @@ def parse_sse(text: str) -> list[dict]:
     return results
 
 
-def post_briefing(client, habits=None, cards=None, calendar_events=None):
+def post_briefing(client):
     return client.post("/api/briefing/stream", json={
-        "cards": cards or [],
-        "calendar_events": calendar_events or [],
-        "habits": habits or [],
         "force": True,   # bypass cache so every call hits the generation path
         "today_only": True,
     })
+
+
+def create_card(client, title="Test card", section="today"):
+    r = client.post("/api/cards", json={"title": title, "section": section})
+    return r.json()["id"]
+
+
+def create_habit(client, name):
+    r = client.post("/api/habits", json={"name": name})
+    return r.json()["id"]
+
+
+def complete_habit(client, habit_id):
+    client.post(f"/api/habits/{habit_id}/check")
 
 
 def today_text(events: list[dict]) -> str | None:
@@ -82,7 +93,7 @@ def today_text(events: list[dict]) -> str | None:
 
 class TestBriefingHallucinationGuard:
     def test_no_content_skips_llm(self, client):
-        """No todos, no events, no habits → static message without calling the LLM."""
+        """Empty DB (no todos, no habits) → static message without calling the LLM."""
         with patch("routers.briefing.llm_client") as mock_llm:
             res = post_briefing(client)
 
@@ -92,12 +103,13 @@ class TestBriefingHallucinationGuard:
 
     def test_all_habits_completed_skips_llm(self, client):
         """All habits done + no todos/events → static message, LLM not called."""
-        habits = [
-            {"name": "Meditate", "completed_today": True},
-            {"name": "Exercise", "completed_today": True},
-        ]
+        h1 = create_habit(client, "Meditate")
+        h2 = create_habit(client, "Exercise")
+        complete_habit(client, h1)
+        complete_habit(client, h2)
+
         with patch("routers.briefing.llm_client") as mock_llm:
-            res = post_briefing(client, habits=habits)
+            res = post_briefing(client)
 
         assert res.status_code == 200
         mock_llm.assert_not_called()
@@ -105,44 +117,38 @@ class TestBriefingHallucinationGuard:
 
     def test_pending_habit_calls_llm(self, client):
         """A pending habit → LLM is called to generate the briefing."""
-        habits = [
-            {"name": "Meditate", "completed_today": False},
-            {"name": "Exercise", "completed_today": True},
-        ]
+        create_habit(client, "Meditate")          # pending
+        h2 = create_habit(client, "Exercise")
+        complete_habit(client, h2)               # completed
+
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter([])
         with patch("routers.briefing.llm_client", return_value=mock_client):
-            res = post_briefing(client, habits=habits)
+            res = post_briefing(client)
 
         assert res.status_code == 200
         mock_client.chat.completions.create.assert_called_once()
 
     def test_today_card_calls_llm(self, client):
         """A card in the 'today' section → LLM is called (not the static no-content path)."""
-        cards = [{"id": 1, "title": "Write tests", "section": "today",
-                  "description": None, "body": None, "scheduled_at": None,
-                  "completed": False, "completed_at": None, "position": 0,
-                  "created_at": "2026-01-01T00:00:00", "updated_at": None,
-                  "archived": False, "archived_at": None, "raw_input": None,
-                  "recurrence_rule": None, "external_id": None,
-                  "snoozed_until": None, "waiting_reason": None, "tags": []}]
+        create_card(client, title="Write tests", section="today")
+
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter([])
         with patch("routers.briefing.llm_client", return_value=mock_client):
-            res = post_briefing(client, cards=cards)
+            res = post_briefing(client)
 
         assert res.status_code == 200
         mock_client.chat.completions.create.assert_called_once()
 
     def test_mixed_habits_and_completed_only_shows_pending(self, client):
         """Only pending habits appear in the LLM context; completed ones are excluded."""
-        habits = [
-            {"name": "Meditate", "completed_today": False},
-            {"name": "Exercise", "completed_today": True},
-        ]
+        create_habit(client, "Meditate")          # pending
+        h2 = create_habit(client, "Exercise")
+        complete_habit(client, h2)               # completed
+
         captured_context = {}
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = iter([])
 
         def capture(*args, **kwargs):
             captured_context["messages"] = kwargs.get("messages", [])
@@ -150,7 +156,7 @@ class TestBriefingHallucinationGuard:
 
         mock_client.chat.completions.create.side_effect = capture
         with patch("routers.briefing.llm_client", return_value=mock_client):
-            post_briefing(client, habits=habits)
+            post_briefing(client)
 
         user_msg = next(m["content"] for m in captured_context["messages"] if m["role"] == "user")
         assert "Meditate" in user_msg

@@ -264,9 +264,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
         </div>
 
         <DailyBriefing
-          cards={activeCards}
-          calendarEvents={todayEvents}
-          habits={habits}
           ready={calendarReady}
           todayOnly
           onWeather={onWeather}

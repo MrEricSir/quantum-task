@@ -6,14 +6,16 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import requests as http_requests
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 import models
 import schemas
+import app_setting_keys as setting_keys
 from briefing_context import build_today_context, build_week_context, compute_observations, event_local_date
 from database import SessionLocal
-from deps import llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date
 from gcal import _cached_fetch_events
 from health_context import build_health_context
 from weather import fetch_weather
@@ -221,95 +223,166 @@ _WEEK_SYSTEM = (
 )
 
 
-# ── Scheduled (non-streaming) briefing generation ─────────────────────────────
+# ── Single data-fetch used by both streaming and scheduled briefings ───────────
 
-def generate_today_briefing(today: date, tz_offset: int = 0) -> str | None:
-    """Generate the today briefing as a plain string (used by the Telegram scheduler).
+def _fetch_briefing_data(today: date, tz_offset: int, lat: float | None = None, lon: float | None = None, *, db: Session | None = None) -> dict:
+    """Fetch everything needed for a briefing from the DB and calendar feeds.
 
-    Fetches all necessary data from the DB and calendar feeds directly, without
-    requiring a frontend request. Returns the briefing text or None on error.
+    Pass ``db`` to reuse a caller-managed session (e.g. from Depends(get_db)).
+    When omitted, the function opens and closes its own session via SessionLocal.
+
+    Persists lat/lon to the DB when provided so the Telegram scheduler can use
+    the last-known location for weather without a browser request.
     """
-    now_utc = datetime.now(timezone.utc)
+    now_utc   = datetime.now(timezone.utc)
     local_now = now_utc.replace(tzinfo=None) - timedelta(minutes=tz_offset)
-    window_end = today + timedelta(days=1)
 
-    with SessionLocal() as db:
+    _own_db = db is None
+    if _own_db:
+        db = SessionLocal()
+    try:
+        # ── Cards ─────────────────────────────────────────────────────────────
         raw_cards = db.query(models.Card).filter(
-            models.Card.section == "today",
             models.Card.completed == False,   # noqa: E712
             models.Card.archived == False,    # noqa: E712
         ).all()
-        today_cards = [
-            SimpleNamespace(
-                title=c.title,
-                scheduled_at=c.scheduled_at,
+
+        def _card_ns(c):
+            return SimpleNamespace(
+                id=c.id, title=c.title, description=c.description,
+                section=c.section, scheduled_at=c.scheduled_at,
                 overdue_days=max(0, (today - c.scheduled_at.date()).days)
                     if c.scheduled_at and c.scheduled_at.date() < today else 0,
             )
-            for c in raw_cards
-        ]
 
+        all_cards_ns = [_card_ns(c) for c in raw_cards]
+        today_cards  = [c for c in all_cards_ns if c.section == "today"]
+        week_cards   = [c for c in all_cards_ns if c.section == "week"]
+
+        # ── Habits ────────────────────────────────────────────────────────────
         today_str = today.isoformat()
-        done_ids = {
-            c.habit_id for c in db.query(models.HabitCompletion)
+        done_ids  = {
+            hc.habit_id for hc in db.query(models.HabitCompletion)
             .filter(models.HabitCompletion.date == today_str).all()
         }
-        raw_habits = db.query(models.Habit).filter(models.Habit.archived == False).all()  # noqa: E712
         habits = [
             SimpleNamespace(name=h.name, completed_today=(h.id in done_ids))
-            for h in raw_habits
+            for h in db.query(models.Habit).filter(models.Habit.archived == False).all()  # noqa: E712
         ]
 
-        mappings = db.query(models.CalendarMapping).all()
+        # ── Supporting data ───────────────────────────────────────────────────
+        mappings     = db.query(models.CalendarMapping).all()
         observations = compute_observations(db, today)
-        _health_data, _health_ctx = build_health_context(db, today)
+        health_data, health_ctx = build_health_context(db, today)
+        steps_today = int(health_data["today"].get("steps", 0)) or None
 
-    # Fetch and filter calendar events for today
-    today_events: list[schemas.CalendarEvent] = []
+        eng_items  = db.query(models.EngineeringItem).filter_by(state="open").all()
+        on_board   = {c.description for c in raw_cards if c.description}
+        eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
+        eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
+
+        # ── Location: persist if fresh, fall back to cached ──────────────────
+        if lat is not None and lon is not None:
+            for key, val in [
+                (setting_keys.LAST_KNOWN_LAT, str(lat)),
+                (setting_keys.LAST_KNOWN_LON, str(lon)),
+            ]:
+                row = db.query(models.AppSetting).filter_by(key=key).first()
+                if row:
+                    row.value = val
+                else:
+                    db.add(models.AppSetting(key=key, value=val))
+            db.commit()
+        else:
+            lat_row = db.query(models.AppSetting).filter_by(key=setting_keys.LAST_KNOWN_LAT).first()
+            lon_row = db.query(models.AppSetting).filter_by(key=setting_keys.LAST_KNOWN_LON).first()
+            if lat_row and lon_row:
+                try:
+                    lat = float(lat_row.value)
+                    lon = float(lon_row.value)
+                except (ValueError, TypeError):
+                    pass
+    finally:
+        if _own_db:
+            db.close()
+
+    # ── Calendar events (today + week) ────────────────────────────────────────
+    week_end: date = today + timedelta(days=8)
+    all_cal_events: list[schemas.CalendarEvent] = []
     for m in mappings:
         try:
-            for ev in _cached_fetch_events(m.ical_url, today, window_end):
+            for ev in _cached_fetch_events(m.ical_url, today, week_end):
                 if ev.get("is_ooo"):
                     continue
                 start = ev["start"]
-                end = ev.get("end")
+                end   = ev.get("end")
                 if not ev["all_day"]:
                     cutoff = end if end else start
                     if cutoff < now_utc:
                         continue
-                    local_start = start.replace(tzinfo=None) - timedelta(minutes=tz_offset)
-                    if local_start.date() != today:
-                        continue
-                else:
-                    start_date = start.date() if hasattr(start, "date") else start
-                    if start_date != today:
-                        continue
-                today_events.append(schemas.CalendarEvent(
+                all_cal_events.append(schemas.CalendarEvent(
                     id=f"sched::{ev['id']}",
                     title=ev["title"],
                     description=ev.get("description"),
                     location=ev.get("location"),
                     url=ev.get("url"),
-                    start=ev["start"],
-                    end=ev.get("end"),
+                    start=start,
+                    end=end,
                     all_day=ev["all_day"],
                     section="today",
                     is_ooo=False,
                 ))
         except Exception as e:
-            print(f"[telegram] calendar fetch error for mapping {m.id}: {e}")
+            print(f"[briefing] calendar fetch error for mapping {m.id}: {e}")
 
-    pending_habits = [h for h in habits if not h.completed_today]
-    if not today_cards and not today_events and not pending_habits:
-        return "Nothing scheduled today."
+    today_events = [e for e in all_cal_events if event_local_date(e, tz_offset) == today]
+    week_events  = [e for e in all_cal_events
+                    if today < event_local_date(e, tz_offset) <= today + timedelta(days=7)]
+
+    # ── Weather ───────────────────────────────────────────────────────────────
+    weather = fetch_weather(lat, lon) if lat is not None and lon is not None else None
+
+    return {
+        "today_cards":    today_cards,
+        "week_cards":     week_cards,
+        "today_events":   today_events,
+        "week_events":    week_events,
+        "all_cal_events": all_cal_events,
+        "habits":         habits,
+        "observations":   observations,
+        "health_ctx":     health_ctx,
+        "steps_today":    steps_today,
+        "eng_prs":        eng_prs,
+        "eng_issues":     eng_issues,
+        "weather":        weather,
+        "local_now":      local_now,
+    }
+
+
+# ── Scheduled (non-streaming) briefing generation ─────────────────────────────
+
+def generate_today_briefing(today: date, tz_offset: int = 0) -> str | None:
+    """Generate the today briefing as a plain string (used by the Telegram scheduler)."""
+    d = _fetch_briefing_data(today, tz_offset)
+
+    today_h = _today_hash(d["today_cards"], d["today_events"], d["habits"],
+                          d["weather"] is not None, d["local_now"], d["steps_today"])
+    cached = _cache_get("today", today_h)
+    if cached:
+        return cached.text
+
+    pending_habits = [h for h in d["habits"] if not h.completed_today]
+    if not d["today_cards"] and not d["today_events"] and not pending_habits:
+        text = "Nothing scheduled today."
+        _cache_set("today", today_h, text)
+        return text
 
     today_ctx = build_today_context(
-        today_cards, today_events, today, habits,
-        observations, tz_offset,
-        local_now=local_now,
-        health_context=_health_ctx,
+        d["today_cards"], d["today_events"], today, d["habits"],
+        d["observations"], tz_offset, d["eng_prs"],
+        local_now=d["local_now"], weather=d["weather"],
+        all_cal_events=d["all_cal_events"], health_context=d["health_ctx"],
     )
-
     try:
         resp = llm_client().chat.completions.create(
             model=LLM_MODEL,
@@ -320,32 +393,27 @@ def generate_today_briefing(today: date, tz_offset: int = 0) -> str | None:
             stream=False,
             temperature=0.1,
         )
-        return resp.choices[0].message.content.strip()
+        text = resp.choices[0].message.content.strip()
+        _cache_set("today", today_h, text)
+        return text
     except Exception as e:
-        print(f"[telegram] LLM error: {e}")
+        print(f"[briefing] LLM error: {e}")
         return None
 
 
 # ── Briefing endpoint ─────────────────────────────────────────────────────────
 
 @router.post("/api/briefing/stream")
-def stream_briefing(request: Request, req: schemas.BriefingRequest):
-    today_dt = local_date(request)
+def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session = Depends(get_db)):
+    today_dt  = local_date(request)
     tz_offset = req.utc_offset_minutes or 0
-    local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
-    today_cards  = [t for t in req.cards if t.section == "today"]
-    today_events = [e for e in req.calendar_events if event_local_date(e, tz_offset) == today_dt and not e.is_ooo]
-    week_cards   = [t for t in req.cards if t.section == "week"]
-    week_events  = [e for e in req.calendar_events
-                    if today_dt < event_local_date(e, tz_offset) <= today_dt + timedelta(days=7) and not e.is_ooo]
+    d         = _fetch_briefing_data(today_dt, tz_offset, req.lat, req.lon, db=db)
+    local_now = d["local_now"]
 
-    with SessionLocal() as _pre_db:
-        _health_data, _health_ctx = build_health_context(_pre_db, today_dt)
-    _steps_today = int(_health_data["today"].get("steps", 0)) or None
-
-    today_h = _today_hash(today_cards, today_events, req.habits, req.lat is not None, local_now, _steps_today)
-    week_h  = _week_hash(week_cards, week_events)
+    today_h = _today_hash(d["today_cards"], d["today_events"], d["habits"],
+                          d["weather"] is not None, local_now, d["steps_today"])
+    week_h  = _week_hash(d["week_cards"], d["week_events"])
 
     cached_today = cached_weather = cached_week = None
     if not req.force:
@@ -358,7 +426,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
             if row_w:
                 cached_week = row_w.text
 
-    need_week = not req.today_only
+    need_week  = not req.today_only
     all_cached = cached_today is not None and (not need_week or cached_week is not None)
 
     if all_cached:
@@ -372,16 +440,16 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
         return StreamingResponse(replay(), media_type="text/event-stream",
                                  headers={"X-Briefing-Cached": "true"})
 
-    pending_habits = [h for h in req.habits if not h.completed_today]
-    weather = fetch_weather(req.lat, req.lon) if req.lat is not None and req.lon is not None else None
-    with SessionLocal() as _obs_db:
-        observations = compute_observations(_obs_db, today_dt)
-        eng_items = _obs_db.query(models.EngineeringItem).filter_by(state="open").all()
-    on_board = {t.description for t in req.cards if t.description}
-    eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
-    eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
-    today_ctx = build_today_context(today_cards, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events, health_context=_health_ctx)
-    week_ctx  = build_week_context(week_cards, week_events, today_dt, tz_offset, eng_issues) if need_week else None
+    pending_habits = [h for h in d["habits"] if not h.completed_today]
+    today_ctx = build_today_context(
+        d["today_cards"], d["today_events"], today_dt, d["habits"],
+        d["observations"], tz_offset, d["eng_prs"],
+        local_now=local_now, weather=d["weather"],
+        all_cal_events=d["all_cal_events"], health_context=d["health_ctx"],
+    )
+    week_ctx = build_week_context(
+        d["week_cards"], d["week_events"], today_dt, tz_offset, d["eng_issues"]
+    ) if need_week else None
 
     def generate():
         weather_raw: str | None = None
@@ -391,12 +459,12 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
                 yield f"data: {cached_weather}\n\n"
             yield f"data: {json.dumps({'section': 'today', 'text': cached_today})}\n\n"
         else:
-            if weather:
-                weather_raw = json.dumps({'type': 'weather', **weather})
+            if d["weather"]:
+                weather_raw = json.dumps({'type': 'weather', **d["weather"]})
                 yield f"data: {weather_raw}\n\n"
 
             today_acc: list[str] = []
-            if not (today_cards or today_events or pending_habits):
+            if not (d["today_cards"] or d["today_events"] or pending_habits):
                 text = 'Nothing scheduled today.'
                 yield f"data: {json.dumps({'section': 'today', 'text': text})}\n\n"
                 today_acc.append(text)

@@ -2,19 +2,13 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon } from '@radix-ui/react-icons'
 import './DailyBriefing.css'
 
-export default function DailyBriefing({ cards, calendarEvents, habits = [], tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
+export default function DailyBriefing({ tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
   const [sections, setSections] = useState({ today: '', week: '' })
   const [status, setStatus] = useState('idle') // idle | loading | done | error
   const [showSpinner, setShowSpinner] = useState(false)
   const [error, setError] = useState('')
   const [speaking, setSpeaking] = useState(false)
   const abortRef = useRef(null)
-  const cardsRef = useRef(cards)
-  const calEventsRef = useRef(calendarEvents)
-  const habitsRef = useRef(habits)
-  cardsRef.current = cards
-  calEventsRef.current = calendarEvents
-  habitsRef.current = habits
   const mountedRef = useRef(false)
   const debounceRef = useRef(null)
   const generateRef = useRef(null)
@@ -59,9 +53,6 @@ export default function DailyBriefing({ cards, calendarEvents, habits = [], tagI
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate },
         body: JSON.stringify({
-          cards: cardsRef.current,
-          calendar_events: calEventsRef.current,
-          habits: habitsRef.current.map(({ name, completed_today }) => ({ name, completed_today })),
           force,
           today_only: todayOnly,
           utc_offset_minutes: new Date().getTimezoneOffset(),
