@@ -7,7 +7,7 @@ import ConfirmDialog from '../modals/ConfirmDialog'
 import AssistModal from '../modals/AssistModal'
 import CardSheet from '../modals/CardSheet'
 import './EventCard.css'
-import './TodoCard.css'
+import './Card.css'
 import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
 
 const SECTION_COLORS = { today: 'var(--color-today)', week: 'var(--color-week)', month: 'var(--color-month)', later: 'var(--color-later)' }
@@ -33,7 +33,7 @@ function parseGitHubUrl(str) {
   return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
 }
 
-export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown }) {
+export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown }) {
   const [expanded, setExpanded] = useState(false)
   const [showSheet, setShowSheet] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -49,11 +49,11 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
   }, [expanded])
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: todo.id, disabled: !!isOverlay || !!isMobile })
+    useSortable({ id: card.id, disabled: !!isOverlay || !!isMobile })
 
   // Only flag as overdue if the card has an explicit scheduled date
-  const overdueDays = isOverlay ? 0 : (todo.scheduled_at ? (todo.overdue_days ?? 0) : 0)
-  const accentColor = overdueDays > 0 ? '#f59e0b' : (SECTION_COLORS[todo.section] ?? '#6b7280')
+  const overdueDays = isOverlay ? 0 : (card.scheduled_at ? (card.overdue_days ?? 0) : 0)
+  const accentColor = overdueDays > 0 ? '#f59e0b' : (SECTION_COLORS[card.section] ?? '#6b7280')
   if (isDragging && !isOverlay) {
     return (
       <div
@@ -74,9 +74,9 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
     clearTimeout(popTimer.current)
     popTimer.current = setTimeout(() => setPopping(false), 350)
   }
-  const handleEdit   = (e) => { e.stopPropagation(); setExpanded(false); onEdit?.(todo) }
+  const handleEdit   = (e) => { e.stopPropagation(); setExpanded(false); onEdit?.(card) }
   const handleDelete = (e) => { e.stopPropagation(); setShowConfirm(true) }
-  const handleMove   = (e, section) => { e.stopPropagation(); setExpanded(false); onMove?.(todo.id, section) }
+  const handleMove   = (e, section) => { e.stopPropagation(); setExpanded(false); onMove?.(card.id, section) }
 
   return (
     <div
@@ -85,7 +85,7 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
       className={[
         'event-card',
         expanded ? 'event-card--expanded' : '',
-        todo.completed ? 'event-card--done' : '',
+        card.completed ? 'event-card--done' : '',
         overdueDays > 0 ? 'event-card--overdue' : '',
         isDragging ? 'event-card--dragging' : '',
         isOverlay ? 'event-card--overlay' : '',
@@ -100,17 +100,17 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
       <div className="event-header">
         <Checkbox.Root
           className={`card-check${popping ? ' card-check--pop' : ''}`}
-          checked={todo.completed}
-          onCheckedChange={() => onToggle?.(todo)}
+          checked={card.completed}
+          onCheckedChange={() => onToggle?.(card)}
           onClick={handleCheckboxClick}
-          title={todo.completed ? 'Mark incomplete' : 'Mark complete'}
+          title={card.completed ? 'Mark incomplete' : 'Mark complete'}
           aria-label="toggle complete"
         >
           <Checkbox.Indicator className="card-check-indicator">
             <CheckIcon />
           </Checkbox.Indicator>
         </Checkbox.Root>
-        <span className="event-title">{todo.title}</span>
+        <span className="event-title">{card.title}</span>
         {!isOverlay && (
           <span className="event-chevron">
             {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
@@ -118,11 +118,11 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
         )}
       </div>
 
-      {(todo.scheduled_at || todo.recurrence_rule) && (
+      {(card.scheduled_at || card.recurrence_rule) && (
         <div className="event-time">
-          {todo.scheduled_at && <><span className="clock-icon">&#128337;</span>{formatScheduled(todo.scheduled_at)}</>}
-          {todo.recurrence_rule && (
-            <span className="card-recurrence">&#8635; {todo.recurrence_rule}</span>
+          {card.scheduled_at && <><span className="clock-icon">&#128337;</span>{formatScheduled(card.scheduled_at)}</>}
+          {card.recurrence_rule && (
+            <span className="card-recurrence">&#8635; {card.recurrence_rule}</span>
           )}
         </div>
       )}
@@ -131,28 +131,28 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
           &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
         </div>
       )}
-      {todo.waiting_reason && (
+      {card.waiting_reason && (
         <div className="card-waiting-badge">
-          &#9203; Waiting: {todo.waiting_reason}
+          &#9203; Waiting: {card.waiting_reason}
         </div>
       )}
 
       {expanded && !isOverlay && (
         <div className="event-details">
-          {todo.description && (() => {
-            const gh = parseGitHubUrl(todo.description)
+          {card.description && (() => {
+            const gh = parseGitHubUrl(card.description)
             return gh ? (
               <a href={gh.url} target="_blank" rel="noopener noreferrer" className="card-github-badge" onClick={(e) => e.stopPropagation()}>
                 {gh.repo} #{gh.number} ↗
               </a>
             ) : (
-              <div className="event-detail-value">{todo.description}</div>
+              <div className="event-detail-value">{card.description}</div>
             )
           })()}
           <div className="card-move-row">
             <span className="event-detail-label">Move to</span>
             <div className="card-move-buttons">
-              {SECTIONS.filter((s) => s !== todo.section).map((s) => (
+              {SECTIONS.filter((s) => s !== card.section).map((s) => (
                 <button
                   key={s}
                   className="card-move-btn"
@@ -177,9 +177,9 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
         </div>
       )}
 
-      {(todo.tags ?? []).length > 0 && (
+      {(card.tags ?? []).length > 0 && (
         <div className="event-tags">
-          {(todo.tags ?? []).map((tag) => (
+          {(card.tags ?? []).map((tag) => (
             <span key={tag.id} className="event-tag-pill" style={{ background: tag.color }}>
               {tag.name}
             </span>
@@ -190,21 +190,21 @@ export default function TodoCard({ todo, onEdit, onSave, onDelete, onArchive, on
       <ConfirmDialog
         open={showConfirm}
         title="Delete card?"
-        description={`"${todo.title}" will be permanently deleted.`}
-        onConfirm={() => { setShowConfirm(false); onDelete?.(todo.id) }}
+        description={`"${card.title}" will be permanently deleted.`}
+        onConfirm={() => { setShowConfirm(false); onDelete?.(card.id) }}
         onCancel={() => setShowConfirm(false)}
       />
 
       <AssistModal
         open={showAssist}
         onClose={() => setShowAssist(false)}
-        task={todo}
+        task={card}
         onBreakdown={onBreakdown}
       />
 
       {showSheet && (
         <CardSheet
-          card={todo}
+          card={card}
           allTags={allTags ?? []}
           onClose={() => setShowSheet(false)}
           onSave={onSave}

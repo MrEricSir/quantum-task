@@ -1,13 +1,12 @@
-import { CalendarIcon, SunIcon, TableIcon, CommitIcon, LightningBoltIcon, HeartIcon } from '@radix-ui/react-icons'
+import { CalendarIcon, SunIcon, TableIcon, CommitIcon, HeartIcon } from '@radix-ui/react-icons'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
-  { page: 'today',       label: 'Today',       Icon: SunIcon           },
-  { page: 'board',       label: 'Board',       Icon: TableIcon         },
-  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon      },
-  { page: 'health',      label: 'Habits',      Icon: HeartIcon         },
-  { page: 'engineering', label: 'Engineering', Icon: CommitIcon        },
-  { page: 'workshop',    label: 'Workshop',    Icon: LightningBoltIcon },
+  { page: 'today',       label: 'Today',       Icon: SunIcon      },
+  { page: 'board',       label: 'Board',       Icon: TableIcon    },
+  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon },
+  { page: 'health',      label: 'Habits',      Icon: HeartIcon    },
+  { page: 'engineering', label: 'Engineering', Icon: CommitIcon   },
 ]
 
 export default function Sidebar({ tags, selectedTagId, page, onNavigate }) {

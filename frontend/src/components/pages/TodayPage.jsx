@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { DndContext } from '@dnd-kit/core'
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@radix-ui/react-icons'
-import TodoCard from '../board/TodoCard'
+import Card from '../board/Card'
 import CalendarEventCard from '../board/CalendarEventCard'
 import DailyBriefing from '../shared/DailyBriefing'
 import InsightsPanel from '../shared/InsightsPanel'
@@ -151,11 +151,11 @@ function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
   )
 }
 
-export default function TodayPage({ todos, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false, allTags = [], onBreakdown }) {
-  const activeTodos = todos.filter((t) => !t.completed)
-  const overdueTodos = activeTodos.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
-  const todayTodos   = activeTodos.filter((t) => t.section === 'today')
-  const allRelevant  = [...overdueTodos, ...todayTodos]
+export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, healthData, healthGoals, isImperial = false, allTags = [], onBreakdown }) {
+  const activeCards = cards.filter((t) => !t.completed)
+  const overdueCards = activeCards.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
+  const todayCards   = activeCards.filter((t) => t.section === 'today')
+  const allRelevant  = [...overdueCards, ...todayCards]
 
   // Timed tasks go in Schedule with events; untimed tasks appended below in Schedule
   const timedTasks   = allRelevant.filter((t) => t.scheduled_at)
@@ -218,7 +218,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
   const habitsPending = habits.length - habitsDone
   const habitsAllDone = habits.length > 0 && habitsPending === 0
 
-  const catchUpCount  = todos.filter((t) => !t.completed && t.section === 'week').length
+  const catchUpCount  = cards.filter((t) => !t.completed && t.section === 'week').length
 
   const overdueScheduleCount = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
                              + untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
@@ -264,7 +264,7 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
         </div>
 
         <DailyBriefing
-          todos={activeTodos}
+          cards={activeCards}
           calendarEvents={todayEvents}
           habits={habits}
           ready
@@ -368,9 +368,9 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                 item.type === 'event' ? (
                   <CalendarEventCard key={`ev-${item.data.id}`} event={item.data} />
                 ) : (
-                  <TodoCard
+                  <Card
                     key={`task-${item.data.id}`}
-                    todo={item.data}
+                    card={item.data}
                     onEdit={onEdit}
                     onSave={onSave}
                     onDelete={onDelete}
@@ -384,9 +384,9 @@ export default function TodayPage({ todos, calendarEvents, habits, onToggle, onT
                 )
               )}
               {sortedUntimedTasks.map((todo) => (
-                <TodoCard
+                <Card
                   key={todo.id}
-                  todo={todo}
+                  card={todo}
                   onEdit={onEdit}
                   onSave={onSave}
                   onDelete={onDelete}

@@ -39,13 +39,13 @@ function ItemCard({ item, onAddToBoard, isAdded }) {
   )
 }
 
-export default function EngineeringPage({ items, todos = [], lastSynced, syncing, onSync, onAddToBoard }) {
+export default function EngineeringPage({ items, cards = [], lastSynced, syncing, onSync, onAddToBoard }) {
   const { openGithubSettings } = useModalContext()
   const prs    = items.filter((i) => i.item_type === 'pr')
   const issues = items.filter((i) => i.item_type === 'issue')
   const noConfig = items.length === 0 && !syncing
 
-  const isAdded = (item) => todos.some(
+  const isAdded = (item) => cards.some(
     (t) => (t.external_id && t.external_id === item.external_id) || t.description === item.url
   )
 

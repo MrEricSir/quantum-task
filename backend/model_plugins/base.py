@@ -36,7 +36,7 @@ Reference dates:
 {tags_section}
 
 Fields:
-  type          — "task" | "habit" | "goal" | "food"
+  type          — "task" | "habit" | "goal" | "food" | "habit_check" | "task_complete" | "assist"
                   task  = a discrete, completable item with a clear done state
                           (e.g. "send Bob the report", "dentist appointment", "buy groceries")
                   habit = something you do repeatedly on an ongoing, indefinite basis with
@@ -46,10 +46,35 @@ Fields:
                           Use when the input explicitly says "set/change/update my X goal to Y"
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
                           Always set withings_metric and withings_goal when type="goal"
-                  food  = logging something eaten or drunk, right now or very recently
-                          (e.g. "I ate a donut", "just had coffee", "about to drink green tea",
-                          "had a chicken salad for lunch", "drinking a beer")
-                          When type is "food", set title to the food/drink name only
+                  food  = logging something eaten or drunk (past, present, or imminent)
+                          Trigger on ANY first- or second-person eating/drinking verb:
+                          ate, eat, eating, had, have, having, drank, drink, drinking,
+                          consumed, grabbed, picked up, ordered, finished, just had, etc.
+                          Examples: "I ate a donut", "had a cup of yogurt",
+                          "ate sugar-free yogurt", "just had coffee", "drinking a beer",
+                          "had a chicken salad for lunch", "grabbed a snack"
+                          Do NOT classify food as a task or goal just because it mentions
+                          a health attribute (e.g. "sugar-free", "low-cal", "protein shake").
+                          When type is "food", set title to the food/drink description only
+                  habit_check = marking an existing habit as completed today
+                          Use when the input describes a recurring habit in the past tense:
+                          (e.g. "did my meditation", "completed my morning run",
+                          "finished my walk", "checked off yoga", "done with exercise")
+                          When type is "habit_check", set title to just the activity
+                          (strip "did", "completed", "finished", "checked off", etc.)
+                  task_complete = marking a one-time task as finished/archived
+                          Use when the input marks a specific, non-recurring task as done:
+                          (e.g. "finished the dentist appointment", "completed the report",
+                          "done with the meeting", "archive the project proposal",
+                          "I finished the oil change")
+                          Set title to the task name, stripping the completion verb.
+                  assist = a conversational or planning request — NOT a specific item to capture
+                          Use when the input is a question, request for help, or anything that
+                          does not map cleanly to a task, habit, food log, or completion.
+                          Examples: "help me plan my week", "what should I focus on today?",
+                          "can you suggest tasks for my project", "how should I prioritize?"
+                          Do NOT use for imperative statements like "call dentist" or
+                          "meditate daily" — those are tasks/habits even if phrased as requests.
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
@@ -101,7 +126,7 @@ IMPORTANT — MULTIPLE ITEMS:
 with 3+ items, or a store name followed by food items on separate lines — group ALL of \
 them into ONE item with type="task", section="later", and each item on its own line in description.
 - For each item, include "source_text": the verbatim fragment of the user's input that this item was parsed from (copy the exact words, do not paraphrase).
-Return ONLY valid JSON: {{"items": [<ParsedTodo>, ...]}} — no prose, no explanation.\
+Return ONLY valid JSON: {{"items": [<ParsedCard>, ...]}} — no prose, no explanation.\
 """
 
 # Weekday name → weekday index (Monday=0)
@@ -332,7 +357,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit", "goal"}
+    _VALID_TYPES = {"task", "habit", "goal", "assist"}
 
     def normalize_raw(self, raw: dict) -> dict:
         """
@@ -379,8 +404,13 @@ class BaseModelPlugin:
             raw["section"] = "later"
             if not raw.get("description") and raw.get("note_content"):
                 raw["description"] = raw["note_content"]
+        elif type_val in self._VALID_TYPES:
+            raw["type"] = type_val
+            # Ensure a non-empty title for assist items (other fields unused by frontend)
+            if type_val == "assist" and not raw.get("title"):
+                raw["title"] = "Assist"
         else:
-            raw["type"] = type_val if type_val in self._VALID_TYPES else "task"
+            raw["type"] = "task"
 
         section = raw.get("section", "")
         if isinstance(section, str):
@@ -429,9 +459,13 @@ class BaseModelPlugin:
 
     def post_process(self, parsed: Any, *, text: str = "") -> Any:
         """
-        Called on the validated ParsedTodo after Pydantic.
+        Called on the validated ParsedCard after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
+        # Assist items need no further processing — the frontend streams them directly.
+        if parsed.type == "assist":
+            return parsed
+
         lowered = text.strip().lower()
 
         # Enforce section from explicit temporal phrases in the input text.

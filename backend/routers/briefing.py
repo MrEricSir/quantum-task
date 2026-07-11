@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests as http_requests
 from fastapi import APIRouter, Request
@@ -65,7 +65,7 @@ def _normalize_plan_time(s: str | None) -> str | None:
 def _build_daily_plan_context(
     today,
     cal_events: list,
-    todos: list,
+    cards: list,
     habits: list,
     utc_offset_minutes: int = 0,
 ) -> str:
@@ -74,8 +74,8 @@ def _build_daily_plan_context(
     today_str = today.strftime("%A, %B %d, %Y") if hasattr(today, "strftime") else str(today)
     lines = [f"Date: {today_str}"]
 
-    fixed = [(t, _fmt_time_24h(t.scheduled_at, utc_offset_minutes)) for t in todos if t.scheduled_at]
-    unscheduled = [t for t in todos if not t.scheduled_at]
+    fixed = [(t, _fmt_time_24h(t.scheduled_at, utc_offset_minutes)) for t in cards if t.scheduled_at]
+    unscheduled = [t for t in cards if not t.scheduled_at]
 
     if cal_events or fixed:
         lines.append("\nEvents and tasks with fixed start time:")
@@ -112,11 +112,11 @@ def _time_of_day_bucket(local_now: datetime) -> int:
     return 3
 
 
-def _today_hash(todos: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None, steps_today: int | None = None) -> str:
+def _today_hash(cards: list, events: list, habits: list, has_location: bool, local_now: datetime | None = None, steps_today: int | None = None) -> str:
     payload = {
-        "todos": [
+        "cards": [
             {"id": t.id, "title": t.title, "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None}
-            for t in sorted(todos, key=lambda t: t.id)
+            for t in sorted(cards, key=lambda t: t.id)
         ],
         "events": [
             {"id": e.id, "title": e.title, "start": e.start.isoformat(), "all_day": e.all_day}
@@ -133,11 +133,11 @@ def _today_hash(todos: list, events: list, habits: list, has_location: bool, loc
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def _week_hash(todos: list, events: list) -> str:
+def _week_hash(cards: list, events: list) -> str:
     payload = {
-        "todos": [
+        "cards": [
             {"id": t.id, "title": t.title, "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None}
-            for t in sorted(todos, key=lambda t: t.id)
+            for t in sorted(cards, key=lambda t: t.id)
         ],
         "events": [
             {"id": e.id, "title": e.title, "start": e.start.isoformat(), "all_day": e.all_day}
@@ -227,9 +227,9 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     tz_offset = req.utc_offset_minutes or 0
     local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
-    today_todos  = [t for t in req.todos if t.section == "today"]
+    today_cards  = [t for t in req.cards if t.section == "today"]
     today_events = [e for e in req.calendar_events if event_local_date(e, tz_offset) == today_dt and not e.is_ooo]
-    week_todos   = [t for t in req.todos if t.section == "week"]
+    week_cards   = [t for t in req.cards if t.section == "week"]
     week_events  = [e for e in req.calendar_events
                     if today_dt < event_local_date(e, tz_offset) <= today_dt + timedelta(days=7) and not e.is_ooo]
 
@@ -237,8 +237,8 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
         _health_data, _health_ctx = build_health_context(_pre_db, today_dt)
     _steps_today = int(_health_data["today"].get("steps", 0)) or None
 
-    today_h = _today_hash(today_todos, today_events, req.habits, req.lat is not None, local_now, _steps_today)
-    week_h  = _week_hash(week_todos, week_events)
+    today_h = _today_hash(today_cards, today_events, req.habits, req.lat is not None, local_now, _steps_today)
+    week_h  = _week_hash(week_cards, week_events)
 
     cached_today = cached_weather = cached_week = None
     if not req.force:
@@ -270,11 +270,11 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     with SessionLocal() as _obs_db:
         observations = compute_observations(_obs_db, today_dt)
         eng_items = _obs_db.query(models.EngineeringItem).filter_by(state="open").all()
-    on_board = {t.description for t in req.todos if t.description}
+    on_board = {t.description for t in req.cards if t.description}
     eng_prs    = [i for i in eng_items if i.item_type == "pr"    and i.url not in on_board]
     eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
-    today_ctx = build_today_context(today_todos, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events, health_context=_health_ctx)
-    week_ctx  = build_week_context(week_todos, week_events, today_dt, tz_offset, eng_issues) if need_week else None
+    today_ctx = build_today_context(today_cards, today_events, today_dt, req.habits, observations, tz_offset, eng_prs, local_now=local_now, weather=weather, all_cal_events=req.calendar_events, health_context=_health_ctx)
+    week_ctx  = build_week_context(week_cards, week_events, today_dt, tz_offset, eng_issues) if need_week else None
 
     def generate():
         weather_raw: str | None = None
@@ -289,7 +289,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
                 yield f"data: {weather_raw}\n\n"
 
             today_acc: list[str] = []
-            if not (today_todos or today_events or pending_habits):
+            if not (today_cards or today_events or pending_habits):
                 text = 'Nothing scheduled today.'
                 yield f"data: {json.dumps({'section': 'today', 'text': text})}\n\n"
                 today_acc.append(text)
@@ -341,6 +341,17 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+# ── Standalone weather endpoint ───────────────────────────────────────────────
+
+@router.get("/weather")
+def get_weather(lat: float, lon: float):
+    """Return current weather for the given coordinates."""
+    result = fetch_weather(lat, lon)
+    if result is None:
+        return {}
+    return result
+
+
 # ── Assistant endpoint ────────────────────────────────────────────────────────
 
 _ASSIST_TAVILY_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -358,7 +369,7 @@ def _reverse_geocode(lat: float, lon: float) -> str | None:
         r = http_requests.get(
             "https://nominatim.openstreetmap.org/reverse",
             params={"lat": lat, "lon": lon, "format": "json"},
-            headers={"User-Agent": "personal-todo-app/1.0"},
+            headers={"User-Agent": "quantum-task/1.0"},
             timeout=5,
         )
         addr = r.json().get("address", {})
@@ -394,36 +405,46 @@ def _tavily_search(query: str, max_results: int = 5) -> list[dict]:
 
 
 _ASSIST_DECISION_SYSTEM = """\
-Decide whether answering this task requires current web data \
+Decide whether answering this request requires current web data \
 (local businesses, real-time info, current events, prices, reviews, hours, etc.).
 Return ONLY valid JSON — no markdown.
 If search needed: {"search": true, "queries": ["specific query 1", "specific query 2"]}
 If not needed: {"search": false}
-Use 1–3 targeted queries. Include location when relevant (provided in context).
+Use 1–3 targeted queries. Only include a location in queries if the user explicitly \
+provided one — never assume or infer a location.
+IMPORTANT: If the request involves finding specific places or businesses (hotels, \
+restaurants, stores) but no location is given, return {"search": false} — the \
+assistant will ask the user for their location instead of guessing.
 """
 
 _ASSIST_SYSTEM = """\
-You are a personal administrative assistant. When given a task and context, you take \
-action — you do not describe what you would do, you just do it.
+You are a personal administrative assistant. You produce content the user can act on — \
+you do not perform actions yourself.
 
-Examples of what "taking action" means:
-- Task is a reply to send → write the reply, ready to copy and send
-- Task is meeting prep → produce the agenda, talking points, or briefing notes
-- Task is a summary → write the summary
-- Task is extracting action items → list them clearly and concisely
-- Task is drafting a document → write the document
-- Task is finding local options → list real options sourced from the search results provided
+What "producing content" means:
+- Request is a reply to send → write the reply text, ready to copy and send
+- Request is meeting prep → produce the agenda, talking points, or briefing notes
+- Request is a summary → write the summary
+- Request is extracting action items → list them clearly and concisely
+- Request is drafting a document → write the document
+- Request is finding local options → list real options from the web search results provided
 
 Rules:
+- Do not use first person for things you cannot do ("I will call", "I will book", \
+"I have sent"). You produce drafts and information; the user takes the physical action.
 - Do not explain your reasoning or what you are about to do. Produce the output directly.
-- Match the tone and format implied by the task and context.
+- Match the tone and format implied by the request and context.
 - If the context is a message the user received, the output is addressed to the sender.
 - Keep output concise and professional unless the task implies otherwise.
-- If the context does not contain enough information to act, say so in one sentence.
-- If web search results are provided, use them as your primary source of truth. \
-Cite sources inline as [Title](URL) where useful.
-- Never invent specific facts (business names, addresses, prices, people) that are \
-not present in the context or search results.
+- CRITICAL: Never invent specific facts — business names, hotel names, addresses, phone \
+numbers, prices, people — that are not explicitly present in the provided context or \
+web search results. If location-specific information is needed but no location was \
+given, say: "I don't have your location — please tell me where you are and I'll help \
+from there." If other key information is missing, ask for it in one sentence.
+- If web search results are provided, use them as the primary source of truth. \
+Cite sources inline when useful (e.g. "Source: https://example.com").
+- Do not use markdown formatting. No asterisks for bold, no # headers, no --- dividers. \
+Use plain text with line breaks and simple punctuation for structure.
 """
 
 
@@ -433,9 +454,9 @@ def stream_assist(req: schemas.AssistRequest):
     if req.lat is not None and req.lon is not None:
         location_str = _reverse_geocode(req.lat, req.lon)
 
-    user_msg_parts = [f"Task: {req.task_title}"]
-    if req.task_description:
-        user_msg_parts.append(f"Additional context from task: {req.task_description}")
+    user_msg_parts = [f"Task: {req.card_title}"]
+    if req.card_description:
+        user_msg_parts.append(f"Additional context from card: {req.card_description}")
     if location_str:
         user_msg_parts.append(f"User's location: {location_str}")
     user_msg_parts.append(f"\nContext provided by user:\n{req.context}")
@@ -469,6 +490,142 @@ def stream_assist(req: schemas.AssistRequest):
                         search_context = "\n\n---\n\n".join(parts)
             except Exception:
                 pass  # fall through to regular generation
+
+        final_user = user_msg
+        if search_context:
+            final_user += f"\n\n--- Web Search Results ---\n{search_context}"
+
+        try:
+            stream = llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": _ASSIST_SYSTEM},
+                    {"role": "user",   "content": final_user},
+                ],
+                stream=True,
+                temperature=0.3,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({'text': delta})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/api/assist/global")
+def global_assist(req: schemas.GlobalAssistRequest):
+    """Header-level assistant: fetches card context by section or tag, then streams a response."""
+    location_str = None
+    if req.lat is not None and req.lon is not None:
+        location_str = _reverse_geocode(req.lat, req.lon)
+
+    # Build card context from selected section or tag
+    card_context_parts: list[str] = []
+    with SessionLocal() as db:
+        if req.section:
+            cards = (
+                db.query(models.Card)
+                .filter(
+                    models.Card.section == req.section,
+                    models.Card.archived == False,  # noqa: E712
+                    models.Card.completed == False,  # noqa: E712
+                )
+                .order_by(models.Card.created_at)
+                .limit(20)
+                .all()
+            )
+            if cards:
+                label_map = {
+                    "today": "Today", "week": "This Week",
+                    "month": "This Month", "later": "Stash",
+                }
+                label = label_map.get(req.section, req.section)
+                card_context_parts.append(f"### Cards in '{label}'")
+                for c in cards:
+                    card_context_parts.append(
+                        f"- **{c.title}**" + (f": {c.description}" if c.description else "")
+                    )
+        elif req.tag_id:
+            tag = db.query(models.Tag).filter(models.Tag.id == req.tag_id).first()
+            tag_cards = (
+                db.query(models.Card)
+                .join(models.card_tags, models.Card.id == models.card_tags.c.card_id)
+                .filter(
+                    models.card_tags.c.tag_id == req.tag_id,
+                    models.Card.archived == False,  # noqa: E712
+                    models.Card.completed == False,  # noqa: E712
+                )
+                .limit(20)
+                .all()
+            )
+            if tag_cards:
+                label = tag.name if tag else f"tag #{req.tag_id}"
+                card_context_parts.append(f"### Cards tagged '{label}'")
+                for c in tag_cards:
+                    card_context_parts.append(
+                        f"- **{c.title}**" + (f": {c.description}" if c.description else "")
+                    )
+
+        # Always inject habits and health context
+        background_parts: list[str] = []
+        today = date.today()
+        today_str = today.isoformat()
+        _, health_ctx = build_health_context(db, today)
+        if health_ctx:
+            background_parts.append(health_ctx)
+        all_habits = db.query(models.Habit).filter(models.Habit.archived == False).all()  # noqa: E712
+        completed_habit_ids = {
+            c.habit_id for c in db.query(models.HabitCompletion)
+            .filter(models.HabitCompletion.date == today_str).all()
+        }
+        pending_habits = [h.name for h in all_habits if h.id not in completed_habit_ids]
+        done_habits    = [h.name for h in all_habits if h.id in completed_habit_ids]
+        if pending_habits:
+            background_parts.append("Habits pending today: " + ", ".join(pending_habits))
+        if done_habits:
+            background_parts.append("Habits completed today: " + ", ".join(done_habits))
+
+    user_msg_parts = [f"Request: {req.prompt}"]
+    if location_str:
+        user_msg_parts.append(f"User's location: {location_str}")
+    if background_parts:
+        user_msg_parts.append("\n## User context (today)\n" + "\n".join(background_parts))
+    if card_context_parts:
+        user_msg_parts.append("\n" + "\n".join(card_context_parts))
+    user_msg = "\n".join(user_msg_parts)
+
+    def generate():
+        search_context = ""
+        if _ASSIST_TAVILY_KEY:
+            try:
+                decision_resp = llm_client().chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[
+                        {"role": "system", "content": _ASSIST_DECISION_SYSTEM},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    max_tokens=150,
+                    temperature=0,
+                    timeout=10,
+                )
+                decision = json.loads(decision_resp.choices[0].message.content.strip())
+                if decision.get("search"):
+                    yield f"data: {json.dumps({'status': 'searching'})}\n\n"
+                    all_results = []
+                    for q in decision.get("queries", [])[:3]:
+                        all_results.extend(_tavily_search(q))
+                    if all_results:
+                        parts = [
+                            f"[{r['title']}]({r['url']})\n{r['content']}"
+                            for r in all_results[:8]
+                        ]
+                        search_context = "\n\n---\n\n".join(parts)
+            except Exception:
+                pass
 
         final_user = user_msg
         if search_context:

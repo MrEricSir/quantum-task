@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import CardForm, { isoToLocal } from './CardForm'
 import AssistModal from './AssistModal'
-import './AddTodoModal.css'
+import './CardModal.css'
 import './CardSheet.css'
 import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
 

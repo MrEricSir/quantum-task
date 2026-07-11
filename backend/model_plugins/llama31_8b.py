@@ -19,6 +19,33 @@ _TIME_RE = re.compile(
     re.I,
 )
 
+# Past-tense / present-progressive eating/drinking verbs — override task→food
+_FOOD_RE = re.compile(
+    r'^(?:i\s+)?(?:ate|eating|had|having|drank|drinking|'
+    r'consumed|grabbed|ordered|just\s+had|snacked\s+on|tasted)\b',
+    re.I,
+)
+
+# Past-tense completion verbs — override task/habit → habit_check
+# Frontend handles habit vs task disambiguation via unified picker
+_HABIT_CHECK_RE = re.compile(
+    r'^(?:i\s+)?(?:did|complete(?:d)?|finish(?:ed)?|check(?:ed)?\s+off|done\s+with)\b',
+    re.I,
+)
+
+_HABIT_CHECK_STRIP_RE = re.compile(
+    r'^(?:i\s+)?(?:did|complete(?:d)?|finish(?:ed)?|check(?:ed)?\s+off|done\s+with)'
+    r'(?:\s+(?:my|the|a|an))?\s+',
+    re.I,
+)
+
+# "archive" is the only explicit task_complete signal at the regex level
+_TASK_COMPLETE_RE = re.compile(r'^(?:i\s+)?archived?\b', re.I)
+
+_TASK_COMPLETE_STRIP_RE = re.compile(
+    r'^(?:i\s+)?archived?(?:\s+(?:the|a|an))?\s+', re.I
+)
+
 
 class Llama31_8bPlugin(BaseModelPlugin):
     model_name = "llama-3.1-8b-instant"
@@ -72,6 +99,58 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '{{"type":"habit","title":"Meditate","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":"daily","note_content":null}}',
+        ),
+        # habit_check — past-tense habit completion
+        (
+            "did my meditation",
+            '{{"type":"habit_check","title":"Meditation","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
+        ),
+        (
+            "completed my morning run",
+            '{{"type":"habit_check","title":"Morning run","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
+        ),
+        # food — eating/drinking log
+        (
+            "had a yogurt",
+            '{{"type":"food","title":"Yogurt","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
+        ),
+        (
+            "ate a bowl of oatmeal for breakfast",
+            '{{"type":"food","title":"Bowl of oatmeal","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"note_content":null}}',
+        ),
+        # task_complete — marking a one-time task as done
+        (
+            "finished the dentist appointment",
+            '{{\"type\":\"task_complete\",\"title\":\"Dentist appointment\",\"description\":null,'\
+            '\"section\":\"today\",\"scheduled_at\":null,\"suggested_tags\":[],'\
+            '\"recurrence_rule\":null,\"note_content\":null}}',
+        ),
+        (
+            "archive the project proposal",
+            '{{\"type\":\"task_complete\",\"title\":\"Project proposal\",\"description\":null,'\
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'\
+            '\"recurrence_rule\":null,\"note_content\":null}}',
+        ),
+        # assist — conversational/planning request, not a structured item
+        (
+            "help me plan my week",
+            '{{\"type\":\"assist\",\"title\":\"Help me plan my week\",\"description\":null,'
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'
+            '\"recurrence_rule\":null}}',
+        ),
+        (
+            "what should I focus on today?",
+            '{{\"type\":\"assist\",\"title\":\"What should I focus on today?\",\"description\":null,'
+            '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[],'
+            '\"recurrence_rule\":null}}',
         ),
         # note
         (
@@ -127,6 +206,28 @@ class Llama31_8bPlugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
+        if parsed.type == "assist":
+            return parsed
+
+        # Override task/habit → habit_check for past-tense completion verbs
+        # Frontend resolves whether it's a habit or task via unified picker
+        if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):
+            parsed.type = "habit_check"
+            stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
+            if stripped:
+                parsed.title = stripped[0].upper() + stripped[1:]
+
+        # Override task→food when input clearly starts with an eating/drinking verb
+        if parsed.type == "task" and _FOOD_RE.match(text.strip()):
+            parsed.type = "food"
+
+        # "archive" is the only regex-level trigger for task_complete
+        if parsed.type == "task" and _TASK_COMPLETE_RE.match(text.strip()):
+            parsed.type = "task_complete"
+            stripped = _TASK_COMPLETE_STRIP_RE.sub("", text.strip()).strip()
+            if stripped:
+                parsed.title = stripped[0].upper() + stripped[1:]
+
         # Strip fabricated scheduled_at for vague day phrases with no stated clock time
         if parsed.scheduled_at and parsed.section in ("week", "month"):
             if not _TIME_RE.search(text):

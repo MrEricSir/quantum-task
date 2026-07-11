@@ -107,7 +107,7 @@ def compute_observations(db: Session, today: date) -> str | None:
 # ── Context builders ──────────────────────────────────────────────────────────
 
 def build_today_context(
-    todos: list,
+    cards: list,
     cal_events: list,
     today: date,
     habits: list = None,
@@ -166,9 +166,9 @@ def build_today_context(
             else:
                 lines.append(f"  - {e.title} at {fmt_time(e.start, utc_offset_minutes)}{recurring_tag}")
 
-    if todos:
+    if cards:
         lines.append("Tasks for today:")
-        for t in todos:
+        for t in cards:
             suffix = f" at {fmt_time(t.scheduled_at, utc_offset_minutes)}" if t.scheduled_at else ""
             overdue = f" [OVERDUE by {t.overdue_days} day{'s' if t.overdue_days != 1 else ''}]" if t.overdue_days > 0 else ""
             lines.append(f"  - {t.title}{suffix}{overdue}")
@@ -182,7 +182,7 @@ def build_today_context(
         for name in pending_habits:
             lines.append(f"  - {name}")
 
-    if not upcoming_events and not todos and not eng_prs and not pending_habits:
+    if not upcoming_events and not cards and not eng_prs and not pending_habits:
         lines.append("Nothing remaining on the schedule.")
 
     if health_context:
@@ -196,13 +196,13 @@ def build_today_context(
 
 
 def build_week_context(
-    todos: list,
+    cards: list,
     cal_events: list,
     today: date,
     utc_offset_minutes: int = 0,
     eng_issues: list = None,
 ) -> str | None:
-    if not todos and not cal_events:
+    if not cards and not cal_events:
         return None
 
     recur_groups: dict[tuple, list] = {}
@@ -231,7 +231,7 @@ def build_week_context(
         else:
             by_day.setdefault(day, []).append((start, f"- {e.title} at {fmt_time(start, utc_offset_minutes)}"))
 
-    for t in todos:
+    for t in cards:
         if t.scheduled_at:
             day = t.scheduled_at.date()
             if day <= today:

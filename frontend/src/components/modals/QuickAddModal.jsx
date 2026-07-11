@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { parseBulkCards, localDateTime } from '../../api'
+import { parseBulkCards, localDateTime, createCard } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
+import { scoreMatch, findBestMatch } from '../../lib/completion.js'
 import './QuickAddModal.css'
 
 const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)
@@ -18,11 +19,47 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log' }
-
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off', task_complete: 'Complete Task' }
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
-
 const KG_TO_LBS = 2.20462
+
+const SECTION_OPTIONS = [
+  { value: 'section:today', label: 'Today' },
+  { value: 'section:week', label: 'This Week' },
+  { value: 'section:month', label: 'This Month' },
+  { value: 'section:later', label: 'Stash' },
+]
+
+const HISTORY_KEY = 'globalAssistHistory'
+const HISTORY_MAX = 5
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') } catch { return [] }
+}
+
+function saveToHistory(entry) {
+  const prev = loadHistory()
+  const next = [entry, ...prev.filter((e) => e.prompt !== entry.prompt)].slice(0, HISTORY_MAX)
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next))
+}
+
+
+function timeAgo(iso) {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+function parseContext(value) {
+  if (!value) return { section: null, tag_id: null }
+  if (value.startsWith('section:')) return { section: value.slice(8), tag_id: null }
+  if (value.startsWith('tag:')) return { section: null, tag_id: parseInt(value.slice(4)) }
+  return { section: null, tag_id: null }
+}
 
 function formatGoalDisplay(metric, goal, isImperial) {
   if (goal == null) return '—'
@@ -35,14 +72,30 @@ function formatGoalDisplay(metric, goal, isImperial) {
   return String(goal)
 }
 
-export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSaveHabit, onSaveGoals, onSaveStepGoal, onSaveFood, isImperial = false, initialText = '' }) {
+export default function QuickAddModal({
+  allTags = [],
+  visibleTags = [],
+  habits = [],
+  cards = [],
+  onClose,
+  onSaveCard,
+  onSaveHabit,
+  onSaveGoals,
+  onSaveStepGoal,
+  onSaveFood,
+  onToggleHabit,
+  onCompleteTask,
+  isImperial = false,
+  initialText = '',
+  initialStep = 'input',
+}) {
   // ── Input step ──
   const [text, setText] = useState(initialText)
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState('')
 
-  // ── Confirm / bulk-edit step ──
-  const [step, setStep] = useState('input') // 'input' | 'confirm' | 'bulk-confirm' | 'bulk-edit'
+  // ── Confirm / bulk-edit / assist step ──
+  const [step, setStep] = useState(initialStep) // 'input' | 'confirm' | 'bulk-confirm' | 'bulk-edit' | 'assist'
   const [detectedType, setDetectedType] = useState('task')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -53,6 +106,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const [clarificationQuestion, setClarificationQuestion] = useState('')
   const [withingsMetric, setWithingsMetric] = useState(null)
   const [withingsGoal, setWithingsGoal] = useState(null)
+  const [matchedItem, setMatchedItem] = useState(null) // { kind: 'habit'|'task', id }
   const [saving, setSaving] = useState(false)
 
   // ── Voice input ──
@@ -65,6 +119,20 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
   const [splittingIdx, setSplittingIdx] = useState(null)
   const [splitText, setSplitText] = useState('')
   const [reparseLoading, setReparseLoading] = useState(false)
+
+  // ── Assist tab ──
+  const [contextType, setContextType] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [output, setOutput] = useState('')
+  const [assistStatus, setAssistStatus] = useState('idle') // 'idle' | 'running' | 'done' | 'error'
+  const [searching, setSearching] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [savedAsCard, setSavedAsCard] = useState(false)
+  const [history, setHistory] = useState(() => loadHistory())
+  const abortRef = useRef(null)
+  const outputRef = useRef(null)
+
+  // ── Add tab handlers ──
 
   const toggleTag = (id) =>
     setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
@@ -106,6 +174,12 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
       const { items } = await parseBulkCards(text.trim())
       if (items.length === 1) {
         const result = items[0]
+        if (result.type === 'assist') {
+          setPrompt(text.trim())
+          setStep('assist')
+          runAssist(text.trim())
+          return
+        }
         const tagIds = (result.suggested_tags ?? [])
           .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
           .filter(Boolean)
@@ -119,6 +193,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         setClarificationQuestion(result.clarification_question ?? '')
         setWithingsMetric(result.withings_metric ?? null)
         setWithingsGoal(result.withings_goal ?? null)
+        if (result.type === 'habit_check' || result.type === 'task_complete') {
+          setMatchedItem(findBestMatch(result.title ?? '', habits, cards))
+        }
         setStep('confirm')
       } else {
         setBulkItems(items.map((item, i) => ({ ...item, _key: i })))
@@ -148,12 +225,19 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
         await onSaveStepGoal(withingsGoal)
       } else if (detectedType === 'goal' && withingsMetric) {
         await onSaveGoals({ [withingsMetric]: withingsGoal })
+      } else if (detectedType === 'habit_check' || detectedType === 'task_complete') {
+        if (matchedItem?.kind === 'habit') {
+          const habit = habits.find((h) => h.id === matchedItem.id)
+          if (habit) await onToggleHabit(habit)
+        } else if (matchedItem?.kind === 'task') {
+          await onCompleteTask(matchedItem.id)
+        }
       } else if (detectedType === 'habit') {
         await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
       } else {
-        await onSaveTask(buildCardPayload())
+        await onSaveCard(buildCardPayload())
       }
       onClose()
     } catch {
@@ -252,12 +336,20 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           await onSaveStepGoal(item.withings_goal)
         } else if (item.type === 'goal' && item.withings_metric) {
           await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
+        } else if (item.type === 'habit_check' || item.type === 'task_complete') {
+          const m = findBestMatch(item.title, habits, cards)
+          if (m?.kind === 'habit') {
+            const habit = habits.find((h) => h.id === m.id)
+            if (habit) await onToggleHabit(habit)
+          } else if (m?.kind === 'task') {
+            await onCompleteTask(m.id)
+          }
         } else if (item.type === 'habit') {
           await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
         } else if (item.type === 'food') {
           await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
         } else {
-          await onSaveTask({
+          await onSaveCard({
             title: item.title,
             description: item.description || null,
             section: item.section ?? 'later',
@@ -280,7 +372,9 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
       ? (!withingsMetric || withingsGoal == null)
       : detectedType === 'food'
         ? !text.trim()
-        : !title.trim()
+        : (detectedType === 'habit_check' || detectedType === 'task_complete')
+          ? !matchedItem
+          : !title.trim()
   )
 
   const renderCardFields = (idPrefix) => (
@@ -303,15 +397,92 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
     />
   )
 
+  // ── Assist tab handlers ──
+
+  const runAssist = async (overrideText) => {
+    const p = (overrideText !== undefined ? overrideText : prompt).trim()
+    if (!p || assistStatus === 'running') return
+    setAssistStatus('running')
+    setOutput('')
+    setSearching(false)
+    setSavedAsCard(false)
+    setCopied(false)
+    const controller = new AbortController()
+    abortRef.current = controller
+    const ctx = parseContext(contextType)
+    try {
+      const resp = await fetch('/api/assist/global', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: p, ...ctx }),
+        signal: controller.signal,
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let text = ''
+      let done = false
+      while (!done) {
+        const { done: d, value } = await reader.read()
+        done = d
+        if (value) buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop()
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (data === '[DONE]') { done = true; break }
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.searching) { setSearching(true); continue }
+            if (parsed.text) {
+              text += parsed.text
+              setOutput(text)
+              if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight
+            }
+          } catch {}
+        }
+      }
+      if (text) {
+        saveToHistory({ prompt: p, output: text, ts: new Date().toISOString() })
+        setHistory(loadHistory())
+      }
+      setAssistStatus('done')
+    } catch (e) {
+      if (e.name !== 'AbortError') setAssistStatus('error')
+      else setAssistStatus('idle')
+    }
+  }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(output).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const handleSaveAsCard = async () => {
+    if (!output || savedAsCard) return
+    try {
+      await createCard({
+        title: prompt.trim().slice(0, 80),
+        description: output,
+        section: 'later',
+        tag_ids: [],
+      })
+      setSavedAsCard(true)
+    } catch {}
+  }
+
   return (
     <Modal onClose={onClose} className="modal--md quick-modal">
 
+      {/* ── Quick input ── */}
+
       {step === 'input' && (
         <>
-          <Dialog.Title asChild><h2>Quick Add</h2></Dialog.Title>
-          <p className="quick-hint">
-            Describe a task, habit, food log entry, or health goal in plain language. Put multiple items on separate lines to add them all at once.
-          </p>
+          <Dialog.Title asChild><h2 className="sr-only">Capture</h2></Dialog.Title>
           <div className="quick-input-wrap">
             <textarea
               className="quick-textarea"
@@ -319,8 +490,8 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleParse() }}
-              autoFocus
-              rows={4}
+              autoFocus={initialStep === 'input'}
+              rows={6}
             />
             {SR && (
               <button
@@ -328,7 +499,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
                 className={`quick-mic-btn${listening ? ' quick-mic-btn--listening' : ''}`}
                 onClick={handleMic}
                 title={listening ? 'Stop recording' : 'Dictate'}
-                aria-label={listening ? 'Stop recording' : 'Dictate task'}
+                aria-label={listening ? 'Stop recording' : 'Dictate'}
               >
                 <MicIcon />
               </button>
@@ -337,11 +508,14 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
           {parseError && (
             <p className="quick-parse-error">{parseError}</p>
           )}
-          <div className="modal-footer">
-            <button className="btn-cancel" onClick={onClose}>Cancel</button>
-            <button className="btn-save" onClick={handleParse} disabled={!text.trim() || parsing}>
-              {parsing ? 'Thinking…' : 'Add'}
-            </button>
+          <div className="quick-input-footer">
+            <button className="btn-assist" onClick={() => { setPrompt(text.trim()); setStep('assist') }}>✦ Assist</button>
+            <div className="quick-input-footer-actions">
+              <button className="btn-cancel" onClick={onClose}>Cancel</button>
+              <button className="btn-save" onClick={handleParse} disabled={!text.trim() || parsing}>
+                {parsing ? 'Thinking…' : 'Continue'}
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -468,7 +642,7 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
 
       {step === 'confirm' && (
         <>
-          <Dialog.Title asChild><h2>Confirm</h2></Dialog.Title>
+          <Dialog.Title asChild><h2 className="sr-only">Confirm</h2></Dialog.Title>
 
           {clarificationQuestion && (
             <div className="quick-clarification">
@@ -477,21 +651,29 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
             </div>
           )}
 
-          {detectedType !== 'food' && (
+          {/* Type tabs — only for creation types */}
+          {['task', 'habit', 'food'].includes(detectedType) && (
             <div className="quick-type-row">
-              <span className="quick-type-label">Detected as</span>
               <div className="quick-type-tabs">
-                {(detectedType === 'goal' ? ['goal'] : ['task', 'habit']).map((t) => (
+                {['task', 'habit', 'food'].map((t) => (
                   <button
                     key={t}
                     type="button"
                     className={`quick-type-tab${detectedType === t ? ' quick-type-tab--active' : ''}`}
-                    onClick={() => t !== 'goal' && setDetectedType(t)}
+                    onClick={() => setDetectedType(t)}
                   >
                     {TYPE_LABELS[t]}
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Completion header — for habit_check and task_complete */}
+          {(detectedType === 'habit_check' || detectedType === 'task_complete') && (
+            <div className="quick-complete-header">
+              <span className="quick-complete-check">✓</span>
+              {detectedType === 'habit_check' ? 'Checking off a habit' : 'Completing a task'}
             </div>
           )}
 
@@ -524,12 +706,176 @@ export default function QuickAddModal({ allTags = [], onClose, onSaveTask, onSav
             </div>
           )}
 
+          {(detectedType === 'habit_check' || detectedType === 'task_complete') && (() => {
+            const manualHabits = habits.filter((h) => !h.archived && !h.withings_metric)
+            const activeTasks = cards.filter((c) => !c.completed && !c.archived)
+            const matchVal = matchedItem ? `${matchedItem.kind}:${matchedItem.id}` : ''
+            return (
+              <div className="form-group">
+                <label htmlFor="qa-mark-done">What did you finish?</label>
+                {manualHabits.length === 0 && activeTasks.length === 0 ? (
+                  <p className="quick-hint">No habits or active tasks found.</p>
+                ) : (
+                  <select
+                    id="qa-mark-done"
+                    value={matchVal}
+                    onChange={(e) => {
+                      if (!e.target.value) { setMatchedItem(null); return }
+                      const [kind, id] = e.target.value.split(':')
+                      setMatchedItem({ kind, id: parseInt(id) })
+                    }}
+                  >
+                    <option value="">Select…</option>
+                    {manualHabits.length > 0 && (
+                      <optgroup label="Habits">
+                        {manualHabits.map((h) => (
+                          <option key={h.id} value={`habit:${h.id}`}>{h.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {activeTasks.length > 0 && (
+                      <optgroup label="Tasks">
+                        {activeTasks.map((c) => (
+                          <option key={c.id} value={`task:${c.id}`}>{c.title}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                )}
+              </div>
+            )
+          })()}
+
           <div className="modal-footer">
             <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
             <button className="btn-save" onClick={handleConfirm} disabled={confirmDisabled}>
-              {saving ? 'Saving…' : detectedType === 'goal' ? 'Set Goal' : detectedType === 'food' ? 'Log Food' : `Add ${TYPE_LABELS[detectedType]}`}
+              {saving ? 'Saving…'
+                : detectedType === 'goal' ? 'Set Goal'
+                : detectedType === 'food' ? 'Log Food'
+                : (detectedType === 'habit_check' || detectedType === 'task_complete') ? 'Mark Done'
+                : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
           </div>
+        </>
+      )}
+
+      {/* ── Assist step ── */}
+
+      {step === 'assist' && (
+        <>
+          <Dialog.Title asChild><h2 className="quick-add-title">✦ Assist</h2></Dialog.Title>
+
+          {/* Context selector */}
+          <div className="quick-assist-context-row">
+            <label className="quick-assist-context-label" htmlFor="qa-assist-context">Cards</label>
+            <select
+              id="qa-assist-context"
+              className="quick-assist-context-select"
+              value={contextType}
+              onChange={(e) => setContextType(e.target.value)}
+            >
+              <option value="">No cards</option>
+              <optgroup label="By section">
+                {SECTION_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+              {visibleTags.length > 0 && (
+                <optgroup label="By tag">
+                  {visibleTags.map((t) => (
+                    <option key={t.id} value={`tag:${t.id}`}>{t.name}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+
+          {/* Prompt */}
+          <textarea
+            className="quick-textarea quick-assist-prompt"
+            placeholder="What would you like help with?"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runAssist() }}
+            rows={5}
+            autoFocus
+          />
+
+          {/* Output */}
+          {(output || assistStatus === 'running') && (
+            <div className="quick-assist-output-section">
+              <div className="quick-assist-output-header">
+                <span className="quick-assist-output-label">Output</span>
+                {output && (
+                  <div className="quick-assist-actions">
+                    <button className="quick-assist-action-btn" onClick={handleCopy}>
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                    <button className="quick-assist-action-btn" onClick={handleSaveAsCard} disabled={savedAsCard}>
+                      {savedAsCard ? 'Saved' : 'Save as card'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div
+                className={`quick-assist-output${assistStatus === 'running' ? ' quick-assist-output--streaming' : ''}`}
+                ref={outputRef}
+              >
+                {output || (
+                  <span className="quick-assist-placeholder">
+                    {searching ? 'Searching the web…' : 'Thinking…'}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {assistStatus === 'error' && (
+            <p className="quick-parse-error">Something went wrong. Check your connection and try again.</p>
+          )}
+
+          {/* Footer */}
+          <div className="modal-footer">
+            <button className="btn-cancel" onClick={() => setStep('input')}>← Back</button>
+            <button
+              className="btn-save"
+              onClick={() => runAssist()}
+              disabled={!prompt.trim() || assistStatus === 'running'}
+              aria-label="Generate"
+            >
+              {assistStatus === 'running'
+                ? <><span className="quick-spinner" style={{ display: 'inline-block', marginRight: 6 }} />Generating…</>
+                : 'Generate'}
+            </button>
+          </div>
+
+          {/* History dropdown */}
+          {history.length > 0 && (
+            <div className="quick-assist-history-row">
+              <label className="quick-assist-context-label" htmlFor="qa-assist-recent">Recent</label>
+              <select
+                id="qa-assist-recent"
+                className="quick-assist-context-select"
+                value=""
+                onChange={(e) => {
+                  if (!e.target.value) return
+                  const entry = history[parseInt(e.target.value)]
+                  if (entry) {
+                    setPrompt(entry.prompt)
+                    setOutput(entry.output)
+                    setAssistStatus('done')
+                  }
+                }}
+              >
+                <option value="">Choose a previous query…</option>
+                {history.map((entry, i) => (
+                  <option key={i} value={i}>
+                    {entry.prompt.length > 55 ? entry.prompt.slice(0, 55) + '…' : entry.prompt} · {timeAgo(entry.ts)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </>
       )}
 

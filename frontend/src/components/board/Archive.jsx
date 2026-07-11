@@ -1,11 +1,11 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import TodoCard from './TodoCard'
+import Card from './Card'
 import Collapsible from '../layout/Collapsible'
 import './Archive.css'
 
-export default function Archive({ todos, onEdit, onDelete, onToggle }) {
-  const sorted = [...todos].sort((a, b) => {
+export default function Archive({ cards, onEdit, onDelete, onToggle }) {
+  const sorted = [...cards].sort((a, b) => {
     if (!a.completed_at && !b.completed_at) return 0
     if (!a.completed_at) return 1
     if (!b.completed_at) return -1
@@ -16,7 +16,7 @@ export default function Archive({ todos, onEdit, onDelete, onToggle }) {
 
   return (
     <div className="archive">
-      <Collapsible label="Archive" count={todos.length}>
+      <Collapsible label="Archive" count={cards.length}>
         <SortableContext items={sorted.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           <div
             className={`archive-grid${isOver ? ' archive-grid--over' : ''}`}
@@ -28,9 +28,9 @@ export default function Archive({ todos, onEdit, onDelete, onToggle }) {
               </p>
             ) : (
               sorted.map((todo) => (
-                <TodoCard
+                <Card
                   key={todo.id}
-                  todo={todo}
+                  card={todo}
                   onEdit={onEdit}
                   onDelete={onDelete}
                   onToggle={onToggle}

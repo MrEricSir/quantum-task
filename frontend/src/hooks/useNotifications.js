@@ -49,7 +49,7 @@ async function registerPushSubscription() {
   }
 }
 
-export function useNotifications(todos, onOpenTodo) {
+export function useNotifications(cards, onOpenTodo) {
   const [permission, setPermission] = useState(
     () => (typeof Notification !== 'undefined' ? Notification.permission : 'denied')
   )
@@ -71,17 +71,17 @@ export function useNotifications(todos, onOpenTodo) {
       const ch = new BroadcastChannel(CHANNEL_NAME)
       channelRef.current = ch
       ch.onmessage = (e) => {
-        if (e.data?.type === 'open_todo' && e.data.todoId) {
+        if (e.data?.type === 'open_card' && e.data.cardId) {
           window.focus()
-          onOpenTodo?.(e.data.todoId)
+          onOpenTodo?.(e.data.cardId)
         }
       }
     }
     // Service worker messages — push notifications
     const swHandler = (e) => {
-      if (e.data?.type === 'open_todo' && e.data.todoId) {
+      if (e.data?.type === 'open_card' && e.data.cardId) {
         window.focus()
-        onOpenTodo?.(e.data.todoId)
+        onOpenTodo?.(e.data.cardId)
       }
     }
     navigator.serviceWorker?.addEventListener('message', swHandler)
@@ -111,18 +111,18 @@ export function useNotifications(todos, onOpenTodo) {
       const now = Date.now()
       const cutoff = now + LEAD_MINUTES * 60_000
 
-      todos.forEach((todo) => {
-        if (!todo.scheduled_at || todo.completed) return
-        const t = new Date(todo.scheduled_at).getTime()
+      cards.forEach((card) => {
+        if (!card.scheduled_at || card.completed) return
+        const t = new Date(card.scheduled_at).getTime()
         if (t < now || t > cutoff) return
 
-        const key = `${todo.id}:${todo.scheduled_at}`
+        const key = `${card.id}:${card.scheduled_at}`
         if (shownRef.current.has(key)) return
         shownRef.current.add(key)
         saveShown(shownRef.current)
 
         const mins = Math.round((t - now) / 60_000)
-        const notif = new Notification(todo.title, {
+        const notif = new Notification(card.title, {
           body: mins <= 1 ? 'Due now' : `Due in ${mins} minute${mins !== 1 ? 's' : ''}`,
           icon: '/icon.svg',
           tag: key,
@@ -130,7 +130,7 @@ export function useNotifications(todos, onOpenTodo) {
         notif.onclick = () => {
           window.focus()
           if (channelRef.current) {
-            channelRef.current.postMessage({ type: 'open_todo', todoId: todo.id })
+            channelRef.current.postMessage({ type: 'open_card', cardId: card.id })
           }
         }
       })
@@ -139,7 +139,7 @@ export function useNotifications(todos, onOpenTodo) {
     check()
     const id = setInterval(check, POLL_MS)
     return () => clearInterval(id)
-  }, [permission, enabled, todos])
+  }, [permission, enabled, cards])
 
   return { permission, enabled, setEnabled, requestPermission }
 }

@@ -10,20 +10,21 @@ import pytest
 from datetime import date, datetime
 from model_plugins.base import BaseModelPlugin, resolve_dates
 from model_plugins.llama31_8b import Llama31_8bPlugin
-from schemas import ParsedTodo
+from model_plugins.llama32 import Llama32Plugin
+from schemas import ParsedCard
 
 plugin = BaseModelPlugin()
 
 
-def _parsed(**kwargs) -> ParsedTodo:
-    """Build a minimal ParsedTodo with sensible defaults."""
+def _parsed(**kwargs) -> ParsedCard:
+    """Build a minimal ParsedCard with sensible defaults."""
     defaults = dict(type="task", title="Test task", section="later")
     defaults.update(kwargs)
-    return ParsedTodo(**defaults)
+    return ParsedCard(**defaults)
 
 
-def _pp(text: str, **kwargs) -> ParsedTodo:
-    """Run post_process on a minimal ParsedTodo with the given input text."""
+def _pp(text: str, **kwargs) -> ParsedCard:
+    """Run post_process on a minimal ParsedCard with the given input text."""
     return plugin.post_process(_parsed(**kwargs), text=text)
 
 
@@ -151,10 +152,10 @@ _llama = Llama31_8bPlugin()
 _TODAY = date(2026, 6, 7)
 
 
-def _full_pipeline(raw: dict, *, text: str = "") -> ParsedTodo:
+def _full_pipeline(raw: dict, *, text: str = "") -> ParsedCard:
     """normalize_raw → post_process → resolve_dates, using the Llama 3.1 8b plugin."""
     raw = _llama.normalize_raw(raw)
-    parsed = _llama.post_process(ParsedTodo.model_validate(raw), text=text)
+    parsed = _llama.post_process(ParsedCard.model_validate(raw), text=text)
     return resolve_dates(parsed, text=text, today=_TODAY)
 
 
@@ -236,3 +237,201 @@ class TestBulkTimestampParsing:
         result = _full_pipeline(_task(title=raw_title, description=description))
         assert not re.search(r'\d{4}-\d{2}-\d{2}', result.title), \
             f"ISO date fragment in title for input {raw_title!r}: got {result.title!r}"
+
+
+# ── Food type detection ────────────────────────────────────────────────────────
+
+_llama32 = Llama32Plugin()
+
+
+def _food_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedCard:
+    """normalize_raw → post_process for food-detection tests (no date resolution needed)."""
+    raw = plugin.normalize_raw(raw)
+    return plugin.post_process(ParsedCard.model_validate(raw), text=text)
+
+
+class TestFoodTypeDetection:
+    """
+    Regression suite for the food log classification bug.
+
+    Root causes that were fixed:
+      1. ParsedCard.type Literal excluded "food", so Pydantic silently coerced
+         any LLM-returned "food" back to the default "task".
+      2. Both model plugins lacked a _FOOD_RE post_process override to catch the
+         case where the LLM misclassifies an eating/drinking log as a task.
+    """
+
+    # ── Schema regression ──────────────────────────────────────────────────────
+
+    def test_schema_accepts_food_type(self):
+        """ParsedCard must accept type='food' without validation error."""
+        p = ParsedCard(type="food", title="Yogurt", section="today")
+        assert p.type == "food"
+
+    def test_schema_food_not_coerced_to_task(self):
+        """Before the fix, type='food' was silently dropped to 'task'."""
+        p = ParsedCard.model_validate(
+            {"type": "food", "title": "Yogurt", "section": "today"}
+        )
+        assert p.type == "food", "type='food' must not be coerced to 'task'"
+
+    # ── Plugin override: llama-3.1-8b-instant ─────────────────────────────────
+
+    @pytest.mark.parametrize("text", [
+        "had a yogurt",
+        "had a cup of sugar-free yogurt",
+        "ate a banana",
+        "eating some chips",
+        "drank a coffee",
+        "drinking a smoothie",
+        "just had lunch",
+        "I had some oatmeal",
+        "grabbed a snack",
+    ])
+    def test_llama31_food_verbs_override_task(self, text):
+        """LLM returning task for food input must be corrected to food."""
+        result = _food_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "food", f"Expected food for {text!r}, got {result.type!r}"
+
+    @pytest.mark.parametrize("text", [
+        "call dentist tomorrow",
+        "buy groceries",
+        "drink more water daily",   # habit, not a log entry
+        "eat less sugar",           # imperative/goal, not a log entry
+        "have a meeting at 2pm",    # "have" used for appointment
+    ])
+    def test_llama31_non_food_inputs_not_overridden(self, text):
+        """Task inputs that happen to contain food-adjacent words must stay as task."""
+        result = _food_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "task", f"Expected task for {text!r}, got {result.type!r}"
+
+    def test_llama31_habit_type_not_overridden(self):
+        """The override must only fire for type=task, not type=habit."""
+        result = _food_pipeline(
+            _llama,
+            _task(type="habit", recurrence_rule="daily"),
+            text="had a yogurt",
+        )
+        assert result.type == "habit"
+
+    # ── Plugin override: llama3.2 ──────────────────────────────────────────────
+
+    @pytest.mark.parametrize("text", [
+        "had a yogurt",
+        "ate a bowl of oatmeal",
+        "drank a glass of water",
+        "eating leftovers",
+    ])
+    def test_llama32_food_verbs_override_task(self, text):
+        result = _food_pipeline(_llama32, _task(type="task"), text=text)
+        assert result.type == "food", f"Expected food for {text!r}, got {result.type!r}"
+
+    @pytest.mark.parametrize("text", [
+        "drink more water daily",
+        "eat less processed food",
+        "call dentist",
+    ])
+    def test_llama32_non_food_inputs_not_overridden(self, text):
+        result = _food_pipeline(_llama32, _task(type="task"), text=text)
+        assert result.type == "task", f"Expected task for {text!r}, got {result.type!r}"
+
+
+# ── Habit check-off detection ──────────────────────────────────────────────────
+
+def _habit_pipeline(plugin, raw: dict, *, text: str = "") -> ParsedCard:
+    raw = plugin.normalize_raw(raw)
+    return plugin.post_process(ParsedCard.model_validate(raw), text=text)
+
+
+def _habit_raw(**overrides) -> dict:
+    base = dict(type="habit", title="Test", description=None, section="today",
+                scheduled_at=None, suggested_tags=[], recurrence_rule="daily", note_content=None)
+    base.update(overrides)
+    return base
+
+
+class TestHabitCheckDetection:
+    """
+    habit → habit_check when the input is a past-tense completion phrase.
+    task  → task_complete (not habit_check) for the same phrases.
+    """
+
+    @pytest.mark.parametrize("text,expected_title", [
+        ("did my meditation",      "Meditation"),
+        ("completed my morning run", "Morning run"),
+        ("complete my morning run", "Morning run"),
+        ("finished my walk",       "Walk"),
+        ("finish my walk",         "Walk"),
+        ("checked off yoga",       "Yoga"),
+        ("check off yoga",         "Yoga"),
+        ("done with exercise",     "Exercise"),
+    ])
+    def test_llama31_habit_becomes_habit_check(self, text, expected_title):
+        result = _habit_pipeline(_llama, _habit_raw(), text=text)
+        assert result.type == "habit_check", f"Expected habit_check for {text!r}, got {result.type!r}"
+        assert result.title.lower() == expected_title.lower(), \
+            f"Title should be {expected_title!r}, got {result.title!r}"
+
+    @pytest.mark.parametrize("text,expected_title", [
+        ("did my meditation",      "Meditation"),
+        ("completed my morning run", "Morning run"),
+        ("finished my walk",       "Walk"),
+    ])
+    def test_llama32_habit_becomes_habit_check(self, text, expected_title):
+        result = _habit_pipeline(_llama32, _habit_raw(), text=text)
+        assert result.type == "habit_check", f"Expected habit_check for {text!r}, got {result.type!r}"
+        assert result.title.lower() == expected_title.lower(), \
+            f"Title should be {expected_title!r}, got {result.title!r}"
+
+    @pytest.mark.parametrize("text", [
+        "did my duolingo",
+        "finish duolingo",
+        "finished the report",
+        "finish the report",
+        "complete the dentist appointment",
+        "completed the dentist appointment",
+        "done with my walk",
+    ])
+    def test_task_with_completion_verb_becomes_habit_check(self, text):
+        """Any completion verb on a task type → habit_check; frontend resolves habit vs task."""
+        result = _habit_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "habit_check", \
+            f"task + completion verb should be habit_check, got {result.type!r}"
+
+    def test_non_completion_habit_unchanged(self):
+        result = _habit_pipeline(_llama, _habit_raw(), text="meditate every morning")
+        assert result.type == "habit"
+
+
+# ── Task completion detection ──────────────────────────────────────────────────
+
+class TestTaskCompleteDetection:
+    """
+    task → task_complete when the input is a past-tense completion phrase.
+    food verbs take priority so 'finished my breakfast' stays food, not task_complete.
+    """
+
+    @pytest.mark.parametrize("text,expected_title", [
+        ("archived the project proposal", "Project proposal"),
+        ("archive the old notes",         "Old notes"),
+    ])
+    def test_archive_keyword_becomes_task_complete(self, text, expected_title):
+        """"archive" is the only regex trigger for task_complete."""
+        result = _habit_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type == "task_complete", \
+            f"Expected task_complete for {text!r}, got {result.type!r}"
+        assert result.title.lower() == expected_title.lower(), \
+            f"Title should be {expected_title!r}, got {result.title!r}"
+
+    @pytest.mark.parametrize("text", [
+        "had a yogurt",
+        "ate a banana",
+        "drank a coffee",
+        "grabbed a snack",
+        "call dentist tomorrow",
+        "buy groceries",
+    ])
+    def test_non_completion_tasks_unchanged(self, text):
+        result = _habit_pipeline(_llama, _task(type="task"), text=text)
+        assert result.type not in ("task_complete", "habit_check"), \
+            f"Unexpected completion type for {text!r}: {result.type!r}"

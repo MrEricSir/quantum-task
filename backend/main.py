@@ -206,7 +206,7 @@ def _fire_due_push_notifications() -> None:
                 "title": card.title,
                 "body": "Due now" if mins <= 1 else f"Due in {mins} minute{'s' if mins != 1 else ''}",
                 "tag": key,
-                "todoId": card.id,
+                "cardId": card.id,
             }
             for sub in subs:
                 alive = push_lib.send_notification(sub, payload, priv)
@@ -273,7 +273,7 @@ async def lifespan(app):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Todo Dashboard API", lifespan=lifespan)
+app = FastAPI(title="Quantum Task API", lifespan=lifespan)
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(

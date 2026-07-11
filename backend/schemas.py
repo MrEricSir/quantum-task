@@ -56,10 +56,12 @@ class ParseRequest(BaseModel):
     text: str
 
 
-class ParsedTodo(BaseModel):
+class ParsedCard(BaseModel):
     # type: "task" = completable item; "habit" = ongoing recurring behaviour
     #       "goal" = update a standalone health goal (not a habit or task)
-    type: Literal["task", "habit", "goal"] = "task"
+    #       "food" = log something eaten or drunk
+    #       "habit_check" = mark an existing habit as done today
+    type: Literal["task", "habit", "goal", "food", "habit_check", "task_complete", "assist"] = "task"
     title: str
     # description: optional short context from the user's input
     description: Optional[str] = None
@@ -79,11 +81,13 @@ class ParsedTodo(BaseModel):
     @field_validator('scheduled_at', 'description', 'source_text', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
-        return None if v == '' else v
+        if isinstance(v, str) and v.strip().lower() in ('', 'null', 'none'):
+            return None
+        return v
 
 
 class BulkParseResponse(BaseModel):
-    items: List[ParsedTodo]
+    items: List[ParsedCard]
 
 
 class HabitCreate(BaseModel):
@@ -276,15 +280,23 @@ class Job(BaseModel):
 
 
 class AssistRequest(BaseModel):
-    task_title: str
-    task_description: Optional[str] = None
+    card_title: str
+    card_description: Optional[str] = None
     context: str  # user-pasted content: emails, messages, documents, etc.
     lat: Optional[float] = None
     lon: Optional[float] = None
 
 
+class GlobalAssistRequest(BaseModel):
+    prompt: str
+    section: Optional[str] = None   # "today" | "week" | "month" | "later"
+    tag_id: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
 class BriefingRequest(BaseModel):
-    todos: List['Card'] = []
+    cards: List['Card'] = []
     calendar_events: List[CalendarEvent] = []
     habits: List[HabitBriefingItem] = []
     lat: Optional[float] = None

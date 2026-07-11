@@ -142,6 +142,10 @@ async function mockAPIs(page) {
         'data: {"section":"today","text":"A productive day ahead."}\n\n' +
         'data: [DONE]\n\n',
     }))
+
+  // Standalone weather endpoint — registered after the broader briefing** glob so it takes priority
+  await page.route('**/api/briefing/weather**', r =>
+    r.fulfill({ json: { emojis: '⛅', high: 72, low: 58, description: 'partly cloudy', windy: false, umbrella: false, snow: false, cold: false } }))
 }
 
 async function waitForApp(page) {
@@ -167,7 +171,7 @@ test.describe('app shell', () => {
     await waitForApp(page)
 
     // Header
-    await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /capture/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /search/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
@@ -175,6 +179,47 @@ test.describe('app shell', () => {
     for (const label of ['Today', 'Board', 'Calendar', 'Habits', 'Engineering']) {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Assist step (within quick-add modal)
+// ---------------------------------------------------------------------------
+test.describe('assist step', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+  })
+
+  test('pressing A key opens modal in assist step', async ({ page }) => {
+    await page.keyboard.press('a')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
+  })
+
+  test('clicking ✦ Assist in quick modal switches to assist step', async ({ page }) => {
+    await page.locator('button.btn-primary').first().click()
+    await page.locator('.btn-assist').click()
+    await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
+  })
+
+  test('assist step has context selector and prompt textarea', async ({ page }) => {
+    await page.keyboard.press('a')
+    await expect(page.locator('#qa-assist-context')).toBeVisible()
+    await expect(page.locator('.quick-assist-prompt')).toBeVisible()
+  })
+
+  test('Generate button is disabled when prompt is empty', async ({ page }) => {
+    await page.locator('button.btn-primary').first().click()
+    await page.locator('.btn-assist').click()
+    await expect(page.getByRole('button', { name: /generate/i })).toBeDisabled()
+  })
+
+  test('Back button returns to input step', async ({ page }) => {
+    await page.keyboard.press('a')
+    await expect(page.getByRole('heading', { name: /✦ assist/i })).toBeVisible()
+    await page.getByRole('button', { name: /back/i }).click()
+    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
   })
 })
 
@@ -359,27 +404,17 @@ test.describe('quick-add modal', () => {
     await expect(page.getByRole('textbox')).toBeVisible()
   })
 
-  test('hint text mentions tasks, habits, food, and health goals', async ({ page }) => {
-    await page.goto('/today')
-    await waitForApp(page)
-    await page.locator('button.btn-primary').first().click()
-    const hint = page.locator('.quick-hint')
-    await expect(hint).toContainText('task')
-    await expect(hint).toContainText('habit')
-    await expect(hint).toContainText('food')
-    await expect(hint).toContainText('health goal')
-  })
-
-  test('has Cancel and Add footer buttons, no X button', async ({ page }) => {
+  test('has Cancel, Continue, and Assist footer buttons, no X button', async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /add/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
+    await expect(page.locator('.btn-assist')).toBeVisible()
     await expect(page.locator('.modal-close-btn')).toHaveCount(0)
   })
 
-  test('confirm screen shows detected type and Back/Add buttons', async ({ page }) => {
+  test('confirm screen shows detected type tabs and Back/Add buttons', async ({ page }) => {
     await page.route('**/api/cards/parse-bulk', r =>
       r.fulfill({ json: { items: [{
         type: 'task', title: 'Call dentist', description: null,
@@ -389,9 +424,7 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('Call dentist next week')
-    await page.getByRole('button', { name: /^add$/i }).click()
-    // Confirm screen
-    await expect(page.getByRole('heading', { name: /confirm/i })).toBeVisible()
+    await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     await expect(page.locator('.quick-type-tabs')).toBeVisible()
     await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
@@ -408,9 +441,8 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('Morning run every day')
-    await page.getByRole('button', { name: /^add$/i }).click()
+    await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
-    // Override to habit
     await page.locator('.quick-type-tab', { hasText: 'Habit' }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Habit')
     await expect(page.getByRole('button', { name: /add habit/i })).toBeVisible()
@@ -426,10 +458,10 @@ test.describe('quick-add modal', () => {
     await waitForApp(page)
     await page.locator('button.btn-primary').first().click()
     await page.getByRole('textbox').fill('grocery list: milk eggs')
-    await page.getByRole('button', { name: /^add$/i }).click()
+    await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Task')
     await page.getByRole('button', { name: /back/i }).click()
-    await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
   })
 })
 
@@ -466,7 +498,7 @@ test.describe('mobile header layout', () => {
     expect(box.height).toBeGreaterThan(40)
 
     // Action buttons must be reachable (not hidden behind notch area)
-    await expect(page.getByRole('button', { name: /add/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /capture/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
   })
 })
@@ -589,7 +621,7 @@ test.describe('keyboard shortcuts', () => {
 
   test('n opens quick add modal', async ({ page }) => {
     await page.keyboard.press('n')
-    await expect(page.getByRole('heading', { name: /quick add/i })).toBeVisible()
+    await expect(page.getByRole('dialog')).toBeVisible()
   })
 
   test('/ opens search modal', async ({ page }) => {
@@ -698,8 +730,8 @@ test.describe('workshop page', () => {
     await waitForApp(page)
   })
 
-  test('Workshop nav item is visible in sidebar', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /workshop/i }).first()).toBeVisible()
+  test('Workshop is not in the primary sidebar nav', async ({ page }) => {
+    await expect(page.locator('.sidebar-item', { hasText: /^workshop$/i })).toHaveCount(0)
   })
 
   test('"New Job" button is visible', async ({ page }) => {
@@ -1293,6 +1325,13 @@ test.describe('search modal', () => {
     // No mock override needed — habit filter is client-side from passed habits list
     await page.keyboard.type('meditation')
     await expect(page.getByText('Morning meditation')).toBeVisible()
+  })
+
+  test('calendar events appear in search results when title matches', async ({ page }) => {
+    // Calendar events are client-side filtered from the calendarEvents prop
+    await page.keyboard.type('product review')
+    await expect(page.getByText('Product Review')).toBeVisible()
+    await expect(page.getByText('Event')).toBeVisible()
   })
 })
 

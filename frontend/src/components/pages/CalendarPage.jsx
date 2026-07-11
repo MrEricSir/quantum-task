@@ -34,19 +34,19 @@ function sortItems(items) {
   })
 }
 
-function CalendarTaskRow({ todo, onToggle, onEdit }) {
+function CalendarTaskRow({ card, onToggle, onEdit }) {
   return (
-    <div className="calp-task-row" onClick={() => onEdit(todo)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onEdit(todo)}>
+    <div className="calp-task-row" onClick={() => onEdit(card)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onEdit(card)}>
       <button
         type="button"
         className="calp-task-check"
-        onClick={(e) => { e.stopPropagation(); onToggle(todo) }}
+        onClick={(e) => { e.stopPropagation(); onToggle(card) }}
         aria-label="Toggle complete"
       />
-      <span className="calp-task-time">{formatTime(todo.scheduled_at)}</span>
-      <span className="calp-task-title">{todo.title}</span>
+      <span className="calp-task-time">{formatTime(card.scheduled_at)}</span>
+      <span className="calp-task-title">{card.title}</span>
       <div className="calp-task-tags">
-        {(todo.tags ?? []).map((tag) => (
+        {(card.tags ?? []).map((tag) => (
           <span key={tag.id} className="calp-task-dot" style={{ background: tag.color }} title={tag.name} />
         ))}
       </div>
@@ -54,14 +54,14 @@ function CalendarTaskRow({ todo, onToggle, onEdit }) {
   )
 }
 
-function buildDayMap(events, todos) {
+function buildDayMap(events, cards) {
   const map = {}
   for (const e of events) {
     const key = toDateKey(new Date(e.start))
     if (!map[key]) map[key] = { events: [], tasks: [] }
     map[key].events.push(e)
   }
-  for (const t of todos) {
+  for (const t of cards) {
     if (!t.scheduled_at) continue
     const key = toDateKey(new Date(t.scheduled_at))
     if (!map[key]) map[key] = { events: [], tasks: [] }
@@ -328,18 +328,22 @@ function DiscoveryPanel({ refreshTrigger }) {
   )
 }
 
-export default function CalendarPage({ events, todos, onToggle, onEdit, onRefresh, lastRefreshed, refreshing }) {
+export default function CalendarPage({ events, cards, onToggle, onEdit, onRefresh, lastRefreshed, refreshing, highlightEventId, onHighlightClear }) {
   const todayDate = new Date()
   todayDate.setHours(0, 0, 0, 0)
   const todayKey = toDateKey(todayDate)
 
   const [view, setView] = useState('list')
+
+  useEffect(() => {
+    if (highlightEventId) setView('list')
+  }, [highlightEventId])
   const [monthYear, setMonthYear] = useState({ year: todayDate.getFullYear(), month: todayDate.getMonth() })
   const [selectedDate, setSelectedDate] = useState(todayKey)
   const [discoveryRefreshTrigger, setDiscoveryRefreshTrigger] = useState(0)
 
-  const activeTodos = useMemo(() => todos.filter((t) => !t.completed && t.scheduled_at), [todos])
-  const dayMap = useMemo(() => buildDayMap(events, activeTodos), [events, activeTodos])
+  const activeCards = useMemo(() => cards.filter((t) => !t.completed && t.scheduled_at), [cards])
+  const dayMap = useMemo(() => buildDayMap(events, activeCards), [events, activeCards])
   const listDays = useMemo(() => getListDays(), [])
   const monthCells = useMemo(() => buildMonthCells(monthYear.year, monthYear.month), [monthYear.year, monthYear.month])
 
@@ -426,9 +430,14 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
                   ) : (
                     items.map((item) =>
                       item.type === 'event' ? (
-                        <CalendarEventCard key={`ev-${item.data.id}`} event={item.data} />
+                        <CalendarEventCard
+                          key={`ev-${item.data.id}`}
+                          event={item.data}
+                          highlighted={item.data.id === highlightEventId}
+                          onHighlightClear={onHighlightClear}
+                        />
                       ) : (
-                        <CalendarTaskRow key={`task-${item.data.id}`} todo={item.data} onToggle={onToggle} onEdit={onEdit} />
+                        <CalendarTaskRow key={`task-${item.data.id}`} card={item.data} onToggle={onToggle} onEdit={onEdit} />
                       )
                     )
                   )}
@@ -507,7 +516,7 @@ export default function CalendarPage({ events, todos, onToggle, onEdit, onRefres
                   item.type === 'event' ? (
                     <CalendarEventCard key={`ev-${item.data.id}`} event={item.data} />
                   ) : (
-                    <CalendarTaskRow key={`task-${item.data.id}`} todo={item.data} onToggle={onToggle} onEdit={onEdit} />
+                    <CalendarTaskRow key={`task-${item.data.id}`} card={item.data} onToggle={onToggle} onEdit={onEdit} />
                   )
                 )}
               </div>
