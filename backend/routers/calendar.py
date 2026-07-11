@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date as date_type, datetime, timedelta, timezone
 from typing import List
 
 import icalendar
@@ -9,10 +9,11 @@ from fastapi.responses import Response as FastAPIResponse
 from sqlalchemy.orm import Session
 
 import gcal as gcal_lib
+from gcal import _cached_fetch_events
 import models
 import schemas
 import app_setting_keys as setting_keys
-from deps import get_db, local_date
+from deps import get_db, local_date, utc_offset_minutes as get_utc_offset
 
 router = APIRouter()
 
@@ -69,14 +70,22 @@ def rotate_export_token(db: Session = Depends(get_db)):
 
 
 @router.get("/api/calendar-events", response_model=List[schemas.CalendarEvent])
-def get_calendar_events(request: Request, db: Session = Depends(get_db)):
+def get_calendar_events(request: Request, db: Session = Depends(get_db), force: bool = Query(False)):
     mappings = db.query(models.CalendarMapping).all()
     if not mappings:
         return []
 
     today = local_date(request)
+    offset_minutes = get_utc_offset(request)
     window_end = today + timedelta(days=28)
     now = datetime.now(timezone.utc)
+
+    def _to_local_date(dt) -> date_type:
+        """Convert a UTC-aware datetime to the client's local date."""
+        if isinstance(dt, datetime) and dt.tzinfo is not None:
+            local_dt = dt.replace(tzinfo=None) - timedelta(minutes=offset_minutes)
+            return local_dt.date()
+        return dt.date() if hasattr(dt, "date") else dt
 
     # uid -> best candidate so far (dict with schema fields + sequence for dedup)
     seen: dict[str, dict] = {}
@@ -84,7 +93,7 @@ def get_calendar_events(request: Request, db: Session = Depends(get_db)):
     for m in mappings:
         tag = db.query(models.Tag).filter(models.Tag.id == m.tag_id).first()
         try:
-            for ev in gcal_lib.fetch_events(m.ical_url, today, window_end):
+            for ev in _cached_fetch_events(m.ical_url, today, window_end, force=force):
                 start = ev["start"]
                 end = ev.get("end")
 
@@ -96,7 +105,7 @@ def get_calendar_events(request: Request, db: Session = Depends(get_db)):
                     cutoff = end if end else start
                     if cutoff < now:
                         continue
-                    start_date = start.date() if hasattr(start, "date") else start
+                    start_date = _to_local_date(start)
 
                 delta = (start_date - today).days
                 if delta == 0:

@@ -9,12 +9,14 @@ export function useCalendar({ authed, invalidateBriefing }) {
   const {
     data: calendarEvents = [],
     dataUpdatedAt,
+    isLoading: calendarLoading,
     isFetching: calendarRefreshing,
     refetch,
   } = useQuery({
     queryKey: CALENDAR_QUERY_KEY,
     queryFn: fetchCalendarEvents,
     enabled: !!authed,
+    staleTime: 10 * 60 * 1000,   // treat cached data as fresh for 10 min
     refetchInterval: 15 * 60 * 1000,
   })
 
@@ -22,12 +24,16 @@ export function useCalendar({ authed, invalidateBriefing }) {
 
   const handleRefreshCalendar = async () => {
     try {
-      await refetch()
+      await queryClient.fetchQuery({
+        queryKey: CALENDAR_QUERY_KEY,
+        queryFn: () => fetchCalendarEvents({ force: true }),
+        staleTime: 0,
+      })
       invalidateBriefing?.()
     } catch {
       // ignore
     }
   }
 
-  return { calendarEvents, lastRefreshed, calendarRefreshing, handleRefreshCalendar }
+  return { calendarEvents, calendarLoading, lastRefreshed, calendarRefreshing, handleRefreshCalendar }
 }

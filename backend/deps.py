@@ -48,6 +48,19 @@ def get_db():
 # ── Request helpers ───────────────────────────────────────────────────────────
 
 
+def utc_offset_minutes(request: Request) -> int:
+    """Return the client's UTC offset in minutes from the X-UTC-Offset header.
+
+    JavaScript's Date.getTimezoneOffset() returns the offset as UTC-local in minutes,
+    so UTC+10 → -600 and UTC-5 → +300. Falls back to 0 (UTC) when absent.
+    """
+    raw = request.headers.get("X-UTC-Offset", "")
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
 def local_date(request: Request) -> date:
     """Return the client's local date from the X-Local-Date header.
 

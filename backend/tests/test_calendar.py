@@ -46,6 +46,7 @@ def override_get_db():
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    gcal._ical_cache.clear()  # prevent cache from leaking across tests
     models.Base.metadata.create_all(bind=test_engine)
     # Seed default tags
     with TestingSessionLocal() as db:

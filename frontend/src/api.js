@@ -20,7 +20,11 @@ export function localDateTime() {
 }
 
 function apiFetch(url, opts = {}) {
-  const headers = { 'X-Local-Date': localDate(), ...opts.headers }
+  const headers = {
+    'X-Local-Date': localDate(),
+    'X-UTC-Offset': String(new Date().getTimezoneOffset()),
+    ...opts.headers,
+  }
   return fetch(url, { ...opts, headers })
 }
 
@@ -203,8 +207,8 @@ export async function saveCalendarMappings(mappings) {
   return res.json()
 }
 
-export async function fetchCalendarEvents() {
-  const res = await apiFetch('/api/calendar-events')
+export async function fetchCalendarEvents({ force = false } = {}) {
+  const res = await apiFetch(`/api/calendar-events${force ? '?force=1' : ''}`)
   if (!res.ok) throw new Error('Failed to fetch calendar events')
   return res.json()
 }

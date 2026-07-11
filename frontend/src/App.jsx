@@ -113,7 +113,7 @@ export default function App() {
   } = useHabits({ authed, invalidateBriefing })
 
   const {
-    calendarEvents, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
+    calendarEvents, calendarLoading, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
   } = useCalendar({ authed, invalidateBriefing })
 
   const { engineeringItems, lastEngineeringSynced, engineeringSyncing, refreshEngineeringItems } = useEngineering({ authed })
@@ -706,6 +706,7 @@ export default function App() {
             onBreakdown={handleBreakdownCommit}
             onWeather={handleSetWeather}
             briefingKey={briefingKey}
+            calendarReady={!calendarLoading}
             healthData={healthData}
             healthGoals={healthGoals}
             isImperial={isImperial}

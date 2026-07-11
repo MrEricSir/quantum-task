@@ -75,6 +75,28 @@ def normalize_ical_url(url: str) -> str:
     return url
 
 
+# In-memory cache for iCal feed fetches.
+# Keyed by (url, today_iso) so the cache naturally expires at midnight even
+# without a TTL (events shift relative to today each day).  A TTL is also
+# applied so a busy day doesn't hammer external servers.
+_TTL_SECONDS = 15 * 60  # 15 minutes
+
+_ical_cache: dict[tuple[str, str], tuple[float, list]] = {}
+
+
+def _cached_fetch_events(ical_url: str, start: date, end: date, *, force: bool = False) -> list[dict]:
+    import time
+    key = (ical_url, start.isoformat())
+    now = time.monotonic()
+    if not force and key in _ical_cache:
+        ts, events = _ical_cache[key]
+        if now - ts < _TTL_SECONDS:
+            return events
+    events = fetch_events(ical_url, start, end)
+    _ical_cache[key] = (now, events)
+    return events
+
+
 _FETCH_HEADERS = {
     "Accept": "text/calendar, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
