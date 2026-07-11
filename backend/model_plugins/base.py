@@ -57,11 +57,21 @@ Fields:
                           a health attribute (e.g. "sugar-free", "low-cal", "protein shake").
                           When type is "food", set title to the food/drink description only
                   habit_check = marking an existing habit as completed today
-                          Use when the input describes a recurring habit in the past tense:
-                          (e.g. "did my meditation", "completed my morning run",
-                          "finished my walk", "checked off yoga", "done with exercise")
-                          When type is "habit_check", set title to just the activity
-                          (strip "did", "completed", "finished", "checked off", etc.)
+                          Use when the input describes a recurring habit in the past tense,
+                          whether or not it uses an explicit completion verb.
+                          With completion verb: "did my meditation", "completed my morning run",
+                          "finished my walk", "checked off yoga", "done with exercise"
+                          Natural past tense (NO completion verb): "talked to a stranger",
+                          "went for a run", "meditated this morning", "journaled for 10 minutes",
+                          "practiced guitar", "walked the dog"
+                          Key question: would this activity make sense as something done
+                          repeatedly/daily? If yes → habit_check, even without "did/finished".
+                          When type is "habit_check", set title to the base habit name
+                          (e.g. "did my meditation" → "Meditation";
+                           "talked to a stranger" → "Talk to a stranger";
+                           "went for a run" → "Run")
+                          Do NOT use for clearly one-time tasks: "emailed the quarterly report",
+                          "booked a flight to NYC", "sent the invoice to the client"
                   task_complete = marking a one-time task as finished/archived
                           Use when the input marks a specific, non-recurring task as done:
                           (e.g. "finished the dentist appointment", "completed the report",
@@ -357,7 +367,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit", "goal", "assist"}
+    _VALID_TYPES = {"task", "habit", "goal", "assist", "food", "habit_check", "task_complete"}
 
     def normalize_raw(self, raw: dict) -> dict:
         """

@@ -42,6 +42,20 @@ _HABIT_CHECK_STRIP_RE = re.compile(
     re.I,
 )
 
+# Natural past tense of habitually recurring activities — used as a fallback
+# when the model misclassifies as "task". Only changes type, not title.
+# Kept narrow (activities that are essentially never one-time tasks) to avoid
+# false positives with task_complete (e.g. "emailed the report", "booked a flight").
+_HABITUAL_PAST_RE = re.compile(
+    # "talked/spoke to/with a [noun]" — indefinite object signals recurring habit
+    r'^(?:i\s+)?(?:talked?|spoke)\s+(?:to|with)\s+(?:a\b|an\b|some\b|someone\b|a\s+\w+)\b'
+    # Clearly habitual wellness/lifestyle activities
+    r'|^(?:i\s+)?(?:meditat|journal|stretch|exercis|practic|walked|jogged|cycled|biked?|swam|hiked?|ran\b)\w*\b'
+    # "went for a [run/walk/swim/ride/hike]"
+    r'|^(?:i\s+)?went\s+for\s+(?:a|my)\s+\w+\b',
+    re.I,
+)
+
 # "archive" is the only explicit task_complete signal at the regex level
 _TASK_COMPLETE_RE = re.compile(r'^(?:i\s+)?archived?\b', re.I)
 
@@ -85,16 +99,27 @@ class Llama32Plugin(BaseModelPlugin):
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":"daily","note_content":null}}',
         ),
-        # habit_check — past-tense habit completion
+        # habit_check — explicit completion verb
         (
             "did my meditation",
             '{{"type":"habit_check","title":"Meditation","description":null,'
-            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
+            '"section":"today","scheduled_at":null,"suggested_tags":[]}}',
         ),
         (
             "finished my evening walk",
             '{{"type":"habit_check","title":"Evening walk","description":null,'
-            '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
+            '"section":"today","scheduled_at":null,"suggested_tags":[]}}',
+        ),
+        # habit_check — natural past tense WITHOUT completion verb
+        (
+            "talked to a stranger",
+            '{{"type":"habit_check","title":"Talk to a stranger","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[]}}',
+        ),
+        (
+            "went for a run this morning",
+            '{{"type":"habit_check","title":"Run","description":null,'
+            '"section":"today","scheduled_at":null,"suggested_tags":[]}}',
         ),
         # food — eating/drinking log (past or present tense)
         (
@@ -129,32 +154,30 @@ class Llama32Plugin(BaseModelPlugin):
             '{{\"type\":\"assist\",\"title\":\"What should I focus on today?\",\"description\":null,'
             '\"section\":\"later\",\"scheduled_at\":null,\"suggested_tags\":[]}}',
         ),
-        # note — explicit "note:" prefix
+        # reference capture — "note:" prefix or list → task/later with description
         (
             "note: the meeting room code is 4821",
-            '{{"type":"note","title":"Meeting room code","description":null,'
-            '"section":"later","scheduled_at":null,"suggested_tags":[],'
-            '"note_content":"The meeting room code is 4821."}}',
+            '{{"type":"task","title":"Meeting room code","description":"The meeting room code is 4821.",'
+            '"section":"later","scheduled_at":null,"suggested_tags":[]}}',
         ),
         (
-            "grocery list: milk, eggs, bread",
-            '{{"type":"note","title":"Grocery list","description":null,'
-            '"section":"later","scheduled_at":null,"suggested_tags":[],'
-            '"note_content":"milk\\neggs\\nbread"}}',
+            "packing list: passport, charger, headphones",
+            '{{"type":"task","title":"Packing list","description":"passport\\ncharger\\nheadphones",'
+            '"section":"later","scheduled_at":null,"suggested_tags":[]}}',
         ),
     ]
 
     BULK_EXAMPLES = [
-        # Mixed: task with time + shopping list → note + habit
+        # Mixed: task with time + shopping list + habit
         (
             "call sam at 3pm, buy lettuce milk bagels, add a habit to eat fiber",
             '{{"items":['
             '{{"type":"task","title":"Call Sam","description":null,"section":"today",'
-            '"scheduled_at":"{today}T15:00:00","suggested_tags":[],"note_content":null}},'
-            '{{"type":"note","title":"Shopping list","description":null,"section":"later",'
-            '"scheduled_at":null,"suggested_tags":[],"note_content":"lettuce\\nmilk\\nbagels"}},'
+            '"scheduled_at":"{today}T15:00:00","suggested_tags":[]}},'
+            '{{"type":"task","title":"Shopping list","description":"lettuce\\nmilk\\nbagels",'
+            '"section":"later","scheduled_at":null,"suggested_tags":[]}},'
             '{{"type":"habit","title":"Eat fiber","description":null,"section":"today",'
-            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":"daily","note_content":null}}'
+            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":"daily"}}'
             ']}}',
         ),
         # Multi-task comma-separated input → separate items, times resolved
@@ -177,19 +200,18 @@ class Llama32Plugin(BaseModelPlugin):
             '"scheduled_at":null,"suggested_tags":[],"note_content":null}}'
             ']}}',
         ),
-        # "buy X, Y, and Z" with multiple items → single note
+        # "buy X, Y, and Z" with multiple items → single task with description
         (
             "buy eggs, fish, and apple juice",
-            '{{"items":[{{"type":"note","title":"Shopping list","description":null,'
-            '"section":"later","scheduled_at":null,"suggested_tags":[],'
-            '"note_content":"eggs\\nfish\\napple juice"}}]}}',
+            '{{"items":[{{"type":"task","title":"Shopping list","description":"eggs\\nfish\\napple juice",'
+            '"section":"later","scheduled_at":null,"suggested_tags":[]}}]}}',
         ),
-        # Store name + items on separate lines → single note
+        # Store name + items on separate lines → single task with description
         (
             "trader joe\'s\nmuffin mix\nyogurt\nsalad",
-            '{{"items":[{{"type":"note","title":"Trader Joe\'s shopping list","description":null,'
-            '"section":"later","scheduled_at":null,"suggested_tags":[],'
-            '"note_content":"Trader Joe\'s\\nmuffin mix\\nyogurt\\nsalad"}}]}}',
+            '{{"items":[{{"type":"task","title":"Trader Joe\'s shopping list",'
+            '"description":"Trader Joe\'s\\nmuffin mix\\nyogurt\\nsalad",'
+            '"section":"later","scheduled_at":null,"suggested_tags":[]}}]}}',
         ),
     ]
 
@@ -204,6 +226,11 @@ class Llama32Plugin(BaseModelPlugin):
             stripped = _HABIT_CHECK_STRIP_RE.sub("", text.strip()).strip()
             if stripped:
                 parsed.title = stripped[0].upper() + stripped[1:]
+
+        # Natural past-tense habitual activity — type override only, preserve title.
+        # Runs after the explicit-verb check so _HABIT_CHECK_STRIP_RE doesn't clobber it.
+        if parsed.type == "task" and _HABITUAL_PAST_RE.match(text.strip()):
+            parsed.type = "habit_check"
 
         # Override task→food for eating/drinking verbs
         if parsed.type == "task" and _FOOD_RE.match(text.strip()):

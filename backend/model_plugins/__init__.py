@@ -13,14 +13,20 @@ from .base import BaseModelPlugin
 from .phi4_mini import Phi4MiniPlugin
 from .llama32 import Llama32Plugin
 from .llama31_8b import Llama31_8bPlugin
+from .llama33_70b import Llama33_70bPlugin
 
 _plugins: list[BaseModelPlugin] = [
     Phi4MiniPlugin(),
     Llama32Plugin(),
     Llama31_8bPlugin(),
+    Llama33_70bPlugin(),
 ]
 
 REGISTRY: dict[str, BaseModelPlugin] = {p.model_name: p for p in _plugins}
+
+# Ollama appends ":latest" to untagged model names — alias to the same plugin.
+_llama32 = REGISTRY["llama3.2"]
+REGISTRY["llama3.2:latest"] = _llama32
 
 
 def get_plugin(model_name: str) -> BaseModelPlugin:
