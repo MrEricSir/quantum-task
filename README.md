@@ -117,7 +117,7 @@ cd frontend && npm run dev
 Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
 
 **Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
-- 114 Playwright tests verifying key elements are visible on each page
+- 121 Playwright tests verifying key elements are visible on each page
 - Covers: app shell, today page, tasks board, cards, habits, quick-add modal, settings modals (tag manager, calendar, GitHub, Withings), engineering page, discovery panel, archive, search, insights, offline banner
 - All API calls are mocked; runs against a production build (`npm run build`)
 
@@ -137,20 +137,15 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Edit and delete tasks via the `⋯` card menu
 - Recurring tasks auto-spawn the next occurrence on completion
 
-### Cards (reference material)
-- A separate Cards page for reference material that doesn't belong on the task board
-- Cards have a title, body text, and tags — no due dates or completion state
-- Created via Quick Add ("add a note about X") or directly from the Cards page
-- Searchable alongside tasks
-
-### AI Quick Add
-- Describe anything in plain English — the LLM classifies it as a **task** or **habit** automatically
+### Capture (AI Quick Add)
+- Describe anything in plain English — the LLM classifies it as a **task**, **habit**, **food log**, **habit completion**, **task completion**, or **assist** request automatically
 - Paste or type multiple items at once ("call sam at 3pm, buy milk and eggs, meditate daily") — each is split and parsed individually
 - Date and time phrases are resolved to real datetimes: "call dentist tomorrow at 9am", "project review next Friday", "standup at 9"
 - A confirm screen shows the detected type with a one-click override, then type-specific fields to review before saving
 - Multiple items show a bulk-confirm list; click any item to open its full edit form before saving
-- Deterministic post-processing catches common patterns (explicit recurrence → habit, "add a habit to X" → habit) even when the model guesses wrong
+- Deterministic post-processing catches common patterns: explicit recurrence → habit, "add a habit to X" → habit, natural past tense ("talked to a stranger", "went for a run") → habit completion
 - Tags are auto-suggested from your existing tags
+- **Assist mode**: conversational or planning requests ("help me plan my week") stream an AI response instead of creating a card
 
 ### Habits
 - Track recurring habits with a daily completion toggle
@@ -230,7 +225,7 @@ Any OpenAI-compatible API works. To test a cloud provider locally, export the va
 ```bash
 export LLM_BASE_URL="https://api.groq.com/openai/v1"
 export LLM_API_KEY="your-key"
-export LLM_MODEL="llama-3.1-8b-instant"
+export LLM_MODEL="llama-3.3-70b-versatile"
 ./dev.sh start
 ```
 
@@ -327,8 +322,8 @@ todo/
       engineering.py     # GitHub engineering feed
       push.py            # Push subscription management
       search.py          # Cross-entity search
-    model_plugins/       # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini)
-    alembic/             # Database migrations (00001–00012)
+    model_plugins/       # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini, llama3.3-70b)
+    alembic/             # Database migrations (00001–00013)
     tests/
       test_calendar.py       # Calendar feed CRUD, timezone, iCal export/import
       test_briefing.py       # Briefing SSE unit tests
@@ -361,19 +356,19 @@ todo/
       context/
         ModalContext.jsx  # Context for opening modals from nested components
       components/
-        pages/         # TodayPage, BoardPage, CardsPage, HabitsPage, CalendarPage,
+        pages/         # TodayPage, HabitsPage, CalendarPage,
                        # EngineeringPage, WorkshopPage, HealthPage, LoginPage
+                       # (board is rendered inline in App.jsx)
         board/         # Column, TodoCard, CalendarEventCard, Archive
         layout/        # Sidebar, MobileNav, TagFilterBar
         modals/        # QuickAddModal, CardSheet, CalendarSettings, GithubSettings,
                        # WithingsSettings, TagManager, AssistModal, ...
         shared/        # QueueIndicator and other shared components
     tests/
-      visual.spec.js   # Playwright functional tests (all APIs mocked, 114 tests)
+      visual.spec.js   # Playwright functional tests (all APIs mocked, 121 tests)
     dist/              # Production build output (gitignored)
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide
-  ARCHITECTURE.md      # Architecture decisions and refactor tracking
   IDEAS.md             # Feature ideas and brainstorm
   dev.sh               # Development helper script
 ```
