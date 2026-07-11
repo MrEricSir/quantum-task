@@ -24,6 +24,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import gcal
 import models
 from database import Base
 from main import app
@@ -53,6 +54,7 @@ def override_get_db():
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    gcal._ical_cache.clear()
     models.Base.metadata.create_all(bind=test_engine)
     with TestingSessionLocal() as db:
         for name, color in [("personal", "#8b5cf6"), ("work", "#3b82f6")]:
