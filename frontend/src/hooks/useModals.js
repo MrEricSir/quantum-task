@@ -9,6 +9,7 @@ export function useModals() {
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
   const [showGithubSettings, setShowGithubSettings] = useState(false)
   const [showWithingsSettings, setShowWithingsSettings] = useState(false)
+  const [showTelegramSettings, setShowTelegramSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [editingCard, setEditingCard] = useState(null)
   const [defaultSection, setDefaultSection] = useState('today')
@@ -44,6 +45,7 @@ export function useModals() {
     showCalendarSettings, setShowCalendarSettings,
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
+    showTelegramSettings, setShowTelegramSettings,
     showShortcuts, setShowShortcuts,
     editingCard,
     defaultSection,

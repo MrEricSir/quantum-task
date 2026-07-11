@@ -27,7 +27,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search, insights, correlations, food, discovery
+from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search, insights, correlations, food, discovery, telegram as telegram_router
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -258,17 +258,69 @@ async def _experiment_cleanup_scheduler() -> None:
         await asyncio.get_event_loop().run_in_executor(None, _expire_stale_experiments)
 
 
+# ── Telegram briefing scheduler ───────────────────────────────────────────────
+
+_telegram_briefing_sent: set[str] = set()  # ISO dates already briefed this process
+
+
+def _check_telegram_briefing() -> None:
+    from datetime import date
+    with SessionLocal() as db:
+        token_row    = db.query(models.AppSetting).filter_by(key=setting_keys.TELEGRAM_BOT_TOKEN).first()
+        chat_row     = db.query(models.AppSetting).filter_by(key=setting_keys.TELEGRAM_CHAT_ID).first()
+        time_row     = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_SCHEDULE_TIME).first()
+        offset_row   = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_TZ_OFFSET).first()
+
+    token   = token_row.value   if token_row   and token_row.value   else ""
+    chat_id = chat_row.value    if chat_row    and chat_row.value    else ""
+    if not token or not chat_id:
+        return
+
+    schedule_time = time_row.value  if time_row  and time_row.value  else "07:30"
+    tz_offset     = int(offset_row.value) if offset_row and offset_row.value else 0
+
+    now_utc   = datetime.now(timezone.utc)
+    local_now = now_utc.replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today     = local_now.date()
+
+    if local_now.strftime("%H:%M") != schedule_time:
+        return
+    if today.isoformat() in _telegram_briefing_sent:
+        return
+    _telegram_briefing_sent.add(today.isoformat())
+
+    from routers.briefing import generate_today_briefing
+    import telegram_notify
+    text = generate_today_briefing(today, tz_offset)
+    if text:
+        ok = telegram_notify.send_message(token, chat_id, text)
+        print(f"[telegram] briefing sent={ok} for {today}")
+    else:
+        print(f"[telegram] briefing generation failed for {today}")
+
+
+async def _telegram_briefing_scheduler() -> None:
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, _check_telegram_briefing)
+        except Exception as e:
+            print(f"[telegram] scheduler error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app):
     _run_startup_migrations()
     _expire_stale_experiments()  # run once at startup to catch any backlog
-    task = asyncio.create_task(_push_scheduler())
+    task  = asyncio.create_task(_push_scheduler())
     wtask = asyncio.create_task(_withings_scheduler())
     etask = asyncio.create_task(_experiment_cleanup_scheduler())
+    ttask = asyncio.create_task(_telegram_briefing_scheduler())
     yield
     task.cancel()
     wtask.cancel()
     etask.cancel()
+    ttask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -299,6 +351,7 @@ app.include_router(insights.router)
 app.include_router(correlations.router)
 app.include_router(food.router)
 app.include_router(discovery.router)
+app.include_router(telegram_router.router)
 
 # Serve bundled frontend for all non-API routes (must be last).
 # Using an explicit catch-all route instead of StaticFiles mount to avoid

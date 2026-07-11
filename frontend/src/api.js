@@ -498,6 +498,28 @@ export async function deleteFoodEntry(id) {
   if (!res.ok) throw new Error('Failed to delete food entry')
 }
 
+export async function fetchTelegramConfig() {
+  const res = await apiFetch('/api/telegram/config')
+  if (!res.ok) throw new Error('Failed to fetch Telegram config')
+  return res.json()
+}
+
+export async function saveTelegramConfig(config) {
+  const res = await apiFetch('/api/telegram/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) throw new Error('Failed to save Telegram config')
+  return res.json()
+}
+
+export async function testTelegramConfig() {
+  const res = await apiFetch('/api/telegram/test', { method: 'POST' })
+  if (!res.ok) throw new Error(`Server error ${res.status}`)
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

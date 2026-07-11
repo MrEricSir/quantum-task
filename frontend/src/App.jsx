@@ -30,6 +30,7 @@ import WorkshopPage from './components/pages/WorkshopPage'
 import HealthPage from './components/pages/HealthPage'
 import LoginPage from './components/pages/LoginPage'
 import WithingsSettings from './components/modals/WithingsSettings'
+import TelegramSettings from './components/modals/TelegramSettings'
 import QueueIndicator from './components/shared/QueueIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
@@ -79,6 +80,7 @@ export default function App() {
     showCalendarSettings, setShowCalendarSettings,
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
+    showTelegramSettings, setShowTelegramSettings,
     showShortcuts, setShowShortcuts,
     editingCard,
     defaultSection, showNewSheet, setShowNewSheet,
@@ -565,6 +567,7 @@ export default function App() {
     openCalendarSettings: () => setShowCalendarSettings(true),
     openGithubSettings: () => setShowGithubSettings(true),
     openWithingsSettings: () => setShowWithingsSettings(true),
+    openTelegramSettings: () => setShowTelegramSettings(true),
     openEdit,
   }
 
@@ -627,6 +630,9 @@ export default function App() {
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
                     &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTelegramSettings(true)}>
+                    &#9992;&#65039; Telegram Briefing
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
@@ -879,6 +885,10 @@ export default function App() {
           onClose={() => setShowWithingsSettings(false)}
           isImperial={isImperial}
         />
+      )}
+
+      {showTelegramSettings && (
+        <TelegramSettings onClose={() => setShowTelegramSettings(false)} />
       )}
 
       {showTagManager && (
