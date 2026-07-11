@@ -118,17 +118,17 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         )}
       </div>
 
-      {(card.scheduled_at || card.recurrence_rule) && (
+      {(card.scheduled_at || card.recurrence_rule || overdueDays > 0) && (
         <div className="event-time">
           {card.scheduled_at && <><span className="clock-icon">&#128337;</span>{formatScheduled(card.scheduled_at)}</>}
           {card.recurrence_rule && (
             <span className="card-recurrence">&#8635; {card.recurrence_rule}</span>
           )}
-        </div>
-      )}
-      {overdueDays > 0 && (
-        <div className="card-overdue-badge">
-          &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
+          {overdueDays > 0 && (
+            <span className="card-overdue-badge">
+              &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
+            </span>
+          )}
         </div>
       )}
       {card.waiting_reason && (

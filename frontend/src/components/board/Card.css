@@ -22,8 +22,8 @@
   border: 1px solid rgba(239, 68, 68, 0.25);
   border-radius: 6px;
   padding: 1px 6px;
-  margin-top: 4px;
 }
+
 
 .card-waiting-badge {
   display: inline-flex;
