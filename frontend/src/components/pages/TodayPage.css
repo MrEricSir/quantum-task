@@ -52,6 +52,42 @@
   margin-right: 4px;
 }
 
+.focus-next-title--btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.focus-next-title--btn:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.focus-next-complete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.focus-next-complete:hover {
+  background: #8b5cf6;
+  border-color: #8b5cf6;
+  color: #fff;
+}
+
 /* ── Header ── */
 .today-header {
   margin-bottom: 16px;

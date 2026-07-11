@@ -53,7 +53,7 @@ function StuckTaskInsight({ insight, onDismiss, onArchive }) {
   const { card, text, days_stuck } = insight
   const [mode, setMode] = useState(null) // null | 'reschedule' | 'snooze'
   const [reason, setReason] = useState('')
-  const [date, setDate] = useState('')
+  const [date, setDate] = useState(card.scheduled_at ? card.scheduled_at.slice(0, 10) : '')
   const [busy, setBusy] = useState(false)
   const key = insightKey(insight)
 
@@ -123,15 +123,13 @@ function StuckTaskInsight({ insight, onDismiss, onArchive }) {
               min={addDays(1)}
               onChange={e => setDate(e.target.value)}
             />
-            {date && (
-              <button className="insight-btn" onClick={handleSetDate} disabled={busy}>
-                Set date
-              </button>
-            )}
+            <button className="insight-btn" onClick={handleSetDate} disabled={busy || !date}>
+              Set date
+            </button>
+            <button className="insight-btn insight-btn--cancel" onClick={() => setMode(null)}>
+              Cancel
+            </button>
           </div>
-          <button className="insight-btn insight-btn--cancel" onClick={() => setMode(null)}>
-            Cancel
-          </button>
         </div>
       )}
 

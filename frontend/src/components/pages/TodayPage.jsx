@@ -277,18 +277,30 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
           const focusTask = sortedUntimedTasks[0]
           const projectTag = focusTask.tags?.find((t) => t.name.startsWith('Project: '))
           const projectName = projectTag ? projectTag.name.slice('Project: '.length) : null
+          const isOverdue = (focusTask.overdue_days ?? 0) > 0
           return (
             <div className="focus-next">
               <span className="focus-next-label">Focus next</span>
-              <span className="focus-next-title">
+              <button
+                className="focus-next-title focus-next-title--btn"
+                onClick={() => onEdit(focusTask)}
+                title="Open card"
+              >
                 {projectName && <span className="focus-next-project">{projectName} ›</span>}
                 {focusTask.title}
-              </span>
-              {(focusTask.overdue_days ?? 0) > 0 && (
+              </button>
+              {isOverdue && (
                 <span className="focus-next-overdue">
                   {focusTask.overdue_days}d overdue
                 </span>
               )}
+              <button
+                className="focus-next-complete"
+                onClick={() => onToggle(focusTask)}
+                title="Mark complete"
+              >
+                <CheckIcon />
+              </button>
             </div>
           )
         })()}
