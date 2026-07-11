@@ -837,6 +837,9 @@ export default function HealthPage({ habits = [], archivedHabits = [], onToggleH
         </div>
       </div>
 
+      {/* Food log — always visible, independent of Withings */}
+      <FoodLog />
+
       {!showCharts && (
         <div className="health-not-connected">
           <p>Connect your Withings account to start tracking steps, body fat, and weight.</p>
@@ -947,9 +950,6 @@ export default function HealthPage({ habits = [], archivedHabits = [], onToggleH
             </div>
           </div>
         )}
-
-        {/* Food log */}
-        <FoodLog />
 
         {/* Steps */}
         <section className="health-section">
