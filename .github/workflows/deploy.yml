@@ -140,9 +140,6 @@ jobs:
 
       - name: Set up Cloud Scheduler for Telegram briefing
         run: |
-          gcloud services enable cloudscheduler.googleapis.com \
-            --project ${{ vars.GCP_PROJECT_ID }} --quiet
-
           SERVICE_URL=$(gcloud run services describe ${{ env.GCP_SERVICE_NAME }} \
             --region ${{ env.GCP_REGION }} \
             --project ${{ vars.GCP_PROJECT_ID }} \
