@@ -433,7 +433,7 @@ gcp_setup_scheduler() {
       --schedule "0 * * * *" \
       --uri "$ENDPOINT" \
       --http-method POST \
-      --headers "Authorization=Bearer ${AUTH_PASSWORD}" \
+      --update-headers "Authorization=Bearer ${AUTH_PASSWORD}" \
       --quiet
     echo "==> Updated existing scheduler job."
   else

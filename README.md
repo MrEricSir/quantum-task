@@ -173,16 +173,29 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Auto-refreshes with a 10-second debounce after any meaningful data change
 - Force-regenerate anytime with the refresh button
 
-### Telegram Push Briefing
-- Receive your daily briefing as a Telegram message — no need to open the app
-- Configure via **Settings → Telegram Briefing**: paste your bot token, chat ID, and pick a delivery hour
-- A **Send test now** button sends the briefing immediately to verify your setup
+### Telegram Integration
+- Receive your daily briefing as a Telegram message each morning
+- **Two-way chat**: send messages to your bot to interact with the app:
+  - `today` — see today's task list (overdue, scheduled, and unscheduled)
+  - `habits` — see today's habit status (done vs pending)
+  - `overdue` — list overdue tasks
+  - `done [task]` — mark a matching task complete by name
+  - anything else — captured as a new task via the AI parser (same NLP as Quick Add)
+  - `help` — show available commands
+- **Proactive notifications** (configure send times in Settings → Telegram):
+  - Morning briefing — AI summary of your day
+  - Evening habit reminder — nudge listing any habits still pending
+  - Midday overdue nudge — alert if you have overdue tasks
+- Configure via **Settings → Telegram**: paste your bot token, chat ID, and pick a delivery hour
 
 **Setup (one-time):**
 1. Message **@BotFather** on Telegram, send `/newbot`, and copy the token it gives you
 2. Send any message to your new bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` — your numeric chat ID appears in the response
-3. Paste both into **Settings → Telegram Briefing**, pick a delivery hour, and save
-4. (Production) Run `./dev.sh gcp-setup-scheduler` once to create the Cloud Scheduler job that pings the app hourly
+3. Paste both into **Settings → Telegram**, pick a delivery hour, and click **Save**
+4. Click **Register webhook** in the Two-way chat section — this tells Telegram to send messages to your backend
+5. (Production) Run `./dev.sh gcp-setup-scheduler` once to create the Cloud Scheduler job that sends the daily briefing
+
+> **Note:** The webhook must be registered against a publicly reachable URL. It works automatically in production (Cloud Run). For local development, you would need a tunnel (e.g. ngrok) pointing to `localhost:8000` — otherwise only the daily briefing outbound direction works locally.
 
 ### Calendar
 - Subscribe to any iCal/ICS feed (e.g. Google Calendar, Apple Calendar)
@@ -320,7 +333,7 @@ todo/
     app_setting_keys.py  # Constants for all AppSetting key strings
     streak.py            # Habit streak computation
     push.py              # Web Push / VAPID helpers
-    telegram_notify.py   # Telegram Bot API send helper
+    telegram_notify.py   # Telegram Bot API helpers: send message, set/delete webhook
     weather.py           # Open-Meteo fetch + WMO condition helpers
     briefing_context.py  # Today/week context builders for AI briefing
     health_context.py    # Health data context builder (Withings + goals)
@@ -338,7 +351,7 @@ todo/
       food.py            # Food/drink logging + nutritional assessment
       insights.py        # Habit insights and health experiment suggestions
       correlations.py    # Health experiment tracking
-      telegram.py        # Telegram config, test, and Cloud Scheduler endpoint
+      telegram.py        # Telegram config, daily briefing, webhook registration, and two-way chat handler
       tags.py            # Tag CRUD
       engineering.py     # GitHub engineering feed
       push.py            # Push subscription management

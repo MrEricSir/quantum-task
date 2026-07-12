@@ -44,6 +44,18 @@ BRIEFING_LAST_SENT = "briefing_last_sent"
 LAST_KNOWN_LAT = "last_known_lat"
 LAST_KNOWN_LON = "last_known_lon"
 
+# Random hex token sent as X-Telegram-Bot-Api-Secret-Token on every webhook POST.
+# Generated on first webhook registration; used to verify requests come from Telegram.
+TELEGRAM_WEBHOOK_SECRET = "telegram_webhook_secret"
+# Local "HH:MM" time to send an evening habit reminder; empty string to disable.
+HABIT_REMINDER_TIME = "habit_reminder_time"
+# ISO date of last habit reminder sent — prevents double-send.
+HABIT_REMINDER_LAST_SENT = "habit_reminder_last_sent"
+# Local "HH:MM" time to send a midday overdue-task nudge; empty string to disable.
+OVERDUE_NUDGE_TIME = "overdue_nudge_time"
+# ISO date of last overdue nudge sent — prevents double-send.
+OVERDUE_NUDGE_LAST_SENT = "overdue_nudge_last_sent"
+
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.
 STREAK_DAYS_V1 = "streak_days_v1"

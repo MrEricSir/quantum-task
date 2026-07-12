@@ -520,6 +520,12 @@ export async function testTelegramConfig() {
   return res.json()
 }
 
+export async function registerTelegramWebhook() {
+  const res = await apiFetch('/api/telegram/register-webhook', { method: 'POST' })
+  if (!res.ok) throw new Error(`Server error ${res.status}`)
+  return res.json()
+}
+
 export async function checkAuth() {
   const res = await fetch('/api/auth/check')
   // 401 = auth enabled, not logged in. Any other failure = backend down, let it throw.

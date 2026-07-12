@@ -123,3 +123,39 @@
   gap: 8px;
   justify-content: flex-end;
 }
+
+.telegram-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0;
+}
+
+.telegram-webhook-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.telegram-webhook-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.telegram-webhook-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.telegram-webhook-desc code {
+  font-family: monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  color: var(--text);
+}

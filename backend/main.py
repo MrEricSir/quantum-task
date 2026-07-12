@@ -44,6 +44,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or path.startswith("/api/auth/")
             or path == "/api/calendar/export.ics"
             or path == "/api/withings/callback"
+            or path == "/api/telegram/webhook"
         ):
             return await call_next(request)
         # Session cookie (browser)
@@ -261,6 +262,8 @@ async def _experiment_cleanup_scheduler() -> None:
 # ── Telegram briefing scheduler ───────────────────────────────────────────────
 
 def _check_telegram_briefing() -> None:
+    from routers.telegram import _check_briefing, _check_habit_reminder, _check_overdue_nudge
+
     with SessionLocal() as db:
         def _g(key, default=""):
             row = db.query(models.AppSetting).filter_by(key=key).first()
@@ -271,36 +274,14 @@ def _check_telegram_briefing() -> None:
         if not token or not chat_id:
             return
 
-        schedule_time = _g(setting_keys.BRIEFING_SCHEDULE_TIME, "07:30")
-        tz_offset     = int(_g(setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
-
-        now_utc   = datetime.now(timezone.utc)
-        local_now = now_utc.replace(tzinfo=None) - timedelta(minutes=tz_offset)
+        tz_offset = int(_g(setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
+        local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
         today     = local_now.date()
 
-        if local_now.strftime("%H:%M") != schedule_time:
-            return
-
-        # DB-backed dedup so cold-start instances don't double-send
-        last_sent = _g(setting_keys.BRIEFING_LAST_SENT)
-        if last_sent == today.isoformat():
-            return
-
-        row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIEFING_LAST_SENT).first()
-        if row:
-            row.value = today.isoformat()
-        else:
-            db.add(models.AppSetting(key=setting_keys.BRIEFING_LAST_SENT, value=today.isoformat()))
-        db.commit()
-
-    from routers.briefing import generate_today_briefing
-    import telegram_notify
-    text = generate_today_briefing(today, tz_offset)
-    if text:
-        ok = telegram_notify.send_message(token, chat_id, text)
-        print(f"[telegram] briefing sent={ok} for {today}")
-    else:
-        print(f"[telegram] briefing generation failed for {today}")
+        r1 = _check_briefing(db, token, chat_id, tz_offset, local_now, today)
+        r2 = _check_habit_reminder(db, token, chat_id, local_now, today)
+        r3 = _check_overdue_nudge(db, token, chat_id, local_now, today)
+        print(f"[telegram] briefing={r1} habit_reminder={r2} overdue_nudge={r3}")
 
 
 async def _telegram_briefing_scheduler() -> None:
