@@ -279,6 +279,18 @@ class Job(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ThreadMessageRequest(BaseModel):
+    content: str
+
+
+class ThreadContextRequest(BaseModel):
+    context: Optional[str] = None
+
+
+class ThreadOutputRequest(BaseModel):
+    output: Optional[str] = None
+
+
 class AssistRequest(BaseModel):
     card_title: str
     card_description: Optional[str] = None
@@ -356,6 +368,8 @@ class Card(BaseModel):
     snoozed_until: Optional[str] = None
     waiting_reason: Optional[str] = None
     tags: List[Tag] = []
+
+    thread_output: Optional[str] = None
 
     @computed_field
     @property

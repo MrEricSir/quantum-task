@@ -118,6 +118,40 @@
   overflow: hidden;
 }
 
+/* ── Assistant output ── */
+.card-body-output {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 10px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 6px;
+}
+
+.card-body-output-row {
+  display: flex;
+  gap: 6px;
+}
+
+.card-body-output-label {
+  font-size: 11px;
+  color: #a78bfa;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.card-body-output-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ── GitHub source badge ── */
 .card-github-badge {
   display: inline-flex;
@@ -189,6 +223,12 @@
 .card-action-assist:hover {
   background: rgba(139, 92, 246, 0.12);
   border-color: #a78bfa;
+}
+
+.card-action-assist--output {
+  font-size: 11px;
+  padding: 3px 10px;
+  align-self: flex-start;
 }
 
 /* ── Move section (mobile only) ── */

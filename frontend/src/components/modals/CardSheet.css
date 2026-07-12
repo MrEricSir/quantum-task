@@ -102,6 +102,45 @@
   margin: 0;
 }
 
+/* ── Thread output ── */
+.card-sheet-thread-output {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(139, 92, 246, 0.07);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+}
+
+.card-sheet-thread-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-sheet-thread-output-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a78bfa;
+}
+
+.card-sheet-btn--assist-sm {
+  flex: none;
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+.card-sheet-thread-output-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
 /* ── Tags ── */
 .card-sheet-tags {
   display: flex;

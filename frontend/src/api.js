@@ -540,3 +540,44 @@ export async function login(password) {
 export async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' })
 }
+
+// ── Card threads (multi-turn assistant conversations) ─────────────────────────
+
+export async function fetchCardThread(cardId) {
+  const res = await apiFetch(`/api/cards/${cardId}/thread`)
+  if (!res.ok) throw new Error('Failed to fetch thread')
+  return res.json()
+}
+
+// Returns the raw Response for SSE streaming — caller handles the reader
+export function sendThreadMessage(cardId, content) {
+  return apiFetch(`/api/cards/${cardId}/thread/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+}
+
+export async function saveThreadOutput(cardId, output) {
+  const res = await apiFetch(`/api/cards/${cardId}/thread/output`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ output }),
+  })
+  if (!res.ok) throw new Error('Failed to save output')
+  return res.json()
+}
+
+export async function updateThreadContext(cardId, context) {
+  const res = await apiFetch(`/api/cards/${cardId}/thread/context`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context }),
+  })
+  if (!res.ok) throw new Error('Failed to update context')
+}
+
+export async function clearCardThread(cardId) {
+  const res = await apiFetch(`/api/cards/${cardId}/thread`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to clear thread')
+}

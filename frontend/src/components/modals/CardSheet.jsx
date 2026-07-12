@@ -20,6 +20,7 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
   const isNew = !card?.id
   const [mode, setMode] = useState(isNew ? 'edit' : 'view')
   const [showAssist, setShowAssist] = useState(false)
+  const [savedOutput, setSavedOutput] = useState(card?.thread_output ?? null)
   const [title, setTitle] = useState(card?.title ?? '')
   const [description, setDescription] = useState(card?.description ?? '')
   const [section, setSection] = useState(card?.section ?? defaultSection)
@@ -106,6 +107,18 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
                 </div>
               )}
 
+              {savedOutput && (
+                <div className="card-sheet-thread-output">
+                  <div className="card-sheet-thread-output-header">
+                    <span className="card-sheet-thread-output-label">✦ Assistant output</span>
+                    <button className="card-sheet-btn card-sheet-btn--assist card-sheet-btn--assist-sm" onClick={() => setShowAssist(true)}>
+                      Open
+                    </button>
+                  </div>
+                  <p className="card-sheet-thread-output-text">{savedOutput}</p>
+                </div>
+              )}
+
               {(card.tags ?? []).length > 0 && (
                 <div className="card-sheet-tags">
                   {(card.tags ?? []).map((tag) => (
@@ -141,14 +154,22 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
               <button className="card-sheet-btn card-sheet-btn--edit" onClick={() => setMode('edit')}>
                 Edit
               </button>
-              <button className="card-sheet-btn card-sheet-btn--assist" onClick={() => setShowAssist(true)}>
-                ✦ Assist
-              </button>
+              {!savedOutput && (
+                <button className="card-sheet-btn card-sheet-btn--assist" onClick={() => setShowAssist(true)}>
+                  ✦ Assist
+                </button>
+              )}
             </div>
           </>
         ) : (
           <form className="card-sheet-form" onSubmit={handleSave} noValidate>
             <div className="card-sheet-body">
+              {savedOutput && (
+                <div className="card-sheet-thread-output">
+                  <span className="card-sheet-thread-output-label">✦ Saved output</span>
+                  <p className="card-sheet-thread-output-text">{savedOutput}</p>
+                </div>
+              )}
               <CardForm
                 idPrefix="cs"
                 title={title}
@@ -193,6 +214,7 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
           onClose={() => setShowAssist(false)}
           task={card}
           onBreakdown={onBreakdown}
+          onOutputSaved={output => setSavedOutput(output)}
         />
       )}
     </div>,

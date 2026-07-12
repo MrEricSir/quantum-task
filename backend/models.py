@@ -69,7 +69,29 @@ class Card(Base):
     snoozed_until = Column(String, nullable=True)   # YYYY-MM-DD — suppress from insights until this date
     waiting_reason = Column(String, nullable=True)  # free-text context shown as a badge on the board
     today_since = Column(DateTime, nullable=True)   # when card last entered the 'today' section
-    tags = relationship("Tag", secondary="card_tags", lazy="joined")
+    tags   = relationship("Tag", secondary="card_tags", lazy="joined")
+    thread = relationship("CardThread", uselist=False, back_populates="card", lazy="joined")
+
+    @property
+    def thread_output(self):
+        return self.thread.output if self.thread else None
+
+
+class CardThread(Base):
+    """Persistent multi-turn assistant conversation attached to a card."""
+    __tablename__ = "card_threads"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    card_id    = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False, unique=True)
+    card       = relationship("Card", back_populates="thread")
+    # context: the user-pasted document/email/etc. that persists across turns
+    context    = Column(Text, nullable=True)
+    # messages: JSON array of {role, content, ts} — the chat history
+    messages   = Column(Text, nullable=False, default="[]")
+    # output: user-saved result text, shown in the card detail view
+    output     = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=True)
 
 
 class CalendarMapping(Base):

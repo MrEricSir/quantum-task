@@ -33,7 +33,7 @@ The server runs UTC (Cloud Run). All date/time logic must use the client's local
 **Backend**: Always read timezone from the request via `deps.py` helpers — never from the request body:
 - `local_date(request)` → client's local `YYYY-MM-DD` (from `X-Local-Date` header)         
 - `utc_offset_minutes(request)` → JS-convention offset (UTC+10 → -600) (from `X-UTC-Offset` header)                                                                                   
-                                                                                             
+
 **Frontend**: Always use `apiFetch` from `api.js` — it injects both headers automatically. 
                                                                                         
 If raw `fetch` is needed (e.g. SSE streaming with `AbortController`), manually add:        

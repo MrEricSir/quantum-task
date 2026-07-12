@@ -68,6 +68,9 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
     ? { boxShadow: 'var(--shadow-lg)', opacity: 1, borderLeftColor: accentColor }
     : { transform: CSS.Transform.toString(transform), transition, borderLeftColor: accentColor }
 
+  const [savedOutput, setSavedOutput] = useState(card.thread_output ?? null)
+  useEffect(() => { setSavedOutput(card.thread_output ?? null) }, [card.thread_output])
+
   const handleCheckboxClick = (e) => {
     e.stopPropagation()
     setPopping(true)
@@ -139,6 +142,20 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
 
       {expanded && !isOverlay && (
         <div className="event-details">
+          {savedOutput && (
+            <div className="card-body-output">
+              <div className="card-body-output-row">
+                <span className="card-body-output-label">✦</span>
+                <span className="card-body-output-text">{savedOutput}</span>
+              </div>
+              <button
+                className="card-action-assist card-action-assist--output"
+                onClick={(e) => { e.stopPropagation(); setShowAssist(true) }}
+              >
+                ✦ Assist
+              </button>
+            </div>
+          )}
           {card.description && (() => {
             const gh = parseGitHubUrl(card.description)
             return gh ? (
@@ -166,13 +183,15 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
           </div>
           <div className="card-detail-actions">
             <button className="card-action-edit" onClick={handleEdit}>Edit</button>
-            <button
-              className="card-action-assist"
-              onClick={(e) => { e.stopPropagation(); setShowAssist(true) }}
-              title="AI Assistant"
-            >
-              ✦ Assistant
-            </button>
+            {!savedOutput && (
+              <button
+                className="card-action-assist"
+                onClick={(e) => { e.stopPropagation(); setShowAssist(true) }}
+                title="AI Assistant"
+              >
+                ✦ Assistant
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -200,6 +219,7 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         onClose={() => setShowAssist(false)}
         task={card}
         onBreakdown={onBreakdown}
+        onOutputSaved={output => setSavedOutput(output)}
       />
 
       {showSheet && (

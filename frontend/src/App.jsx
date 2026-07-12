@@ -708,7 +708,7 @@ export default function App() {
             onDelete={handleDeleteCard}
             onArchive={handleArchiveCard}
             onMove={handleMoveSection}
-            allTags={tags}
+            allTags={visibleTags}
             onBreakdown={handleBreakdownCommit}
             onWeather={handleSetWeather}
             briefingKey={briefingKey}
@@ -756,7 +756,7 @@ export default function App() {
                     onToggle={handleToggle}
                     onMove={handleMoveSection}
                     onAdd={() => openNewCard(section)}
-                    allTags={tags}
+                    allTags={visibleTags}
                     onBreakdown={handleBreakdownCommit}
                   />
                 ))}
@@ -838,7 +838,7 @@ export default function App() {
         <CardModal
           card={editingCard}
           defaultSection={defaultSection}
-          allTags={tags}
+          allTags={visibleTags}
           onClose={closeModal}
           onSave={handleModalSave}
           onDelete={editingCard ? async () => { await handleDeleteCard(editingCard.id); closeModal() } : undefined}
@@ -849,7 +849,7 @@ export default function App() {
       {showNewSheet && (
         <CardSheet
           defaultSection={defaultSection}
-          allTags={tags}
+          allTags={visibleTags}
           onClose={() => setShowNewSheet(false)}
           onCreate={handleAddCard}
         />

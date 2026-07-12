@@ -1,91 +1,120 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
-import { Cross2Icon, CopyIcon, CheckIcon } from '@radix-ui/react-icons'
-import { breakdownCard, commitBreakdown, bulkCreateCards } from '../../api'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+import { Cross2Icon, CopyIcon, CheckIcon, TrashIcon } from '@radix-ui/react-icons'
+import {
+  breakdownCard, commitBreakdown, bulkCreateCards,
+  fetchCardThread, sendThreadMessage, saveThreadOutput,
+  updateThreadContext, clearCardThread,
+} from '../../api'
+import descriptionToHtml from '../../lib/descriptionToHtml'
 import './AssistModal.css'
 
-export default function AssistModal({ open, onClose, task, onBreakdown }) {
-  const [mode,     setMode]    = useState('assist')  // 'assist' | 'breakdown'
+export default function AssistModal({ open, onClose, task, onBreakdown, onOutputSaved }) {
+  const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown'
 
-  // Assist state
-  const [context,    setContext]    = useState('')
-  const [output,     setOutput]     = useState('')
-  const [status,     setStatus]     = useState('idle') // idle | loading | searching | done | error
-  const [searching,  setSearching]  = useState(false)
-  const [copied,     setCopied]     = useState(false)
-  // Create-tasks flow (parsed from output)
-  const [taskItems,  setTaskItems]  = useState([])
-  const [taskMode,   setTaskMode]   = useState('none') // none | confirming | creating
-  const [taskError,  setTaskError]  = useState('')
-  const abortRef   = useRef(null)
-  const outputRef  = useRef(null)
+  // Thread state
+  const [messages,  setMessages]  = useState([])   // [{role, content, ts}]
+  const [context,   setContext]   = useState('')    // pasted reference document
+  const [output,    setOutput]    = useState(null)  // saved output text
+  const [input,     setInput]     = useState('')    // current chat input
+  const [sending,   setSending]   = useState(false)
+  const [streaming, setStreaming] = useState(false) // true while SSE is in flight
+  const [threadErr, setThreadErr] = useState('')
+  const [searching, setSearching] = useState(false)
+
+  // Context panel
+  const [showDesc,    setShowDesc]    = useState(false)
+  const [showContext, setShowContext] = useState(false)
+  const [editContext, setEditContext] = useState('')
+  const [savingCtx,  setSavingCtx]   = useState(false)
+
+  // Output save state
+  const [savingOutput, setSavingOutput] = useState(null)  // index of msg being saved, or null
+  const [copied,       setCopied]       = useState(null)  // index of msg copied
 
   // Breakdown state
-  const [bdStatus,   setBdStatus]   = useState('idle') // idle | loading | ready | saving | error
+  const [bdStatus,   setBdStatus]   = useState('idle')
   const [bdSubtasks, setBdSubtasks] = useState([])
   const [bdTagName,  setBdTagName]  = useState('')
   const [bdError,    setBdError]    = useState('')
 
-  // Reset all state when task or open changes
+  const abortRef    = useRef(null)
+  const scrollRef   = useRef(null)
+  const inputRef    = useRef(null)
+  const streamingMsg = useRef('')  // accumulates the in-flight assistant message
+
+  // ── Load thread on open ──────────────────────────────────────────────────
+
   useEffect(() => {
-    if (open) {
-      setMode('assist')
-      setContext(''); setOutput(''); setStatus('idle'); setCopied(false); setSearching(false)
-      setTaskItems([]); setTaskMode('none'); setTaskError('')
-      setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
-    }
+    if (!open || !task?.id) return
+    setMode('assist')
+    setInput(''); setThreadErr(''); setSearching(false); setSending(false); setStreaming(false)
+    setShowDesc(false); setShowContext(false); setSavingOutput(null); setCopied(null)
+    setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
+
+    fetchCardThread(task.id)
+      .then(data => {
+        setMessages(data.messages ?? [])
+        setContext(data.context ?? '')
+        setEditContext(data.context ?? '')
+        setOutput(data.output ?? null)
+      })
+      .catch(() => {
+        setMessages([]); setContext(''); setEditContext(''); setOutput(null)
+      })
   }, [open, task?.id])
 
-  // Reset breakdown state when switching to breakdown mode
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
-    if (mode === 'breakdown' && bdStatus === 'idle') {
-      // auto-kick off generation
-      generateBreakdown()
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [messages])
+
+  // Auto-focus input when chat loads and is empty
+  useEffect(() => {
+    if (open && mode === 'assist' && !sending && inputRef.current) {
+      setTimeout(() => inputRef.current?.focus(), 50)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode])
+  }, [open, mode, messages.length])
 
-  // Auto-scroll assist output as it streams
+  // Close on Escape
   useEffect(() => {
-    if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight
-  }, [output])
+    if (!open) return
+    const onKey = e => { if (e.key === 'Escape') handleClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Assist ────────────────────────────────────────────────────────────────
+  // ── Send a message ────────────────────────────────────────────────────────
 
-  const getLocation = () =>
-    new Promise((resolve) => {
-      if (!navigator.geolocation) return resolve(null)
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-        () => resolve(null),
-        { timeout: 5000 },
-      )
-    })
+  const send = useCallback(async () => {
+    const text = input.trim()
+    if (!text || sending || streaming) return
 
-  const generate = async () => {
-    if (!context.trim()) return
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
     abortRef.current = controller
-    setOutput(''); setStatus('loading'); setSearching(false)
-    const location = await getLocation()
+
+    setSending(true); setStreaming(false); setThreadErr(''); setSearching(false)
+
+    // Optimistically add user message to thread
+    const userMsg = { role: 'user', content: text, ts: new Date().toISOString() }
+    setMessages(prev => [...prev, userMsg])
+    setInput('')
+
+    // Add a placeholder assistant message that we'll fill while streaming
+    streamingMsg.current = ''
+    const placeholderMsg = { role: 'assistant', content: '', ts: new Date().toISOString(), _streaming: true }
+    setMessages(prev => [...prev, placeholderMsg])
+
     try {
-      const res = await fetch('/api/assist/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          card_title: task.title,
-          card_description: task.description || null,
-          context: context.trim(),
-          lat: location?.lat ?? null,
-          lon: location?.lon ?? null,
-        }),
-        signal: controller.signal,
-      })
+      const res = await sendThreadMessage(task.id, text)
       if (!res.ok) throw new Error('Server error')
+
+      setSending(false); setStreaming(true)
       const reader  = res.body.getReader()
       const decoder = new TextDecoder()
-      let buffer = '', acc = ''
+      let buffer = ''
+
       outer: while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -95,107 +124,118 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           const data = line.slice(6).trim()
-          if (data === '[DONE]') { setStatus('done'); break outer }
+          if (data === '[DONE]') break outer
           try {
             const parsed = JSON.parse(data)
-            if (parsed.error) { setStatus('error'); setOutput(parsed.error); return }
+            if (parsed.error) { setThreadErr(parsed.error); break outer }
             if (parsed.status === 'searching') { setSearching(true) }
-            if (parsed.text)  { setSearching(false); acc += parsed.text; setOutput(acc) }
+            if (parsed.text) {
+              setSearching(false)
+              streamingMsg.current += parsed.text
+              const acc = streamingMsg.current
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, content: acc } : m
+              ))
+            }
           } catch { /* malformed chunk */ }
         }
       }
-      setStatus('done')
+
+      // Mark streaming done — remove _streaming flag
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 ? { ...m, _streaming: false } : m
+      ))
     } catch (err) {
-      if (err.name !== 'AbortError') { setStatus('error'); setOutput('Could not generate output.') }
+      if (err.name !== 'AbortError') {
+        setThreadErr('Could not reach the assistant.')
+        // Remove placeholder
+        setMessages(prev => prev.filter(m => !m._streaming))
+      }
+    } finally {
+      setSending(false); setStreaming(false); setSearching(false)
+    }
+  }, [input, sending, streaming, task?.id])
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send()
     }
   }
 
-  const copy = () => {
-    navigator.clipboard.writeText(output).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+  // ── Context ───────────────────────────────────────────────────────────────
+
+  const saveContext = async () => {
+    setSavingCtx(true)
+    try {
+      await updateThreadContext(task.id, editContext)
+      setContext(editContext)
+      setShowContext(false)
+    } catch { /* ignore */ }
+    setSavingCtx(false)
+  }
+
+  // ── Output ────────────────────────────────────────────────────────────────
+
+  const handleSaveOutput = async (content, idx) => {
+    setSavingOutput(idx)
+    try {
+      await saveThreadOutput(task.id, content)
+      setOutput(content)
+      onOutputSaved?.(content)
+    } catch { /* ignore */ }
+    setSavingOutput(null)
+  }
+
+  const handleClearOutput = async () => {
+    try {
+      await saveThreadOutput(task.id, null)
+      setOutput(null)
+      onOutputSaved?.(null)
+    } catch { /* ignore */ }
+  }
+
+  const handleCopy = (content, idx) => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(idx)
+      setTimeout(() => setCopied(null), 2000)
     })
   }
 
-  // ── Create tasks from output ───────────────────────────────────────────────
+  // ── Clear thread ──────────────────────────────────────────────────────────
 
-  const parsedOutputItems = useMemo(() => {
-    const items = []
-    const clean = (raw) =>
-      raw
-        .replace(/\*\*(.+?)\*\*/g, '$1')
-        .replace(/\*(.+?)\*/g, '$1')
-        .replace(/\[(.+?)\]\(.+?\)/g, '$1')
-        .replace(/^[:#–—-]+\s*/, '')
-        .trim()
-    for (const line of output.split('\n')) {
-      const t = line.trim()
-      if (!t) continue
-      let m
-      if ((m = t.match(/^[\d]+[.)]\s+(.+)/)))  { const c = clean(m[1]);        if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-      if ((m = t.match(/^[-•*]\s+(.+)/)))       { const c = clean(m[1]);        if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-      if ((m = t.match(/^#{1,3}\s+(.+)/)))      { const c = clean(m[1]);        if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-      if ((m = t.match(/^\*\*(.+?)\*\*(.*)$/))) { const c = clean(m[1] + m[2]); if (c.length >= 4 && c.length <= 200) items.push(c); continue }
-    }
-    return items
-  }, [output])
-
-  const startCreateTasks = () => {
-    setTaskItems(parsedOutputItems)
-    setTaskMode('confirming')
-    setTaskError('')
-  }
-
-  const confirmCreateTasks = async () => {
-    const valid = taskItems.map((s) => s.trim()).filter(Boolean)
-    if (!valid.length) return
-    setTaskMode('creating')
-    setTaskError('')
-    try {
-      const section = task.section ?? 'today'
-      const { cards: created } = await bulkCreateCards(
-        valid.map((title) => ({ title, section }))
-      )
-      onBreakdown?.({ cards: created })
-      handleClose()
-    } catch {
-      setTaskError('Failed to create tasks. Please try again.')
-      setTaskMode('confirming')
-    }
+  const handleClearThread = async () => {
+    if (!window.confirm('Clear this conversation? This cannot be undone.')) return
+    await clearCardThread(task.id)
+    setMessages([]); setOutput(null); setContext(''); setEditContext('')
+    onOutputSaved?.(null)
   }
 
   // ── Breakdown ─────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (mode === 'breakdown' && bdStatus === 'idle') generateBreakdown()
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const generateBreakdown = async () => {
     setBdStatus('loading'); setBdError('')
     try {
       const { subtasks, tag_name } = await breakdownCard(task.id)
-      setBdSubtasks(subtasks)
-      setBdTagName(tag_name)
-      setBdStatus('ready')
+      setBdSubtasks(subtasks); setBdTagName(tag_name); setBdStatus('ready')
     } catch {
-      setBdError('Failed to generate subtasks. Please try again.')
-      setBdStatus('error')
+      setBdError('Failed to generate subtasks.'); setBdStatus('error')
     }
   }
 
-  const updateSubtask = (i, val) =>
-    setBdSubtasks((prev) => prev.map((s, idx) => (idx === i ? val : s)))
-
-  const removeSubtask = (i) =>
-    setBdSubtasks((prev) => prev.filter((_, idx) => idx !== i))
-
   const confirmBreakdown = async () => {
-    const valid = bdSubtasks.filter((s) => s.trim())
+    const valid = bdSubtasks.filter(s => s.trim())
     if (!valid.length) return
     setBdStatus('saving')
     try {
       const result = await commitBreakdown(task.id, valid, bdTagName)
-      onBreakdown?.(result)
-      handleClose()
+      onBreakdown?.(result); handleClose()
     } catch {
-      setBdError('Failed to create subtasks. Please try again.')
-      setBdStatus('ready')
+      setBdError('Failed to create subtasks.'); setBdStatus('ready')
     }
   }
 
@@ -203,137 +243,170 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
 
   const handleClose = () => { abortRef.current?.abort(); onClose() }
 
-  if (!task) return null
+  if (!task || !open) return null
 
-  const validBdCount = bdSubtasks.filter((s) => s.trim()).length
+  const validBdCount = bdSubtasks.filter(s => s.trim()).length
+  const hasHistory   = messages.length > 0
 
-  return (
-    <Dialog.Root open={open} onOpenChange={(v) => !v && handleClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="assist-overlay" />
-        <Dialog.Content className="assist-modal" aria-describedby={undefined} onClick={(e) => e.stopPropagation()}>
+  return createPortal(
+    <div className="assist-overlay" onClick={handleClose} onPointerDown={e => e.stopPropagation()}>
+      <div
+        className="assist-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Assistant"
+        onClick={e => e.stopPropagation()}
+      >
 
+          {/* Header */}
           <div className="assist-header">
             <div className="assist-header-left">
               <span className="assist-spark">✦</span>
-              <Dialog.Title className="assist-title">Assistant</Dialog.Title>
+              <span className="assist-title">Assistant</span>
             </div>
-            <Dialog.Close className="assist-close" aria-label="Close">
-              <Cross2Icon />
-            </Dialog.Close>
+            <div className="assist-header-right">
+              {hasHistory && mode === 'assist' && (
+                <button className="assist-icon-btn" onClick={handleClearThread} title="Clear conversation">
+                  <TrashIcon />
+                </button>
+              )}
+              <button className="assist-close" aria-label="Close" onClick={handleClose}>
+                <Cross2Icon />
+              </button>
+            </div>
           </div>
 
+          {/* Task chip */}
           <div className="assist-task">
             <span className="assist-task-label">Task</span>
-            <span className="assist-task-name">{task.title}</span>
+            <div className="assist-task-body">
+              <div className="assist-task-title-row">
+                <span className="assist-task-name">{task.title}</span>
+                {task.description && (
+                  <button className="assist-task-desc-toggle" onClick={() => setShowDesc(v => !v)}>
+                    {showDesc ? 'Hide' : 'Details'}
+                  </button>
+                )}
+              </div>
+              {task.description && showDesc && (
+                <span className="assist-task-desc" dangerouslySetInnerHTML={{ __html: descriptionToHtml(task.description) }} />
+              )}
+            </div>
           </div>
 
+          {/* Tabs */}
           <div className="assist-tabs">
-            <button
-              className={`assist-tab${mode === 'assist' ? ' assist-tab--active' : ''}`}
-              onClick={() => setMode('assist')}
-            >
-              Assist
+            <button className={`assist-tab${mode === 'assist' ? ' assist-tab--active' : ''}`} onClick={() => setMode('assist')}>
+              Chat
             </button>
-            <button
-              className={`assist-tab${mode === 'breakdown' ? ' assist-tab--active' : ''}`}
-              onClick={() => setMode('breakdown')}
-            >
+            <button className={`assist-tab${mode === 'breakdown' ? ' assist-tab--active' : ''}`} onClick={() => setMode('breakdown')}>
               Break down
             </button>
           </div>
 
           {mode === 'assist' ? (
             <>
-              <div className="assist-context-section">
-                <label className="assist-label" htmlFor="assist-context">
-                  Paste context — emails, messages, documents, notes
-                </label>
-                <textarea
-                  id="assist-context"
-                  className="assist-context"
-                  placeholder="Paste anything relevant here…"
-                  value={context}
-                  onChange={(e) => setContext(e.target.value)}
-                  rows={6}
-                />
+              {/* Saved output panel */}
+              {output && (
+                <div className="assist-output-panel">
+                  <div className="assist-output-panel-header">
+                    <span className="assist-label">Saved output</span>
+                    <button className="assist-icon-btn" onClick={handleClearOutput} title="Remove saved output">
+                      <TrashIcon />
+                    </button>
+                  </div>
+                  <div className="assist-output-panel-text">{output}</div>
+                </div>
+              )}
+
+              {/* Context panel (collapsible) */}
+              <div className="assist-context-panel">
+                <button
+                  className="assist-context-toggle"
+                  onClick={() => { setShowContext(v => !v); setEditContext(context) }}
+                >
+                  <span>Reference document</span>
+                  <span className={`assist-context-caret${showContext ? ' assist-context-caret--open' : ''}`}>▾</span>
+                  {context && <span className="assist-context-dot" />}
+                </button>
+                {showContext && (
+                  <div className="assist-context-body">
+                    <textarea
+                      className="assist-context-input"
+                      placeholder="Paste an email, document, or any reference text here. The assistant will use it throughout the conversation."
+                      value={editContext}
+                      onChange={e => setEditContext(e.target.value)}
+                      rows={5}
+                    />
+                    <div className="assist-context-actions">
+                      <button className="assist-copy" onClick={() => { setShowContext(false); setEditContext(context) }}>Cancel</button>
+                      <button className="assist-run assist-run--sm" onClick={saveContext} disabled={savingCtx}>
+                        {savingCtx ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <button
-                className="assist-run"
-                onClick={generate}
-                disabled={!context.trim() || status === 'loading'}
-              >
-                {status === 'loading' ? (
-                  <><span className="assist-spinner" /> Generating…</>
-                ) : 'Generate'}
-              </button>
-
-              {(output || status === 'loading') && taskMode === 'none' && (
-                <div className="assist-output-section">
-                  <div className="assist-output-header">
-                    <span className="assist-label">Output</span>
-                    {status === 'done' && (
-                      <div className="assist-output-actions">
-                        {parsedOutputItems.length >= 2 && (
-                          <button className="assist-copy" onClick={startCreateTasks}>
-                            Create tasks
-                          </button>
-                        )}
-                        <button className="assist-copy" onClick={copy} title="Copy to clipboard">
-                          {copied ? <CheckIcon /> : <CopyIcon />}
-                          {copied ? 'Copied' : 'Copy'}
+              {/* Message thread */}
+              <div className="assist-thread" ref={scrollRef}>
+                {!hasHistory && (
+                  <div className="assist-thread-empty">
+                    Start a conversation about this task — the assistant will remember it.
+                  </div>
+                )}
+                {messages.map((msg, idx) => (
+                  <div key={idx} className={`assist-msg assist-msg--${msg.role}`}>
+                    <div className="assist-msg-bubble">
+                      {msg._streaming && !msg.content
+                        ? <span className="assist-msg-placeholder">{searching ? 'Searching the web…' : 'Thinking…'}</span>
+                        : <span className="assist-msg-text">{msg.content}</span>
+                      }
+                    </div>
+                    {msg.role === 'assistant' && !msg._streaming && msg.content && (
+                      <div className="assist-msg-actions">
+                        <button
+                          className="assist-msg-action"
+                          onClick={() => handleCopy(msg.content, idx)}
+                          title="Copy"
+                        >
+                          {copied === idx ? <CheckIcon /> : <CopyIcon />}
+                        </button>
+                        <button
+                          className="assist-msg-action"
+                          onClick={() => handleSaveOutput(msg.content, idx)}
+                          disabled={savingOutput === idx}
+                          title="Save as output"
+                        >
+                          {savingOutput === idx ? '…' : output === msg.content ? '✓ Saved' : 'Save'}
                         </button>
                       </div>
                     )}
                   </div>
-                  <div
-                    ref={outputRef}
-                    className={`assist-output${status === 'loading' ? ' assist-output--streaming' : ''}`}
-                  >
-                    {output || <span className="assist-output-placeholder">{searching ? 'Searching the web…' : 'Thinking…'}</span>}
-                  </div>
-                </div>
-              )}
+                ))}
+                {threadErr && <div className="assist-thread-error">{threadErr}</div>}
+              </div>
 
-              {taskMode !== 'none' && (
-                <>
-                  <p className="assist-bd-intro">
-                    Edit tasks before adding to <strong>{task.section ?? 'today'}</strong>:
-                  </p>
-                  <div className="assist-bd-list">
-                    {taskItems.map((s, i) => (
-                      <div key={i} className="assist-bd-item">
-                        <span className="assist-bd-num">{i + 1}</span>
-                        <input
-                          className="assist-bd-input"
-                          value={s}
-                          onChange={(e) => setTaskItems((prev) => prev.map((x, idx) => idx === i ? e.target.value : x))}
-                        />
-                        <button
-                          type="button"
-                          className="assist-bd-remove"
-                          onClick={() => setTaskItems((prev) => prev.filter((_, idx) => idx !== i))}
-                          aria-label="Remove task"
-                        >✕</button>
-                      </div>
-                    ))}
-                  </div>
-                  {taskError && <p className="assist-bd-error">{taskError}</p>}
-                  <div className="assist-task-confirm-row">
-                    <button className="assist-copy" onClick={() => setTaskMode('none')}>Back</button>
-                    <button
-                      className="assist-run"
-                      onClick={confirmCreateTasks}
-                      disabled={taskMode === 'creating' || taskItems.filter(s => s.trim()).length === 0}
-                    >
-                      {taskMode === 'creating'
-                        ? <><span className="assist-spinner" /> Creating…</>
-                        : `Add ${taskItems.filter(s => s.trim()).length} task${taskItems.filter(s => s.trim()).length !== 1 ? 's' : ''}`}
-                    </button>
-                  </div>
-                </>
-              )}
+              {/* Input */}
+              <div className="assist-input-row">
+                <textarea
+                  ref={inputRef}
+                  className="assist-input"
+                  placeholder="Message…"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  rows={2}
+                  disabled={sending || streaming}
+                />
+                <button
+                  className="assist-send"
+                  onClick={send}
+                  disabled={!input.trim() || sending || streaming}
+                >
+                  {sending || streaming ? <span className="assist-spinner" /> : '↑'}
+                </button>
+              </div>
             </>
           ) : (
             <>
@@ -342,16 +415,11 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
                   <span className="assist-spinner assist-spinner--dark" /> Generating subtasks…
                 </div>
               )}
-
-              {bdStatus === 'error' && !bdSubtasks.length && (
-                <div className="assist-bd-error">{bdError}</div>
-              )}
-
+              {bdStatus === 'error' && <div className="assist-bd-error">{bdError}</div>}
               {(bdStatus === 'ready' || bdStatus === 'saving') && (
                 <>
                   <p className="assist-bd-intro">
-                    Original card will be archived and tagged{' '}
-                    <strong>{bdTagName}</strong>. Edit or remove subtasks before creating:
+                    Original card will be archived and tagged <strong>{bdTagName}</strong>. Edit or remove subtasks before creating:
                   </p>
                   <div className="assist-bd-list">
                     {bdSubtasks.map((s, i) => (
@@ -360,34 +428,30 @@ export default function AssistModal({ open, onClose, task, onBreakdown }) {
                         <input
                           className="assist-bd-input"
                           value={s}
-                          onChange={(e) => updateSubtask(i, e.target.value)}
+                          onChange={e => setBdSubtasks(prev => prev.map((x, idx) => idx === i ? e.target.value : x))}
                         />
-                        <button
-                          type="button"
-                          className="assist-bd-remove"
-                          onClick={() => removeSubtask(i)}
-                          aria-label="Remove subtask"
+                        <button type="button" className="assist-bd-remove"
+                          onClick={() => setBdSubtasks(prev => prev.filter((_, idx) => idx !== i))}
+                          aria-label="Remove"
                         >✕</button>
                       </div>
                     ))}
                   </div>
                   {bdError && <p className="assist-bd-error">{bdError}</p>}
-                  <button
-                    className="assist-run"
-                    onClick={confirmBreakdown}
+                  <button className="assist-run" onClick={confirmBreakdown}
                     disabled={bdStatus === 'saving' || validBdCount === 0}
                   >
-                    {bdStatus === 'saving' ? (
-                      <><span className="assist-spinner" /> Creating…</>
-                    ) : `Create ${validBdCount} subtask${validBdCount !== 1 ? 's' : ''}`}
+                    {bdStatus === 'saving'
+                      ? <><span className="assist-spinner" /> Creating…</>
+                      : `Create ${validBdCount} subtask${validBdCount !== 1 ? 's' : ''}`}
                   </button>
                 </>
               )}
             </>
           )}
 
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </div>
+    </div>,
+    document.body
   )
 }
