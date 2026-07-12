@@ -306,19 +306,19 @@ test.describe('cards page', () => {
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
 
-  test('clicking a card opens editor with Cancel/Save footer', async ({ page }) => {
+  test('clicking a card opens the detail panel and Edit shows edit form', async ({ page }) => {
     const card = page.locator('.event-card', { hasText: 'Shopping list' })
     await card.click()
-    // Expanded view — click Edit to open modal
-    const editBtn = card.getByRole('button', { name: /^edit$/i })
+    const panel = page.locator('.card-detail-panel')
+    await expect(panel).toBeVisible()
+    const editBtn = panel.getByRole('button', { name: /^edit$/i })
     await expect(editBtn).toBeVisible()
     await editBtn.click()
-    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
-    await expect(page.locator('#atm-title')).toBeVisible()
-    await expect(page.locator('#atm-desc')).toBeVisible()
-    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /save changes/i })).toBeVisible()
-    await expect(page.locator('.modal-close-btn')).toHaveCount(0)
+    await expect(panel.locator('.cdp-title')).toHaveText(/edit card/i)
+    await expect(page.locator('#cdp-title')).toBeVisible()
+    await expect(page.locator('#cdp-desc')).toBeVisible()
+    await expect(panel.getByRole('button', { name: /cancel/i })).toBeVisible()
+    await expect(panel.getByRole('button', { name: /^save$/i })).toBeVisible()
   })
 })
 
@@ -775,70 +775,60 @@ test.describe('assistant modal', () => {
     await waitForApp(page)
   })
 
-  test('"Assistant" button is visible when a card is expanded', async ({ page }) => {
+  test('"✦ Assist" button is visible in the card detail panel', async ({ page }) => {
     const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
     await card.click()
-    await expect(card.getByRole('button', { name: /assistant/i })).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await expect(panel.getByRole('button', { name: /assist/i })).toBeVisible()
   })
 
-  test('Assistant modal opens when button is clicked', async ({ page }) => {
+  test('clicking Assist opens inline assistant with Chat and Break down tabs', async ({ page }) => {
     const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await expect(page.getByRole('dialog')).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Assistant' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /generate/i })).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await expect(page.locator('.assist-inline')).toBeVisible()
+    await expect(page.locator('.assist-tabs')).toBeVisible()
   })
 
-  test('"Create tasks" button appears when output contains a list', async ({ page }) => {
-    await page.route('**/api/assist/stream', r => r.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-      body: ASSIST_LIST_SSE,
-    }))
+  test('chat input and send button are visible in the inline assistant', async ({ page }) => {
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await page.locator('.assist-context').fill('Help me break this down')
-    await page.getByRole('button', { name: /generate/i }).click()
-    await expect(page.getByRole('button', { name: /create tasks/i })).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await expect(page.locator('.assist-inline')).toBeVisible()
+    await expect(page.locator('.assist-input')).toBeVisible()
+    await expect(page.locator('.assist-send')).toBeVisible()
   })
 
-  test('"Create tasks" shows editable confirm list', async ({ page }) => {
-    await page.route('**/api/assist/stream', r => r.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-      body: ASSIST_LIST_SSE,
-    }))
-    await page.route('**/api/cards/bulk', r => r.fulfill({ json: { cards: [] } }))
+  test('"Break down" tab shows editable subtask list', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', (r) =>
+      r.fulfill({ json: { subtasks: ['Go to the dentist', 'Get a cleaning', 'Schedule follow-up'], tag_name: 'Project: Call dentist' } })
+    )
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await page.locator('.assist-context').fill('Help me break this down')
-    await page.getByRole('button', { name: /generate/i }).click()
-    await page.getByRole('button', { name: /create tasks/i }).click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /^break down$/i }).click()
     await expect(page.locator('.assist-bd-input').nth(0)).toHaveValue('Go to the dentist')
     await expect(page.locator('.assist-bd-input').nth(1)).toHaveValue('Get a cleaning')
     await expect(page.locator('.assist-bd-input').nth(2)).toHaveValue('Schedule follow-up')
-    await expect(page.getByRole('button', { name: /add 3 tasks/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /create 3 subtasks/i })).toBeVisible()
   })
 
-  test('"Create tasks" Back button returns to output view', async ({ page }) => {
-    await page.route('**/api/assist/stream', r => r.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-      body: ASSIST_LIST_SSE,
-    }))
+  test('switching back to Chat tab from Break down shows chat input', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', (r) =>
+      r.fulfill({ json: { subtasks: ['Step 1'], tag_name: 'Project: Call dentist' } })
+    )
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await page.locator('.assist-context').fill('Help me break this down')
-    await page.getByRole('button', { name: /generate/i }).click()
-    await page.getByRole('button', { name: /create tasks/i }).click()
-    await page.getByRole('button', { name: /back/i }).click()
-    await expect(page.locator('.assist-output')).toBeVisible()
-    await expect(page.getByRole('button', { name: /create tasks/i })).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /^break down$/i }).click()
+    await expect(page.locator('.assist-bd-input').first()).toBeVisible()
+    await page.getByRole('button', { name: /^chat$/i }).click()
+    await expect(page.locator('.assist-bd-input')).toHaveCount(0)
+    await expect(page.locator('.assist-input')).toBeVisible()
   })
 })
 
@@ -864,7 +854,7 @@ test.describe('mobile card sheet', () => {
     await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
     const sheet = page.locator('.card-sheet')
     await expect(sheet.locator('.card-sheet-title', { hasText: 'Call dentist' })).toBeVisible()
-    await expect(sheet.getByRole('button', { name: /mark complete/i })).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /^complete$/i })).toBeVisible()
     await expect(sheet.getByRole('button', { name: /^edit$/i })).toBeVisible()
   })
 
@@ -935,14 +925,15 @@ test.describe('breakdown', () => {
     await waitForApp(page)
   })
 
-  test('"Break down" tab is visible in the Assistant modal', async ({ page }) => {
+  test('"Break down" tab is visible in the assistant panel', async ({ page }) => {
     await page.route('**/api/cards/3/breakdown', (r) =>
       r.fulfill({ json: { subtasks: [], tag_name: 'Project: Call dentist' } })
     )
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await expect(page.locator('.assist-modal')).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await expect(page.locator('.assist-inline')).toBeVisible()
     await expect(page.getByRole('button', { name: /^break down$/i })).toBeVisible()
   })
 
@@ -952,7 +943,8 @@ test.describe('breakdown', () => {
     )
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
     await page.getByRole('button', { name: /^break down$/i }).click()
     await expect(page.getByText('Project: Call dentist')).toBeVisible()
     await expect(page.locator('.assist-bd-input').nth(0)).toHaveValue('Step 1')
@@ -983,7 +975,7 @@ test.describe('mobile assistant modal', () => {
     await page.locator('.event-card', { hasText: 'Call dentist' }).click({ force: true })
     await page.locator('.card-sheet').getByRole('button', { name: /assist/i }).click()
     await expect(page.locator('.assist-modal')).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Assistant' })).toBeVisible()
+    await expect(page.locator('.assist-title')).toHaveText('Assistant')
     await expect(page.locator('.assist-tabs')).toBeVisible()
   })
 
@@ -1110,12 +1102,13 @@ test.describe('edit modal scheduled_at', () => {
     // Card 1 "Daily Engineering Standup" has scheduled_at: '2026-06-03T09:00:00'
     const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
     await card.click()
-    const editBtn = card.getByRole('button', { name: /^edit$/i })
+    const panel = page.locator('.card-detail-panel')
+    const editBtn = panel.getByRole('button', { name: /^edit$/i })
     await expect(editBtn).toBeVisible()
     await editBtn.click()
-    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
+    await expect(panel.locator('.cdp-title')).toHaveText(/edit card/i)
     // The datetime-local input should show the pre-filled scheduled date
-    await expect(page.locator('#atm-scheduled')).toHaveValue('2026-06-03T09:00')
+    await expect(page.locator('#cdp-scheduled')).toHaveValue('2026-06-03T09:00')
   })
 
   test('scheduled date persists after save (PUT returns updated card)', async ({ page }) => {
@@ -1129,24 +1122,23 @@ test.describe('edit modal scheduled_at', () => {
       return r.continue()
     })
 
-    // Open edit modal for "Call dentist" (no scheduled_at initially)
+    // Open the detail panel for "Call dentist" (no scheduled_at initially)
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    const editBtn = card.getByRole('button', { name: /^edit$/i })
-    await editBtn.click()
-    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /^edit$/i }).click()
+    await expect(panel.locator('.cdp-title')).toHaveText(/edit card/i)
 
-    // Set a scheduled date
-    await page.locator('#atm-scheduled').fill('2026-06-01T10:00')
-    await page.getByRole('button', { name: /save changes/i }).click()
-    await expect(page.getByRole('heading', { name: /edit card/i })).toHaveCount(0)
+    // Set a scheduled date and save
+    await page.locator('#cdp-scheduled').fill('2026-06-01T10:00')
+    await panel.getByRole('button', { name: /^save$/i }).click()
+    // Panel returns to view mode after save
+    await expect(panel.locator('.cdp-title')).toHaveText(/call dentist/i)
 
-    // Re-open the same card — state should now have scheduled_at from the PUT response
-    await card.click()
-    const editBtn2 = card.getByRole('button', { name: /^edit$/i })
-    await editBtn2.click()
-    await expect(page.getByRole('heading', { name: /edit card/i })).toBeVisible()
-    await expect(page.locator('#atm-scheduled')).toHaveValue('2026-06-01T10:00')
+    // Re-open edit — state should now have scheduled_at from the PUT response
+    await panel.getByRole('button', { name: /^edit$/i }).click()
+    await expect(panel.locator('.cdp-title')).toHaveText(/edit card/i)
+    await expect(page.locator('#cdp-scheduled')).toHaveValue('2026-06-01T10:00')
   })
 })
 
@@ -1423,18 +1415,17 @@ test.describe('assistant modal — web search indicator', () => {
       'data: {"status":"searching"}\n\n' +
       'data: {"text":"Here are some brunch spots."}\n\n' +
       'data: [DONE]\n\n'
-    await page.route('**/api/assist/stream', r => r.fulfill({
+    await page.route('**/api/cards/*/thread/message', r => r.fulfill({
       status: 200,
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
       body: searchingSse,
     }))
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await page.locator('.assist-context').fill('Find me brunch spots')
-    await page.getByRole('button', { name: /generate/i }).click()
-    // Eventually the output renders
-    await expect(page.locator('.assist-output')).toBeVisible()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await page.locator('.assist-input').fill('Find me brunch spots')
+    await page.locator('.assist-send').click()
     await expect(page.getByText('Here are some brunch spots.')).toBeVisible()
   })
 })
@@ -1443,22 +1434,22 @@ test.describe('assistant modal — web search indicator', () => {
 // Assistant modal — "Create tasks" error state
 // ---------------------------------------------------------------------------
 test.describe('assistant modal — create tasks error', () => {
-  test('shows error message when bulk card creation fails', async ({ page }) => {
-    await page.route('**/api/assist/stream', r => r.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-      body: ASSIST_LIST_SSE,
-    }))
-    await page.route('**/api/cards/bulk', r => r.fulfill({ status: 500, json: { detail: 'Server error' } }))
+  test('shows error message when breakdown commit fails', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', r =>
+      r.fulfill({ json: { subtasks: ['Step 1', 'Step 2', 'Step 3'], tag_name: 'Project: Call dentist' } })
+    )
+    await page.route('**/api/cards/3/breakdown/commit', r =>
+      r.fulfill({ status: 500, json: { detail: 'Server error' } })
+    )
     await page.goto('/board')
     await waitForApp(page)
     const card = page.locator('.event-card', { hasText: 'Call dentist' })
     await card.click()
-    await card.getByRole('button', { name: /assistant/i }).click()
-    await page.locator('.assist-context').fill('Help me break this down')
-    await page.getByRole('button', { name: /generate/i }).click()
-    await page.getByRole('button', { name: /create tasks/i }).click()
-    await page.getByRole('button', { name: /add 3 tasks/i }).click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /^break down$/i }).click()
+    await expect(page.locator('.assist-bd-input').first()).toBeVisible()
+    await page.getByRole('button', { name: /create 3 subtasks/i }).click()
     await expect(page.locator('.assist-bd-error')).toBeVisible()
     // Should still be on the confirm screen (not closed)
     await expect(page.locator('.assist-bd-input').first()).toBeVisible()

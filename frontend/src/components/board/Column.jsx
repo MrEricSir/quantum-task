@@ -10,7 +10,7 @@ const SECTION_COLORS = {
   later: 'var(--color-later)',
 }
 
-export default function Column({ section, label, cards, isActive, isMobile, onEdit, onSave, onDelete, onArchive, onToggle, onMove, onAdd, allTags, onBreakdown }) {
+export default function Column({ section, label, cards, isActive, isMobile, onEdit, onSave, onDelete, onArchive, onToggle, onMove, onAdd, allTags, onBreakdown, onSelect, selectedCardId }) {
   const { setNodeRef, isOver } = useDroppable({ id: section })
   const { active } = useDndContext()
 
@@ -37,6 +37,8 @@ export default function Column({ section, label, cards, isActive, isMobile, onEd
               onMove={onMove}
               allTags={allTags}
               onBreakdown={onBreakdown}
+              onSelect={onSelect}
+              isSelected={selectedCardId === todo.id}
             />
           ))}
           {cards.length === 0 && active && (

@@ -12,6 +12,7 @@ import { arrayMove } from '@dnd-kit/sortable'
 import Column from './components/board/Column'
 import Card from './components/board/Card'
 import Archive from './components/board/Archive'
+import CardDetailPanel from './components/board/CardDetailPanel'
 import Sidebar from './components/layout/Sidebar'
 import MobileNav from './components/layout/MobileNav'
 import TagFilterBar from './components/layout/TagFilterBar'
@@ -84,10 +85,13 @@ export default function App() {
     showShortcuts, setShowShortcuts,
     editingCard,
     defaultSection, showNewSheet, setShowNewSheet,
-    openEdit, openNewCard, closeModal,
+    openEdit: openEditModal, openNewCard: openNewCardModal, closeModal,
   } = useModals()
   const [quickAddStep, setQuickAddStep] = useState('input')
   const [activeCard, setActiveCard] = useState(null)
+  const [selectedCardId, setSelectedCardId] = useState(null)
+  const [panelInitialMode, setPanelInitialMode] = useState('view')
+  const [panelDefaultSection, setPanelDefaultSection] = useState('today')
   const [activeSection, setActiveSection] = useState('today')
   const [highlightCalendarEventId, setHighlightCalendarEventId] = useState(null)
   const [weather, setWeather] = useState(() => {
@@ -354,6 +358,26 @@ export default function App() {
 
   const activeCards = cards.filter((t) => !t.completed && !t.archived)
   const completedCards = cards.filter((t) => t.completed && !t.archived)
+
+  const selectedCard = selectedCardId ? cards.find((c) => c.id === selectedCardId) ?? null : null
+  const handleSelectCard = (card) => {
+    if (card.id === selectedCardId) { setSelectedCardId(null); return }
+    setSelectedCardId(card.id)
+    setPanelInitialMode('view')
+  }
+
+  const openEdit = (card) => {
+    if (window.matchMedia('(max-width: 640px)').matches) { openEditModal(card); return }
+    setSelectedCardId(card.id)
+    setPanelInitialMode('edit')
+  }
+
+  const openNewCard = (section = 'today') => {
+    if (window.matchMedia('(max-width: 640px)').matches) { openNewCardModal(section); return }
+    setSelectedCardId(null)
+    setPanelInitialMode('new')
+    setPanelDefaultSection(section)
+  }
 
   const visibleTags = useMemo(() =>
     tags.filter((tag) => {
@@ -710,6 +734,8 @@ export default function App() {
             onMove={handleMoveSection}
             allTags={visibleTags}
             onBreakdown={handleBreakdownCommit}
+            onSelect={handleSelectCard}
+            selectedCardId={selectedCardId}
             onWeather={handleSetWeather}
             briefingKey={briefingKey}
             calendarReady={!calendarLoading}
@@ -758,6 +784,8 @@ export default function App() {
                     onAdd={() => openNewCard(section)}
                     allTags={visibleTags}
                     onBreakdown={handleBreakdownCommit}
+                    onSelect={handleSelectCard}
+                    selectedCardId={selectedCardId}
                   />
                 ))}
               </div>
@@ -827,6 +855,23 @@ export default function App() {
           />
         ) : null}
       </main>
+
+      {(selectedCard || panelInitialMode === 'new') && (
+        <CardDetailPanel
+          card={selectedCard}
+          initialMode={panelInitialMode}
+          defaultSection={panelDefaultSection}
+          allTags={visibleTags}
+          onClose={() => { setSelectedCardId(null); setPanelInitialMode('view') }}
+          onCreate={handleAddCard}
+          onSave={handleUpdateCard}
+          onToggle={handleToggle}
+          onMove={handleMoveSection}
+          onDelete={handleDeleteCard}
+          onArchive={handleArchiveCard}
+          onBreakdown={handleBreakdownCommit}
+        />
+      )}
       </div>{/* app-body */}
 
       <MobileNav

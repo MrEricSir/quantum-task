@@ -261,12 +261,14 @@
   margin: 4px 0;
 }
 
-/* ── Body layout (sidebar + content) ── */
+/* ── Body layout (sidebar + content + detail panel) ── */
 .app-body {
   flex: 1;
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   min-height: 0;
+  overflow: hidden;
+  position: relative;
 }
 
 

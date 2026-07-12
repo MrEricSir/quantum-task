@@ -2,9 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import * as Checkbox from '@radix-ui/react-checkbox'
-import { CheckIcon, ChevronUpIcon, ChevronDownIcon } from '@radix-ui/react-icons'
+import { CheckIcon } from '@radix-ui/react-icons'
 import ConfirmDialog from '../modals/ConfirmDialog'
-import AssistModal from '../modals/AssistModal'
 import CardSheet from '../modals/CardSheet'
 import './EventCard.css'
 import './Card.css'
@@ -19,41 +18,18 @@ function formatScheduled(iso) {
   })
 }
 
-function formatDate(iso) {
-  if (!iso) return null
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: 'short', day: 'numeric', year: 'numeric',
-  })
-}
-
-function parseGitHubUrl(str) {
-  if (!str) return null
-  const m = str.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/(pull|issues?)\/(\d+)/)
-  if (!m) return null
-  return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
-}
-
-export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown }) {
-  const [expanded, setExpanded] = useState(false)
-  const [showSheet, setShowSheet] = useState(false)
+export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onSelect, isSelected }) {
+  const [showSheet,   setShowSheet]   = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
-  const [showAssist, setShowAssist] = useState(false)
-  const [popping, setPopping] = useState(false)
+  const [popping,     setPopping]     = useState(false)
   const popTimer = useRef(null)
-
-  useEffect(() => {
-    if (!expanded) return
-    const handler = (e) => { if (e.key === 'Escape') setExpanded(false) }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [expanded])
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: card.id, disabled: !!isOverlay || !!isMobile })
 
-  // Only flag as overdue if the card has an explicit scheduled date
   const overdueDays = isOverlay ? 0 : (card.scheduled_at ? (card.overdue_days ?? 0) : 0)
   const accentColor = overdueDays > 0 ? '#f59e0b' : (SECTION_COLORS[card.section] ?? '#6b7280')
+
   if (isDragging && !isOverlay) {
     return (
       <div
@@ -68,18 +44,18 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
     ? { boxShadow: 'var(--shadow-lg)', opacity: 1, borderLeftColor: accentColor }
     : { transform: CSS.Transform.toString(transform), transition, borderLeftColor: accentColor }
 
-  const [savedOutput, setSavedOutput] = useState(card.thread_output ?? null)
-  useEffect(() => { setSavedOutput(card.thread_output ?? null) }, [card.thread_output])
-
   const handleCheckboxClick = (e) => {
     e.stopPropagation()
     setPopping(true)
     clearTimeout(popTimer.current)
     popTimer.current = setTimeout(() => setPopping(false), 350)
   }
-  const handleEdit   = (e) => { e.stopPropagation(); setExpanded(false); onEdit?.(card) }
-  const handleDelete = (e) => { e.stopPropagation(); setShowConfirm(true) }
-  const handleMove   = (e, section) => { e.stopPropagation(); setExpanded(false); onMove?.(card.id, section) }
+
+  const handleCardClick = () => {
+    if (isOverlay) return
+    if (window.matchMedia('(max-width: 640px)').matches) setShowSheet(true)
+    else onSelect?.(card)
+  }
 
   return (
     <div
@@ -87,17 +63,13 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
       style={style}
       className={[
         'event-card',
-        expanded ? 'event-card--expanded' : '',
-        card.completed ? 'event-card--done' : '',
+        card.completed  ? 'event-card--done'    : '',
         overdueDays > 0 ? 'event-card--overdue' : '',
-        isDragging ? 'event-card--dragging' : '',
-        isOverlay ? 'event-card--overlay' : '',
+        isDragging      ? 'event-card--dragging' : '',
+        isOverlay       ? 'event-card--overlay'  : '',
+        isSelected      ? 'event-card--selected' : '',
       ].filter(Boolean).join(' ')}
-      onClick={() => {
-        if (isOverlay) return
-        if (window.matchMedia('(max-width: 640px)').matches) setShowSheet(true)
-        else setExpanded((v) => !v)
-      }}
+      onClick={handleCardClick}
       {...(isOverlay ? {} : { ...attributes, ...listeners })}
     >
       <div className="event-header">
@@ -114,10 +86,8 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
           </Checkbox.Indicator>
         </Checkbox.Root>
         <span className="event-title">{card.title}</span>
-        {!isOverlay && (
-          <span className="event-chevron">
-            {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-          </span>
+        {card.thread_output && !isOverlay && (
+          <span className="card-output-dot" title="Has assistant output">✦</span>
         )}
       </div>
 
@@ -134,65 +104,10 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
           )}
         </div>
       )}
+
       {card.waiting_reason && (
         <div className="card-waiting-badge">
           &#9203; Waiting: {card.waiting_reason}
-        </div>
-      )}
-
-      {expanded && !isOverlay && (
-        <div className="event-details">
-          {savedOutput && (
-            <div className="card-body-output">
-              <div className="card-body-output-row">
-                <span className="card-body-output-label">✦</span>
-                <span className="card-body-output-text">{savedOutput}</span>
-              </div>
-              <button
-                className="card-action-assist card-action-assist--output"
-                onClick={(e) => { e.stopPropagation(); setShowAssist(true) }}
-              >
-                ✦ Assist
-              </button>
-            </div>
-          )}
-          {card.description && (() => {
-            const gh = parseGitHubUrl(card.description)
-            return gh ? (
-              <a href={gh.url} target="_blank" rel="noopener noreferrer" className="card-github-badge" onClick={(e) => e.stopPropagation()}>
-                {gh.repo} #{gh.number} ↗
-              </a>
-            ) : (
-              <div className="event-detail-value">{card.description}</div>
-            )
-          })()}
-          <div className="card-move-row">
-            <span className="event-detail-label">Move to</span>
-            <div className="card-move-buttons">
-              {SECTIONS.filter((s) => s !== card.section).map((s) => (
-                <button
-                  key={s}
-                  className="card-move-btn"
-                  style={{ borderColor: SECTION_COLORS[s], color: SECTION_COLORS[s] }}
-                  onClick={(e) => handleMove(e, s)}
-                >
-                  {SECTION_LABELS[s]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="card-detail-actions">
-            <button className="card-action-edit" onClick={handleEdit}>Edit</button>
-            {!savedOutput && (
-              <button
-                className="card-action-assist"
-                onClick={(e) => { e.stopPropagation(); setShowAssist(true) }}
-                title="AI Assistant"
-              >
-                ✦ Assistant
-              </button>
-            )}
-          </div>
         </div>
       )}
 
@@ -212,14 +127,6 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         description={`"${card.title}" will be permanently deleted.`}
         onConfirm={() => { setShowConfirm(false); onDelete?.(card.id) }}
         onCancel={() => setShowConfirm(false)}
-      />
-
-      <AssistModal
-        open={showAssist}
-        onClose={() => setShowAssist(false)}
-        task={card}
-        onBreakdown={onBreakdown}
-        onOutputSaved={output => setSavedOutput(output)}
       />
 
       {showSheet && (

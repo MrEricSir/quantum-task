@@ -9,7 +9,7 @@ import {
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './AssistModal.css'
 
-export default function AssistModal({ open, onClose, task, onBreakdown, onOutputSaved }) {
+export default function AssistModal({ open, onClose, task, onBreakdown, onOutputSaved, inline = false }) {
   const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown'
 
   // Thread state
@@ -31,6 +31,7 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
   // Output save state
   const [savingOutput, setSavingOutput] = useState(null)  // index of msg being saved, or null
   const [copied,       setCopied]       = useState(null)  // index of msg copied
+  const [copiedOutput, setCopiedOutput] = useState(false) // saved output copy feedback
 
   // Breakdown state
   const [bdStatus,   setBdStatus]   = useState('idle')
@@ -187,7 +188,15 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
     setSavingOutput(null)
   }
 
+  const handleCopyOutput = () => {
+    navigator.clipboard.writeText(output).then(() => {
+      setCopiedOutput(true)
+      setTimeout(() => setCopiedOutput(false), 2000)
+    })
+  }
+
   const handleClearOutput = async () => {
+    if (!window.confirm('Remove saved output? This cannot be undone.')) return
     try {
       await saveThreadOutput(task.id, null)
       setOutput(null)
@@ -248,33 +257,29 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
   const validBdCount = bdSubtasks.filter(s => s.trim()).length
   const hasHistory   = messages.length > 0
 
-  return createPortal(
-    <div className="assist-overlay" onClick={handleClose} onPointerDown={e => e.stopPropagation()}>
-      <div
-        className="assist-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Assistant"
-        onClick={e => e.stopPropagation()}
-      >
+  const content = (
+    <div
+      className={inline ? 'assist-inline' : 'assist-modal'}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Assistant"
+      onClick={inline ? undefined : e => e.stopPropagation()}
+    >
 
-          {/* Header */}
-          <div className="assist-header">
-            <div className="assist-header-left">
-              <span className="assist-spark">✦</span>
-              <span className="assist-title">Assistant</span>
-            </div>
-            <div className="assist-header-right">
-              {hasHistory && mode === 'assist' && (
-                <button className="assist-icon-btn" onClick={handleClearThread} title="Clear conversation">
-                  <TrashIcon />
+          {/* Header — hidden in inline mode (panel provides its own header) */}
+          {!inline && (
+            <div className="assist-header">
+              <div className="assist-header-left">
+                <span className="assist-spark">✦</span>
+                <span className="assist-title">Assistant</span>
+              </div>
+              <div className="assist-header-right">
+                <button className="assist-close" aria-label="Close" onClick={handleClose}>
+                  <Cross2Icon />
                 </button>
-              )}
-              <button className="assist-close" aria-label="Close" onClick={handleClose}>
-                <Cross2Icon />
-              </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Task chip */}
           <div className="assist-task">
@@ -311,6 +316,9 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
                 <div className="assist-output-panel">
                   <div className="assist-output-panel-header">
                     <span className="assist-label">Saved output</span>
+                    <button className="assist-icon-btn" onClick={handleCopyOutput} title="Copy">
+                      {copiedOutput ? <CheckIcon /> : <CopyIcon />}
+                    </button>
                     <button className="assist-icon-btn" onClick={handleClearOutput} title="Remove saved output">
                       <TrashIcon />
                     </button>
@@ -350,6 +358,11 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
 
               {/* Message thread */}
               <div className="assist-thread" ref={scrollRef}>
+                {hasHistory && (
+                  <div className="assist-thread-clear-row">
+                    <button className="assist-clear-btn" onClick={handleClearThread}>Clear conversation</button>
+                  </div>
+                )}
                 {!hasHistory && (
                   <div className="assist-thread-empty">
                     Start a conversation about this task — the assistant will remember it.
@@ -451,6 +464,12 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
           )}
 
       </div>
+  )
+
+  if (inline) return content
+  return createPortal(
+    <div className="assist-overlay" onClick={handleClose} onPointerDown={e => e.stopPropagation()}>
+      {content}
     </div>,
     document.body
   )

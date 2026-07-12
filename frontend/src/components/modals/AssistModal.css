@@ -1,3 +1,15 @@
+/* Inline mode — fills the panel body, no overlay wrapper */
+.assist-inline {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+  padding: 16px;
+  overflow: hidden;
+  user-select: text;
+}
+
 .assist-overlay {
   position: fixed;
   inset: 0;
@@ -308,6 +320,28 @@
   gap: 12px;
   padding: 4px 0;
   min-height: 0;
+}
+
+.assist-thread-clear-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px;
+}
+
+.assist-clear-btn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-family: inherit;
+  opacity: 0.6;
+}
+
+.assist-clear-btn:hover {
+  opacity: 1;
+  color: #f87171;
 }
 
 .assist-thread-empty {

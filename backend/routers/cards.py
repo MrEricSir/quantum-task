@@ -386,6 +386,7 @@ _PROJECT_TAG_COLORS = [
 _BREAKDOWN_SYSTEM = """\
 Break down the following task into 3 to 6 ordered, specific, actionable subtasks.
 Also suggest a short project name (2–4 words, no "Project:" prefix).
+If assistant research or notes are provided, use them to inform the subtasks — reference specific details, decisions, or next steps mentioned there.
 Return ONLY a JSON object — no markdown, no explanation.
 Example: {"project_name": "Brunch Planning", "subtasks": ["Research venues", "Send invitations", "Buy supplies"]}
 """
@@ -399,7 +400,9 @@ def breakdown_card(card_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Card not found")
     prompt = card.title
     if card.description:
-        prompt += f"\n\nContext: {card.description}"
+        prompt += f"\n\nDescription: {card.description}"
+    if card.thread_output:
+        prompt += f"\n\nAssistant research/notes:\n{card.thread_output}"
     try:
         client = llm_client()
         resp = client.chat.completions.create(
@@ -409,6 +412,7 @@ def breakdown_card(card_id: int, db: Session = Depends(get_db)):
                 {"role": "user", "content": prompt},
             ],
             max_tokens=400,
+            response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content.strip()
         parsed = json.loads(raw)

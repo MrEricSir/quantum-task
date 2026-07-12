@@ -1,0 +1,383 @@
+/* ── Backdrop ── */
+.cdp-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 99;
+  background: transparent;
+  cursor: default;
+}
+
+/* ── Panel ── */
+.card-detail-panel {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(640px, calc(100% - 120px));
+  display: flex;
+  flex-direction: column;
+  background: rgb(14, 8, 30);
+  border-left: 1px solid rgba(139, 92, 246, 0.2);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.55);
+  z-index: 100;
+  overflow: hidden;
+  animation: cdp-slide-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes cdp-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+/* ── Header ── */
+.cdp-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.15);
+  flex-shrink: 0;
+}
+
+.cdp-section-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cdp-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdp-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cdp-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.cdp-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+
+/* ── Scrollable body ── */
+.cdp-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── Section blocks ── */
+.cdp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cdp-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+/* ── Metadata row ── */
+.cdp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cdp-meta-item {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.cdp-meta-item--recur  { color: #a78bfa; }
+.cdp-meta-item--waiting { color: #93c5fd; }
+
+/* ── Description ── */
+.cdp-description {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cdp-description--expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.cdp-desc-toggle {
+  background: none;
+  border: none;
+  color: #a78bfa;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+}
+
+.cdp-desc-toggle:hover { text-decoration: underline; }
+
+/* ── AI output ── */
+.cdp-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cdp-copy-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color 0.12s;
+}
+
+.cdp-copy-btn:hover { color: var(--text); }
+
+.cdp-output-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: rgba(139, 92, 246, 0.07);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+/* ── Tags ── */
+.cdp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.cdp-tag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+}
+
+/* ── Move buttons ── */
+.cdp-move-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cdp-move-btn {
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1.5px solid;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+
+.cdp-move-btn:hover { background: rgba(255,255,255,0.05); }
+
+/* ── Assist button ── */
+.cdp-assist-btn {
+  background: none;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #a78bfa;
+  padding: 8px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cdp-assist-btn:hover {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: #a78bfa;
+}
+
+/* ── GitHub badge ── */
+.cdp-github-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #58a6ff;
+  font-size: 12px;
+  font-family: monospace;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+
+.cdp-github-badge:hover { border-color: #58a6ff; }
+
+/* ── Footer (fixed at bottom, mirrors mobile sheet) ── */
+.cdp-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid rgba(139, 92, 246, 0.15);
+  flex-shrink: 0;
+}
+
+.cdp-btn {
+  padding: 7px 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+  transition: background 0.12s, opacity 0.12s;
+}
+
+.cdp-btn--toggle {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  color: #c4b5fd;
+}
+
+.cdp-btn--toggle:hover { background: rgba(139, 92, 246, 0.2); }
+
+.cdp-btn--done {
+  background: rgba(139, 92, 246, 0.25);
+  color: #a78bfa;
+}
+
+.cdp-btn--assist-footer {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #a78bfa;
+}
+
+.cdp-btn--assist-footer:hover {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: #a78bfa;
+}
+
+.cdp-btn--edit {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.cdp-btn--edit:hover { background: #6d28d9; }
+
+.cdp-btn--save {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.cdp-btn--save:hover:not(:disabled) { background: #6d28d9; }
+.cdp-btn--save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cdp-btn--secondary {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--text-muted);
+}
+
+.cdp-btn--secondary:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+
+.cdp-btn--cancel {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--text-muted);
+}
+
+.cdp-btn--cancel:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+
+.cdp-btn--danger {
+  background: none;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: rgba(239, 68, 68, 0.75);
+}
+
+.cdp-btn--danger:hover { background: rgba(239, 68, 68, 0.08); color: #f87171; }
+
+/* ── Edit/new form layout ── */
+.cdp-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.cdp-form-footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+
+.cdp-form-footer .cdp-btn--cancel {
+  margin-left: auto;
+}
+
+/* CardForm fields inside panel */
+.card-detail-panel .form-group label {
+  font-size: 11px;
+}
+
+/* ── Hide on mobile — sheet handles it ── */
+@media (max-width: 640px) {
+  .card-detail-panel,
+  .cdp-backdrop {
+    display: none;
+  }
+}

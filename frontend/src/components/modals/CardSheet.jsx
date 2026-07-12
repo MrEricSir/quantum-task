@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import CardForm, { isoToLocal } from './CardForm'
 import AssistModal from './AssistModal'
@@ -29,6 +29,14 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
   const [selectedTagIds, setSelectedTagIds] = useState((card?.tags ?? []).map((t) => t.id))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [copiedOutput, setCopiedOutput] = useState(false)
+
+  const handleCopyOutput = useCallback(() => {
+    navigator.clipboard.writeText(savedOutput).then(() => {
+      setCopiedOutput(true)
+      setTimeout(() => setCopiedOutput(false), 2000)
+    })
+  }, [savedOutput])
 
   const toggleTag = (id) =>
     setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
@@ -111,8 +119,8 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
                 <div className="card-sheet-thread-output">
                   <div className="card-sheet-thread-output-header">
                     <span className="card-sheet-thread-output-label">✦ Assistant output</span>
-                    <button className="card-sheet-btn card-sheet-btn--assist card-sheet-btn--assist-sm" onClick={() => setShowAssist(true)}>
-                      Open
+                    <button className="card-sheet-copy-btn" onClick={handleCopyOutput}>
+                      {copiedOutput ? '✓ Copied' : 'Copy'}
                     </button>
                   </div>
                   <p className="card-sheet-thread-output-text">{savedOutput}</p>
@@ -149,16 +157,19 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
                 className="card-sheet-btn card-sheet-btn--toggle"
                 onClick={() => { onToggle?.(card); onClose() }}
               >
-                {card.completed ? 'Mark Incomplete' : 'Mark Complete'}
+                {card.completed ? 'Undo' : 'Complete'}
+              </button>
+              {onArchive && (
+                <button type="button" className="card-sheet-btn card-sheet-btn--secondary" onClick={() => { onArchive(card.id); onClose() }}>
+                  Archive
+                </button>
+              )}
+              <button className="card-sheet-btn card-sheet-btn--assist" onClick={() => setShowAssist(true)}>
+                ✦ {savedOutput ? 'Assistant' : 'Assist'}
               </button>
               <button className="card-sheet-btn card-sheet-btn--edit" onClick={() => setMode('edit')}>
                 Edit
               </button>
-              {!savedOutput && (
-                <button className="card-sheet-btn card-sheet-btn--assist" onClick={() => setShowAssist(true)}>
-                  ✦ Assist
-                </button>
-              )}
             </div>
           </>
         ) : (
@@ -190,16 +201,14 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
               />
             </div>
             <div className="card-sheet-footer card-sheet-footer--edit">
-              {!isNew && onDelete && (
-                <button type="button" className="card-sheet-btn card-sheet-btn--danger" onClick={handleDelete}>
-                  Delete
-                </button>
-              )}
               {!isNew && onArchive && (
                 <button type="button" className="card-sheet-btn card-sheet-btn--secondary" onClick={() => { onArchive(card.id); onClose() }}>
                   Archive
                 </button>
               )}
+              <button type="button" className="card-sheet-btn card-sheet-btn--cancel" onClick={() => isNew ? onClose() : setMode('view')}>
+                Cancel
+              </button>
               <button type="submit" className="card-sheet-btn card-sheet-btn--save" disabled={saving}>
                 {saving ? 'Saving…' : isNew ? 'Add Card' : 'Save'}
               </button>

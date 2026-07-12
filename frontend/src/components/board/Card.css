@@ -1,5 +1,19 @@
 /* Shared base lives in EventCard.css — imported alongside this file in Card.jsx */
 
+/* ── Selected state (panel open) ── */
+.event-card--selected {
+  background: rgba(139, 92, 246, 0.06);
+  border-left-width: 3px;
+}
+
+/* ── AI output indicator dot ── */
+.card-output-dot {
+  font-size: 10px;
+  color: #a78bfa;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
 /* ── Done state ── */
 .event-card--done .event-title {
   text-decoration: line-through;

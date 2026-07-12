@@ -151,7 +151,7 @@ function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
   )
 }
 
-export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, healthGoals, isImperial = false, allTags = [], onBreakdown }) {
+export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, healthGoals, isImperial = false, allTags = [], onBreakdown, onSelect, selectedCardId }) {
   const activeCards = cards.filter((t) => !t.completed)
   const overdueCards = activeCards.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayCards   = activeCards.filter((t) => t.section === 'today')
@@ -388,6 +388,8 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     onMove={onMove}
                     allTags={allTags}
                     onBreakdown={onBreakdown}
+                    onSelect={onSelect}
+                    isSelected={selectedCardId === item.data.id}
                     isMobile
                   />
                 )
@@ -404,6 +406,8 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                   onMove={onMove}
                   allTags={allTags}
                   onBreakdown={onBreakdown}
+                  onSelect={onSelect}
+                  isSelected={selectedCardId === todo.id}
                   isMobile
                 />
               ))}

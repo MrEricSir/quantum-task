@@ -66,14 +66,20 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 18px;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 8px 10px;
   border-radius: 6px;
   font-family: inherit;
   white-space: nowrap;
   flex-shrink: 0;
   transition: background 0.12s, color 0.12s;
+  line-height: 1;
+  min-width: 36px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .card-sheet-close:hover {
@@ -119,6 +125,18 @@
   justify-content: space-between;
 }
 
+.card-sheet-copy-btn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-family: inherit;
+}
+
+.card-sheet-copy-btn:hover { color: var(--text); }
+
 .card-sheet-thread-output-label {
   font-size: 11px;
   font-weight: 600;
@@ -131,6 +149,7 @@
   flex: none;
   font-size: 12px;
   padding: 5px 12px;
+  white-space: nowrap;
 }
 
 .card-sheet-thread-output-text {
@@ -192,30 +211,42 @@
 /* ── Footer ── */
 .card-sheet-footer {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 12px 18px 14px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-.card-sheet-footer--edit {
-  justify-content: flex-end;
+.card-sheet-footer--edit .card-sheet-btn--cancel {
+  margin-left: auto;
+}
+
+.card-sheet-btn--cancel {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.card-sheet-btn--cancel:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
 }
 
 /* ── Buttons ── */
 .card-sheet-btn {
-  padding: 11px 18px;
+  padding: 10px 16px;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
   border: none;
+  white-space: nowrap;
 }
 
 .card-sheet-btn--toggle {
-  flex: 1;
   background: rgba(139, 92, 246, 0.15);
   color: #c4b5fd;
   border: 1px solid rgba(139, 92, 246, 0.3);
@@ -226,7 +257,6 @@
 }
 
 .card-sheet-btn--edit {
-  flex: 1;
   background: #7c3aed;
   color: #fff;
 }
@@ -262,10 +292,13 @@
 }
 
 .card-sheet-btn--assist {
-  flex: 1;
   background: rgba(139, 92, 246, 0.15);
   color: #a78bfa;
   border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.card-sheet-footer .card-sheet-btn--assist {
+  margin-left: auto;
 }
 
 .card-sheet-btn--assist:hover {
