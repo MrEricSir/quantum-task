@@ -300,7 +300,6 @@ class BriefingRequest(BaseModel):
     lon: Optional[float] = None
     force: bool = False
     today_only: bool = False
-    utc_offset_minutes: Optional[int] = None
 
 
 class EngineeringItem(BaseModel):

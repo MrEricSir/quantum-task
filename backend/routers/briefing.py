@@ -15,7 +15,7 @@ import schemas
 import app_setting_keys as setting_keys
 from briefing_context import build_today_context, build_week_context, compute_observations, event_local_date
 from database import SessionLocal
-from deps import get_db, llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes as _utc_offset
 from gcal import _cached_fetch_events
 from health_context import build_health_context
 from weather import fetch_weather
@@ -406,7 +406,7 @@ def generate_today_briefing(today: date, tz_offset: int = 0) -> str | None:
 @router.post("/api/briefing/stream")
 def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session = Depends(get_db)):
     today_dt  = local_date(request)
-    tz_offset = req.utc_offset_minutes or 0
+    tz_offset = _utc_offset(request)
 
     d         = _fetch_briefing_data(today_dt, tz_offset, req.lat, req.lon, db=db)
     local_now = d["local_now"]

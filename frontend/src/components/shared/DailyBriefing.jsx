@@ -51,11 +51,10 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
       const localDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
       const response = await fetch('/api/briefing/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate },
+        headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate, 'X-UTC-Offset': String(new Date().getTimezoneOffset()) },
         body: JSON.stringify({
           force,
           today_only: todayOnly,
-          utc_offset_minutes: new Date().getTimezoneOffset(),
           ...(location ?? {}),
         }),
         signal: controller.signal,
