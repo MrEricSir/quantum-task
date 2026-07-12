@@ -211,6 +211,25 @@
   gap: 6px;
 }
 
+.today-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
+
+.today-group-label--overdue {
+  color: #f59e0b;
+}
+
+.today-group-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
 /* ── Empty / catchup ── */
 .today-empty {
   font-size: 13px;

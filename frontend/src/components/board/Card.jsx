@@ -18,7 +18,7 @@ function formatScheduled(iso) {
   })
 }
 
-export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onSelect, isSelected }) {
+export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onSelect, isSelected, inOverdueGroup = false }) {
   const [showSheet,   setShowSheet]   = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [popping,     setPopping]     = useState(false)
@@ -91,13 +91,13 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         )}
       </div>
 
-      {(card.scheduled_at || card.recurrence_rule || overdueDays > 0) && (
+      {(card.scheduled_at || card.recurrence_rule || (overdueDays > 0 && !inOverdueGroup)) && (
         <div className="event-time">
           {card.scheduled_at && <><span className="clock-icon">&#128337;</span>{formatScheduled(card.scheduled_at)}</>}
           {card.recurrence_rule && (
             <span className="card-recurrence">&#8635; {card.recurrence_rule}</span>
           )}
-          {overdueDays > 0 && (
+          {overdueDays > 0 && !inOverdueGroup && (
             <span className="card-overdue-badge">
               &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
             </span>

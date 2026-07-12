@@ -14,6 +14,30 @@ export default function Column({ section, label, cards, isActive, isMobile, onEd
   const { setNodeRef, isOver } = useDroppable({ id: section })
   const { active } = useDndContext()
 
+  // Group overdue cards at the top of the Today column under a single label
+  const overdueCards = section === 'today' ? cards.filter(c => (c.overdue_days ?? 0) > 0) : []
+  const normalCards  = section === 'today' ? cards.filter(c => (c.overdue_days ?? 0) <= 0) : cards
+  const sortedCards  = section === 'today' ? [...overdueCards, ...normalCards] : cards
+
+  const renderCard = (todo, inOverdueGroup = false) => (
+    <Card
+      key={todo.id}
+      card={todo}
+      isMobile={isMobile}
+      onEdit={onEdit}
+      onSave={onSave}
+      onDelete={onDelete}
+      onArchive={onArchive}
+      onToggle={onToggle}
+      onMove={onMove}
+      allTags={allTags}
+      onBreakdown={onBreakdown}
+      onSelect={onSelect}
+      isSelected={selectedCardId === todo.id}
+      inOverdueGroup={inOverdueGroup}
+    />
+  )
+
   return (
     <div className={`column ${isOver ? 'column--over' : ''} ${!isActive ? 'column--inactive' : ''}`}>
       <div className="column-header">
@@ -22,25 +46,18 @@ export default function Column({ section, label, cards, isActive, isMobile, onEd
         <span className="column-count">{cards.length}</span>
       </div>
 
-      <SortableContext items={cards.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+      <SortableContext items={sortedCards.map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <div className="column-body" ref={setNodeRef}>
-          {cards.map((todo) => (
-            <Card
-              key={todo.id}
-              card={todo}
-              isMobile={isMobile}
-              onEdit={onEdit}
-              onSave={onSave}
-              onDelete={onDelete}
-              onArchive={onArchive}
-              onToggle={onToggle}
-              onMove={onMove}
-              allTags={allTags}
-              onBreakdown={onBreakdown}
-              onSelect={onSelect}
-              isSelected={selectedCardId === todo.id}
-            />
-          ))}
+          {overdueCards.length > 0 && (
+            <>
+              <div className="column-group-label column-group-label--overdue">
+                ⚠ Overdue
+              </div>
+              {overdueCards.map(todo => renderCard(todo, true))}
+              {normalCards.length > 0 && <div className="column-group-divider" />}
+            </>
+          )}
+          {normalCards.map(todo => renderCard(todo))}
           {cards.length === 0 && active && (
             <div className="column-empty">Drop here</div>
           )}

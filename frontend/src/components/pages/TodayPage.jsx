@@ -161,12 +161,20 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
   const timedTasks   = allRelevant.filter((t) => t.scheduled_at)
   const untimedTasks = allRelevant.filter((t) => !t.scheduled_at)
 
-  const sortedUntimedTasks = untimedTasks.slice().sort((a, b) => {
-    const aOverdue = a.overdue_days ?? 0
-    const bOverdue = b.overdue_days ?? 0
-    if (aOverdue !== bOverdue) return bOverdue - aOverdue
-    return (a.position ?? 0) - (b.position ?? 0)
-  })
+  // Group overdue tasks together at top of schedule section
+  const overdueTimedTasks   = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0)
+  const normalTimedTasks    = timedTasks.filter((t) => (t.overdue_days ?? 0) <= 0)
+  const overdueUntimedTasks = untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0)
+  const normalUntimedTasks  = untimedTasks.filter((t) => (t.overdue_days ?? 0) <= 0)
+
+  // All overdue tasks combined, sorted by most overdue first
+  const allOverdueTasks = [...overdueTimedTasks, ...overdueUntimedTasks].sort(
+    (a, b) => (b.overdue_days ?? 0) - (a.overdue_days ?? 0)
+  )
+
+  const sortedUntimedTasks = normalUntimedTasks.slice().sort(
+    (a, b) => (a.position ?? 0) - (b.position ?? 0)
+  )
 
   const today = new Date()
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -178,10 +186,10 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === todayKey
   })
 
-  // Merge timed tasks + calendar events, sort chronologically
+  // Merge non-overdue timed tasks + calendar events, sort chronologically
   const scheduleItems = [
     ...todayEvents.map((e) => ({ type: 'event', data: e, time: e.all_day ? null : new Date(e.start) })),
-    ...timedTasks.map((t) => ({ type: 'task', data: t, time: new Date(t.scheduled_at) })),
+    ...normalTimedTasks.map((t) => ({ type: 'task', data: t, time: new Date(t.scheduled_at) })),
   ].sort((a, b) => {
     if (!a.time && !b.time) return 0
     if (!a.time) return -1
@@ -189,7 +197,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
     return a.time - b.time
   })
 
-  const hasScheduleOrTasks = scheduleItems.length > 0 || sortedUntimedTasks.length > 0
+  const hasScheduleOrTasks = allOverdueTasks.length > 0 || scheduleItems.length > 0 || sortedUntimedTasks.length > 0
 
   // Build a map of metric → today's value from healthData
   const todayMetrics = (() => {
@@ -220,10 +228,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
 
   const catchUpCount  = cards.filter((t) => !t.completed && t.section === 'week').length
 
-  const overdueScheduleCount = timedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
-                             + untimedTasks.filter((t) => (t.overdue_days ?? 0) > 0).length
-
-  const allClear = scheduleItems.length === 0 && untimedTasks.length === 0 && habitsPending === 0
+  const allClear = scheduleItems.length === 0 && allOverdueTasks.length === 0 && untimedTasks.length === 0 && habitsPending === 0
 
   const [habitsOpen, setHabitsOpen] = useState(!habitsAllDone)
 
@@ -232,8 +237,10 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
   const scheduleStatus = (() => {
     const evCount   = todayEvents.length
     const taskCount = timedTasks.length + untimedTasks.length
-    if (!evCount && !taskCount) return ''
+    const overdueCount = allOverdueTasks.length
+    if (!evCount && !taskCount && !overdueCount) return ''
     const parts = []
+    if (overdueCount) parts.push(`${overdueCount} overdue`)
     if (evCount)   parts.push(`${evCount} event${evCount !== 1 ? 's' : ''}`)
     if (taskCount) parts.push(`${taskCount} task${taskCount !== 1 ? 's' : ''}`)
     return parts.join(' · ')
@@ -270,8 +277,10 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
           invalidationKey={briefingKey}
         />
 
-        {sortedUntimedTasks.length > 0 && (() => {
-          const focusTask = sortedUntimedTasks[0]
+        {(overdueUntimedTasks.length > 0 || sortedUntimedTasks.length > 0) && (() => {
+          const focusTask = overdueUntimedTasks.length > 0
+            ? overdueUntimedTasks.slice().sort((a, b) => (b.overdue_days ?? 0) - (a.overdue_days ?? 0))[0]
+            : sortedUntimedTasks[0]
           const projectTag = focusTask.tags?.find((t) => t.name.startsWith('Project: '))
           const projectName = projectTag ? projectTag.name.slice('Project: '.length) : null
           const isOverdue = (focusTask.overdue_days ?? 0) > 0
@@ -367,12 +376,39 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
           <section className="today-section">
             <SectionHeader
               title="Schedule"
-              badge={overdueScheduleCount > 0 ? `${overdueScheduleCount} overdue` : null}
               status={scheduleStatus}
               open
               toggleable={false}
             />
             <div className="today-cards">
+              {allOverdueTasks.length > 0 && (
+                <>
+                  <div className="today-group-label today-group-label--overdue">
+                    ⚠ Overdue
+                  </div>
+                  {allOverdueTasks.map((todo) => (
+                    <Card
+                      key={todo.id}
+                      card={todo}
+                      onEdit={onEdit}
+                      onSave={onSave}
+                      onDelete={onDelete}
+                      onArchive={onArchive}
+                      onToggle={onToggle}
+                      onMove={onMove}
+                      allTags={allTags}
+                      onBreakdown={onBreakdown}
+                      onSelect={onSelect}
+                      isSelected={selectedCardId === todo.id}
+                      inOverdueGroup
+                      isMobile
+                    />
+                  ))}
+                  {(scheduleItems.length > 0 || sortedUntimedTasks.length > 0) && (
+                    <div className="today-group-divider" />
+                  )}
+                </>
+              )}
               {scheduleItems.map((item) =>
                 item.type === 'event' ? (
                   <CalendarEventCard key={`ev-${item.data.id}`} event={item.data} />

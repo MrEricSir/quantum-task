@@ -78,6 +78,25 @@
   gap: 7px;
 }
 
+.column-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
+
+.column-group-label--overdue {
+  color: #f59e0b;
+}
+
+.column-group-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
 .column-empty {
   display: flex;
   align-items: center;
