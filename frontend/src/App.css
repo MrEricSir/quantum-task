@@ -1,7 +1,8 @@
 .app {
-  min-height: 100dvh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 @keyframes fade-in-up {
@@ -277,6 +278,8 @@
   flex: 1;
   padding: 24px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .board {
