@@ -332,7 +332,7 @@ TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
     --project "$GCP_PROJECT_ID" 2>/dev/null \
     && echo "    Created $GHA_SA." || echo "    Already exists — skipping."
 
-  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder roles/iam.serviceAccountUser roles/logging.viewer; do
+  for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder roles/iam.serviceAccountUser roles/logging.viewer roles/cloudscheduler.admin; do
     gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
       --member="serviceAccount:$GHA_SA" \
       --role="$role" --quiet
@@ -343,6 +343,9 @@ TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
   rm -f "$SCRIPT_DIR/.github-actions-sa-key.json"
   gcloud iam service-accounts keys create "$SCRIPT_DIR/.github-actions-sa-key.json" \
     --iam-account "$GHA_SA" --project "$GCP_PROJECT_ID"
+
+  # ── 9. Cloud Scheduler for Telegram briefing ─────────────────────────────────
+  gcp_setup_scheduler
 
   # ── Summary ───────────────────────────────────────────────────────────────────
   echo ""
@@ -430,7 +433,7 @@ gcp_setup_scheduler() {
       --schedule "0 * * * *" \
       --uri "$ENDPOINT" \
       --http-method POST \
-      --headers "Authorization:Bearer ${AUTH_PASSWORD}" \
+      --headers "Authorization=Bearer ${AUTH_PASSWORD}" \
       --quiet
     echo "==> Updated existing scheduler job."
   else
@@ -440,7 +443,7 @@ gcp_setup_scheduler() {
       --schedule "0 * * * *" \
       --uri "$ENDPOINT" \
       --http-method POST \
-      --headers "Authorization:Bearer ${AUTH_PASSWORD}" \
+      --headers "Authorization=Bearer ${AUTH_PASSWORD}" \
       --quiet
     echo "==> Created scheduler job."
   fi

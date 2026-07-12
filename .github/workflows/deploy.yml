@@ -138,6 +138,43 @@ jobs:
             --update-env-vars "^|^AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}|WITHINGS_CLIENT_ID=${{ secrets.WITHINGS_CLIENT_ID }}|WITHINGS_SECRET=${{ secrets.WITHINGS_SECRET }}|WITHINGS_CALLBACK_URI=${{ secrets.WITHINGS_CALLBACK_URI }}|TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}|ALLOWED_ORIGIN=${{ vars.ALLOWED_ORIGIN }}" \
             --quiet
 
+      - name: Set up Cloud Scheduler for Telegram briefing
+        run: |
+          gcloud services enable cloudscheduler.googleapis.com \
+            --project ${{ vars.GCP_PROJECT_ID }} --quiet
+
+          SERVICE_URL=$(gcloud run services describe ${{ env.GCP_SERVICE_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ vars.GCP_PROJECT_ID }} \
+            --format 'value(status.url)')
+
+          ENDPOINT="$SERVICE_URL/api/telegram/daily-briefing"
+          JOB_NAME="telegram-daily-briefing"
+
+          if gcloud scheduler jobs describe "$JOB_NAME" \
+              --location ${{ env.GCP_REGION }} \
+              --project ${{ vars.GCP_PROJECT_ID }} &>/dev/null; then
+            gcloud scheduler jobs update http "$JOB_NAME" \
+              --location ${{ env.GCP_REGION }} \
+              --project ${{ vars.GCP_PROJECT_ID }} \
+              --schedule "0 * * * *" \
+              --uri "$ENDPOINT" \
+              --http-method POST \
+              --headers "Authorization=Bearer ${{ secrets.AUTH_PASSWORD }}" \
+              --quiet
+            echo "Updated Cloud Scheduler job: $JOB_NAME"
+          else
+            gcloud scheduler jobs create http "$JOB_NAME" \
+              --location ${{ env.GCP_REGION }} \
+              --project ${{ vars.GCP_PROJECT_ID }} \
+              --schedule "0 * * * *" \
+              --uri "$ENDPOINT" \
+              --http-method POST \
+              --headers "Authorization=Bearer ${{ secrets.AUTH_PASSWORD }}" \
+              --quiet
+            echo "Created Cloud Scheduler job: $JOB_NAME"
+          fi
+
       - name: Print service URL
         run: |
           gcloud run services describe ${{ env.GCP_SERVICE_NAME }} \
