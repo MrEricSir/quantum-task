@@ -360,10 +360,9 @@ class Card(BaseModel):
     @computed_field
     @property
     def overdue_days(self) -> int:
-        if self.completed or self.section != 'today':
+        if self.completed or self.section != 'today' or self.scheduled_at is None:
             return 0
         today = date.today()
-        ref = (self.scheduled_at or self.created_at).date()
-        return max(0, (today - ref).days)
+        return max(0, (today - self.scheduled_at.date()).days)
 
     model_config = {"from_attributes": True}
