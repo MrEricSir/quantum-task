@@ -233,8 +233,9 @@ def register_webhook(request: Request, db: Session = Depends(get_db)):
         _set(db, setting_keys.TELEGRAM_WEBHOOK_SECRET, secret)
         db.commit()
 
-    # Derive our own public URL from the incoming request
-    base = str(request.base_url).rstrip("/")
+    # Derive our own public URL from the incoming request.
+    # Force https — Cloud Run terminates TLS so base_url arrives as http internally.
+    base = str(request.base_url).rstrip("/").replace("http://", "https://", 1)
     webhook_url = f"{base}/api/telegram/webhook"
 
     try:
