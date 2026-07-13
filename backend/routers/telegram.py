@@ -270,27 +270,34 @@ async def telegram_webhook(
 
 def _handle_update(update: dict) -> None:
     """Process a single Telegram update in a background task."""
-    msg = update.get("message") or update.get("edited_message")
-    if not msg:
-        return
-    text = (msg.get("text") or "").strip()
-    if not text:
-        return
-    chat_id_incoming = str(msg.get("chat", {}).get("id", ""))
+    try:
+        msg = update.get("message") or update.get("edited_message")
+        if not msg:
+            return
+        text = (msg.get("text") or "").strip()
+        if not text:
+            log.info("[telegram] update has no text, skipping")
+            return
+        chat_id_incoming = str(msg.get("chat", {}).get("id", ""))
 
-    with SessionLocal() as db:
-        token   = _get(db, setting_keys.TELEGRAM_BOT_TOKEN)
-        chat_id = _get(db, setting_keys.TELEGRAM_CHAT_ID)
-        tz_offset = int(_get(db, setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
+        with SessionLocal() as db:
+            token     = _get(db, setting_keys.TELEGRAM_BOT_TOKEN)
+            chat_id   = _get(db, setting_keys.TELEGRAM_CHAT_ID)
+            tz_offset = int(_get(db, setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
 
-    if not token or not chat_id:
-        return
-    # Only respond to the configured chat
-    if chat_id_incoming != chat_id:
-        return
+        if not token or not chat_id:
+            log.warning("[telegram] bot not configured, dropping update")
+            return
+        if chat_id_incoming != chat_id:
+            log.warning("[telegram] chat_id mismatch: got %s expected %s", chat_id_incoming, chat_id)
+            return
 
-    reply = _route_message(text, tz_offset)
-    telegram_notify.send_message(token, chat_id, reply)
+        log.info("[telegram] routing message: %r", text[:80])
+        reply = _route_message(text, tz_offset)
+        ok = telegram_notify.send_message(token, chat_id, reply)
+        log.info("[telegram] send_message ok=%s", ok)
+    except Exception:
+        log.exception("[telegram] unhandled error in _handle_update")
 
 
 _TODAY_KEYWORDS = ("today", "list", "tasks", "my tasks", "my list", "schedule",
