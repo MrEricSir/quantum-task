@@ -1,7 +1,7 @@
 """
-Telegram Bot API notification helper.
+Telegram Bot API HTTP calls.
 
-No third-party library needed — the Telegram Bot API is a simple HTTPS endpoint.
+No third-party library — the Telegram Bot API is a simple HTTPS endpoint.
 """
 import logging
 
@@ -45,4 +45,11 @@ def delete_webhook(bot_token: str) -> dict:
     url = _API_BASE.format(token=bot_token, method="deleteWebhook")
     r = requests.post(url, timeout=10)
     r.raise_for_status()
+    return r.json()
+
+
+def get_webhook_info(bot_token: str) -> dict:
+    """Fetch Telegram's getWebhookInfo — shows last error, pending count, etc."""
+    url = _API_BASE.format(token=bot_token, method="getWebhookInfo")
+    r = requests.get(url, timeout=10)
     return r.json()

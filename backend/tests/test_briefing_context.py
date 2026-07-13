@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import pytest
 
-from briefing_context import (
+from briefing.context import (
     fmt_time,
     event_local_date,
     build_today_context,

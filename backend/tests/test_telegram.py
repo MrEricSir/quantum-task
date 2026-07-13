@@ -174,8 +174,8 @@ class TestTelegramTest:
             "schedule_time": "07:30",
             "tz_offset": 0,
         })
-        with patch("routers.telegram.generate_today_briefing", return_value="Good morning! Nothing scheduled.") as mock_gen, \
-             patch("telegram_notify.send_message", return_value=True) as mock_send:
+        with patch("telegram.router.generate_today_briefing", return_value="Good morning! Nothing scheduled.") as mock_gen, \
+             patch("telegram.router.send_message", return_value=True) as mock_send:
             res = client.post("/api/telegram/test")
 
         assert res.status_code == 200
@@ -190,8 +190,8 @@ class TestTelegramTest:
             "schedule_time": "07:30",
             "tz_offset": 0,
         })
-        with patch("routers.telegram.generate_today_briefing", return_value="Briefing text"), \
-             patch("telegram_notify.send_message", return_value=False):
+        with patch("telegram.router.generate_today_briefing", return_value="Briefing text"), \
+             patch("telegram.router.send_message", return_value=False):
             res = client.post("/api/telegram/test")
 
         assert res.json()["ok"] is False
@@ -204,7 +204,7 @@ class TestTelegramTest:
             "schedule_time": "07:30",
             "tz_offset": 0,
         })
-        with patch("routers.telegram.generate_today_briefing", side_effect=RuntimeError("LLM down")):
+        with patch("telegram.router.generate_today_briefing", side_effect=RuntimeError("LLM down")):
             res = client.post("/api/telegram/test")
 
         data = res.json()
@@ -218,7 +218,7 @@ class TestTelegramTest:
             "schedule_time": "07:30",
             "tz_offset": 0,
         })
-        with patch("routers.telegram.generate_today_briefing", return_value=None):
+        with patch("telegram.router.generate_today_briefing", return_value=None):
             res = client.post("/api/telegram/test")
 
         assert res.json()["ok"] is False

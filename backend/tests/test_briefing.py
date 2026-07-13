@@ -94,7 +94,7 @@ def today_text(events: list[dict]) -> str | None:
 class TestBriefingHallucinationGuard:
     def test_no_content_skips_llm(self, client):
         """Empty DB (no todos, no habits) → static message without calling the LLM."""
-        with patch("routers.briefing.llm_client") as mock_llm:
+        with patch("briefing.router.llm_client") as mock_llm:
             res = post_briefing(client)
 
         assert res.status_code == 200
@@ -108,7 +108,7 @@ class TestBriefingHallucinationGuard:
         complete_habit(client, h1)
         complete_habit(client, h2)
 
-        with patch("routers.briefing.llm_client") as mock_llm:
+        with patch("briefing.router.llm_client") as mock_llm:
             res = post_briefing(client)
 
         assert res.status_code == 200
@@ -123,7 +123,7 @@ class TestBriefingHallucinationGuard:
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter([])
-        with patch("routers.briefing.llm_client", return_value=mock_client):
+        with patch("briefing.router.llm_client", return_value=mock_client):
             res = post_briefing(client)
 
         assert res.status_code == 200
@@ -135,7 +135,7 @@ class TestBriefingHallucinationGuard:
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter([])
-        with patch("routers.briefing.llm_client", return_value=mock_client):
+        with patch("briefing.router.llm_client", return_value=mock_client):
             res = post_briefing(client)
 
         assert res.status_code == 200
@@ -155,7 +155,7 @@ class TestBriefingHallucinationGuard:
             return iter([])
 
         mock_client.chat.completions.create.side_effect = capture
-        with patch("routers.briefing.llm_client", return_value=mock_client):
+        with patch("briefing.router.llm_client", return_value=mock_client):
             post_briefing(client)
 
         user_msg = next(m["content"] for m in captured_context["messages"] if m["role"] == "user")

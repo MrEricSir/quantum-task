@@ -27,7 +27,9 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, briefing, withings, search, insights, correlations, food, discovery, telegram as telegram_router, assist
+from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, withings, search, insights, correlations, food, discovery, assist
+import briefing as briefing_pkg
+import telegram as telegram_pkg
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -262,26 +264,11 @@ async def _experiment_cleanup_scheduler() -> None:
 # ── Telegram briefing scheduler ───────────────────────────────────────────────
 
 def _check_telegram_briefing() -> None:
-    from routers.telegram import _check_briefing, _check_habit_reminder, _check_overdue_nudge
-
+    from telegram.scheduler import check_all
     with SessionLocal() as db:
-        def _g(key, default=""):
-            row = db.query(models.AppSetting).filter_by(key=key).first()
-            return row.value if row and row.value else default
-
-        token   = _g(setting_keys.TELEGRAM_BOT_TOKEN)
-        chat_id = _g(setting_keys.TELEGRAM_CHAT_ID)
-        if not token or not chat_id:
-            return
-
-        tz_offset = int(_g(setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
-        local_now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
-        today     = local_now.date()
-
-        r1 = _check_briefing(db, token, chat_id, tz_offset, local_now, today)
-        r2 = _check_habit_reminder(db, token, chat_id, local_now, today)
-        r3 = _check_overdue_nudge(db, token, chat_id, local_now, today)
-        print(f"[telegram] briefing={r1} habit_reminder={r2} overdue_nudge={r3}")
+        results = check_all(db)
+        if not results.get("skipped"):
+            print(f"[telegram] {results}")
 
 
 async def _telegram_briefing_scheduler() -> None:
@@ -329,14 +316,14 @@ app.include_router(jobs.router)
 app.include_router(habits.router)
 app.include_router(calendar.router)
 app.include_router(cards.router)
-app.include_router(briefing.router)
+app.include_router(briefing_pkg.router)
 app.include_router(withings.router)
 app.include_router(search.router)
 app.include_router(insights.router)
 app.include_router(correlations.router)
 app.include_router(food.router)
 app.include_router(discovery.router)
-app.include_router(telegram_router.router)
+app.include_router(telegram_pkg.router)
 app.include_router(assist.router)
 
 # Serve bundled frontend for all non-API routes (must be last).

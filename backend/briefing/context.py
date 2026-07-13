@@ -1,7 +1,7 @@
 """
 Context-building helpers for the daily briefing.
 
-Separated from briefing.py to keep the router thin.
+These functions transform raw DB data into prompt-ready strings for the LLM.
 """
 from collections import defaultdict
 from datetime import date, datetime, timedelta, time as dt_time
@@ -146,7 +146,6 @@ def build_today_context(
             title_days.setdefault(e.title, set()).add(day)
         recurring_titles = {t for t, days in title_days.items() if len(days) >= 2}
 
-    # OOO events are pre-filtered by the caller and never appear here.
     upcoming_events = []
     for e in cal_events:
         if e.all_day:

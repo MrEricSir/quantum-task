@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock
 import pytest
 
-from routers.briefing import _fmt_time_24h, _normalize_plan_time, _build_daily_plan_context
+from briefing.generate import _fmt_time_24h, _normalize_plan_time, _build_daily_plan_context
 
 
 # ── _fmt_time_24h ─────────────────────────────────────────────────────────────

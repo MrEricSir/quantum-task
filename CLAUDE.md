@@ -22,6 +22,41 @@ Tests are in `frontend/tests/visual.spec.js`. They check element presence and vi
 - 34 tests covering: app shell, today page, tasks board, notes, habits, quick-add modal (input + confirm screen), settings modals (tag manager, calendar settings), offline banner
 
 
+## Backend Architecture
+
+The backend is organized into feature packages. Each package follows this structure:
+
+```
+feature/
+  __init__.py    # re-exports (router, key functions) — zero import breakage
+  router.py      # thin FastAPI endpoints only (HTTP adapters)
+  generate.py    # business logic, LLM calls, data fetching
+  context.py     # prompt-building helpers (briefing only)
+  bot.py         # message handling (telegram only)
+  scheduler.py   # background/scheduled tasks (telegram only)
+  notify.py      # raw HTTP calls to external service (telegram only)
+```
+
+**Current feature packages:**
+- `briefing/` — daily briefing generation and streaming; imports: `briefing.router`, `briefing.generate`, `briefing.context`
+- `telegram/` — bot, scheduler, webhook; imports: `telegram.router`, `telegram.bot`, `telegram.scheduler`, `telegram.notify`
+
+**Flat routers** (still in `routers/`): auth, cards, habits, calendar, tags, jobs, engineering, push, withings, search, insights, correlations, food, discovery, assist
+
+**Shared infrastructure:**
+- `schemas/` — Pydantic models organized by domain (`cards.py`, `habits.py`, `calendar.py`, `briefing.py`, `jobs.py`, `withings.py`, `engineering.py`, `common.py`); `__init__.py` re-exports all for zero breakage
+- `settings.py` — `Settings(db)` typed wrapper over `AppSetting` KV table; all config access goes through here
+- `deps.py` — `llm_client()` singleton, `get_db()`, `local_date()`, auth constants
+- `database.py` — SQLAlchemy engine + `SessionLocal`
+
+**Rules for adding new features:**
+1. New feature = new package under `backend/` (not `routers/`)
+2. Router file is a thin adapter — all logic in separate modules
+3. All config reads/writes go through `Settings(db)` in `settings.py`
+4. Schema types go in `schemas/<domain>.py` and re-exported from `schemas/__init__.py`
+5. When patching in tests, patch the module where the name is *used*, not where it's defined (e.g. `briefing.router.llm_client`, not `deps.llm_client`)
+
+
 ## Gotchas
 
 - The backend is designed to be run as-needed on Google Cloud Run, so the minimum instances must be 0.

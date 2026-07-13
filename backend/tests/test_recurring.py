@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from briefing_context import build_week_context as _build_week_context
+from briefing.context import build_week_context as _build_week_context
 
 
 TODAY = date(2026, 6, 3)
