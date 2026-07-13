@@ -276,7 +276,7 @@ def _handle_update(update: dict) -> None:
             return
         text = (msg.get("text") or "").strip()
         if not text:
-            log.info("[telegram] update has no text, skipping")
+            print("[telegram] update has no text, skipping")
             return
         chat_id_incoming = str(msg.get("chat", {}).get("id", ""))
 
@@ -285,17 +285,20 @@ def _handle_update(update: dict) -> None:
             chat_id   = _get(db, setting_keys.TELEGRAM_CHAT_ID)
             tz_offset = int(_get(db, setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
 
+        print(f"[telegram] incoming chat_id={chat_id_incoming!r} configured={chat_id!r} token_set={bool(token)}")
+
         if not token or not chat_id:
-            log.warning("[telegram] bot not configured, dropping update")
+            print("[telegram] bot not configured, dropping update")
             return
         if chat_id_incoming != chat_id:
-            log.warning("[telegram] chat_id mismatch: got %s expected %s", chat_id_incoming, chat_id)
+            print(f"[telegram] chat_id mismatch: got {chat_id_incoming!r} expected {chat_id!r}")
             return
 
-        log.info("[telegram] routing message: %r", text[:80])
+        print(f"[telegram] routing message: {text[:80]!r}")
         reply = _route_message(text, tz_offset)
+        print(f"[telegram] reply preview: {reply[:80]!r}")
         ok = telegram_notify.send_message(token, chat_id, reply)
-        log.info("[telegram] send_message ok=%s", ok)
+        print(f"[telegram] send_message ok={ok}")
     except Exception:
         log.exception("[telegram] unhandled error in _handle_update")
 

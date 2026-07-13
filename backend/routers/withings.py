@@ -239,7 +239,16 @@ def do_sync(db: Session) -> dict:
             print(f"[withings] token refresh transient error: {exc}", flush=True)
             return {"ok": False, "error": "sync_failed"}
 
-    today = date.today()
+    # Use the user's local date (via stored tz offset) — the server runs UTC on Cloud Run.
+    tz_offset = 0
+    try:
+        import app_setting_keys as _sk
+        row = db.query(models.AppSetting).filter_by(key=_sk.BRIEFING_TZ_OFFSET).first()
+        if row and row.value:
+            tz_offset = int(row.value)
+    except Exception:
+        pass
+    today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
     start = today - timedelta(days=89)
     synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0, "spo2": 0, "sleep_score": 0, "sleep_minutes": 0, "sleep_deep_minutes": 0}
     errors: dict[str, str] = {}
