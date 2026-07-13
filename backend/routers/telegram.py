@@ -299,8 +299,10 @@ def _handle_update(update: dict) -> None:
         print(f"[telegram] reply preview: {reply[:80]!r}")
         ok = telegram_notify.send_message(token, chat_id, reply)
         print(f"[telegram] send_message ok={ok}")
-    except Exception:
-        log.exception("[telegram] unhandled error in _handle_update")
+    except Exception as exc:
+        import traceback
+        print(f"[telegram] unhandled error in _handle_update: {exc}")
+        print(traceback.format_exc())
 
 
 _TODAY_KEYWORDS = ("today", "list", "tasks", "my tasks", "my list", "schedule",
@@ -347,6 +349,7 @@ def _route_message(text: str, tz_offset: int) -> str:
         )
 
     # ── Default: capture as new card ─────────────────────────────────────────
+    print(f"[telegram] no keyword match — capturing as card: {text[:60]!r}")
     return _reply_capture(text, tz_offset)
 
 
@@ -502,6 +505,7 @@ def _reply_capture(text: str, tz_offset: int) -> str:
             tags_section=tags_section,
         )
         client = llm_client()
+        print(f"[telegram] calling LLM to parse: {text[:60]!r}")
         response = client.chat.completions.create(
             model=plugin.model_name,
             response_format={"type": "json_object"},
@@ -509,11 +513,15 @@ def _reply_capture(text: str, tz_offset: int) -> str:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text},
             ],
+            timeout=15,
         )
         raw = plugin.normalize_raw(_json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=text)
+        print(f"[telegram] LLM parsed: title={parsed.title!r} section={parsed.section!r}")
     except Exception as e:
-        log.warning("LLM parse failed for Telegram capture: %s", e)
+        import traceback
+        print(f"[telegram] LLM parse failed for capture: {e}")
+        print(traceback.format_exc())
         # Fallback: create a plain card in today
         parsed = None
 
