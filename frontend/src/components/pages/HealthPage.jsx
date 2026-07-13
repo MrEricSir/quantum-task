@@ -424,8 +424,11 @@ function ExperimentCard({ onDismiss }) {
   if (weekMatch) {
     const y = parseInt(weekMatch[1]), w = parseInt(weekMatch[2])
     const jan4 = new Date(y, 0, 4)
-    const weekStartMs = jan4.getTime() - jan4.getDay() * 86400000 + (w - 1) * 7 * 86400000
-    const weekEnd = new Date(weekStartMs + 7 * 86400000)
+    // ISO weeks start Monday; getDay() is 0=Sun so shift: Mon=0 .. Sun=6
+    const isoDay = (jan4.getDay() + 6) % 7
+    const weekOneMonday = new Date(jan4.getTime() - isoDay * 86400000)
+    const weekStart = new Date(weekOneMonday.getTime() + (w - 1) * 7 * 86400000)
+    const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
     const today = new Date(); today.setHours(0, 0, 0, 0)
     daysLeft = Math.max(0, Math.ceil((weekEnd - today) / 86400000))
   }

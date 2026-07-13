@@ -335,19 +335,25 @@ directly connected to the data.
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
   "text": "2-3 sentence description of the experiment and why it's worth trying",
-  "hypothesis": "If I do X, I expect to see Y by end of week",
-  "action": "The specific daily action, e.g. '8,000 steps every day' — or null if passive",
+  "hypothesis": "If I [specific action with concrete number], I expect to see Y by end of week",
+  "action": "The specific daily action with a CONCRETE NUMBER, e.g. '8,000 steps every day'",
   "needs_habit": true or false,
   "withings_metric": "steps" | "fat_ratio" | "weight" | null,
   "withings_goal": numeric goal value or null
 }
+
+CRITICAL: "action" must ALWAYS contain a specific measurable target — never vague \
+phrases like "increase my steps" or "walk more". Always include a concrete number: \
+"8,000 steps every day", "45 minutes of walking daily", "7 hours of sleep". \
+If the experiment is passive observation with no daily action, set action to null.
 
 needs_habit should be true only when the experiment requires a specific daily \
 effort to track (e.g. hitting a step target). Set false for passive observation.
 
 withings_metric/withings_goal: ONLY set these when the experiment's primary \
 measurable outcome is literally one of the three Withings-tracked metrics: step \
-count, body fat percentage, or body weight. Examples where you SHOULD set it: \
+count, body fat percentage, or body weight. The withings_goal MUST match the \
+number in the action field exactly. Examples: \
 "Walk 8,000 steps every day" → withings_metric="steps", withings_goal=8000. \
 "Reduce body fat to 18%" → withings_metric="fat_ratio", withings_goal=18. \
 Examples where you must leave it null: "1 hour of screen-free time", "read \
@@ -405,13 +411,52 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         if withings_metric not in ("steps", "fat_ratio", "weight", None):
             withings_metric = None
             withings_goal = None
-        # Fallback: infer steps goal from action text if LLM forgot to set it
-        if withings_metric is None and action and "steps" in action.lower():
-            import re as _re
-            m = _re.search(r'([\d,]+)\s*steps', action, _re.I)
+
+        # Use prose text as authoritative source for step goals — the LLM's JSON
+        # numbers are less reliable than the numbers it writes in action/hypothesis.
+        import re as _re
+
+        def _extract_steps(text: str | None) -> float | None:
+            """Extract a plausible daily step count from text (100–50,000)."""
+            if not text:
+                return None
+            m = _re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps', text, _re.I)
             if m:
+                val = float(m.group(1).replace(",", ""))
+                return val if 100 <= val <= 50_000 else None
+            return None
+
+        if action and "steps" in action.lower():
+            # Action is explicitly about steps — metric must be "steps" regardless of
+            # what the LLM put in the JSON (catches fat_ratio/weight confusion).
+            withings_metric = "steps"
+            # Prefer action text; fall back to hypothesis if action value is implausible
+            withings_goal = _extract_steps(action) or _extract_steps(hypothesis)
+        elif withings_metric == "steps":
+            # LLM said steps but no "steps" in action — correct goal from hypothesis
+            if withings_goal is None or withings_goal > 50_000:
+                withings_goal = _extract_steps(hypothesis)
+        elif withings_metric is None and action:
+            # Fallback: action didn't mention "steps" explicitly but hypothesis might
+            _hypo_steps = _extract_steps(hypothesis)
+            if _hypo_steps:
                 withings_metric = "steps"
-                withings_goal = float(m.group(1).replace(",", ""))
+                withings_goal = _hypo_steps
+
+        # Final guard: clear any remaining implausible step goal
+        if withings_metric == "steps" and not withings_goal:
+            withings_metric = None
+            withings_goal = None
+
+        # If needs_habit is set but no concrete action was produced, the LLM was vague.
+        # Manufacture a sensible default so the experiment still gets a tracking habit.
+        if needs_habit and not action:
+            if withings_metric == "steps":
+                action = "8,000 steps every day"
+                withings_goal = withings_goal or 8000.0
+            else:
+                # Can't auto-infer a goal for other metrics — leave needs_habit False
+                needs_habit = False
     except Exception:
         text = "Try increasing your daily step count by 10% compared to your recent average."
         hypothesis = "More consistent movement should correlate with better weight outcomes."
