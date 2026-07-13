@@ -307,6 +307,8 @@ def _handle_update(update: dict) -> None:
 
 _TODAY_KEYWORDS = ("today", "list", "tasks", "my tasks", "my list", "schedule",
                    "what's on", "whats on", "what do i have", "show tasks")
+_TOMORROW_KEYWORDS = ("tomorrow", "what's tomorrow", "whats tomorrow",
+                      "what do i have tomorrow", "show tomorrow")
 _HABITS_KEYWORDS = ("habits", "my habits", "habit check", "habit status",
                     "how am i doing", "how are my habits")
 _OVERDUE_KEYWORDS = ("overdue", "overdue tasks", "what's overdue", "whats overdue")
@@ -321,6 +323,10 @@ def _route_message(text: str, tz_offset: int) -> str:
     # ── List today's tasks ────────────────────────────────────────────────────
     if any(lower == kw or lower.startswith(kw + " ") for kw in _TODAY_KEYWORDS):
         return _reply_today(tz_offset)
+
+    # ── Tomorrow's tasks ──────────────────────────────────────────────────────
+    if any(lower == kw or lower.startswith(kw + " ") for kw in _TOMORROW_KEYWORDS):
+        return _reply_tomorrow(tz_offset)
 
     # ── Habits status ─────────────────────────────────────────────────────────
     if any(lower == kw or lower.startswith(kw + " ") for kw in _HABITS_KEYWORDS):
@@ -341,6 +347,7 @@ def _route_message(text: str, tz_offset: int) -> str:
         return (
             "Hi! Here's what you can send me:\n\n"
             "<b>today</b> — show today's tasks\n"
+            "<b>tomorrow</b> — show tomorrow's tasks\n"
             "<b>habits</b> — show today's habit status\n"
             "<b>overdue</b> — show overdue tasks\n"
             "<b>done [task]</b> — mark a task complete\n"
@@ -348,8 +355,8 @@ def _route_message(text: str, tz_offset: int) -> str:
             "You'll get your daily briefing and reminders automatically."
         )
 
-    # ── Default: capture as new card ─────────────────────────────────────────
-    print(f"[telegram] no keyword match — capturing as card: {text[:60]!r}")
+    # ── Default: use LLM to classify intent and act ───────────────────────────
+    print(f"[telegram] no keyword match — routing via LLM: {text[:60]!r}")
     return _reply_capture(text, tz_offset)
 
 
@@ -392,6 +399,33 @@ def _reply_today(tz_offset: int) -> str:
         for c in untimed:
             lines.append(f"• {c.title}")
 
+    return "\n".join(lines)
+
+
+def _reply_tomorrow(tz_offset: int) -> str:
+    """Return tomorrow's scheduled tasks."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    tomorrow = (now_local + timedelta(days=1)).date()
+
+    with SessionLocal() as db:
+        cards = (
+            db.query(models.Card)
+            .filter(
+                models.Card.completed == False,  # noqa: E712
+                models.Card.archived == False,   # noqa: E712
+                models.Card.scheduled_at.isnot(None),
+            )
+            .all()
+        )
+
+    tomorrow_cards = [c for c in cards if c.scheduled_at.date() == tomorrow]
+
+    if not tomorrow_cards:
+        return f"Nothing scheduled for tomorrow ({tomorrow.strftime('%A, %b %-d')})."
+
+    lines = [f"<b>📅 Tomorrow — {tomorrow.strftime('%A, %b %-d')}</b>"]
+    for c in sorted(tomorrow_cards, key=lambda x: x.scheduled_at):
+        lines.append(f"• {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
     return "\n".join(lines)
 
 
@@ -480,8 +514,37 @@ def _reply_complete(query: str) -> str:
     return f"✓ Marked complete: <b>{title}</b>"
 
 
+_TELEGRAM_PROMPT_SUFFIX = """
+
+CONTEXT — TELEGRAM BOT:
+This message arrives via a Telegram bot. The user may be asking a question about their
+schedule or data rather than creating a new item. Classify accordingly:
+  type="assist"  → the user is asking a question or making a conversational request
+                   (e.g. "what's tomorrow?", "what do I have this week?",
+                   "what's first up?", "am I free on Friday?", "what's on my plate?")
+  type="task"    → the user is stating something to do (imperative or noun phrase)
+                   (e.g. "call dentist", "buy groceries", "dentist at 3pm tomorrow")
+When in doubt and the input ends with "?", prefer type="assist"."""
+
+
+def _route_query(text: str, tz_offset: int) -> str:
+    """LLM classified this as a question/query. Route to the appropriate data reply."""
+    lower = text.lower()
+    if "tomorrow" in lower or "next" in lower:
+        return _reply_tomorrow(tz_offset)
+    if "overdue" in lower or "late" in lower or "missed" in lower or "behind" in lower:
+        return _reply_overdue(tz_offset)
+    if "habit" in lower:
+        return _reply_habits(tz_offset)
+    if any(w in lower for w in ("today", "schedule", "tasks", "list", "plate", "on",
+                                "morning", "afternoon", "evening", "week")):
+        return _reply_today(tz_offset)
+    # Generic question we can't map — show today as best default
+    return _reply_today(tz_offset)
+
+
 def _reply_capture(text: str, tz_offset: int) -> str:
-    """Parse text with LLM and create a new card. Returns confirmation."""
+    """Use LLM to classify and act: either answer a query or create a new card."""
     import json as _json
 
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -493,6 +556,7 @@ def _reply_capture(text: str, tz_offset: int) -> str:
 
     tags_section = f"Available tags: {', '.join(tag_names)}" if tag_names else "No tags available."
 
+    parsed = None
     try:
         from model_plugins import get_plugin
         import schemas
@@ -503,9 +567,9 @@ def _reply_capture(text: str, tz_offset: int) -> str:
             weekday=today.strftime("%A"),
             tomorrow=tomorrow.isoformat(),
             tags_section=tags_section,
-        )
+        ) + _TELEGRAM_PROMPT_SUFFIX
         client = llm_client()
-        print(f"[telegram] calling LLM to parse: {text[:60]!r}")
+        print(f"[telegram] calling LLM to classify: {text[:60]!r}")
         response = client.chat.completions.create(
             model=plugin.model_name,
             response_format={"type": "json_object"},
@@ -517,17 +581,21 @@ def _reply_capture(text: str, tz_offset: int) -> str:
         )
         raw = plugin.normalize_raw(_json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=text)
-        print(f"[telegram] LLM parsed: title={parsed.title!r} section={parsed.section!r}")
+        print(f"[telegram] LLM classified: type={parsed.type!r} title={parsed.title!r}")
     except Exception as e:
         import traceback
-        print(f"[telegram] LLM parse failed for capture: {e}")
+        print(f"[telegram] LLM classify failed: {e}")
         print(traceback.format_exc())
-        # Fallback: create a plain card in today
-        parsed = None
 
+    # ── Query: the LLM said this is a question, not a task to capture ─────────
+    if parsed and parsed.type == "assist":
+        print(f"[telegram] routing as query: {text[:60]!r}")
+        return _route_query(text, tz_offset)
+
+    # ── Capture: create a new card ────────────────────────────────────────────
     with SessionLocal() as db:
         max_pos = db.query(models.Card).filter_by(section="today").count()
-        if parsed:
+        if parsed and parsed.type not in ("assist",):
             section = parsed.section if parsed.section not in (None, "none") else "today"
             card = models.Card(
                 title=parsed.title or text,
@@ -536,11 +604,11 @@ def _reply_capture(text: str, tz_offset: int) -> str:
                 scheduled_at=parsed.scheduled_at,
                 position=max_pos,
             )
-            # Resolve tag names to Tag rows
             if parsed.suggested_tags:
                 tag_objs = db.query(models.Tag).filter(models.Tag.name.in_(parsed.suggested_tags)).all()
                 card.tags = tag_objs
         else:
+            # LLM failed — fall back to plain card in today
             card = models.Card(title=text, section="today", position=max_pos)
 
         db.add(card)
