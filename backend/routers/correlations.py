@@ -367,6 +367,11 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
     """Generate a new experiment via LLM, persist to health_experiments table."""
     week = _current_isoweek()
 
+    # Guard against concurrent generation: re-check inside the session before inserting.
+    existing = db.query(models.HealthExperiment).filter_by(week=week, status="active").first()
+    if existing:
+        return existing
+
     if not correlations:
         exp = models.HealthExperiment(
             week=week,

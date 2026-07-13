@@ -14,16 +14,21 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        'card_threads',
-        sa.Column('id',         sa.Integer,  primary_key=True),
-        sa.Column('card_id',    sa.Integer,  sa.ForeignKey('cards.id', ondelete='CASCADE'), nullable=False, unique=True),
-        sa.Column('context',    sa.Text,     nullable=True),
-        sa.Column('messages',   sa.Text,     nullable=False, server_default='[]'),
-        sa.Column('output',     sa.Text,     nullable=True),
-        sa.Column('created_at', sa.DateTime, nullable=True),
-        sa.Column('updated_at', sa.DateTime, nullable=True),
-    )
+    # Table may already exist if create_all ran before this migration was added.
+    from sqlalchemy import inspect
+    from alembic import op as _op
+    bind = _op.get_bind()
+    if 'card_threads' not in inspect(bind).get_table_names():
+        op.create_table(
+            'card_threads',
+            sa.Column('id',         sa.Integer,  primary_key=True),
+            sa.Column('card_id',    sa.Integer,  sa.ForeignKey('cards.id', ondelete='CASCADE'), nullable=False, unique=True),
+            sa.Column('context',    sa.Text,     nullable=True),
+            sa.Column('messages',   sa.Text,     nullable=False, server_default='[]'),
+            sa.Column('output',     sa.Text,     nullable=True),
+            sa.Column('created_at', sa.DateTime, nullable=True),
+            sa.Column('updated_at', sa.DateTime, nullable=True),
+        )
 
 
 def downgrade():
