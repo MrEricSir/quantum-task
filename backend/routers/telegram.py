@@ -539,5 +539,41 @@ def _reply_capture(text: str, tz_offset: int) -> str:
     return f"✓ Added to <b>{section_label}</b>: {card.title}"
 
 
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+
+@router.get("/api/telegram/webhook-info")
+def webhook_info(db: Session = Depends(get_db)):
+    """Proxy Telegram's getWebhookInfo — shows last error, pending updates, etc."""
+    token = _get(db, setting_keys.TELEGRAM_BOT_TOKEN)
+    if not token:
+        return {"ok": False, "error": "Bot token not configured."}
+    try:
+        import requests as _req
+        r = _req.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=10)
+        return r.json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class _SimulateMessage(BaseModel):
+    text: str
+    chat_id: str = ""  # defaults to configured chat_id
+
+
+@router.post("/api/telegram/simulate-message")
+def simulate_message(body: _SimulateMessage, db: Session = Depends(get_db)):
+    """Directly invoke the message handler — useful for local testing without Telegram."""
+    chat_id = body.chat_id or _get(db, setting_keys.TELEGRAM_CHAT_ID)
+    tz_offset = int(_get(db, setting_keys.BRIEFING_TZ_OFFSET, "0") or "0")
+    fake_update = {
+        "message": {
+            "text": body.text,
+            "chat": {"id": int(chat_id) if chat_id.lstrip("-").isdigit() else 0},
+        }
+    }
+    _handle_update(fake_update)
+    return {"ok": True, "routed": body.text}
+
+
 # Import here to avoid circular deps at module load time
 from database import SessionLocal
