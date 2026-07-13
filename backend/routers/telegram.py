@@ -537,8 +537,8 @@ def _reply_capture(text: str, tz_offset: int) -> str:
                 position=max_pos,
             )
             # Resolve tag names to Tag rows
-            if parsed.tags:
-                tag_objs = db.query(models.Tag).filter(models.Tag.name.in_(parsed.tags)).all()
+            if parsed.suggested_tags:
+                tag_objs = db.query(models.Tag).filter(models.Tag.name.in_(parsed.suggested_tags)).all()
                 card.tags = tag_objs
         else:
             card = models.Card(title=text, section="today", position=max_pos)
