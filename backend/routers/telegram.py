@@ -5,7 +5,7 @@ import os
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -254,17 +254,17 @@ def register_webhook(request: Request, db: Session = Depends(get_db)):
 @router.post("/api/telegram/webhook")
 async def telegram_webhook(
     request: Request,
-    background_tasks: BackgroundTasks,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    """Receives incoming Telegram updates. Must return 200 quickly; processing runs in background."""
+    """Receives incoming Telegram updates. Processed synchronously — Cloud Run throttles
+    CPU after the response is sent, so BackgroundTasks would never execute."""
     secret = _get(db, setting_keys.TELEGRAM_WEBHOOK_SECRET)
     if secret and not hmac.compare_digest(x_telegram_bot_api_secret_token or "", secret):
         return {"ok": False}  # silently reject — don't leak info
 
     body = await request.json()
-    background_tasks.add_task(_handle_update, body)
+    _handle_update(body)
     return {"ok": True}
 
 
