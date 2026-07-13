@@ -14,6 +14,8 @@ import models
 import telegram_notify
 from deps import get_db, llm_client, LLM_MODEL
 from routers.briefing import generate_today_briefing
+from briefing_context import event_local_date
+from gcal import _cached_fetch_events
 
 log = logging.getLogger(__name__)
 
@@ -452,8 +454,51 @@ def _route_message(text: str, tz_offset: int) -> str:
     return _capture_from_intent(intent, text, tz_offset)
 
 
+def _fetch_cal_events_for_date(target_date, tz_offset: int) -> list:
+    """Fetch calendar events from all configured iCal feeds for a given date."""
+    now_utc = datetime.now(timezone.utc)
+    events = []
+    try:
+        with SessionLocal() as db:
+            mappings = db.query(models.CalendarMapping).all()
+        week_end = target_date + timedelta(days=2)
+        for m in mappings:
+            try:
+                for ev in _cached_fetch_events(m.ical_url, target_date, week_end):
+                    if ev.get("is_ooo"):
+                        continue
+                    # Skip already-ended timed events
+                    if not ev["all_day"]:
+                        cutoff = ev.get("end") or ev["start"]
+                        if cutoff < now_utc:
+                            continue
+                    import schemas as _schemas
+                    cal_ev = _schemas.CalendarEvent(
+                        id=ev["id"], title=ev["title"],
+                        start=ev["start"], end=ev.get("end"),
+                        all_day=ev["all_day"], section="today", is_ooo=False,
+                    )
+                    if event_local_date(cal_ev, tz_offset) == target_date:
+                        events.append(cal_ev)
+            except Exception as e:
+                print(f"[telegram] calendar fetch error for mapping {m.id}: {e}")
+    except Exception as e:
+        print(f"[telegram] calendar fetch error: {e}")
+    return events
+
+
+def _fmt_event_time(ev, tz_offset: int) -> str:
+    """Format a calendar event's start time in local time."""
+    if ev.all_day:
+        return "all day"
+    start = ev.start
+    if start.tzinfo is not None:
+        start = start.replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    return start.strftime("%-I:%M %p")
+
+
 def _reply_today(tz_offset: int) -> str:
-    """Return today's task list as a formatted message."""
+    """Return today's tasks and calendar events."""
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
     today = now_local.date()
 
@@ -465,10 +510,11 @@ def _reply_today(tz_offset: int) -> str:
             .all()
         )
 
-    if not cards:
+    cal_events = _fetch_cal_events_for_date(today, tz_offset)
+
+    if not cards and not cal_events:
         return "✓ Nothing on your plate today. Enjoy!"
 
-    # Overdue = has a scheduled_at that is in the past
     overdue = [c for c in cards if c.scheduled_at and c.scheduled_at.date() < today]
     timed   = [c for c in cards if c.scheduled_at and c.scheduled_at.date() >= today]
     untimed = [c for c in cards if not c.scheduled_at]
@@ -481,8 +527,13 @@ def _reply_today(tz_offset: int) -> str:
             days = (today - c.scheduled_at.date()).days
             lines.append(f"• {c.title} ({days}d)")
 
+    if cal_events:
+        lines.append("\n<b>📅 Calendar</b>")
+        for ev in sorted(cal_events, key=lambda e: (e.all_day, e.start)):
+            lines.append(f"• {ev.title} @ {_fmt_event_time(ev, tz_offset)}")
+
     if timed:
-        lines.append("\n<b>📅 Scheduled</b>")
+        lines.append("\n<b>⏰ Scheduled tasks</b>")
         for c in sorted(timed, key=lambda x: x.scheduled_at):
             lines.append(f"• {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
 
@@ -495,12 +546,16 @@ def _reply_today(tz_offset: int) -> str:
 
 
 def _reply_date(target_date, tz_offset: int) -> str:
-    """Return scheduled tasks for a specific date."""
+    """Return tasks and calendar events for a specific date."""
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
     today = now_local.date()
 
+    # For today, delegate to the richer _reply_today
+    if target_date == today:
+        return _reply_today(tz_offset)
+
     with SessionLocal() as db:
-        cards = (
+        all_cards = (
             db.query(models.Card)
             .filter(
                 models.Card.completed == False,  # noqa: E712
@@ -510,22 +565,27 @@ def _reply_date(target_date, tz_offset: int) -> str:
             .all()
         )
 
-    day_cards = [c for c in cards if c.scheduled_at.date() == target_date]
+    day_cards = [c for c in all_cards if c.scheduled_at.date() == target_date]
+    cal_events = _fetch_cal_events_for_date(target_date, tz_offset)
 
     delta = (target_date - today).days
-    if delta == 0:
-        label = "Today"
-    elif delta == 1:
-        label = f"Tomorrow — {target_date.strftime('%A, %b %-d')}"
-    else:
-        label = target_date.strftime('%A, %b %-d')
+    label = f"Tomorrow — {target_date.strftime('%A, %b %-d')}" if delta == 1 else target_date.strftime('%A, %b %-d')
 
-    if not day_cards:
+    if not day_cards and not cal_events:
         return f"Nothing scheduled for {label}."
 
     lines = [f"<b>📅 {label}</b>"]
-    for c in sorted(day_cards, key=lambda x: x.scheduled_at):
-        lines.append(f"• {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
+
+    if cal_events:
+        lines.append("\n<b>Calendar</b>")
+        for ev in sorted(cal_events, key=lambda e: (e.all_day, e.start)):
+            lines.append(f"• {ev.title} @ {_fmt_event_time(ev, tz_offset)}")
+
+    if day_cards:
+        lines.append("\n<b>Tasks</b>")
+        for c in sorted(day_cards, key=lambda x: x.scheduled_at):
+            lines.append(f"• {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
+
     return "\n".join(lines)
 
 
