@@ -472,21 +472,37 @@ def _reply_overdue(tz_offset: int) -> str:
     return "\n".join(lines)
 
 
-def _reply_complete(query: str, chat_id: str = "") -> str:
-    query_lower = query.lower()
+def _fuzzy_find_card(cards: list, query: str):
+    """Find best matching card using: exact → substring (both ways) → word overlap."""
+    q = query.lower().strip()
+    q_words = {w for w in q.split() if len(w) > 2}
 
+    # 1. Exact match
+    for c in cards:
+        if c.title.lower() == q:
+            return c
+    # 2. Query is a substring of title, or title is a substring of query
+    for c in cards:
+        t = c.title.lower()
+        if q in t or t in q:
+            return c
+    # 3. Best word-overlap: most query words appear in the title
+    if q_words:
+        best, best_score = None, 0
+        for c in cards:
+            t_words = set(c.title.lower().split())
+            score = len(q_words & t_words)
+            if score > best_score:
+                best, best_score = c, score
+        if best_score > 0:
+            return best
+    return None
+
+
+def _reply_complete(query: str, chat_id: str = "") -> str:
     with SessionLocal() as db:
         cards = db.query(models.Card).filter_by(completed=False, archived=False).all()
-        match = None
-        for c in cards:
-            if c.title.lower() == query_lower:
-                match = c
-                break
-        if not match:
-            for c in cards:
-                if query_lower in c.title.lower():
-                    match = c
-                    break
+        match = _fuzzy_find_card(cards, query)
 
         if not match:
             return f'Couldn\'t find a task matching "{query}". Try <b>today</b> to see your list.'
@@ -801,19 +817,10 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     if not section and target_date:
         section = _section_for_date(target_date, today)
 
-    # Find card by fuzzy match (exact first, then substring)
+    # Find card by fuzzy match
     with SessionLocal() as db:
         candidates = db.query(models.Card).filter_by(completed=False, archived=False).all()
-        match = None
-        for c in candidates:
-            if c.title.lower() == query:
-                match = c
-                break
-        if not match:
-            for c in candidates:
-                if query in c.title.lower():
-                    match = c
-                    break
+        match = _fuzzy_find_card(candidates, query)
 
         if not match:
             return f'Couldn\'t find a task matching "{intent.get("match_query")}". Try <b>today</b> to see your list.'
