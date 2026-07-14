@@ -17,10 +17,17 @@ import re
 from datetime import date, datetime, time as dt_time, timedelta
 from typing import Any
 
+import capabilities.food as _food
+import capabilities.habit_check as _habit_check
+import capabilities.mood as _mood
+import capabilities.task_complete as _task_complete
+
 # ── Shared prompt instructions ────────────────────────────────────────────────
 # Examples are intentionally excluded here — each plugin supplies its own.
+# Capability descriptions (food, mood, habit_check, task_complete) are imported
+# from capabilities/ so that parse-flow and Telegram stay in sync.
 
-BASE_INSTRUCTIONS = """\
+BASE_INSTRUCTIONS = f"""\
 You parse natural language into structured todo items. Reply only with valid JSON. No explanation.
 
 CRITICAL: You are a parser, not a content generator. Never write poems, stories, essays, lists,
@@ -30,10 +37,10 @@ extract them as tasks with that title. Do not produce the content itself.\
 
 
 Reference dates:
-  Today    : {today} ({weekday})
-  Tomorrow : {tomorrow}
+  Today    : {{today}} ({{weekday}})
+  Tomorrow : {{tomorrow}}
 
-{tags_section}
+{{tags_section}}
 
 Fields:
   type          — "task" | "habit" | "goal" | "food" | "habit_check" | "task_complete" | "assist"
@@ -46,38 +53,9 @@ Fields:
                           Use when the input explicitly says "set/change/update my X goal to Y"
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
                           Always set withings_metric and withings_goal when type="goal"
-                  food  = logging something eaten or drunk (past, present, or imminent)
-                          Trigger on ANY first- or second-person eating/drinking verb:
-                          ate, eat, eating, had, have, having, drank, drink, drinking,
-                          consumed, grabbed, picked up, ordered, finished, just had, etc.
-                          Examples: "I ate a donut", "had a cup of yogurt",
-                          "ate sugar-free yogurt", "just had coffee", "drinking a beer",
-                          "had a chicken salad for lunch", "grabbed a snack"
-                          Do NOT classify food as a task or goal just because it mentions
-                          a health attribute (e.g. "sugar-free", "low-cal", "protein shake").
-                          When type is "food", set title to the food/drink description only
-                  habit_check = marking an existing habit as completed today
-                          Use when the input describes a recurring habit in the past tense,
-                          whether or not it uses an explicit completion verb.
-                          With completion verb: "did my meditation", "completed my morning run",
-                          "finished my walk", "checked off yoga", "done with exercise"
-                          Natural past tense (NO completion verb): "talked to a stranger",
-                          "went for a run", "meditated this morning", "journaled for 10 minutes",
-                          "practiced guitar", "walked the dog"
-                          Key question: would this activity make sense as something done
-                          repeatedly/daily? If yes → habit_check, even without "did/finished".
-                          When type is "habit_check", set title to the base habit name
-                          (e.g. "did my meditation" → "Meditation";
-                           "talked to a stranger" → "Talk to a stranger";
-                           "went for a run" → "Run")
-                          Do NOT use for clearly one-time tasks: "emailed the quarterly report",
-                          "booked a flight to NYC", "sent the invoice to the client"
-                  task_complete = marking a one-time task as finished/archived
-                          Use when the input marks a specific, non-recurring task as done:
-                          (e.g. "finished the dentist appointment", "completed the report",
-                          "done with the meeting", "archive the project proposal",
-                          "I finished the oil change")
-                          Set title to the task name, stripping the completion verb.
+                  {_food.PARSE_DESCRIPTION}
+                  {_habit_check.PARSE_DESCRIPTION}
+                  {_task_complete.PARSE_DESCRIPTION}
                   assist = a conversational or planning request — NOT a specific item to capture
                           Use when the input is a question, request for help, or anything that
                           does not map cleanly to a task, habit, food log, or completion.
@@ -85,15 +63,7 @@ Fields:
                           "can you suggest tasks for my project", "how should I prioritize?"
                           Do NOT use for imperative statements like "call dentist" or
                           "meditate daily" — those are tasks/habits even if phrased as requests.
-                  mood  = logging current energy or mood level
-                          Use when the input describes how the user is feeling or their energy.
-                          Examples: "feeling great today", "pretty tired 3/5", "energy level 4",
-                          "low energy today", "feeling focused and productive", "exhausted"
-                          Set title to a short description (e.g. "Good energy", "Feeling drained")
-                          Set energy to an integer 1–5:
-                            1 = drained/exhausted  2 = tired/low  3 = okay/neutral
-                            4 = good/focused       5 = great/energized
-                          If user gives N/5, use N directly. If N/10, round to nearest (N+1)/2.
+                  {_mood.PARSE_DESCRIPTION}
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;

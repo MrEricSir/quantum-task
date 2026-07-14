@@ -10,6 +10,10 @@ import json as _json
 import traceback
 from datetime import datetime, timezone, timedelta
 
+import capabilities.food as _food
+import capabilities.habit_check as _habit_check
+import capabilities.mood as _mood
+import capabilities.task_complete as _task_complete
 import models
 from briefing.context import event_local_date
 from database import SessionLocal
@@ -20,8 +24,11 @@ from telegram.notify import send_message
 
 
 # ── Intent prompt ─────────────────────────────────────────────────────────────
+# Capability action blocks (mark_complete, complete_habit, log_food, log_mood)
+# are imported from capabilities/ so they stay in sync with the parse-flow prompt.
 
-_TELEGRAM_INTENT_PROMPT = """\
+_TELEGRAM_INTENT_PROMPT = (
+"""\
 You are the intent parser for a personal productivity Telegram bot.
 Given the user's message, return a single JSON object describing the action to take.
 
@@ -62,10 +69,9 @@ The "action" field must be one of:
       Examples: "call dentist", "buy groceries", "meeting with Sarah at 3pm tomorrow",
                 "dentist appointment next Friday at 2pm"
 
-  "mark_complete"
-      User is marking an existing task done.
-      Also return "match_query": the task title or fragment to match.
-      Examples: "done with dentist", "finished the report", "mark groceries complete"
+"""
++ _task_complete.TELEGRAM_DESCRIPTION
++ """
 
   "undo"
       User wants to reverse their last action (capture or mark_complete).
@@ -91,38 +97,22 @@ The "action" field must be one of:
       Examples: "what should I work on?", "what's my priority?", "what should I do next?",
                 "help me focus", "what's most important right now?"
 
-  "complete_habit"
-      User is marking a habit done for today. Use this when the thing being completed
-      matches one of the available habits, not a task.
-      Also return "match_query": the habit name or fragment to match.
-      Examples: "done meditation", "finished yoga", "did my workout", "mark reading complete",
-                "exercise done", "I meditated"
+"""
++ _habit_check.TELEGRAM_DESCRIPTION
++ """
 
   "query_avoiding"
       User wants to know what they've been putting off or avoiding.
       Examples: "what am I avoiding?", "what have I been putting off?",
                 "what keeps getting pushed?", "what am I procrastinating on?"
 
-  "log_food"
-      User is logging something they ate or drank. Use this whenever food or drink
-      is mentioned in a past-tense or "I had / I ate / I drank" context.
-      Also return:
-        "raw_input" — exact food/drink description from the user's message
-        "meal_type" — "breakfast" | "lunch" | "dinner" | "snack" | "drink" | null
-      Examples: "I had yogurt and iced tea for breakfast", "just ate a salad for lunch",
-                "had a coffee", "ate a muffin", "grabbed a green smoothie"
+"""
++ _food.TELEGRAM_DESCRIPTION
++ """
 
-  "log_mood"
-      User is logging their current energy or mood level — NOT food.
-      Also return:
-        "energy" — integer 1–5 (1=drained/exhausted, 2=tired/low, 3=okay/neutral,
-                   4=good/focused, 5=great/energized/amazing)
-        "note"   — brief descriptor extracted from the message, or null
-      If user gives N/5, use N directly. If N/10, convert to nearest 1–5.
-      IMPORTANT: Do NOT use this for food or drink. If the user mentions food they ate
-      or drank, use log_food instead.
-      Examples: "feeling great today", "pretty tired 3/5", "energy 4", "exhausted",
-                "low energy today", "feeling focused and productive"
+"""
++ _mood.TELEGRAM_DESCRIPTION
++ """
 
   "reschedule"
       User wants to move or reschedule an existing task to a different date, time, or section.
@@ -139,6 +129,7 @@ The "action" field must be one of:
 
 Reply ONLY with valid JSON. No explanation.\
 """
+)
 
 
 # ── Per-chat session state (in-memory) ───────────────────────────────────────
