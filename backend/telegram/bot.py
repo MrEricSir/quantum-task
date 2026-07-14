@@ -103,13 +103,24 @@ The "action" field must be one of:
       Examples: "what am I avoiding?", "what have I been putting off?",
                 "what keeps getting pushed?", "what am I procrastinating on?"
 
+  "log_food"
+      User is logging something they ate or drank. Use this whenever food or drink
+      is mentioned in a past-tense or "I had / I ate / I drank" context.
+      Also return:
+        "raw_input" — exact food/drink description from the user's message
+        "meal_type" — "breakfast" | "lunch" | "dinner" | "snack" | "drink" | null
+      Examples: "I had yogurt and iced tea for breakfast", "just ate a salad for lunch",
+                "had a coffee", "ate a muffin", "grabbed a green smoothie"
+
   "log_mood"
-      User is logging their current energy or mood level.
+      User is logging their current energy or mood level — NOT food.
       Also return:
         "energy" — integer 1–5 (1=drained/exhausted, 2=tired/low, 3=okay/neutral,
                    4=good/focused, 5=great/energized/amazing)
         "note"   — brief descriptor extracted from the message, or null
       If user gives N/5, use N directly. If N/10, convert to nearest 1–5.
+      IMPORTANT: Do NOT use this for food or drink. If the user mentions food they ate
+      or drank, use log_food instead.
       Examples: "feeling great today", "pretty tired 3/5", "energy 4", "exhausted",
                 "low energy today", "feeling focused and productive"
 
@@ -140,8 +151,14 @@ _sessions: dict[str, dict] = {}
 
 def _get_session(chat_id: str) -> dict:
     if chat_id not in _sessions:
-        _sessions[chat_id] = {"undo": None, "last_card": None, "pending": None}
+        _sessions[chat_id] = {"undo": None, "undo_prev": None, "last_card": None, "pending": None}
     return _sessions[chat_id]
+
+
+def _push_undo(session: dict, action: dict) -> None:
+    """Push a new undo action, keeping the previous one for 'undo both'."""
+    session["undo_prev"] = session.get("undo")
+    session["undo"] = action
 
 
 # Words/phrases treated as pronoun references to the last mentioned card
@@ -278,6 +295,8 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_overdue(tz_offset)
     if lower in ("undo", "undo that", "cancel that", "never mind", "nevermind"):
         return _reply_undo(chat_id)
+    if lower in ("undo both", "undo all", "undo all of that", "undo everything"):
+        return _reply_undo(chat_id, count=2)
     if lower in ("week", "this week", "week ahead"):
         return _reply_week(tz_offset)
     if lower in ("health", "steps", "fitness"):
@@ -328,8 +347,11 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     if action == "query_avoiding":
         return _reply_avoiding(tz_offset)
 
+    if action == "log_food":
+        return _reply_log_food(intent, tz_offset, chat_id)
+
     if action == "log_mood":
-        return _reply_log_mood(intent, tz_offset)
+        return _reply_log_mood(intent, tz_offset, chat_id)
 
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -619,7 +641,7 @@ def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: s
             card.completed = True
             card.completed_at = datetime.now(timezone.utc)
             db.commit()
-        session["undo"] = {"type": "mark_complete", "card_id": selected["id"], "title": selected["title"]}
+        _push_undo(session, {"type": "mark_complete", "card_id": selected["id"], "title": selected["title"]})
         session["last_card"] = {"id": selected["id"], "title": selected["title"]}
         return f'✓ Marked complete: <b>{selected["title"]}</b>\nSend <b>undo</b> to reverse.'
 
@@ -663,7 +685,7 @@ def _reply_complete(query: str, chat_id: str = "") -> str:
         db.commit()
 
     if chat_id:
-        session["undo"] = {"type": "mark_complete", "card_id": card_id, "title": title}
+        _push_undo(session, {"type": "mark_complete", "card_id": card_id, "title": title})
         session["last_card"] = {"id": card_id, "title": title}
 
     return f"✓ Marked complete: <b>{title}</b>\nSend <b>undo</b> to reverse."
@@ -706,7 +728,7 @@ def _capture_from_intent(intent: dict, original_text: str, tz_offset: int, chat_
 
     if chat_id:
         session = _get_session(chat_id)
-        session["undo"] = {"type": "capture", "card_id": card_id, "title": title}
+        _push_undo(session, {"type": "capture", "card_id": card_id, "title": title})
         session["last_card"] = {"id": card_id, "title": title}
 
     return f"✓ Added to <b>{section_label}</b>: {title}\nSend <b>undo</b> to remove it."
@@ -723,7 +745,7 @@ def _capture_plain(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if chat_id:
         session = _get_session(chat_id)
-        session["undo"] = {"type": "capture", "card_id": card_id, "title": text}
+        _push_undo(session, {"type": "capture", "card_id": card_id, "title": text})
         session["last_card"] = {"id": card_id, "title": text}
 
     return f"✓ Added to <b>Today</b>: {text}\nSend <b>undo</b> to remove it."
@@ -914,7 +936,7 @@ def _reply_priority(tz_offset: int) -> str:
 _ENERGY_LABELS = {1: "😴 Drained", 2: "😔 Low", 3: "😐 Okay", 4: "😊 Good", 5: "⚡ Energized"}
 
 
-def _reply_log_mood(intent: dict, tz_offset: int) -> str:
+def _reply_log_mood(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     """Log today's energy level."""
     try:
         energy = max(1, min(5, int(float(str(intent.get("energy") or "3")))))
@@ -927,6 +949,8 @@ def _reply_log_mood(intent: dict, tz_offset: int) -> str:
 
     with SessionLocal() as db:
         row = db.query(models.MoodLog).filter_by(date=today_str).first()
+        prev_energy = row.energy if row else None
+        prev_note   = row.note   if row else None
         if row:
             row.energy = energy
             row.note = note
@@ -935,9 +959,46 @@ def _reply_log_mood(intent: dict, tz_offset: int) -> str:
             db.add(models.MoodLog(date=today_str, energy=energy, note=note))
         db.commit()
 
+    if chat_id:
+        session = _get_session(chat_id)
+        _push_undo(session, {
+            "type": "mood_log",
+            "date": today_str,
+            "prev_energy": prev_energy,
+            "prev_note": prev_note,
+            "title": "energy log",
+        })
+
     label = _ENERGY_LABELS.get(energy, "😐 Okay")
     note_part = f" — {note}" if note else ""
-    return f"✓ Energy logged: <b>{label}</b>{note_part}"
+    return f"✓ Energy logged: <b>{label}</b>{note_part}\nSend <b>undo</b> to remove it."
+
+
+def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
+    """Log a food or drink entry."""
+    raw = (intent.get("raw_input") or "").strip()
+    meal_type = intent.get("meal_type") or None
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+
+    with SessionLocal() as db:
+        entry = models.FoodEntry(
+            raw_input=raw,
+            name=raw,
+            category="food",
+            meal_type=meal_type,
+            consumed_at=now_local,
+        )
+        db.add(entry)
+        db.commit()
+        entry_id = entry.id
+
+    if chat_id:
+        session = _get_session(chat_id)
+        _push_undo(session, {"type": "food_log", "entry_id": entry_id, "title": raw})
+
+    meal_label = f" ({meal_type})" if meal_type else ""
+    return f"✓ Food logged{meal_label}: {raw}\nSend <b>undo</b> to remove it."
 
 
 def _reply_complete_habit(query: str, chat_id: str = "") -> str:
@@ -1153,13 +1214,13 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
         db.commit()
 
     if chat_id:
-        session["undo"] = {
+        _push_undo(session, {
             "type": "reschedule",
             "card_id": card_id,
             "title": title,
             "old_section": old_section,
             "old_scheduled_at": old_scheduled_at,
-        }
+        })
         session["last_card"] = {"id": card_id, "title": title}
 
     # Build confirmation label
@@ -1174,39 +1235,78 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     return f"↗ Moved <b>{title}</b> to {date_label}\nSend <b>undo</b> to reverse."
 
 
-def _reply_undo(chat_id: str) -> str:
-    """Reverse the most recent reversible action for this chat."""
-    session = _get_session(chat_id)
-    action = session.get("undo")
-    if not action:
-        return "Nothing to undo."
-    session["undo"] = None
+def _undo_single_action(action: dict) -> str:
+    """Execute one undo action and return the confirmation line."""
+    atype = action["type"]
+    title = action.get("title", "")
 
-    card_id = action["card_id"]
-    title   = action["title"]
-
-    with SessionLocal() as db:
-        card = db.query(models.Card).filter_by(id=card_id).first()
-        if not card:
-            return f'Could not undo — "{title}" no longer exists.'
-
-        if action["type"] == "capture":
+    if atype == "capture":
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=action["card_id"]).first()
+            if not card:
+                return f'Could not undo — "{title}" no longer exists.'
             db.delete(card)
             db.commit()
-            return f"↩ Removed: <b>{title}</b>"
+        return f"↩ Removed: <b>{title}</b>"
 
-        if action["type"] == "mark_complete":
+    if atype == "mark_complete":
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=action["card_id"]).first()
+            if not card:
+                return f'Could not undo — "{title}" no longer exists.'
             if not card.completed:
                 return f'"{title}" is already not marked complete.'
             card.completed    = False
             card.completed_at = None
             db.commit()
-            return f"↩ Unmarked complete: <b>{title}</b>"
+        return f"↩ Unmarked complete: <b>{title}</b>"
 
-        if action["type"] == "reschedule":
+    if atype == "reschedule":
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=action["card_id"]).first()
+            if not card:
+                return f'Could not undo — "{title}" no longer exists.'
             card.section      = action["old_section"]
             card.scheduled_at = action["old_scheduled_at"]
             db.commit()
-            return f"↩ Moved <b>{title}</b> back to {action['old_section'].title()}"
+        return f"↩ Moved <b>{title}</b> back to {action['old_section'].title()}"
 
-    return "Nothing to undo."
+    if atype == "mood_log":
+        with SessionLocal() as db:
+            row = db.query(models.MoodLog).filter_by(date=action["date"]).first()
+            if row:
+                if action.get("prev_energy") is None:
+                    db.delete(row)
+                else:
+                    row.energy = action["prev_energy"]
+                    row.note   = action.get("prev_note")
+                db.commit()
+        return "↩ Energy log removed"
+
+    if atype == "food_log":
+        with SessionLocal() as db:
+            entry = db.query(models.FoodEntry).filter_by(id=action["entry_id"]).first()
+            if entry:
+                db.delete(entry)
+                db.commit()
+        return f"↩ Removed food log: <b>{title}</b>"
+
+    return "↩ Undone"
+
+
+def _reply_undo(chat_id: str, count: int = 1) -> str:
+    """Reverse the most recent reversible action(s) for this chat."""
+    session = _get_session(chat_id)
+
+    to_undo = []
+    if session.get("undo"):
+        to_undo.append(session["undo"])
+        session["undo"] = None
+    if count >= 2 and session.get("undo_prev"):
+        to_undo.append(session["undo_prev"])
+        session["undo_prev"] = None
+
+    if not to_undo:
+        return "Nothing to undo."
+
+    return "\n".join(_undo_single_action(a) for a in to_undo)
