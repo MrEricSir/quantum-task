@@ -77,6 +77,14 @@ class Settings:
     def overdue_nudge_last_sent(self) -> str:
         return self.get(keys.OVERDUE_NUDGE_LAST_SENT)
 
+    @property
+    def evening_summary_last_sent(self) -> str:
+        return self.get(keys.EVENING_SUMMARY_LAST_SENT)
+
+    @property
+    def meeting_alerts_sent(self) -> str:
+        return self.get(keys.MEETING_ALERTS_SENT, "")
+
     # ── GitHub ────────────────────────────────────────────────────────────────
 
     @property

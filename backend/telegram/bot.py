@@ -30,6 +30,7 @@ Reference dates:
   Tomorrow : {tomorrow}
 
 {tags_section}
+{last_card_section}
 
 The "action" field must be one of:
 
@@ -106,15 +107,28 @@ Reply ONLY with valid JSON. No explanation.\
 """
 
 
-# ── Undo state (in-memory, per chat) ─────────────────────────────────────────
-# Stores the most recent reversible action per chat_id.
-# {"type": "capture"|"mark_complete", "card_id": int, "title": str}
-_last_actions: dict[str, dict] = {}
+# ── Per-chat session state (in-memory) ───────────────────────────────────────
+# Keyed by chat_id. Each value is a dict with:
+#   "undo"    — last reversible action (or None)
+#   "last_card" — {"id": int, "title": str} of the most recently mentioned card
+#   "pending" — pending disambiguation: {"action": str, "intent": dict, "candidates": [...]}
+_sessions: dict[str, dict] = {}
+
+
+def _get_session(chat_id: str) -> dict:
+    if chat_id not in _sessions:
+        _sessions[chat_id] = {"undo": None, "last_card": None, "pending": None}
+    return _sessions[chat_id]
+
+
+# Words/phrases treated as pronoun references to the last mentioned card
+_PRONOUN_REFS = {"it", "that", "this", "the task", "that one", "this one",
+                 "the one", "that task", "this task"}
 
 
 # ── LLM intent classification ─────────────────────────────────────────────────
 
-def _parse_telegram_intent(text: str, tz_offset: int) -> dict:
+def _parse_telegram_intent(text: str, tz_offset: int, chat_id: str = "") -> dict:
     """Call the LLM with the Telegram intent prompt and return parsed JSON."""
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
     today = now_local.date()
@@ -124,11 +138,23 @@ def _parse_telegram_intent(text: str, tz_offset: int) -> dict:
         tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
 
     tags_section = f"Available tags: {', '.join(tag_names)}" if tag_names else "No tags defined."
+
+    last_card_section = ""
+    if chat_id:
+        session = _get_session(chat_id)
+        if session.get("last_card"):
+            lc = session["last_card"]
+            last_card_section = (
+                f'Last mentioned task: "{lc["title"]}" — '
+                f'if the user says "it", "that", "this task", or similar, resolve to this task.'
+            )
+
     prompt = _TELEGRAM_INTENT_PROMPT.format(
         today=today.isoformat(),
         weekday=today.strftime("%A"),
         tomorrow=tomorrow.isoformat(),
         tags_section=tags_section,
+        last_card_section=last_card_section,
     )
 
     client = llm_client()
@@ -189,6 +215,12 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     """Classify the user's message via LLM and dispatch to the right handler."""
     lower = text.lower().strip()
 
+    # Check for pending disambiguation first
+    if chat_id:
+        result = _resolve_disambiguation(_get_session(chat_id), lower, tz_offset, chat_id)
+        if result is not None:
+            return result
+
     # Instant shortcuts — skip LLM for unambiguous single-word commands
     if lower in ("help", "/help", "/start"):
         return (
@@ -230,7 +262,7 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     # LLM intent classification for everything else
     print(f"[telegram] classifying intent: {text[:60]!r}")
     try:
-        intent = _parse_telegram_intent(text, tz_offset)
+        intent = _parse_telegram_intent(text, tz_offset, chat_id)
     except Exception as e:
         print(f"[telegram] intent parse failed: {e}")
         print(traceback.format_exc())
@@ -472,41 +504,116 @@ def _reply_overdue(tz_offset: int) -> str:
     return "\n".join(lines)
 
 
-def _fuzzy_find_card(cards: list, query: str):
-    """Find best matching card using: exact → substring (both ways) → word overlap."""
+def _fuzzy_find_cards(cards: list, query: str) -> list:
+    """Return best-matching cards (up to 3) for disambiguation.
+
+    Strategy: exact → substring (either direction) → word overlap.
+    A single exact or unambiguous substring match returns a one-element list.
+    Multiple equally-good matches return up to 3 for the caller to disambiguate.
+    """
     q = query.lower().strip()
     q_words = {w for w in q.split() if len(w) > 2}
 
-    # 1. Exact match
+    # 1. Exact match — always unambiguous
     for c in cards:
         if c.title.lower() == q:
-            return c
-    # 2. Query is a substring of title, or title is a substring of query
-    for c in cards:
-        t = c.title.lower()
-        if q in t or t in q:
-            return c
-    # 3. Best word-overlap: most query words appear in the title
+            return [c]
+
+    # 2. Substring: query in title, or title in query
+    sub = [c for c in cards if q in c.title.lower() or c.title.lower() in q]
+    if sub:
+        return sub[:3]
+
+    # 3. Word overlap — most shared words wins; ties kept for disambiguation
     if q_words:
-        best, best_score = None, 0
-        for c in cards:
-            t_words = set(c.title.lower().split())
-            score = len(q_words & t_words)
-            if score > best_score:
-                best, best_score = c, score
-        if best_score > 0:
-            return best
+        scored = [(len(q_words & set(c.title.lower().split())), c) for c in cards]
+        scored = [(s, c) for s, c in scored if s > 0]
+        if scored:
+            scored.sort(key=lambda x: -x[0])
+            top = scored[0][0]
+            return [c for s, c in scored if s == top][:3]
+
+    return []
+
+
+def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: str):
+    """If a disambiguation is pending, try to resolve the user's selection.
+
+    Returns a reply string if resolved or cancelled, None if text is unrelated.
+    """
+    pending = session.get("pending")
+    if not pending:
+        return None
+
+    candidates = pending["candidates"]  # list of {"id": int, "title": str}
+    lower = text.strip().lower()
+    selected = None
+
+    # Numeric selection: "1", "2", "3"
+    if lower in {str(i + 1) for i in range(len(candidates))}:
+        selected = candidates[int(lower) - 1]
+
+    # Title substring match
+    if not selected:
+        for c in candidates:
+            if lower in c["title"].lower() or c["title"].lower() in lower:
+                selected = c
+                break
+
+    if not selected:
+        # Unrelated message — clear pending and fall through to normal routing
+        session["pending"] = None
+        return None
+
+    session["pending"] = None
+
+    action = pending["action"]
+
+    if action == "complete":
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=selected["id"]).first()
+            if not card or card.completed:
+                return f'"{selected["title"]}" is already done or not found.'
+            card.completed = True
+            card.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        session["undo"] = {"type": "mark_complete", "card_id": selected["id"], "title": selected["title"]}
+        session["last_card"] = {"id": selected["id"], "title": selected["title"]}
+        return f'✓ Marked complete: <b>{selected["title"]}</b>\nSend <b>undo</b> to reverse.'
+
+    if action == "reschedule":
+        intent = dict(pending["intent"])
+        intent["match_query"] = selected["title"]  # exact title → unambiguous re-run
+        return _reply_reschedule(intent, tz_offset, chat_id)
+
     return None
 
 
 def _reply_complete(query: str, chat_id: str = "") -> str:
+    session = _get_session(chat_id) if chat_id else {}
+
+    # Resolve pronoun references to last mentioned card
+    if query.lower().strip() in _PRONOUN_REFS and session.get("last_card"):
+        query = session["last_card"]["title"]
+
     with SessionLocal() as db:
         cards = db.query(models.Card).filter_by(completed=False, archived=False).all()
-        match = _fuzzy_find_card(cards, query)
+        matches = _fuzzy_find_cards(cards, query)
 
-        if not match:
+        if not matches:
             return f'Couldn\'t find a task matching "{query}". Try <b>today</b> to see your list.'
 
+        if len(matches) > 1:
+            if chat_id:
+                session["pending"] = {
+                    "action": "complete",
+                    "intent": {},
+                    "candidates": [{"id": c.id, "title": c.title} for c in matches],
+                }
+            numbered = "\n".join(f"{i + 1}. {c.title}" for i, c in enumerate(matches))
+            return f"Which task did you mean?\n{numbered}"
+
+        match = matches[0]
         match.completed = True
         match.completed_at = datetime.now(timezone.utc)
         card_id = match.id
@@ -514,7 +621,8 @@ def _reply_complete(query: str, chat_id: str = "") -> str:
         db.commit()
 
     if chat_id:
-        _last_actions[chat_id] = {"type": "mark_complete", "card_id": card_id, "title": title}
+        session["undo"] = {"type": "mark_complete", "card_id": card_id, "title": title}
+        session["last_card"] = {"id": card_id, "title": title}
 
     return f"✓ Marked complete: <b>{title}</b>\nSend <b>undo</b> to reverse."
 
@@ -555,7 +663,9 @@ def _capture_from_intent(intent: dict, original_text: str, tz_offset: int, chat_
         }.get(card.section, card.section)
 
     if chat_id:
-        _last_actions[chat_id] = {"type": "capture", "card_id": card_id, "title": title}
+        session = _get_session(chat_id)
+        session["undo"] = {"type": "capture", "card_id": card_id, "title": title}
+        session["last_card"] = {"id": card_id, "title": title}
 
     return f"✓ Added to <b>{section_label}</b>: {title}\nSend <b>undo</b> to remove it."
 
@@ -570,7 +680,9 @@ def _capture_plain(text: str, tz_offset: int, chat_id: str = "") -> str:
         card_id = card.id
 
     if chat_id:
-        _last_actions[chat_id] = {"type": "capture", "card_id": card_id, "title": text}
+        session = _get_session(chat_id)
+        session["undo"] = {"type": "capture", "card_id": card_id, "title": text}
+        session["last_card"] = {"id": card_id, "title": text}
 
     return f"✓ Added to <b>Today</b>: {text}\nSend <b>undo</b> to remove it."
 
@@ -817,14 +929,30 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     if not section and target_date:
         section = _section_for_date(target_date, today)
 
+    # Resolve pronoun references
+    session = _get_session(chat_id) if chat_id else {}
+    if query in _PRONOUN_REFS and session.get("last_card"):
+        query = session["last_card"]["title"]
+
     # Find card by fuzzy match
     with SessionLocal() as db:
-        candidates = db.query(models.Card).filter_by(completed=False, archived=False).all()
-        match = _fuzzy_find_card(candidates, query)
+        all_cards = db.query(models.Card).filter_by(completed=False, archived=False).all()
+        matches = _fuzzy_find_cards(all_cards, query)
 
-        if not match:
+        if not matches:
             return f'Couldn\'t find a task matching "{intent.get("match_query")}". Try <b>today</b> to see your list.'
 
+        if len(matches) > 1:
+            if chat_id:
+                session["pending"] = {
+                    "action": "reschedule",
+                    "intent": intent,
+                    "candidates": [{"id": c.id, "title": c.title} for c in matches],
+                }
+            numbered = "\n".join(f"{i + 1}. {c.title}" for i, c in enumerate(matches))
+            return f"Which task did you mean?\n{numbered}"
+
+        match = matches[0]
         old_section = match.section
         old_scheduled_at = match.scheduled_at
         card_id = match.id
@@ -837,13 +965,14 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
         db.commit()
 
     if chat_id:
-        _last_actions[chat_id] = {
+        session["undo"] = {
             "type": "reschedule",
             "card_id": card_id,
             "title": title,
             "old_section": old_section,
             "old_scheduled_at": old_scheduled_at,
         }
+        session["last_card"] = {"id": card_id, "title": title}
 
     # Build confirmation label
     if target_date:
@@ -858,10 +987,12 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 
 
 def _reply_undo(chat_id: str) -> str:
-    """Reverse the most recent capture or mark_complete for this chat."""
-    action = _last_actions.pop(chat_id, None)
+    """Reverse the most recent reversible action for this chat."""
+    session = _get_session(chat_id)
+    action = session.get("undo")
     if not action:
         return "Nothing to undo."
+    session["undo"] = None
 
     card_id = action["card_id"]
     title   = action["title"]

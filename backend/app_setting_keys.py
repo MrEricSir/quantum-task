@@ -56,6 +56,11 @@ OVERDUE_NUDGE_TIME = "overdue_nudge_time"
 # ISO date of last overdue nudge sent — prevents double-send.
 OVERDUE_NUDGE_LAST_SENT = "overdue_nudge_last_sent"
 
+# ISO date of last evening summary sent — prevents double-send.
+EVENING_SUMMARY_LAST_SENT = "evening_summary_last_sent"
+# JSON {"date": "YYYY-MM-DD", "ids": [...]} — event IDs already alerted today.
+MEETING_ALERTS_SENT = "meeting_alerts_sent"
+
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.
 STREAK_DAYS_V1 = "streak_days_v1"

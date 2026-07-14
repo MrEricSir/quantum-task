@@ -5,6 +5,7 @@ Called every minute by the background task in main.py via check_all().
 Each function is idempotent — it checks whether its condition is met and
 whether it has already fired today before sending anything.
 """
+import json as _json
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy.orm import Session
@@ -50,35 +51,146 @@ def check_briefing(db: Session, token: str, chat_id: str,
     return "sent" if send_message(token, chat_id, text) else "send_failed"
 
 
-def check_habit_reminder(db: Session, token: str, chat_id: str,
-                          now_local: datetime, today) -> str:
-    """Send an evening habit nudge if pending habits exist."""
+def check_evening_summary(db: Session, token: str, chat_id: str,
+                           tz_offset: int, now_local: datetime, today) -> str:
+    """Send an evening summary: tasks done, habits status, and tomorrow preview."""
     s = Settings(db)
     if not _hour_matches(s.habit_reminder_time, now_local):
         return "skipped"
-    if s.habit_reminder_last_sent == today.isoformat():
+    if s.evening_summary_last_sent == today.isoformat():
         return "already_sent"
 
     today_str = today.isoformat()
-    habits = db.query(models.Habit).filter_by(archived=False).all()
-    if not habits:
-        return "skipped: no habits"
+    tomorrow = today + timedelta(days=1)
 
-    completed_ids = {
+    # Tasks completed today (local date)
+    completed_today = [
+        c for c in db.query(models.Card).filter(
+            models.Card.completed == True,   # noqa: E712
+            models.Card.archived == False,   # noqa: E712
+            models.Card.completed_at.isnot(None),
+        ).all()
+        if (c.completed_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)).date() == today
+    ]
+
+    # Tasks still pending in today's board
+    pending_cards = (
+        db.query(models.Card)
+        .filter_by(section="today", completed=False, archived=False)
+        .order_by(models.Card.position)
+        .all()
+    )
+
+    # Habits
+    habits = db.query(models.Habit).filter_by(archived=False).all()
+    completed_habit_ids = {
         r.habit_id for r in db.query(models.HabitCompletion).filter_by(date=today_str).all()
     }
-    pending = [h for h in habits if h.id not in completed_ids]
-    if not pending:
-        return "skipped: all done"
 
-    s.set(keys.HABIT_REMINDER_LAST_SENT, today_str)
+    # Tomorrow's scheduled tasks
+    tomorrow_cards = [
+        c for c in db.query(models.Card).filter(
+            models.Card.completed == False,   # noqa: E712
+            models.Card.archived == False,    # noqa: E712
+            models.Card.scheduled_at.isnot(None),
+        ).all()
+        if c.scheduled_at.date() == tomorrow
+    ]
+
+    s.set(keys.EVENING_SUMMARY_LAST_SENT, today_str)
     db.commit()
 
-    lines = [f"<b>🔔 Habit check-in</b> — {len(pending)} left today\n"]
-    for h in pending:
-        lines.append(f"○ {h.name}")
+    lines = [f"<b>📊 Evening wrap-up — {today.strftime('%A, %b %-d')}</b>"]
+
+    if completed_today:
+        lines.append(f"\n<b>✅ {len(completed_today)} task{'s' if len(completed_today) != 1 else ''} done</b>")
+        for c in completed_today[:6]:
+            lines.append(f"  ✓ {c.title}")
+    else:
+        lines.append("\n<i>No tasks completed today.</i>")
+
+    if habits:
+        done_habits = [h for h in habits if h.id in completed_habit_ids]
+        pending_habits = [h for h in habits if h.id not in completed_habit_ids]
+        lines.append(f"\n<b>🔁 Habits: {len(done_habits)}/{len(habits)} done</b>")
+        for h in done_habits:
+            lines.append(f"  ✓ {h.name}")
+        for h in pending_habits:
+            lines.append(f"  ○ {h.name}")
+
+    if pending_cards:
+        lines.append(f"\n<b>📋 {len(pending_cards)} carrying over</b>")
+        for c in pending_cards[:5]:
+            lines.append(f"  • {c.title}")
+        if len(pending_cards) > 5:
+            lines.append(f"  … and {len(pending_cards) - 5} more")
+
+    if tomorrow_cards:
+        lines.append(f"\n<b>📅 Tomorrow</b>")
+        for c in sorted(tomorrow_cards, key=lambda x: x.scheduled_at)[:4]:
+            lines.append(f"  • {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
 
     return "sent" if send_message(token, chat_id, "\n".join(lines)) else "send_failed"
+
+
+def check_meeting_alerts(db: Session, token: str, chat_id: str,
+                          tz_offset: int, now_utc: datetime, now_local: datetime) -> str:
+    """Alert for calendar meetings starting in ~30 minutes (25–35 min window)."""
+    from gcal import _cached_fetch_events
+
+    s = Settings(db)
+    today = now_local.date()
+
+    # Load already-alerted event IDs for today
+    try:
+        stored = _json.loads(s.meeting_alerts_sent) if s.meeting_alerts_sent else {}
+    except Exception:
+        stored = {}
+    if stored.get("date") != today.isoformat():
+        stored = {"date": today.isoformat(), "ids": []}
+    alerted_ids = set(stored["ids"])
+
+    # Window: 25–35 minutes from now (UTC)
+    window_start = now_utc + timedelta(minutes=25)
+    window_end   = now_utc + timedelta(minutes=35)
+
+    mappings = db.query(models.CalendarMapping).all()
+    to_alert = []
+    for m in mappings:
+        try:
+            for ev in _cached_fetch_events(m.ical_url, today, today + timedelta(days=1)):
+                if ev.get("is_ooo") or ev.get("all_day"):
+                    continue
+                ev_id = str(ev["id"])
+                if ev_id in alerted_ids:
+                    continue
+                start = ev["start"]
+                start_naive = start.replace(tzinfo=None) if start.tzinfo else start
+                if window_start.replace(tzinfo=None) <= start_naive <= window_end.replace(tzinfo=None):
+                    # Compute local display time
+                    start_local = start_naive - timedelta(minutes=tz_offset)
+                    mins_away = int((start_naive - now_utc.replace(tzinfo=None)).total_seconds() / 60)
+                    to_alert.append((ev_id, ev["title"], start_local, mins_away))
+        except Exception as e:
+            print(f"[telegram] meeting alert error for mapping {m.id}: {e}")
+
+    if not to_alert:
+        return "skipped: no meetings in window"
+
+    # Persist alerted IDs before sending
+    for ev_id, _, _, _ in to_alert:
+        alerted_ids.add(ev_id)
+    stored["ids"] = list(alerted_ids)
+    s.set(keys.MEETING_ALERTS_SENT, _json.dumps(stored))
+    db.commit()
+
+    sent = 0
+    for _, title, start_local, mins_away in to_alert:
+        text = f"📅 <b>{title}</b> in {mins_away} min ({start_local.strftime('%-I:%M %p')})"
+        if send_message(token, chat_id, text):
+            sent += 1
+
+    return f"sent: {sent} alert(s)"
 
 
 def check_overdue_nudge(db: Session, token: str, chat_id: str,
@@ -124,11 +236,13 @@ def check_all(db: Session) -> dict:
         return {"skipped": True, "reason": "not configured"}
 
     tz_offset = s.tz_offset
-    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    now_utc   = datetime.now(timezone.utc)
+    now_local = now_utc.replace(tzinfo=None) - timedelta(minutes=tz_offset)
     today     = now_local.date()
 
     return {
-        "briefing":       check_briefing(db, token, chat_id, tz_offset, now_local, today),
-        "habit_reminder": check_habit_reminder(db, token, chat_id, now_local, today),
-        "overdue_nudge":  check_overdue_nudge(db, token, chat_id, now_local, today),
+        "briefing":         check_briefing(db, token, chat_id, tz_offset, now_local, today),
+        "evening_summary":  check_evening_summary(db, token, chat_id, tz_offset, now_local, today),
+        "overdue_nudge":    check_overdue_nudge(db, token, chat_id, now_local, today),
+        "meeting_alerts":   check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
     }
