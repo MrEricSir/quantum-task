@@ -32,7 +32,7 @@ const SNOOZE_OPTIONS = [
 const MOVE_OPTIONS = [
   { label: 'This Week', section: 'week' },
   { label: 'This Month', section: 'month' },
-  { label: 'Stash', section: 'later' },
+  { label: 'Later', section: 'later' },
 ]
 
 function addDays(days) {

@@ -16,7 +16,7 @@ describe('SECTION_LABELS', () => {
     expect(SECTION_LABELS.today).toBe('Today')
     expect(SECTION_LABELS.week).toBe('This Week')
     expect(SECTION_LABELS.month).toBe('This Month')
-    expect(SECTION_LABELS.later).toBe('Stash')
+    expect(SECTION_LABELS.later).toBe('Later')
   })
 
   it('has a label for every SECTIONS entry', () => {
@@ -40,9 +40,9 @@ describe('ALL_SECTIONS', () => {
     }
   })
 
-  it('"later" is labelled "Stash"', () => {
+  it('"later" is labelled "Later"', () => {
     const later = ALL_SECTIONS.find((s) => s.value === 'later')
-    expect(later?.label).toBe('Stash')
+    expect(later?.label).toBe('Later')
   })
 
   it('values are consistent with SECTIONS', () => {

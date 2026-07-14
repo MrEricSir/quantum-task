@@ -312,7 +312,7 @@ Compares parse quality and speed across all locally available Ollama models and 
 
 See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitHub secrets, LLM provider options, and CI/CD details.
 
-After deploying, run this once to set up the Telegram briefing cron job:
+After deploying, run this once to set up the Telegram cron job:
 
 ```bash
 ./dev.sh gcp-setup-scheduler

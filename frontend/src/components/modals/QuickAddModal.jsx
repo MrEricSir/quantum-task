@@ -34,7 +34,7 @@ const SECTION_OPTIONS = [
   { value: 'section:today', label: 'Today' },
   { value: 'section:week', label: 'This Week' },
   { value: 'section:month', label: 'This Month' },
-  { value: 'section:later', label: 'Stash' },
+  { value: 'section:later', label: 'Later' },
 ]
 
 const HISTORY_KEY = 'globalAssistHistory'

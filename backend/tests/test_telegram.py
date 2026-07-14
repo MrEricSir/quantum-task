@@ -1,5 +1,5 @@
 """
-Tests for the Telegram briefing router.
+Tests for the Telegram router.
 
 Covers:
   - GET /api/telegram/config   — returns defaults / saved values

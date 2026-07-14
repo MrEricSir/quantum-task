@@ -29,7 +29,7 @@ GITHUB_REPOS = "github_repos"
 # JSON object {"steps": N|null, "fat_ratio": N|null, "weight": N|null}.
 WITHINGS_HEALTH_GOALS = "withings_health_goals"
 
-# ── Telegram briefing ──────────────────────────────────────────────────────────
+# ── Telegram ──────────────────────────────────────────────────────────
 # Telegram Bot API token (from @BotFather).
 TELEGRAM_BOT_TOKEN = "telegram_bot_token"
 # Telegram chat ID to send briefings to (numeric string, e.g. "123456789").
@@ -40,7 +40,7 @@ BRIEFING_SCHEDULE_TIME = "briefing_schedule_time"
 BRIEFING_TZ_OFFSET = "briefing_tz_offset"
 # ISO date string (YYYY-MM-DD) of the last day a briefing was successfully sent.
 BRIEFING_LAST_SENT = "briefing_last_sent"
-# Last known device location for weather in scheduled/Telegram briefings.
+# Last known device location for weather in scheduled/Telegram.
 LAST_KNOWN_LAT = "last_known_lat"
 LAST_KNOWN_LON = "last_known_lon"
 

@@ -13,7 +13,7 @@ export const SECTION_LABELS = {
   today: 'Today',
   week:  'This Week',
   month: 'This Month',
-  later: 'Stash',
+  later: 'Later',
 }
 
 /**
@@ -24,5 +24,5 @@ export const ALL_SECTIONS = [
   { value: 'today', label: 'Today' },
   { value: 'week',  label: 'This Week' },
   { value: 'month', label: 'This Month' },
-  { value: 'later', label: 'Stash' },
+  { value: 'later', label: 'Later' },
 ]

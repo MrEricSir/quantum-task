@@ -665,7 +665,7 @@ export default function App() {
                     &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTelegramSettings(true)}>
-                    &#9992;&#65039; Telegram Briefing
+                    &#9992;&#65039; Telegram
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"

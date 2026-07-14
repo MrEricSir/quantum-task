@@ -344,7 +344,7 @@ TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
   gcloud iam service-accounts keys create "$SCRIPT_DIR/.github-actions-sa-key.json" \
     --iam-account "$GHA_SA" --project "$GCP_PROJECT_ID"
 
-  # ── 9. Cloud Scheduler for Telegram briefing ─────────────────────────────────
+  # ── 9. Cloud Scheduler for Telegram ─────────────────────────────────
   gcp_setup_scheduler
 
   # ── Summary ───────────────────────────────────────────────────────────────────
@@ -450,7 +450,7 @@ gcp_setup_scheduler() {
 
   echo ""
   echo "The briefing will be sent at your configured time (±15 min)."
-  echo "Configure time and credentials in Settings > Telegram Briefing."
+  echo "Configure time and credentials in Settings > Telegram."
 }
 
 gcp_logs() {

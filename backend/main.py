@@ -261,7 +261,7 @@ async def _experiment_cleanup_scheduler() -> None:
         await asyncio.get_event_loop().run_in_executor(None, _expire_stale_experiments)
 
 
-# ── Telegram briefing scheduler ───────────────────────────────────────────────
+# ── Telegram scheduler ───────────────────────────────────────────────
 
 def _check_telegram_briefing() -> None:
     from telegram.scheduler import check_all

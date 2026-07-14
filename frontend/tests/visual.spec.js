@@ -275,7 +275,7 @@ test.describe('tasks board', () => {
   })
 
   test('board columns are visible', async ({ page }) => {
-    for (const col of ['Today', 'This Week', 'This Month', 'Stash']) {
+    for (const col of ['Today', 'This Week', 'This Month', 'Later']) {
       await expect(page.locator('.column-label', { hasText: col })).toBeVisible()
     }
   })
@@ -289,7 +289,7 @@ test.describe('tasks board', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Stash column on /board
+// Later column on /board
 // ---------------------------------------------------------------------------
 test.describe('cards page', () => {
   test.beforeEach(async ({ page }) => {
@@ -297,11 +297,11 @@ test.describe('cards page', () => {
     await waitForApp(page)
   })
 
-  test('Stash column is visible', async ({ page }) => {
-    await expect(page.locator('.column-label', { hasText: 'Stash' })).toBeVisible()
+  test('Later column is visible', async ({ page }) => {
+    await expect(page.locator('.column-label', { hasText: 'Later' })).toBeVisible()
   })
 
-  test('cards with section=later appear in the Stash column', async ({ page }) => {
+  test('cards with section=later appear in the Later column', async ({ page }) => {
     await expect(page.getByText('Shopping list')).toBeVisible()
     await expect(page.getByText('Sprint ideas')).toBeVisible()
   })
@@ -861,8 +861,8 @@ test.describe('mobile card sheet', () => {
   test('sheet shows description text for a card that has one', async ({ page }) => {
     await page.goto('/board')
     await waitForApp(page)
-    // Shopping list is in the Stash section
-    await page.locator('.mobile-tab', { hasText: 'Stash' }).click()
+    // Shopping list is in the Later section
+    await page.locator('.mobile-tab', { hasText: 'Later' }).click()
     await page.locator('.event-card', { hasText: 'Shopping list' }).click({ force: true })
     const sheet = page.locator('.card-sheet')
     await expect(sheet).toBeVisible()
@@ -1386,8 +1386,8 @@ test.describe('tag filter bar', () => {
     await page.locator('.mobile-tab', { hasText: 'Today' }).click()
     // "Call dentist" has no tags — should not appear
     await expect(page.locator('.event-card', { hasText: 'Call dentist' })).toHaveCount(0)
-    // "Read that article" has personal tag (it's in Stash)
-    await page.locator('.mobile-tab', { hasText: 'Stash' }).click()
+    // "Read that article" has personal tag (it's in Later)
+    await page.locator('.mobile-tab', { hasText: 'Later' }).click()
     await expect(page.locator('.event-card', { hasText: 'Read that article' })).toBeVisible()
   })
 
