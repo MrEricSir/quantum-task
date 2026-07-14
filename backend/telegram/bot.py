@@ -69,6 +69,26 @@ The "action" field must be one of:
       User wants to reverse their last action (capture or mark_complete).
       Examples: "undo", "undo that", "wait, cancel that", "actually never mind"
 
+  "query_week"
+      User wants an overview of the week ahead (next 7 days).
+      Examples: "what's this week look like?", "week ahead", "what's coming up?",
+                "show me my week", "anything this week?"
+
+  "query_health"
+      User wants health or fitness data: steps, weight, body fat, heart rate, etc.
+      Examples: "how many steps today?", "how's my health?", "what's my step count?",
+                "am I near my step goal?", "how's my weight doing?"
+
+  "query_streaks"
+      User wants habit streak information.
+      Examples: "what are my streaks?", "how long is my meditation streak?",
+                "how many days in a row?", "habit streaks"
+
+  "query_priority"
+      User wants a recommendation on what to work on or focus on next.
+      Examples: "what should I work on?", "what's my priority?", "what should I do next?",
+                "help me focus", "what's most important right now?"
+
 Reply ONLY with valid JSON. No explanation.\
 """
 
@@ -162,8 +182,12 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "Hi! Here's what I can do:\n\n"
             "<b>today</b> — show today's tasks\n"
             "<b>tomorrow</b> — show tomorrow's schedule\n"
-            "<b>habits</b> — habit status\n"
+            "<b>week</b> — overview of the week ahead\n"
+            "<b>habits</b> — habit status for today\n"
+            "<b>streaks</b> — your current habit streaks\n"
+            "<b>health</b> — steps, weight, and fitness data\n"
             "<b>overdue</b> — overdue tasks\n"
+            "<b>priority</b> — what to focus on next\n"
             "<b>done [task]</b> — mark a task complete\n"
             "<b>undo</b> — reverse your last capture or completion\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"
@@ -180,6 +204,14 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_overdue(tz_offset)
     if lower in ("undo", "undo that", "cancel that", "never mind", "nevermind"):
         return _reply_undo(chat_id)
+    if lower in ("week", "this week", "week ahead"):
+        return _reply_week(tz_offset)
+    if lower in ("health", "steps", "fitness"):
+        return _reply_health(tz_offset)
+    if lower in ("streaks", "streak"):
+        return _reply_streaks(tz_offset)
+    if lower in ("priority", "focus", "next"):
+        return _reply_priority(tz_offset)
 
     # LLM intent classification for everything else
     print(f"[telegram] classifying intent: {text[:60]!r}")
@@ -195,6 +227,18 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "undo":
         return _reply_undo(chat_id)
+
+    if action == "query_week":
+        return _reply_week(tz_offset)
+
+    if action == "query_health":
+        return _reply_health(tz_offset)
+
+    if action == "query_streaks":
+        return _reply_streaks(tz_offset)
+
+    if action == "query_priority":
+        return _reply_priority(tz_offset)
 
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -496,6 +540,188 @@ def _capture_plain(text: str, tz_offset: int, chat_id: str = "") -> str:
         _last_actions[chat_id] = {"type": "capture", "card_id": card_id, "title": text}
 
     return f"✓ Added to <b>Today</b>: {text}\nSend <b>undo</b> to remove it."
+
+
+def _reply_week(tz_offset: int) -> str:
+    """Summarise the next 7 days: calendar events + scheduled tasks grouped by day."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    with SessionLocal() as db:
+        week_cards = (
+            db.query(models.Card)
+            .filter(
+                models.Card.completed == False,  # noqa: E712
+                models.Card.archived == False,   # noqa: E712
+                models.Card.scheduled_at.isnot(None),
+            )
+            .all()
+        )
+
+    # Group scheduled cards by day (next 7 days, not including today)
+    by_day: dict = {}
+    for c in week_cards:
+        d = c.scheduled_at.date()
+        if today < d <= today + timedelta(days=7):
+            by_day.setdefault(d, {"cards": [], "events": []})["cards"].append(c)
+
+    # Calendar events for the week
+    for offset in range(1, 8):
+        d = today + timedelta(days=offset)
+        evs = _fetch_cal_events_for_date(d, tz_offset)
+        if evs:
+            by_day.setdefault(d, {"cards": [], "events": []})["events"].extend(evs)
+
+    if not by_day:
+        return "Nothing scheduled for the week ahead."
+
+    lines = ["<b>📅 Week ahead</b>"]
+    for d in sorted(by_day):
+        label = "Tomorrow" if d == today + timedelta(days=1) else d.strftime("%A, %b %-d")
+        day_lines = [f"\n<b>{label}</b>"]
+        items = by_day[d]
+        for ev in sorted(items["events"], key=lambda e: (e.all_day, e.start)):
+            day_lines.append(f"  📅 {ev.title} @ {_fmt_event_time(ev, tz_offset)}")
+        for c in sorted(items["cards"], key=lambda x: x.scheduled_at):
+            day_lines.append(f"  • {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
+        lines.extend(day_lines)
+
+    return "\n".join(lines)
+
+
+def _reply_health(tz_offset: int) -> str:
+    """Return today's health data from Withings (steps, weight, body fat, etc.)."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    with SessionLocal() as db:
+        has_credentials = db.query(models.WithingsCredentials).first() is not None
+        from health_context import build_health_context
+        data, ctx = build_health_context(db, today)
+
+    if not has_credentials:
+        return "Withings isn't connected yet. Link it in the app under Settings → Withings."
+
+    if not ctx:
+        return "No health data available yet. Make sure your Withings device has synced recently."
+
+    # ctx already has "Health data:" as header — reformat for Telegram
+    lines = ["<b>❤️ Health</b>"]
+    for line in ctx.splitlines():
+        stripped = line.strip()
+        if stripped and stripped != "Health data:":
+            lines.append(stripped.replace("  - ", "• ").replace("- ", "• "))
+    return "\n".join(lines)
+
+
+def _reply_streaks(tz_offset: int) -> str:
+    """Show current streak for each active habit."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today_str = now_local.date().isoformat()
+
+    with SessionLocal() as db:
+        habits = db.query(models.Habit).filter_by(archived=False).order_by(models.Habit.id).all()
+        if not habits:
+            return "You don't have any habits set up yet."
+
+        # Most recent HabitStreakDay per habit
+        streaks: dict[int, int] = {}
+        for h in habits:
+            row = (
+                db.query(models.HabitStreakDay)
+                .filter_by(habit_id=h.id)
+                .order_by(models.HabitStreakDay.date.desc())
+                .first()
+            )
+            streaks[h.id] = row.streak if row else 0
+
+        # Today's completions to show ✓/○ status
+        completed_ids = {
+            r.habit_id for r in db.query(models.HabitCompletion).filter_by(date=today_str).all()
+        }
+
+    if not any(streaks.values()):
+        return "No streaks yet — keep completing your habits every day to build one!"
+
+    lines = ["<b>🔥 Habit streaks</b>\n"]
+    for h in habits:
+        s = streaks.get(h.id, 0)
+        check = "✓" if h.id in completed_ids else "○"
+        flame = " 🔥" if s >= 3 else ""
+        streak_txt = f"{s} day{'s' if s != 1 else ''}" if s > 0 else "no streak"
+        lines.append(f"{check} {h.name} — {streak_txt}{flame}")
+    return "\n".join(lines)
+
+
+def _reply_priority(tz_offset: int) -> str:
+    """Use the LLM to suggest what to focus on next."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    with SessionLocal() as db:
+        today_cards = (
+            db.query(models.Card)
+            .filter_by(section="today", completed=False, archived=False)
+            .order_by(models.Card.position)
+            .all()
+        )
+        overdue = [
+            c for c in today_cards
+            if c.scheduled_at and c.scheduled_at.date() < today
+        ]
+
+    cal_events = _fetch_cal_events_for_date(today, tz_offset)
+    upcoming_events = [
+        ev for ev in cal_events
+        if not ev.all_day and ev.start.replace(tzinfo=None) - timedelta(minutes=tz_offset) >= now_local
+    ]
+
+    if not today_cards and not upcoming_events:
+        return "Nothing on your plate right now — enjoy the clear schedule!"
+
+    # Build context for LLM
+    ctx_lines = [f"Current time: {now_local.strftime('%-I:%M %p')} on {today.strftime('%A, %B %-d')}"]
+    if overdue:
+        ctx_lines.append(f"Overdue tasks ({len(overdue)}):")
+        for c in overdue:
+            days = (today - c.scheduled_at.date()).days
+            ctx_lines.append(f"  - {c.title} ({days}d overdue)")
+    if upcoming_events:
+        ctx_lines.append("Upcoming calendar events:")
+        for ev in upcoming_events[:3]:
+            ctx_lines.append(f"  - {ev.title} at {_fmt_event_time(ev, tz_offset)}")
+    pending = [c for c in today_cards if c not in overdue]
+    if pending:
+        ctx_lines.append("Other tasks today:")
+        for c in pending[:8]:
+            ctx_lines.append(f"  - {c.title}")
+
+    system = (
+        "You are a personal productivity assistant. Based on the user's current tasks "
+        "and schedule, suggest the single most important thing to focus on right now. "
+        "Reply with 1-2 sentences max — be direct and specific. No lists, no bullet points."
+    )
+    try:
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": "\n".join(ctx_lines)},
+            ],
+            timeout=15,
+            temperature=0.3,
+        )
+        suggestion = resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[telegram] priority LLM error: {e}")
+        if overdue:
+            return f"🎯 Start with your most overdue task: <b>{overdue[0].title}</b>"
+        if upcoming_events:
+            return f"🎯 You have <b>{upcoming_events[0].title}</b> coming up — prepare for that."
+        return f"🎯 Start with: <b>{today_cards[0].title}</b>"
+
+    return f"🎯 {suggestion}"
 
 
 def _reply_undo(chat_id: str) -> str:
