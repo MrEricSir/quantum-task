@@ -313,3 +313,77 @@
   color: #ef4444;
   margin-top: 6px;
 }
+
+/* ── Project tag badge (list view) ── */
+.tag-mgr-project-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 4px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* ── Tag type toggle (General / Project) ── */
+.tag-type-toggle {
+  width: 100%;
+  padding: 2px 0 4px;
+}
+
+.tag-type-track {
+  position: relative;
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 0;
+}
+
+.tag-type-indicator {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: calc(50% - 3px);
+  border-radius: 5px;
+  background: rgba(107, 114, 128, 0.25);
+  border: 1px solid rgba(107, 114, 128, 0.3);
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), background 0.18s, border-color 0.18s;
+  left: 3px;
+  pointer-events: none;
+}
+
+.tag-type-track--project .tag-type-indicator {
+  transform: translateX(100%);
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.tag-type-opt {
+  position: relative;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text-muted);
+  transition: color 0.15s;
+  flex: 1;
+  text-align: center;
+  z-index: 1;
+}
+
+.tag-type-opt--active {
+  color: var(--text);
+}
+
+.tag-type-track--project .tag-type-opt--active {
+  color: #a78bfa;
+}

@@ -40,6 +40,7 @@ class Tag(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
     color = Column(String, nullable=False, default="#6b7280")
+    is_project = Column(Boolean, nullable=False, default=False)
 
 
 class Card(Base):

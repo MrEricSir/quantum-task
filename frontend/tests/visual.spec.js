@@ -1009,8 +1009,8 @@ test.describe('mobile assistant modal', () => {
 // Project tag visibility
 // ---------------------------------------------------------------------------
 test.describe('project tag visibility', () => {
-  const PROJECT_TAG_DONE   = { id: 10, name: 'Project: Done Project',   color: '#059669' }
-  const PROJECT_TAG_ACTIVE = { id: 11, name: 'Project: Active Project', color: '#2563eb' }
+  const PROJECT_TAG_DONE   = { id: 10, name: 'Project: Done Project',   color: '#059669', is_project: true }
+  const PROJECT_TAG_ACTIVE = { id: 11, name: 'Project: Active Project', color: '#2563eb', is_project: true }
 
   test('completed project tags are hidden from the sidebar', async ({ page }) => {
     const completedCard = {

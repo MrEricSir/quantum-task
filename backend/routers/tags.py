@@ -39,6 +39,8 @@ def update_tag(tag_id: int, tag: schemas.TagUpdate, db: Session = Depends(get_db
         db_tag.name = tag.name
     if tag.color is not None:
         db_tag.color = tag.color
+    if tag.is_project is not None:
+        db_tag.is_project = tag.is_project
     db.commit()
     db.refresh(db_tag)
     return db_tag

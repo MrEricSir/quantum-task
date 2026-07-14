@@ -390,7 +390,7 @@ export default function App() {
 
   const visibleTags = useMemo(() =>
     tags.filter((tag) => {
-      if (!tag.name.startsWith('Project: ')) return true
+      if (!tag.is_project) return true
       return cards.some((t) => !t.completed && !t.archived && (t.tags ?? []).some((tg) => tg.id === tag.id))
     }),
     [tags, cards]

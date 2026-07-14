@@ -15,14 +15,40 @@ const PRESET_COLORS = [
   '#6b7280', // gray
 ]
 
+function TagTypeToggle({ value, onChange }) {
+  return (
+    <div className="tag-type-toggle" role="group" aria-label="Tag type">
+      <div className={`tag-type-track ${value ? 'tag-type-track--project' : ''}`}>
+        <div className="tag-type-indicator" />
+        <button
+          type="button"
+          className={`tag-type-opt ${!value ? 'tag-type-opt--active' : ''}`}
+          onClick={() => onChange(false)}
+        >
+          General
+        </button>
+        <button
+          type="button"
+          className={`tag-type-opt ${value ? 'tag-type-opt--active' : ''}`}
+          onClick={() => onChange(true)}
+        >
+          Project
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function TagManagerModal({ tags, cards = [], onClose, onCreate, onUpdate, onDelete, onReplace }) {
   const [name, setName] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0])
+  const [isProject, setIsProject] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState(PRESET_COLORS[0])
+  const [editIsProject, setEditIsProject] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
@@ -33,6 +59,7 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
     setEditingId(tag.id)
     setEditName(tag.name)
     setEditColor(tag.color)
+    setEditIsProject(tag.is_project ?? false)
     setEditError('')
   }
 
@@ -46,7 +73,7 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
     setEditSaving(true)
     setEditError('')
     try {
-      await onUpdate(tag.id, { name: editName.trim(), color: editColor })
+      await onUpdate(tag.id, { name: editName.trim(), color: editColor, is_project: editIsProject })
       setEditingId(null)
     } catch (err) {
       setEditError(err.message.includes('already exists') ? 'A tag with that name already exists.' : 'Something went wrong.')
@@ -88,9 +115,10 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
     setSaving(true)
     setError('')
     try {
-      await onCreate({ name: name.trim(), color })
+      await onCreate({ name: name.trim(), color, is_project: isProject })
       setName('')
       setColor(PRESET_COLORS[0])
+      setIsProject(false)
     } catch (err) {
       setError(err.message.includes('409') || err.message.toLowerCase().includes('exists')
         ? 'A tag with that name already exists.'
@@ -126,6 +154,7 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
                       />
                     ))}
                   </div>
+                  <TagTypeToggle value={editIsProject} onChange={setEditIsProject} />
                   <input
                     className="tag-mgr-edit-input"
                     value={editName}
@@ -181,6 +210,7 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
               <div key={tag.id} className="tag-mgr-row">
                 <span className="tag-mgr-dot" style={{ background: tag.color }} />
                 <span className="tag-mgr-name">{tag.name}</span>
+                {tag.is_project && <span className="tag-mgr-project-badge">project</span>}
                 {usageCount > 0 && (
                   <span className="tag-mgr-count">{usageCount}</span>
                 )}
@@ -232,6 +262,7 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
               {saving ? '…' : 'Add'}
             </button>
           </div>
+          <TagTypeToggle value={isProject} onChange={setIsProject} />
           {error && <span className="form-error">{error}</span>}
         </form>
 
