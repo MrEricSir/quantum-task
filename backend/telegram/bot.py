@@ -89,6 +89,19 @@ The "action" field must be one of:
       Examples: "what should I work on?", "what's my priority?", "what should I do next?",
                 "help me focus", "what's most important right now?"
 
+  "reschedule"
+      User wants to move or reschedule an existing task to a different date, time, or section.
+      Also return:
+        "match_query"  — task title or fragment to find (required)
+        "date"         — resolved target date as YYYY-MM-DD, or null if only a section change
+        "time"         — target time as HH:MM (24h), or null if no specific time given
+        "section"      — "today" | "week" | "month" | "later", or null to infer from date
+      For relative phrases: "next week" → section="week" + date=Monday of next week,
+      "push to next month" → section="month", "move to today" → date=today + section="today".
+      Examples: "move dentist to Thursday at 2pm", "push the report to next week",
+                "reschedule groceries to tomorrow", "move call to next Monday at 10am",
+                "push everything to next week", "delay the report by 3 days"
+
 Reply ONLY with valid JSON. No explanation.\
 """
 
@@ -189,7 +202,8 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "<b>overdue</b> — overdue tasks\n"
             "<b>priority</b> — what to focus on next\n"
             "<b>done [task]</b> — mark a task complete\n"
-            "<b>undo</b> — reverse your last capture or completion\n"
+            "<b>move [task] to [date]</b> — reschedule a task\n"
+            "<b>undo</b> — reverse your last capture, completion, or reschedule\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"
             "You'll also get your daily briefing and reminders automatically."
         )
@@ -239,6 +253,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "query_priority":
         return _reply_priority(tz_offset)
+
+    if action == "reschedule":
+        return _reply_reschedule(intent, tz_offset, chat_id)
 
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -724,6 +741,115 @@ def _reply_priority(tz_offset: int) -> str:
     return f"🎯 {suggestion}"
 
 
+def _section_for_date(d, today) -> str:
+    delta = (d - today).days
+    if delta <= 0:
+        return "today"
+    if delta <= 7:
+        return "week"
+    if delta <= 30:
+        return "month"
+    return "later"
+
+
+def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
+    """Find a card by match_query and update its date/section."""
+    from datetime import date as _date
+
+    query = (intent.get("match_query") or "").strip().lower()
+    if not query:
+        return "What task should I reschedule? Try: <b>move dentist to Thursday at 2pm</b>"
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    # Parse target date
+    date_str = intent.get("date")
+    target_date: _date | None = None
+    if date_str:
+        try:
+            target_date = _date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            pass
+
+    # Parse target time
+    time_str = intent.get("time")
+    target_time = None
+    if time_str:
+        try:
+            from datetime import time as _time
+            parts = time_str.split(":")
+            target_time = _time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+        except (ValueError, TypeError, IndexError):
+            pass
+
+    # Determine section
+    section = intent.get("section")
+    if section not in ("today", "week", "month", "later"):
+        section = _section_for_date(target_date, today) if target_date else None
+
+    if not target_date and not section:
+        return "I couldn't figure out the new date. Try: <b>move dentist to Thursday</b>"
+
+    # Build scheduled_at
+    scheduled_at = None
+    if target_date and target_time:
+        scheduled_at = datetime.combine(target_date, target_time)
+    elif target_date and not target_time:
+        scheduled_at = None  # date-only move — clear the time
+
+    if not section and target_date:
+        section = _section_for_date(target_date, today)
+
+    # Find card by fuzzy match (exact first, then substring)
+    with SessionLocal() as db:
+        candidates = db.query(models.Card).filter_by(completed=False, archived=False).all()
+        match = None
+        for c in candidates:
+            if c.title.lower() == query:
+                match = c
+                break
+        if not match:
+            for c in candidates:
+                if query in c.title.lower():
+                    match = c
+                    break
+
+        if not match:
+            return f'Couldn\'t find a task matching "{intent.get("match_query")}". Try <b>today</b> to see your list.'
+
+        old_section = match.section
+        old_scheduled_at = match.scheduled_at
+        card_id = match.id
+        title = match.title
+
+        if section:
+            match.section = section
+        if target_date:
+            match.scheduled_at = scheduled_at  # may be None if no time given
+        db.commit()
+
+    if chat_id:
+        _last_actions[chat_id] = {
+            "type": "reschedule",
+            "card_id": card_id,
+            "title": title,
+            "old_section": old_section,
+            "old_scheduled_at": old_scheduled_at,
+        }
+
+    # Build confirmation label
+    if target_date:
+        if target_time:
+            date_label = f"{target_date.strftime('%A, %b %-d')} at {target_time.strftime('%-I:%M %p')}"
+        else:
+            date_label = target_date.strftime('%A, %b %-d')
+    else:
+        date_label = {"today": "Today", "week": "This Week", "month": "This Month", "later": "Later"}.get(section, section)
+
+    return f"↗ Moved <b>{title}</b> to {date_label}\nSend <b>undo</b> to reverse."
+
+
 def _reply_undo(chat_id: str) -> str:
     """Reverse the most recent capture or mark_complete for this chat."""
     action = _last_actions.pop(chat_id, None)
@@ -750,5 +876,11 @@ def _reply_undo(chat_id: str) -> str:
             card.completed_at = None
             db.commit()
             return f"↩ Unmarked complete: <b>{title}</b>"
+
+        if action["type"] == "reschedule":
+            card.section      = action["old_section"]
+            card.scheduled_at = action["old_scheduled_at"]
+            db.commit()
+            return f"↩ Moved <b>{title}</b> back to {action['old_section'].title()}"
 
     return "Nothing to undo."
