@@ -255,6 +255,18 @@ class PushSubscription(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class MoodLog(Base):
+    """One energy/mood entry per calendar day."""
+    __tablename__ = "mood_logs"
+
+    id         = Column(Integer, primary_key=True)
+    date       = Column(String,   nullable=False, unique=True)  # YYYY-MM-DD
+    energy     = Column(Integer,  nullable=False)               # 1–5
+    note       = Column(String,   nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=True)
+
+
 class AppSetting(Base):
     """Generic key-value store for app-wide settings (e.g. export token)."""
     __tablename__ = "app_settings"

@@ -1,10 +1,84 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Pencil1Icon, CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
 import Collapsible from '../layout/Collapsible'
 import './HabitsPage.css'
 
 const KG_TO_LBS = 2.20462
+
+const ENERGY_LEVELS = [
+  { value: 1, emoji: '😴', label: 'Drained' },
+  { value: 2, emoji: '😔', label: 'Low' },
+  { value: 3, emoji: '😐', label: 'Okay' },
+  { value: 4, emoji: '😊', label: 'Good' },
+  { value: 5, emoji: '⚡', label: 'Energized' },
+]
+
+function MoodLogger({ moodToday, onLogMood }) {
+  const [energy, setEnergy] = useState(moodToday?.energy ?? null)
+  const [note, setNote] = useState(moodToday?.note ?? '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setEnergy(moodToday?.energy ?? null)
+    setNote(moodToday?.note ?? '')
+  }, [moodToday?.energy, moodToday?.note])
+
+  const savedEnergy = moodToday?.energy ?? null
+  const savedNote   = moodToday?.note ?? ''
+  const isDirty = energy !== savedEnergy || note !== savedNote
+  const showSaveRow = energy !== null && isDirty
+
+  const handleSave = async () => {
+    if (!energy) return
+    setSaving(true)
+    try {
+      await onLogMood(energy, note.trim() || null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const level = ENERGY_LEVELS.find(l => l.value === energy)
+
+  return (
+    <div className="mood-logger">
+      <div className="mood-logger-header">
+        <span className="mood-logger-label">Energy today</span>
+        {!isDirty && level && (
+          <span className="mood-logger-badge">{level.emoji} {level.label}</span>
+        )}
+      </div>
+      <div className="mood-logger-levels">
+        {ENERGY_LEVELS.map(l => (
+          <button
+            key={l.value}
+            className={`mood-level-btn${energy === l.value ? ' mood-level-btn--selected' : ''}`}
+            onClick={() => setEnergy(l.value)}
+            title={l.label}
+          >{l.emoji}</button>
+        ))}
+      </div>
+      {showSaveRow && (
+        <div className="mood-logger-row">
+          <input
+            className="mood-logger-note"
+            placeholder="Optional note…"
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSave()}
+          />
+          <button className="mood-logger-save" onClick={handleSave} disabled={saving}>
+            {saving ? '…' : 'Log'}
+          </button>
+        </div>
+      )}
+      {!isDirty && moodToday?.note && (
+        <div className="mood-logger-note-display">{moodToday.note}</div>
+      )}
+    </div>
+  )
+}
 
 function HabitsArchive({ habits, onUnarchive, onDelete }) {
   if (habits.length === 0) return null
@@ -54,7 +128,7 @@ function metricBadgeText(metric, goal, isImperial) {
   return metric
 }
 
-export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, isImperial = false }) {
+export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, isImperial = false, moodToday = null, onLogMood = null }) {
   const navigate = useNavigate()
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
@@ -288,6 +362,10 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
         onUnarchive={onUnarchive}
         onDelete={onDelete}
       />
+
+      {onLogMood && (
+        <MoodLogger moodToday={moodToday} onLogMood={onLogMood} />
+      )}
 
     </div>
   )

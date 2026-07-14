@@ -422,6 +422,109 @@
   color: #f87171;
 }
 
+/* ── Mood logger ── */
+.mood-logger {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.mood-logger-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mood-logger-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mood-logger-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mood-logger-levels {
+  display: flex;
+  gap: 6px;
+}
+
+.mood-level-btn {
+  font-size: 20px;
+  background: none;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.12s, border-color 0.12s, transform 0.1s;
+  line-height: 1;
+}
+
+.mood-level-btn:hover {
+  opacity: 0.8;
+  transform: scale(1.1);
+}
+
+.mood-level-btn--selected {
+  opacity: 1;
+  border-color: rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.07);
+}
+
+.mood-logger-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.mood-logger-note {
+  flex: 1;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 10px;
+  outline: none;
+}
+
+.mood-logger-note:focus {
+  border-color: rgba(255,255,255,0.25);
+}
+
+.mood-logger-save {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.mood-logger-save:hover:not(:disabled) {
+  background: rgba(255,255,255,0.14);
+}
+
+.mood-logger-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mood-logger-note-display {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* ── Mobile ── */
 @media (max-width: 640px) {
   .habit-card-streak {

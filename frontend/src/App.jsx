@@ -52,6 +52,7 @@ import {
   parseCard,
   checkAuth, logout,
   createFoodEntry,
+  logMood,
 } from './api'
 import './App.css'
 import { SECTIONS, SECTION_LABELS } from './lib/sections'
@@ -1004,6 +1005,7 @@ export default function App() {
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
           onSaveFood={createFoodEntry}
+          onLogMood={logMood}
           onToggleHabit={handleToggleHabit}
           onCompleteTask={async (id) => {
             const card = cards.find((c) => c.id === id)

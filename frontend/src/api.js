@@ -498,6 +498,28 @@ export async function deleteFoodEntry(id) {
   if (!res.ok) throw new Error('Failed to delete food entry')
 }
 
+export async function fetchMoodToday() {
+  const res = await apiFetch('/api/mood/today')
+  if (!res.ok) return null
+  return res.json()
+}
+
+export async function logMood(energy, note = null) {
+  const res = await apiFetch('/api/mood/log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ energy, note }),
+  })
+  if (!res.ok) throw new Error('Failed to log mood')
+  return res.json()
+}
+
+export async function fetchMoodRecent(days = 30) {
+  const res = await apiFetch(`/api/mood/recent?days=${days}`)
+  if (!res.ok) return []
+  return res.json()
+}
+
 export async function fetchTelegramConfig() {
   const res = await apiFetch('/api/telegram/config')
   if (!res.ok) throw new Error('Failed to fetch Telegram config')

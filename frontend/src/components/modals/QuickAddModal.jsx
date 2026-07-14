@@ -19,7 +19,14 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off', task_complete: 'Complete Task' }
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off', task_complete: 'Complete Task', mood: 'Energy Log' }
+const ENERGY_LEVELS = [
+  { value: 1, emoji: '😴', label: 'Drained' },
+  { value: 2, emoji: '😔', label: 'Low' },
+  { value: 3, emoji: '😐', label: 'Okay' },
+  { value: 4, emoji: '😊', label: 'Good' },
+  { value: 5, emoji: '⚡', label: 'Energized' },
+]
 const METRIC_LABELS = { steps: 'Steps', fat_ratio: 'Body Fat %', weight: 'Weight' }
 const KG_TO_LBS = 2.20462
 
@@ -83,6 +90,7 @@ export default function QuickAddModal({
   onSaveGoals,
   onSaveStepGoal,
   onSaveFood,
+  onLogMood,
   onToggleHabit,
   onCompleteTask,
   isImperial = false,
@@ -107,6 +115,7 @@ export default function QuickAddModal({
   const [withingsMetric, setWithingsMetric] = useState(null)
   const [withingsGoal, setWithingsGoal] = useState(null)
   const [matchedItem, setMatchedItem] = useState(null) // { kind: 'habit'|'task', id }
+  const [moodEnergy, setMoodEnergy] = useState(3)
   const [saving, setSaving] = useState(false)
 
   // ── Voice input ──
@@ -180,6 +189,13 @@ export default function QuickAddModal({
           runAssist(text.trim())
           return
         }
+        if (result.type === 'mood') {
+          setDetectedType('mood')
+          setMoodEnergy(result.energy ?? 3)
+          setDescription(result.description ?? '')
+          setStep('confirm')
+          return
+        }
         const tagIds = (result.suggested_tags ?? [])
           .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
           .filter(Boolean)
@@ -236,6 +252,8 @@ export default function QuickAddModal({
         await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
+      } else if (detectedType === 'mood' && onLogMood) {
+        await onLogMood(moodEnergy, description.trim() || null)
       } else {
         await onSaveCard(buildCardPayload())
       }
@@ -368,13 +386,15 @@ export default function QuickAddModal({
   }
 
   const confirmDisabled = saving || (
-    detectedType === 'goal'
-      ? (!withingsMetric || withingsGoal == null)
-      : detectedType === 'food'
-        ? !text.trim()
-        : (detectedType === 'habit_check' || detectedType === 'task_complete')
-          ? !matchedItem
-          : !title.trim()
+    detectedType === 'mood'
+      ? !moodEnergy
+      : detectedType === 'goal'
+        ? (!withingsMetric || withingsGoal == null)
+        : detectedType === 'food'
+          ? !text.trim()
+          : (detectedType === 'habit_check' || detectedType === 'task_complete')
+            ? !matchedItem
+            : !title.trim()
   )
 
   const renderCardFields = (idPrefix) => (
@@ -669,6 +689,31 @@ export default function QuickAddModal({
             </div>
           )}
 
+          {/* Mood confirm */}
+          {detectedType === 'mood' && (
+            <div className="quick-mood-confirm">
+              <div className="quick-mood-levels">
+                {ENERGY_LEVELS.map(l => (
+                  <button
+                    key={l.value}
+                    type="button"
+                    className={`mood-level-btn${moodEnergy === l.value ? ' mood-level-btn--selected' : ''}`}
+                    onClick={() => setMoodEnergy(l.value)}
+                    title={l.label}
+                  >{l.emoji}</button>
+                ))}
+              </div>
+              <input
+                className="quick-add-input"
+                placeholder="Optional note…"
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleConfirm()}
+                style={{ marginTop: 12 }}
+              />
+            </div>
+          )}
+
           {/* Completion header — for habit_check and task_complete */}
           {(detectedType === 'habit_check' || detectedType === 'task_complete') && (
             <div className="quick-complete-header">
@@ -750,6 +795,7 @@ export default function QuickAddModal({
             <button className="btn-cancel" onClick={() => setStep('input')}>Back</button>
             <button className="btn-save" onClick={handleConfirm} disabled={confirmDisabled}>
               {saving ? 'Saving…'
+                : detectedType === 'mood' ? 'Log Energy'
                 : detectedType === 'goal' ? 'Set Goal'
                 : detectedType === 'food' ? 'Log Food'
                 : (detectedType === 'habit_check' || detectedType === 'task_complete') ? 'Mark Done'

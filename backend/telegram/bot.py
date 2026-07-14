@@ -103,6 +103,16 @@ The "action" field must be one of:
       Examples: "what am I avoiding?", "what have I been putting off?",
                 "what keeps getting pushed?", "what am I procrastinating on?"
 
+  "log_mood"
+      User is logging their current energy or mood level.
+      Also return:
+        "energy" — integer 1–5 (1=drained/exhausted, 2=tired/low, 3=okay/neutral,
+                   4=good/focused, 5=great/energized/amazing)
+        "note"   — brief descriptor extracted from the message, or null
+      If user gives N/5, use N directly. If N/10, convert to nearest 1–5.
+      Examples: "feeling great today", "pretty tired 3/5", "energy 4", "exhausted",
+                "low energy today", "feeling focused and productive"
+
   "reschedule"
       User wants to move or reschedule an existing task to a different date, time, or section.
       Also return:
@@ -317,6 +327,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "query_avoiding":
         return _reply_avoiding(tz_offset)
+
+    if action == "log_mood":
+        return _reply_log_mood(intent, tz_offset)
 
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -896,6 +909,35 @@ def _reply_priority(tz_offset: int) -> str:
         return f"🎯 Start with: <b>{today_cards[0].title}</b>"
 
     return f"🎯 {suggestion}"
+
+
+_ENERGY_LABELS = {1: "😴 Drained", 2: "😔 Low", 3: "😐 Okay", 4: "😊 Good", 5: "⚡ Energized"}
+
+
+def _reply_log_mood(intent: dict, tz_offset: int) -> str:
+    """Log today's energy level."""
+    try:
+        energy = max(1, min(5, int(float(str(intent.get("energy") or "3")))))
+    except (ValueError, TypeError):
+        energy = 3
+    note = intent.get("note") or None
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today_str = now_local.date().isoformat()
+
+    with SessionLocal() as db:
+        row = db.query(models.MoodLog).filter_by(date=today_str).first()
+        if row:
+            row.energy = energy
+            row.note = note
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            db.add(models.MoodLog(date=today_str, energy=energy, note=note))
+        db.commit()
+
+    label = _ENERGY_LABELS.get(energy, "😐 Okay")
+    note_part = f" — {note}" if note else ""
+    return f"✓ Energy logged: <b>{label}</b>{note_part}"
 
 
 def _reply_complete_habit(query: str, chat_id: str = "") -> str:

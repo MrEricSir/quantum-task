@@ -35,9 +35,10 @@ class ParseRequest(BaseModel):
 
 
 class ParsedCard(BaseModel):
-    type: Literal["task", "habit", "goal", "food", "habit_check", "task_complete", "assist"] = "task"
+    type: Literal["task", "habit", "goal", "food", "habit_check", "task_complete", "assist", "mood"] = "task"
     title: str
     description: Optional[str] = None
+    energy: Optional[int] = None          # 1–5, only for type='mood'
     section: Literal["today", "week", "month", "later"] = "later"
     scheduled_at: Optional[datetime] = None
     suggested_tags: List[str] = []

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime, fetchMoodToday, logMood } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import HabitsPage from './HabitsPage'
 import './HealthPage.css'
@@ -747,6 +747,16 @@ function FoodLog() {
 export default function HealthPage({ habits = [], archivedHabits = [], onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false }) {
   const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
+  const [moodToday, setMoodToday] = useState(null)
+
+  useEffect(() => {
+    fetchMoodToday().then(data => { if (data) setMoodToday(data) }).catch(() => {})
+  }, [])
+
+  const handleLogMood = async (energy, note) => {
+    const result = await logMood(energy, note)
+    setMoodToday(result)
+  }
 
   const toDisplay = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
   const weightUnit = isImperial ? ' lbs' : ' kg'
@@ -818,6 +828,8 @@ export default function HealthPage({ habits = [], archivedHabits = [], onToggleH
         onArchive={onArchiveHabit}
         onUnarchive={onUnarchiveHabit}
         isImperial={isImperial}
+        moodToday={moodToday}
+        onLogMood={handleLogMood}
       />
 
       <div className="health-page-header">

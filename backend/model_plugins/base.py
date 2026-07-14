@@ -85,6 +85,15 @@ Fields:
                           "can you suggest tasks for my project", "how should I prioritize?"
                           Do NOT use for imperative statements like "call dentist" or
                           "meditate daily" — those are tasks/habits even if phrased as requests.
+                  mood  = logging current energy or mood level
+                          Use when the input describes how the user is feeling or their energy.
+                          Examples: "feeling great today", "pretty tired 3/5", "energy level 4",
+                          "low energy today", "feeling focused and productive", "exhausted"
+                          Set title to a short description (e.g. "Good energy", "Feeling drained")
+                          Set energy to an integer 1–5:
+                            1 = drained/exhausted  2 = tired/low  3 = okay/neutral
+                            4 = good/focused       5 = great/energized
+                          If user gives N/5, use N directly. If N/10, round to nearest (N+1)/2.
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
@@ -367,7 +376,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit", "goal", "assist", "food", "habit_check", "task_complete"}
+    _VALID_TYPES = {"task", "habit", "goal", "assist", "food", "habit_check", "task_complete", "mood"}
 
     def normalize_raw(self, raw: dict) -> dict:
         """
@@ -419,6 +428,15 @@ class BaseModelPlugin:
             # Ensure a non-empty title for assist items (other fields unused by frontend)
             if type_val == "assist" and not raw.get("title"):
                 raw["title"] = "Assist"
+            # Normalise energy (1-5) for mood entries — LLM may return a string or float
+            if type_val == "mood":
+                try:
+                    raw["energy"] = max(1, min(5, int(float(str(raw.get("energy") or "3")))))
+                except (ValueError, TypeError):
+                    raw["energy"] = 3
+                if not raw.get("title"):
+                    raw["title"] = {1: "Drained", 2: "Low energy", 3: "Okay",
+                                    4: "Good energy", 5: "Energized"}[raw["energy"]]
         else:
             raw["type"] = "task"
 
@@ -472,8 +490,8 @@ class BaseModelPlugin:
         Called on the validated ParsedCard after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
-        # Assist items need no further processing — the frontend streams them directly.
-        if parsed.type == "assist":
+        # Assist and mood items need no further processing.
+        if parsed.type in ("assist", "mood"):
             return parsed
 
         lowered = text.strip().lower()
