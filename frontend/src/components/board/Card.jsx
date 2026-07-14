@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import * as Checkbox from '@radix-ui/react-checkbox'
@@ -57,6 +57,12 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
     else onSelect?.(card)
   }
 
+  const metaParts = []
+  if (card.scheduled_at) metaParts.push({ key: 'time', cls: null, text: formatScheduled(card.scheduled_at) })
+  if (card.recurrence_rule) metaParts.push({ key: 'rec', cls: 'card-recurrence', text: card.recurrence_rule })
+  if (overdueDays > 0 && !inOverdueGroup) metaParts.push({ key: 'overdue', cls: 'card-meta-overdue', text: `${overdueDays}d overdue` })
+  if (card.waiting_reason) metaParts.push({ key: 'wait', cls: 'card-meta-waiting', text: `Waiting: ${card.waiting_reason}` })
+
   return (
     <div
       ref={isOverlay ? undefined : setNodeRef}
@@ -91,23 +97,14 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         )}
       </div>
 
-      {(card.scheduled_at || card.recurrence_rule || (overdueDays > 0 && !inOverdueGroup)) && (
+      {metaParts.length > 0 && (
         <div className="event-time">
-          {card.scheduled_at && <><span className="clock-icon">&#128337;</span>{formatScheduled(card.scheduled_at)}</>}
-          {card.recurrence_rule && (
-            <span className="card-recurrence">&#8635; {card.recurrence_rule}</span>
-          )}
-          {overdueDays > 0 && !inOverdueGroup && (
-            <span className="card-overdue-badge">
-              &#9888; {overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`}
-            </span>
-          )}
-        </div>
-      )}
-
-      {card.waiting_reason && (
-        <div className="card-waiting-badge">
-          &#9203; Waiting: {card.waiting_reason}
+          {metaParts.map((p, i) => (
+            <Fragment key={p.key}>
+              {i > 0 && <span className="card-meta-sep">·</span>}
+              <span className={p.cls || undefined}>{p.text}</span>
+            </Fragment>
+          ))}
         </div>
       )}
 
