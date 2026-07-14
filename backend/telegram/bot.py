@@ -65,8 +65,18 @@ The "action" field must be one of:
       Also return "match_query": the task title or fragment to match.
       Examples: "done with dentist", "finished the report", "mark groceries complete"
 
+  "undo"
+      User wants to reverse their last action (capture or mark_complete).
+      Examples: "undo", "undo that", "wait, cancel that", "actually never mind"
+
 Reply ONLY with valid JSON. No explanation.\
 """
+
+
+# ── Undo state (in-memory, per chat) ─────────────────────────────────────────
+# Stores the most recent reversible action per chat_id.
+# {"type": "capture"|"mark_complete", "card_id": int, "title": str}
+_last_actions: dict[str, dict] = {}
 
 
 # ── LLM intent classification ─────────────────────────────────────────────────
@@ -131,7 +141,7 @@ def handle_update(update: dict) -> None:
             return
 
         print(f"[telegram] routing message: {text[:80]!r}")
-        reply = _route_message(text, tz_offset)
+        reply = _route_message(text, tz_offset, chat_id)
         print(f"[telegram] reply preview: {reply[:80]!r}")
         ok = send_message(token, chat_id, reply)
         print(f"[telegram] send_message ok={ok}")
@@ -142,7 +152,7 @@ def handle_update(update: dict) -> None:
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 
-def _route_message(text: str, tz_offset: int) -> str:
+def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     """Classify the user's message via LLM and dispatch to the right handler."""
     lower = text.lower().strip()
 
@@ -155,6 +165,7 @@ def _route_message(text: str, tz_offset: int) -> str:
             "<b>habits</b> — habit status\n"
             "<b>overdue</b> — overdue tasks\n"
             "<b>done [task]</b> — mark a task complete\n"
+            "<b>undo</b> — reverse your last capture or completion\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"
             "You'll also get your daily briefing and reminders automatically."
         )
@@ -167,6 +178,8 @@ def _route_message(text: str, tz_offset: int) -> str:
         return _reply_habits(tz_offset)
     if lower == "overdue":
         return _reply_overdue(tz_offset)
+    if lower in ("undo", "undo that", "cancel that", "never mind", "nevermind"):
+        return _reply_undo(chat_id)
 
     # LLM intent classification for everything else
     print(f"[telegram] classifying intent: {text[:60]!r}")
@@ -175,10 +188,13 @@ def _route_message(text: str, tz_offset: int) -> str:
     except Exception as e:
         print(f"[telegram] intent parse failed: {e}")
         print(traceback.format_exc())
-        return _capture_plain(text, tz_offset)
+        return _capture_plain(text, tz_offset, chat_id)
 
     action = intent.get("action", "capture")
     print(f"[telegram] intent={action!r} data={str(intent)[:120]}")
+
+    if action == "undo":
+        return _reply_undo(chat_id)
 
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -201,10 +217,10 @@ def _route_message(text: str, tz_offset: int) -> str:
         query = intent.get("match_query") or ""
         if not query:
             return "What task should I mark complete? Try: <b>done [task name]</b>"
-        return _reply_complete(query)
+        return _reply_complete(query, chat_id)
 
     # "capture" or anything unrecognised
-    return _capture_from_intent(intent, text, tz_offset)
+    return _capture_from_intent(intent, text, tz_offset, chat_id)
 
 
 # ── Calendar helpers ──────────────────────────────────────────────────────────
@@ -395,7 +411,7 @@ def _reply_overdue(tz_offset: int) -> str:
     return "\n".join(lines)
 
 
-def _reply_complete(query: str) -> str:
+def _reply_complete(query: str, chat_id: str = "") -> str:
     query_lower = query.lower()
 
     with SessionLocal() as db:
@@ -416,13 +432,17 @@ def _reply_complete(query: str) -> str:
 
         match.completed = True
         match.completed_at = datetime.now(timezone.utc)
+        card_id = match.id
         title = match.title
         db.commit()
 
-    return f"✓ Marked complete: <b>{title}</b>"
+    if chat_id:
+        _last_actions[chat_id] = {"type": "mark_complete", "card_id": card_id, "title": title}
+
+    return f"✓ Marked complete: <b>{title}</b>\nSend <b>undo</b> to reverse."
 
 
-def _capture_from_intent(intent: dict, original_text: str, tz_offset: int) -> str:
+def _capture_from_intent(intent: dict, original_text: str, tz_offset: int, chat_id: str = "") -> str:
     """Create a card from a 'capture' intent returned by the LLM."""
     section = intent.get("section") or "later"
     if section not in ("today", "week", "month", "later"):
@@ -451,19 +471,58 @@ def _capture_from_intent(intent: dict, original_text: str, tz_offset: int) -> st
             card.tags = db.query(models.Tag).filter(models.Tag.name.in_(tag_names)).all()
         db.add(card)
         db.commit()
+        card_id = card.id
         section_label = {
             "today": "Today", "week": "This Week",
             "month": "This Month", "later": "Later",
         }.get(card.section, card.section)
 
-    return f"✓ Added to <b>{section_label}</b>: {card.title}"
+    if chat_id:
+        _last_actions[chat_id] = {"type": "capture", "card_id": card_id, "title": title}
+
+    return f"✓ Added to <b>{section_label}</b>: {title}\nSend <b>undo</b> to remove it."
 
 
-def _capture_plain(text: str, tz_offset: int) -> str:
+def _capture_plain(text: str, tz_offset: int, chat_id: str = "") -> str:
     """Fallback: create a plain card in Today when the LLM fails."""
     with SessionLocal() as db:
         pos = db.query(models.Card).filter_by(section="today").count()
         card = models.Card(title=text, section="today", position=pos)
         db.add(card)
         db.commit()
-    return f"✓ Added to <b>Today</b>: {text}"
+        card_id = card.id
+
+    if chat_id:
+        _last_actions[chat_id] = {"type": "capture", "card_id": card_id, "title": text}
+
+    return f"✓ Added to <b>Today</b>: {text}\nSend <b>undo</b> to remove it."
+
+
+def _reply_undo(chat_id: str) -> str:
+    """Reverse the most recent capture or mark_complete for this chat."""
+    action = _last_actions.pop(chat_id, None)
+    if not action:
+        return "Nothing to undo."
+
+    card_id = action["card_id"]
+    title   = action["title"]
+
+    with SessionLocal() as db:
+        card = db.query(models.Card).filter_by(id=card_id).first()
+        if not card:
+            return f'Could not undo — "{title}" no longer exists.'
+
+        if action["type"] == "capture":
+            db.delete(card)
+            db.commit()
+            return f"↩ Removed: <b>{title}</b>"
+
+        if action["type"] == "mark_complete":
+            if not card.completed:
+                return f'"{title}" is already not marked complete.'
+            card.completed    = False
+            card.completed_at = None
+            db.commit()
+            return f"↩ Unmarked complete: <b>{title}</b>"
+
+    return "Nothing to undo."

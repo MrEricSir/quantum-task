@@ -72,6 +72,12 @@ export default function App() {
   const [tagsLoading, setTagsLoading] = useState(true)
   const [briefingKey, setBriefingKey] = useState(0)
   const invalidateBriefing = useCallback(() => setBriefingKey((k) => k + 1), [])
+
+  const showUndo = useCallback((label, onUndo) => {
+    clearTimeout(undoTimerRef.current)
+    setUndoAction({ label, onUndo })
+    undoTimerRef.current = setTimeout(() => setUndoAction(null), 5000)
+  }, [])
   const {
     showModal,
     showQuickAdd, setShowQuickAdd,
@@ -88,6 +94,8 @@ export default function App() {
     openEdit: openEditModal, openNewCard: openNewCardModal, closeModal,
   } = useModals()
   const [quickAddStep, setQuickAddStep] = useState('input')
+  const [undoAction, setUndoAction] = useState(null) // {label, onUndo}
+  const undoTimerRef = useRef(null)
   const [activeCard, setActiveCard] = useState(null)
   const [selectedCardId, setSelectedCardId] = useState(null)
   const [panelInitialMode, setPanelInitialMode] = useState('view')
@@ -965,6 +973,20 @@ export default function App() {
         shortcuts={shortcutsRef.current}
       />
 
+      {undoAction && (
+        <div className="undo-toast">
+          <span className="undo-toast-label">Added: {undoAction.label}</span>
+          <button
+            className="undo-toast-btn"
+            onClick={() => {
+              clearTimeout(undoTimerRef.current)
+              undoAction.onUndo()
+              setUndoAction(null)
+            }}
+          >Undo</button>
+        </div>
+      )}
+
       {showQuickAdd && (
         <QuickAddModal
           allTags={visibleTags}
@@ -973,13 +995,21 @@ export default function App() {
           cards={cards}
           initialStep={quickAddStep}
           onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
-          onSaveCard={async (data) => { await handleAddCard(data) }}
+          onSaveCard={async (data) => {
+            const card = await handleAddCard(data)
+            if (card) showUndo(card.title, () => handleDeleteCard(card.id))
+            return card
+          }}
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
           onSaveFood={createFoodEntry}
           onToggleHabit={handleToggleHabit}
-          onCompleteTask={async (id) => { await handleUpdateCard(id, { completed: true }) }}
+          onCompleteTask={async (id) => {
+            const card = cards.find((c) => c.id === id)
+            await handleUpdateCard(id, { completed: true })
+            if (card) showUndo(card.title, () => handleUpdateCard(id, { completed: false }))
+          }}
           isImperial={isImperial}
           initialText={quickAddInitialText}
         />
