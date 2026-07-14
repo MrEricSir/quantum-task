@@ -60,6 +60,8 @@ OVERDUE_NUDGE_LAST_SENT = "overdue_nudge_last_sent"
 EVENING_SUMMARY_LAST_SENT = "evening_summary_last_sent"
 # JSON {"date": "YYYY-MM-DD", "ids": [...]} — event IDs already alerted today.
 MEETING_ALERTS_SENT = "meeting_alerts_sent"
+# JSON {"habit_id:milestone": "YYYY-MM-DD"} — tracks when each streak milestone was sent.
+STREAK_MILESTONES_SENT = "streak_milestones_sent"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.

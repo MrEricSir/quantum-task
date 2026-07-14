@@ -30,6 +30,7 @@ Reference dates:
   Tomorrow : {tomorrow}
 
 {tags_section}
+{habits_section}
 {last_card_section}
 
 The "action" field must be one of:
@@ -90,6 +91,18 @@ The "action" field must be one of:
       Examples: "what should I work on?", "what's my priority?", "what should I do next?",
                 "help me focus", "what's most important right now?"
 
+  "complete_habit"
+      User is marking a habit done for today. Use this when the thing being completed
+      matches one of the available habits, not a task.
+      Also return "match_query": the habit name or fragment to match.
+      Examples: "done meditation", "finished yoga", "did my workout", "mark reading complete",
+                "exercise done", "I meditated"
+
+  "query_avoiding"
+      User wants to know what they've been putting off or avoiding.
+      Examples: "what am I avoiding?", "what have I been putting off?",
+                "what keeps getting pushed?", "what am I procrastinating on?"
+
   "reschedule"
       User wants to move or reschedule an existing task to a different date, time, or section.
       Also return:
@@ -135,9 +148,11 @@ def _parse_telegram_intent(text: str, tz_offset: int, chat_id: str = "") -> dict
     tomorrow = today + timedelta(days=1)
 
     with SessionLocal() as db:
-        tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
+        tag_names   = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
+        habit_names = [h.name for h in db.query(models.Habit).filter_by(archived=False).order_by(models.Habit.id).all()]
 
-    tags_section = f"Available tags: {', '.join(tag_names)}" if tag_names else "No tags defined."
+    tags_section   = f"Available tags: {', '.join(tag_names)}"   if tag_names   else "No tags defined."
+    habits_section = f"Available habits: {', '.join(habit_names)}" if habit_names else "No habits defined."
 
     last_card_section = ""
     if chat_id:
@@ -154,6 +169,7 @@ def _parse_telegram_intent(text: str, tz_offset: int, chat_id: str = "") -> dict
         weekday=today.strftime("%A"),
         tomorrow=tomorrow.isoformat(),
         tags_section=tags_section,
+        habits_section=habits_section,
         last_card_section=last_card_section,
     )
 
@@ -234,7 +250,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "<b>overdue</b> — overdue tasks\n"
             "<b>priority</b> — what to focus on next\n"
             "<b>done [task]</b> — mark a task complete\n"
+            "<b>done [habit]</b> — mark a habit complete (e.g. done meditation)\n"
             "<b>move [task] to [date]</b> — reschedule a task\n"
+            "<b>avoiding</b> — see what you've been putting off\n"
             "<b>undo</b> — reverse your last capture, completion, or reschedule\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"
             "You'll also get your daily briefing and reminders automatically."
@@ -258,6 +276,8 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_streaks(tz_offset)
     if lower in ("priority", "focus", "next"):
         return _reply_priority(tz_offset)
+    if lower in ("avoiding", "procrastinating", "putting off"):
+        return _reply_avoiding(tz_offset)
 
     # LLM intent classification for everything else
     print(f"[telegram] classifying intent: {text[:60]!r}")
@@ -288,6 +308,15 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "reschedule":
         return _reply_reschedule(intent, tz_offset, chat_id)
+
+    if action == "complete_habit":
+        query = intent.get("match_query") or ""
+        if not query:
+            return "Which habit did you complete? Try: <b>done meditation</b>"
+        return _reply_complete_habit(query, chat_id)
+
+    if action == "query_avoiding":
+        return _reply_avoiding(tz_offset)
 
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -867,6 +896,123 @@ def _reply_priority(tz_offset: int) -> str:
         return f"🎯 Start with: <b>{today_cards[0].title}</b>"
 
     return f"🎯 {suggestion}"
+
+
+def _reply_complete_habit(query: str, chat_id: str = "") -> str:
+    """Mark a habit complete for today."""
+    from streak import recompute_from
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None)  # rough — used only for date
+    with SessionLocal() as db:
+        s = Settings(db)
+        tz_offset = s.tz_offset
+        today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
+        today_str = today.isoformat()
+
+        habits = db.query(models.Habit).filter_by(archived=False).all()
+        q = query.lower().strip()
+
+        # Exact match first, then substring, then word overlap
+        match = None
+        for h in habits:
+            if h.name.lower() == q:
+                match = h
+                break
+        if not match:
+            for h in habits:
+                if q in h.name.lower() or h.name.lower() in q:
+                    match = h
+                    break
+        if not match:
+            q_words = {w for w in q.split() if len(w) > 2}
+            if q_words:
+                best, best_score = None, 0
+                for h in habits:
+                    score = len(q_words & set(h.name.lower().split()))
+                    if score > best_score:
+                        best, best_score = h, score
+                if best_score > 0:
+                    match = best
+
+        if not match:
+            names = ", ".join(h.name for h in habits) if habits else "none"
+            return f'No habit matching "{query}". Your habits: {names}'
+
+        # Check if already done today
+        existing = db.query(models.HabitCompletion).filter_by(habit_id=match.id, date=today_str).first()
+        if existing:
+            return f"✓ <b>{match.name}</b> was already marked done today."
+
+        db.add(models.HabitCompletion(habit_id=match.id, date=today_str))
+        db.flush()
+        recompute_from(db, match.id, today)
+        db.commit()
+
+        # Get current streak for a little feedback
+        from streak import get_current_streak
+        streak = get_current_streak(db, match.id, today)
+
+    streak_note = f" ({streak}-day streak 🔥)" if streak >= 2 else ""
+    return f"✓ <b>{match.name}</b> done for today{streak_note}"
+
+
+def _reply_avoiding(tz_offset: int) -> str:
+    """LLM-powered analysis of stale/repeatedly-pushed tasks."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+    cutoff_date = today - timedelta(days=3)
+    stale_created = today - timedelta(days=7)
+
+    with SessionLocal() as db:
+        candidates = db.query(models.Card).filter(
+            models.Card.completed == False,   # noqa: E712
+            models.Card.archived == False,    # noqa: E712
+            models.Card.section.in_(["today", "week"]),
+        ).all()
+
+    # Overdue by >3 days, or sitting in today/week for >7 days without a scheduled date
+    stuck = []
+    for c in candidates:
+        if c.scheduled_at and c.scheduled_at.date() <= cutoff_date:
+            days_overdue = (today - c.scheduled_at.date()).days
+            stuck.append((c.title, f"{days_overdue}d overdue"))
+        elif not c.scheduled_at and c.created_at:
+            created_local = (c.created_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
+            if created_local <= stale_created:
+                days_old = (today - created_local).days
+                stuck.append((c.title, f"added {days_old}d ago, never scheduled"))
+
+    if not stuck:
+        return "Nothing looks stuck right now — you're on top of things!"
+
+    task_lines = "\n".join(f"- {title} ({reason})" for title, reason in stuck)
+    system = (
+        "You are a direct, empathetic productivity coach. The user has these tasks "
+        "that appear to be stuck or repeatedly avoided. Call them out honestly — "
+        "name the tasks specifically, speculate briefly on why they might be stuck "
+        "(too vague? too big? dreading it?), and end with one practical suggestion. "
+        "2-4 sentences. No bullet points."
+    )
+    try:
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"My stuck tasks:\n{task_lines}"},
+            ],
+            timeout=15,
+            temperature=0.4,
+        )
+        insight = resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[telegram] avoiding LLM error: {e}")
+        lines = [f"<b>🪨 {len(stuck)} stuck task{'s' if len(stuck) != 1 else ''}</b>\n"]
+        for title, reason in stuck:
+            lines.append(f"• {title} ({reason})")
+        return "\n".join(lines)
+
+    header = f"<b>🪨 {len(stuck)} task{'s' if len(stuck) != 1 else ''} that keep getting pushed</b>\n"
+    return header + insight
 
 
 def _section_for_date(d, today) -> str:

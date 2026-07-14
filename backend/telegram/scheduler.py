@@ -227,6 +227,56 @@ def check_overdue_nudge(db: Session, token: str, chat_id: str,
     return "sent" if send_message(token, chat_id, "\n".join(lines)) else "send_failed"
 
 
+_STREAK_MILESTONES = [3, 7, 14, 21, 30, 60, 100, 365]
+
+
+def check_streak_milestones(db: Session, token: str, chat_id: str,
+                              now_local: datetime, today) -> str:
+    """Send a celebration message when a habit streak crosses a milestone."""
+    from streak import get_current_streak
+
+    s = Settings(db)
+    try:
+        sent_map: dict = _json.loads(s.streak_milestones_sent) if s.streak_milestones_sent else {}
+    except Exception:
+        sent_map = {}
+
+    habits = db.query(models.Habit).filter_by(archived=False).all()
+    alerts = []
+
+    for h in habits:
+        streak = get_current_streak(db, h.id, today)
+        if streak not in _STREAK_MILESTONES:
+            continue
+        key = f"{h.id}:{streak}"
+        if sent_map.get(key) == today.isoformat():
+            continue  # already sent today
+        alerts.append((h.name, streak))
+        sent_map[key] = today.isoformat()
+
+    if not alerts:
+        return "skipped: no milestones"
+
+    s.set(keys.STREAK_MILESTONES_SENT, _json.dumps(sent_map))
+    db.commit()
+
+    sent = 0
+    for name, days in alerts:
+        if days >= 100:
+            medal = "🏆"
+        elif days >= 30:
+            medal = "🥇"
+        elif days >= 14:
+            medal = "🥈"
+        else:
+            medal = "🔥"
+        text = f"{medal} <b>{days}-day {name} streak!</b> Keep it going."
+        if send_message(token, chat_id, text):
+            sent += 1
+
+    return f"sent: {sent} milestone(s)"
+
+
 def check_all(db: Session) -> dict:
     """Run all scheduled checks. Called by the main.py background scheduler."""
     s = Settings(db)
@@ -241,8 +291,9 @@ def check_all(db: Session) -> dict:
     today     = now_local.date()
 
     return {
-        "briefing":         check_briefing(db, token, chat_id, tz_offset, now_local, today),
-        "evening_summary":  check_evening_summary(db, token, chat_id, tz_offset, now_local, today),
-        "overdue_nudge":    check_overdue_nudge(db, token, chat_id, now_local, today),
-        "meeting_alerts":   check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
+        "briefing":           check_briefing(db, token, chat_id, tz_offset, now_local, today),
+        "evening_summary":    check_evening_summary(db, token, chat_id, tz_offset, now_local, today),
+        "overdue_nudge":      check_overdue_nudge(db, token, chat_id, now_local, today),
+        "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
+        "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),
     }

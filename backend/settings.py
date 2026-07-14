@@ -85,6 +85,10 @@ class Settings:
     def meeting_alerts_sent(self) -> str:
         return self.get(keys.MEETING_ALERTS_SENT, "")
 
+    @property
+    def streak_milestones_sent(self) -> str:
+        return self.get(keys.STREAK_MILESTONES_SENT, "")
+
     # ── GitHub ────────────────────────────────────────────────────────────────
 
     @property
