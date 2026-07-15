@@ -118,10 +118,10 @@ function DiscoveryPanel({ refreshTrigger }) {
   // added: set of event ids added to calendar
   const [added, setAdded] = useState(new Set())
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setLoading(true)
     try {
-      const [data, fb] = await Promise.all([fetchDiscoveryEvents(), fetchDiscoveryFeedback()])
+      const [data, fb] = await Promise.all([fetchDiscoveryEvents({ force }), fetchDiscoveryFeedback()])
       const fbMap = {}
       const disliked = new Set()
       for (const r of fb) {
@@ -139,7 +139,11 @@ function DiscoveryPanel({ refreshTrigger }) {
     }
   }, [])
 
-  useEffect(() => { load() }, [load, refreshTrigger])
+  useEffect(() => {
+    // refreshTrigger === 0 → initial load (serve from cache).
+    // refreshTrigger > 0  → user clicked refresh (bypass ranking cache).
+    load(refreshTrigger > 0)
+  }, [load, refreshTrigger])
 
   const handleFeedback = useCallback(async (ev, interested) => {
     const uid = ev.uid || ev.id

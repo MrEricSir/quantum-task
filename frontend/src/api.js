@@ -245,8 +245,8 @@ export async function saveDiscoveryInterests(interests) {
   return res.json()
 }
 
-export async function fetchDiscoveryEvents() {
-  const res = await apiFetch('/api/discovery/events')
+export async function fetchDiscoveryEvents({ force = false } = {}) {
+  const res = await apiFetch(`/api/discovery/events${force ? '?force=true' : ''}`)
   if (!res.ok) throw new Error('Failed to fetch discovery events')
   return res.json()
 }

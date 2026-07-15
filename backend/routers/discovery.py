@@ -1,12 +1,14 @@
 """Event discovery: public iCal feeds + LLM-based ranking against user interests."""
 
 import hashlib
+import html
 import json
+import re
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Request
 from sqlalchemy.orm import Session
 
 import gcal as gcal_lib
@@ -70,6 +72,71 @@ def _ranking_key(interests: str, liked_uids: list, disliked_uids: list, event_id
         "e": sorted(event_ids),
     })
     return hashlib.sha256(payload.encode()).hexdigest()
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_MULTI_NEWLINE_RE = re.compile(r"\n{2,}")
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and decode entities for cleaner LLM input."""
+    text = _HTML_TAG_RE.sub(" ", text)
+    text = html.unescape(text)
+    text = _MULTI_NEWLINE_RE.sub("\n", text)
+    return text.strip()
+
+
+_REFINE_SYSTEM = """\
+You refine a user's event-interest profile based on their explicit thumbs-up / thumbs-down \
+feedback. Update the profile to be more specific and predictive. Keep it concise (2–4 sentences). \
+Preserve existing accurate preferences; sharpen or remove ones the feedback contradicts. \
+Respond ONLY with the updated profile text — no preamble, no quotes.\
+"""
+
+
+def _refine_interests_bg(liked_titles: list[str], disliked_titles: list[str],
+                          current_interests: str) -> None:
+    """Background task: ask the LLM to update the interest profile from feedback."""
+    if not liked_titles and not disliked_titles:
+        return
+    parts = [f"Current interest profile:\n{current_interests or '(none yet)'}"]
+    if liked_titles:
+        parts.append("Events the user LIKED:\n" + "\n".join(f"- {t}" for t in liked_titles))
+    if disliked_titles:
+        parts.append("Events the user DISLIKED:\n" + "\n".join(f"- {t}" for t in disliked_titles))
+    try:
+        from database import SessionLocal
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _REFINE_SYSTEM},
+                {"role": "user", "content": "\n\n".join(parts)},
+            ],
+            max_tokens=300,
+            temperature=0.4,
+        )
+        refined = resp.choices[0].message.content.strip()
+        # Strip common preamble labels the model may emit despite instructions.
+        for prefix in ("Updated interest profile:", "Interest profile:", "Profile:"):
+            if refined.lower().startswith(prefix.lower()):
+                refined = refined[len(prefix):].strip()
+                break
+        if not refined:
+            return
+        db = SessionLocal()
+        try:
+            row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
+            if row:
+                row.value = refined
+            else:
+                db.add(models.AppSetting(key=setting_keys.DISCOVERY_INTERESTS, value=refined))
+            db.commit()
+        finally:
+            db.close()
+        _ranking_cache.clear()
+        print(f"[discovery] interests refined: {refined[:80]}…")
+    except Exception as e:
+        print(f"[discovery] interest refinement error: {e}")
+
 
 _RANK_SYSTEM = """\
 You are a personal event recommender. Given a user's interest description and a list of \
@@ -168,7 +235,7 @@ def test_discovery_feeds(request: Request, db: Session = Depends(get_db)):
 # ── Fetch + rank events ────────────────────────────────────────────────────
 
 @router.get("/api/discovery/events", response_model=List[schemas.DiscoveryEventOut])
-def get_discovery_events(request: Request, db: Session = Depends(get_db)):
+def get_discovery_events(request: Request, db: Session = Depends(get_db), force: bool = False):
     feeds = db.query(models.EventDiscoveryFeed).all()
     if not feeds:
         return []
@@ -244,7 +311,15 @@ def get_discovery_events(request: Request, db: Session = Depends(get_db)):
             else:
                 seen[ev_id] = candidate
 
-    events = sorted(seen.values(), key=lambda e: e["start"])
+    # Remove events the user explicitly disliked — they shouldn't compete for slots.
+    disliked_uids = {
+        r.event_uid
+        for r in db.query(models.DiscoveryFeedback).filter_by(interested=False).all()
+    }
+    events = sorted(
+        (e for e in seen.values() if not (e["uid"] and e["uid"] in disliked_uids)),
+        key=lambda e: e["start"],
+    )
 
     # Load interests
     row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
@@ -272,22 +347,26 @@ def get_discovery_events(request: Request, db: Session = Depends(get_db)):
             interests,
             [r.event_uid for r in liked_rows],
             [r.event_uid for r in disliked_rows],
-            [e["id"] for e in events[:60]],
+            [e["id"] for e in events[:20]],
         )
 
-        if rkey in _ranking_cache:
+        if not force and rkey in _ranking_cache:
             results = _ranking_cache[rkey]
         else:
-            # LLM ranking: send up to 60 events, get back scored subset
+            # LLM ranking: send up to 20 events using short numeric ids to
+            # prevent the model from hallucinating opaque composite id strings.
+            # 20 is a comfortable batch for smaller local models; large remote
+            # models handle it trivially.
+            ranked_events = events[:20]
             payload = [
                 {
-                    "id": e["id"],
+                    "id": str(i),
                     "title": e["title"],
-                    "description": (e["description"] or "")[:300],
+                    "description": _strip_html(e["description"] or "")[:200],
                     "date": e["start"].strftime("%a %b %-d"),
                     "location": e["location"] or "",
                 }
-                for e in events[:60]
+                for i, e in enumerate(ranked_events)
             ]
 
             feedback_lines = []
@@ -318,15 +397,21 @@ def get_discovery_events(request: Request, db: Session = Depends(get_db)):
                     r["id"]: r
                     for r in json.loads(resp.choices[0].message.content).get("results", [])
                 }
-                for ev in events:
-                    if ev["id"] in scored_map:
-                        ev["score"] = scored_map[ev["id"]].get("score")
-                        ev["reason"] = scored_map[ev["id"]].get("reason")
+                for i, ev in enumerate(ranked_events):
+                    entry = scored_map.get(str(i))
+                    if entry:
+                        ev["score"] = entry.get("score")
+                        ev["reason"] = entry.get("reason")
 
-                results = sorted(
-                    [e for e in events if (e.get("score") or 0) >= 7],
+                # Sort scored events by score desc, then pad with upcoming
+                # unscored events so we always return ~10 results.
+                scored_ids = {id(e) for e in ranked_events if e.get("score") is not None}
+                scored = sorted(
+                    [e for e in ranked_events if e.get("score") is not None],
                     key=lambda e: (-(e["score"] or 0), e["start"]),
-                )[:10]
+                )
+                unscored = [e for e in events if id(e) not in scored_ids]
+                results = (scored + unscored)[:10]
             except Exception as e:
                 print(f"[discovery] LLM ranking error: {e}")
                 results = events[:10]
@@ -352,7 +437,11 @@ def get_feedback(db: Session = Depends(get_db)):
 
 
 @router.post("/api/discovery/feedback")
-def save_feedback(body: dict = Body(...), db: Session = Depends(get_db)):
+def save_feedback(
+    background_tasks: BackgroundTasks,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+):
     event_uid = (body.get("event_uid") or "").strip()
     if not event_uid:
         return {"ok": False, "error": "event_uid required"}
@@ -372,4 +461,16 @@ def save_feedback(body: dict = Body(...), db: Session = Depends(get_db)):
         ))
     db.commit()
     _ranking_cache.clear()
+
+    # Refine the interest profile in the background so the next ranking call
+    # benefits from the updated preferences.
+    all_feedback = db.query(models.DiscoveryFeedback).all()
+    liked_titles    = [r.event_title for r in all_feedback if r.interested]
+    disliked_titles = [r.event_title for r in all_feedback if not r.interested]
+    interests_row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
+    current_interests = (interests_row.value or "").strip() if interests_row else ""
+    background_tasks.add_task(
+        _refine_interests_bg, liked_titles, disliked_titles, current_interests
+    )
+
     return {"ok": True}
