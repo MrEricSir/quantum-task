@@ -247,7 +247,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
   })()
 
   return (
-    <DndContext>
+    <DndContext sensors={[]}>  {/* no drag on Today — read-only card layout */}
       <div className="today-page">
         <div className="today-header">
           <h2 className="today-date">{formatTodayDate()}</h2>
@@ -401,7 +401,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                       onSelect={onSelect}
                       isSelected={selectedCardId === todo.id}
                       inOverdueGroup
-                      isMobile
                     />
                   ))}
                   {(scheduleItems.length > 0 || sortedUntimedTasks.length > 0) && (
@@ -426,7 +425,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     onBreakdown={onBreakdown}
                     onSelect={onSelect}
                     isSelected={selectedCardId === item.data.id}
-                    isMobile
                   />
                 )
               )}
@@ -444,7 +442,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                   onBreakdown={onBreakdown}
                   onSelect={onSelect}
                   isSelected={selectedCardId === todo.id}
-                  isMobile
                 />
               ))}
             </div>

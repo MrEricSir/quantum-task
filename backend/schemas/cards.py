@@ -101,6 +101,7 @@ class Card(BaseModel):
     waiting_reason: Optional[str] = None
     tags: List[Tag] = []
     thread_output: Optional[str] = None
+    today_since: Optional[datetime] = None
 
     @computed_field
     @property

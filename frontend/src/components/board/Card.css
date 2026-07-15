@@ -6,12 +6,16 @@
   border-left-width: 3px;
 }
 
-/* ── AI output indicator dot ── */
+/* ── AI output indicator badge ── */
 .card-output-dot {
   font-size: 10px;
   color: #a78bfa;
   flex-shrink: 0;
-  opacity: 0.7;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 1.6;
 }
 
 /* ── Done state ── */
@@ -38,6 +42,12 @@
 .card-meta-waiting {
   color: #93c5fd;
 }
+
+.card-meta-carryover {
+  color: #78716c;
+  font-style: italic;
+}
+
 
 /* ── Checkbox pop animation ── */
 @keyframes check-pop {

@@ -57,10 +57,19 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
     else onSelect?.(card)
   }
 
+  // Carryover: incomplete today-cards that entered 'today' before the current local day
+  const carryoverDays = (() => {
+    if (isOverlay || card.section !== 'today' || !card.today_since || card.completed || overdueDays > 0) return 0
+    const now = new Date()
+    const localToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    return Math.max(0, Math.floor((localToday.getTime() - new Date(card.today_since).getTime()) / 86400000))
+  })()
+
   const metaParts = []
   if (card.scheduled_at) metaParts.push({ key: 'time', cls: null, text: formatScheduled(card.scheduled_at) })
   if (card.recurrence_rule) metaParts.push({ key: 'rec', cls: 'card-recurrence', text: card.recurrence_rule })
   if (overdueDays > 0 && !inOverdueGroup) metaParts.push({ key: 'overdue', cls: 'card-meta-overdue', text: `${overdueDays}d overdue` })
+  if (carryoverDays > 0) metaParts.push({ key: 'carryover', cls: 'card-meta-carryover', text: `${carryoverDays}d`, title: `In Today for ${carryoverDays} day${carryoverDays === 1 ? '' : 's'}` })
   if (card.waiting_reason) metaParts.push({ key: 'wait', cls: 'card-meta-waiting', text: `Waiting: ${card.waiting_reason}` })
 
   return (
@@ -102,7 +111,7 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
           {metaParts.map((p, i) => (
             <Fragment key={p.key}>
               {i > 0 && <span className="card-meta-sep">·</span>}
-              <span className={p.cls || undefined}>{p.text}</span>
+              <span className={p.cls || undefined} title={p.title}>{p.text}</span>
             </Fragment>
           ))}
         </div>
