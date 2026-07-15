@@ -6,6 +6,8 @@
 
 Keep this file up-to-date as the source of truth for how to configure and use this webapp. When asked for help with using the app, you should look here first for any relevant steps.
 
+The **Telegram Integration** section contains a full table of every supported query and example phrase. When new bot intents or commands are added, update that section to match.
+
 
 ## Frontend Tests
 

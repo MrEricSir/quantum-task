@@ -174,19 +174,80 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Force-regenerate anytime with the refresh button
 
 ### Telegram Integration
-- Receive your daily briefing as a Telegram message each morning
-- **Two-way chat**: send messages to your bot to interact with the app:
-  - `today` — see today's task list (overdue, scheduled, and unscheduled)
-  - `habits` — see today's habit status (done vs pending)
-  - `overdue` — list overdue tasks
-  - `done [task]` — mark a matching task complete by name
-  - anything else — captured as a new task via the AI parser (same NLP as Quick Add)
-  - `help` — show available commands
-- **Proactive notifications** (configure send times in Settings → Telegram):
-  - Morning briefing — AI summary of your day
-  - Evening habit reminder — nudge listing any habits still pending
-  - Midday overdue nudge — alert if you have overdue tasks
-- Configure via **Settings → Telegram**: paste your bot token, chat ID, and pick a delivery hour
+
+Receive your daily briefing as a Telegram message each morning, and send messages to your bot to query and update the app from anywhere. The bot understands natural language — you don't need to memorise exact commands.
+
+#### Viewing your schedule and tasks
+
+| What you send | What happens |
+|---|---|
+| `today` | Today's task list — overdue, scheduled, and unscheduled |
+| `tomorrow` | Tomorrow's schedule (calendar + tasks) |
+| `what do I have on Wednesday?` | Schedule for any named day |
+| `week` | Overview of the next 7 days |
+| `overdue` | All tasks past their scheduled date |
+| `completed` | Everything you've finished today |
+| `what did I finish yesterday?` | Completed tasks for any specific day |
+| `priority` | AI recommendation on what to focus on next |
+| `avoiding` | Tasks that keep getting pushed — named with brief analysis |
+
+#### Habits and health
+
+| What you send | What happens |
+|---|---|
+| `habits` | Today's habit status — done vs pending |
+| `streaks` | Current streak length for each habit |
+| `health` | Today's step count, weight, and body fat (Withings) |
+
+#### Capturing and completing tasks
+
+| What you send | What happens |
+|---|---|
+| `call dentist tomorrow at 2pm` | Captures a new task via the AI parser — same NLP as Quick Add |
+| `meeting with Sarah next Friday` | Captures with date resolved |
+| `done dentist` | Marks the matching task complete |
+| `done meditation` | Marks the matching habit complete for today |
+| `undo` | Reverses your last action (capture, completion, or reschedule) |
+| `undo both` | Reverses the last two actions |
+
+#### Notes
+
+| What you send | What happens |
+|---|---|
+| `add a note to dentist: bring insurance card` | Appends a note to the matching task's description |
+| `note on grocery run: also get olive oil` | Same — "note on" / "append to" all work |
+| `what's the note on dentist?` | Returns the task's full description |
+| `notes on the API task` | Same — "notes on" / "details on" all work |
+
+#### Rescheduling
+
+| What you send | What happens |
+|---|---|
+| `move dentist to Thursday at 2pm` | Reschedules a single task |
+| `push the report to next week` | Moves to the This Week section |
+| `move everything overdue to next week` | Bulk-moves all overdue tasks |
+| `clear today's list` | Moves all Today tasks to Later |
+| `move today's tasks to tomorrow` | Bulk-moves with a specific date |
+| `undo` | Restores all tasks moved by a bulk reschedule |
+
+#### Logging
+
+| What you send | What happens |
+|---|---|
+| `had a salad for lunch` | Logs a food entry |
+| `coffee this morning` | Logs with meal type detected |
+| `energy 4` | Logs today's energy level (1–5 scale) |
+| `feeling tired, 2/5` | Same — natural phrasing works |
+
+#### Proactive notifications
+
+Configured in **Settings → Telegram** — set a send time for each:
+
+- **Morning briefing** — AI summary of your day: weather, schedule, tasks, and habit status
+- **Evening habit reminder** — lists any habits still pending for the day
+- **Midday overdue nudge** — alerts you if tasks have slipped past their scheduled date
+
+---
 
 **Setup (one-time):**
 1. Message **@BotFather** on Telegram, send `/newbot`, and copy the token it gives you

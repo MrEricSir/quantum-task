@@ -58,6 +58,12 @@ The "action" field must be one of:
       User wants to see overdue tasks.
       Examples: "what's overdue?", "anything late?", "what have I missed?"
 
+  "query_completed"
+      User wants to see what tasks they've finished, usually today.
+      Also return "date": resolved date as YYYY-MM-DD. Default to today.
+      Examples: "what did I complete today?", "what did I get done?", "show me my wins",
+                "what have I accomplished?", "completed tasks", "what did I finish today?"
+
   "capture"
       User is stating a new task, event, or item to save.
       Also return:
@@ -68,6 +74,22 @@ The "action" field must be one of:
         "description"    — verbatim extra context from the input, or null
       Examples: "call dentist", "buy groceries", "meeting with Sarah at 3pm tomorrow",
                 "dentist appointment next Friday at 2pm"
+
+  "add_note"
+      User wants to add a note or extra detail to an existing task.
+      Also return:
+        "match_query" — task title or fragment to find (required)
+        "note"        — text to append to the task's notes (required)
+      Examples: "add a note to dentist: bring insurance card",
+                "note on grocery run: also get olive oil",
+                "append to the API task: check rate limits first"
+
+  "read_note"
+      User wants to see the description or notes stored on an existing task.
+      Also return:
+        "match_query" — task title or fragment to find (required)
+      Examples: "what's the note on dentist?", "notes on the API task",
+                "what did I write about groceries?", "details on the dentist card"
 
 """
 + _task_complete.TELEGRAM_DESCRIPTION
@@ -126,6 +148,17 @@ The "action" field must be one of:
       Examples: "move dentist to Thursday at 2pm", "push the report to next week",
                 "reschedule groceries to tomorrow", "move call to next Monday at 10am",
                 "push everything to next week", "delay the report by 3 days"
+
+  "bulk_reschedule"
+      User wants to move MULTIPLE tasks at once (a group, not a single named task).
+      Also return:
+        "filter"  — which tasks to target: "overdue" | "today" | "week" | "all_incomplete"
+        "section" — target section: "today" | "week" | "month" | "later"
+        "date"    — resolved target date as YYYY-MM-DD, or null
+      Use "overdue" when user says "overdue" or "late". Use "today" for "today's list" / "today's tasks".
+      Examples: "move everything overdue to next week", "push all overdue to next month",
+                "clear today's list" (filter=today, section=later),
+                "move today's tasks to tomorrow" (filter=today, section=today, date=tomorrow)
 
 Reply ONLY with valid JSON. No explanation.\
 """
@@ -266,12 +299,16 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "<b>streaks</b> — your current habit streaks\n"
             "<b>health</b> — steps, weight, and fitness data\n"
             "<b>overdue</b> — overdue tasks\n"
+            "<b>completed</b> — what you finished today\n"
             "<b>priority</b> — what to focus on next\n"
             "<b>done [task]</b> — mark a task complete\n"
             "<b>done [habit]</b> — mark a habit complete (e.g. done meditation)\n"
+            "<b>note on [task]: [text]</b> — add a note to a task\n"
+            "<b>notes on [task]</b> — read a task's notes\n"
             "<b>move [task] to [date]</b> — reschedule a task\n"
+            "<b>move all overdue to next week</b> — bulk reschedule\n"
             "<b>avoiding</b> — see what you've been putting off\n"
-            "<b>undo</b> — reverse your last capture, completion, or reschedule\n"
+            "<b>undo</b> — reverse your last action\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"
             "You'll also get your daily briefing and reminders automatically."
         )
@@ -298,6 +335,8 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_priority(tz_offset)
     if lower in ("avoiding", "procrastinating", "putting off"):
         return _reply_avoiding(tz_offset)
+    if lower in ("completed", "done today", "wins", "accomplished", "finished"):
+        return _reply_completed(tz_offset)
 
     # LLM intent classification for everything else
     print(f"[telegram] classifying intent: {text[:60]!r}")
@@ -337,6 +376,18 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "query_avoiding":
         return _reply_avoiding(tz_offset)
+
+    if action == "query_completed":
+        return _reply_completed(tz_offset, intent.get("date"))
+
+    if action == "add_note":
+        return _reply_add_note(intent, chat_id)
+
+    if action == "read_note":
+        return _reply_read_note(intent, chat_id)
+
+    if action == "bulk_reschedule":
+        return _reply_bulk_reschedule(intent, tz_offset, chat_id)
 
     if action == "log_food":
         return _reply_log_food(intent, tz_offset, chat_id)
@@ -559,6 +610,218 @@ def _reply_overdue(tz_offset: int) -> str:
     return "\n".join(lines)
 
 
+def _reply_completed(tz_offset: int, date_str: str | None = None) -> str:
+    """Show tasks completed today (or on a specific date)."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    if date_str:
+        try:
+            from datetime import date as _date
+            target = _date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            target = now_local.date()
+    else:
+        target = now_local.date()
+
+    with SessionLocal() as db:
+        completed = (
+            db.query(models.Card)
+            .filter(
+                models.Card.completed == True,  # noqa: E712
+                models.Card.completed_at.isnot(None),
+            )
+            .order_by(models.Card.completed_at.desc())
+            .all()
+        )
+
+    # Filter to local date
+    day_done = [
+        c for c in completed
+        if (c.completed_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)).date() == target
+    ]
+
+    is_today = target == now_local.date()
+    label = "today" if is_today else target.strftime("%A, %b %-d")
+
+    if not day_done:
+        return f"Nothing completed {label} yet." + (" You've got this!" if is_today else "")
+
+    n = len(day_done)
+    lines = [f"<b>✓ {n} task{'s' if n != 1 else ''} completed {label}</b>\n"]
+    for c in day_done:
+        lines.append(f"✓ {c.title}")
+    if is_today:
+        lines.append("\nNice work! 💪")
+    return "\n".join(lines)
+
+
+def _reply_add_note(intent: dict, chat_id: str = "") -> str:
+    """Append a note to an existing card's description."""
+    query = (intent.get("match_query") or "").strip()
+    note  = (intent.get("note") or "").strip()
+
+    if not query:
+        return "Which task? Try: <b>add a note to dentist: bring insurance card</b>"
+    if not note:
+        return "What's the note? Try: <b>add a note to dentist: bring insurance card</b>"
+
+    session = _get_session(chat_id) if chat_id else {}
+
+    if query.lower() in _PRONOUN_REFS and session.get("last_card"):
+        query = session["last_card"]["title"]
+
+    with SessionLocal() as db:
+        cards = db.query(models.Card).filter_by(archived=False).all()
+        matches = _fuzzy_find_cards(cards, query)
+
+        if not matches:
+            return f'Couldn\'t find a task matching "{query}". Try <b>today</b> to see your list.'
+
+        if len(matches) > 1:
+            if chat_id:
+                session["pending"] = {
+                    "action": "add_note",
+                    "intent": intent,
+                    "candidates": [{"id": c.id, "title": c.title} for c in matches],
+                }
+            numbered = "\n".join(f"{i + 1}. {c.title}" for i, c in enumerate(matches))
+            return f"Which task?\n{numbered}"
+
+        match = matches[0]
+        old_description = match.description or ""
+        match.description = (old_description + "\n" + note).strip() if old_description else note
+        card_id = match.id
+        title = match.title
+        db.commit()
+
+    if chat_id:
+        _push_undo(session, {"type": "add_note", "card_id": card_id, "title": title, "old_description": old_description})
+        session["last_card"] = {"id": card_id, "title": title}
+
+    return f'📝 Note added to <b>{title}</b>\nSend <b>undo</b> to remove it.'
+
+
+def _reply_read_note(intent: dict, chat_id: str = "") -> str:
+    """Return the description/notes stored on a card."""
+    query = (intent.get("match_query") or "").strip()
+
+    if not query:
+        return "Which task? Try: <b>notes on dentist</b>"
+
+    session = _get_session(chat_id) if chat_id else {}
+
+    if query.lower() in _PRONOUN_REFS and session.get("last_card"):
+        query = session["last_card"]["title"]
+
+    with SessionLocal() as db:
+        cards = db.query(models.Card).filter_by(archived=False).all()
+        matches = _fuzzy_find_cards(cards, query)
+
+        if not matches:
+            return f'Couldn\'t find a task matching "{query}".'
+
+        if len(matches) > 1:
+            if chat_id:
+                session["pending"] = {
+                    "action": "read_note",
+                    "intent": intent,
+                    "candidates": [{"id": c.id, "title": c.title} for c in matches],
+                }
+            numbered = "\n".join(f"{i + 1}. {c.title}" for i, c in enumerate(matches))
+            return f"Which task?\n{numbered}"
+
+        match = matches[0]
+        title = match.title
+        description = match.description
+        card_id = match.id
+
+    if chat_id:
+        session["last_card"] = {"id": card_id, "title": title}
+
+    if not description:
+        return f'<b>{title}</b> has no notes.'
+    return f'<b>{title}</b>\n\n{description}'
+
+
+def _reply_bulk_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
+    """Move a group of tasks at once based on a filter."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    filter_type = (intent.get("filter") or "overdue").lower()
+    section = intent.get("section")
+    date_str = intent.get("date")
+
+    target_date = None
+    if date_str:
+        try:
+            from datetime import date as _date
+            target_date = _date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            pass
+
+    if not section:
+        if target_date:
+            section = _section_for_date(target_date, today)
+        else:
+            return "Where should I move them? Try: <b>move everything overdue to next week</b>"
+
+    if section not in ("today", "week", "month", "later"):
+        section = "later"
+
+    scheduled_at = None
+    if target_date:
+        scheduled_at = datetime.combine(target_date, datetime.min.time())
+
+    with SessionLocal() as db:
+        base = db.query(models.Card).filter(
+            models.Card.completed == False,  # noqa: E712
+            models.Card.archived == False,   # noqa: E712
+        )
+
+        if filter_type == "overdue":
+            candidates = [
+                c for c in base.filter(
+                    models.Card.section == "today",
+                    models.Card.scheduled_at.isnot(None),
+                ).all()
+                if c.scheduled_at.date() < today
+            ]
+        elif filter_type == "today":
+            candidates = base.filter(models.Card.section == "today").all()
+        elif filter_type == "week":
+            candidates = base.filter(models.Card.section == "week").all()
+        else:  # all_incomplete
+            candidates = base.filter(models.Card.section != "none").all()
+
+        filter_labels = {
+            "overdue": "overdue tasks", "today": "tasks in Today",
+            "week": "tasks in This Week", "all_incomplete": "incomplete tasks",
+        }
+        if not candidates:
+            return f"No {filter_labels.get(filter_type, 'tasks')} found."
+
+        undo_data = []
+        for card in candidates:
+            undo_data.append({
+                "card_id": card.id, "title": card.title,
+                "old_section": card.section, "old_scheduled_at": card.scheduled_at,
+            })
+            card.section = section
+            if target_date:
+                card.scheduled_at = scheduled_at
+        db.commit()
+
+    section_label = {"today": "Today", "week": "This Week", "month": "This Month", "later": "Later"}.get(section, section)
+    n = len(candidates)
+
+    if chat_id:
+        session = _get_session(chat_id)
+        _push_undo(session, {"type": "bulk_reschedule", "cards": undo_data})
+
+    date_part = f" ({target_date.strftime('%A, %b %-d')})" if target_date else ""
+    return f"↗ Moved {n} task{'s' if n != 1 else ''} to <b>{section_label}</b>{date_part}\nSend <b>undo</b> to reverse."
+
+
 def _fuzzy_find_cards(cards: list, query: str) -> list:
     """Return best-matching cards (up to 3) for disambiguation.
 
@@ -640,6 +903,34 @@ def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: s
         intent = dict(pending["intent"])
         intent["match_query"] = selected["title"]  # exact title → unambiguous re-run
         return _reply_reschedule(intent, tz_offset, chat_id)
+
+    if action == "add_note":
+        note = pending["intent"].get("note", "")
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=selected["id"]).first()
+            if not card:
+                return f'"{selected["title"]}" not found.'
+            old_description = card.description or ""
+            card.description = (old_description + "\n" + note).strip() if old_description else note
+            card_id = card.id
+            title = card.title
+            db.commit()
+        _push_undo(session, {"type": "add_note", "card_id": card_id, "title": title, "old_description": old_description})
+        session["last_card"] = {"id": card_id, "title": title}
+        return f'📝 Note added to <b>{title}</b>\nSend <b>undo</b> to remove it.'
+
+    if action == "read_note":
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=selected["id"]).first()
+            if not card:
+                return f'"{selected["title"]}" not found.'
+            title = card.title
+            description = card.description
+            card_id = card.id
+        session["last_card"] = {"id": card_id, "title": title}
+        if not description:
+            return f'<b>{title}</b> has no notes.'
+        return f'<b>{title}</b>\n\n{description}'
 
     return None
 
@@ -1281,6 +1572,28 @@ def _undo_single_action(action: dict) -> str:
                 db.delete(entry)
                 db.commit()
         return f"↩ Removed food log: <b>{title}</b>"
+
+    if atype == "add_note":
+        with SessionLocal() as db:
+            card = db.query(models.Card).filter_by(id=action["card_id"]).first()
+            if not card:
+                return f'Could not undo — "{title}" no longer exists.'
+            card.description = action.get("old_description") or None
+            db.commit()
+        return f"↩ Note removed from: <b>{title}</b>"
+
+    if atype == "bulk_reschedule":
+        cards_data = action.get("cards", [])
+        count = 0
+        for item in cards_data:
+            with SessionLocal() as db:
+                card = db.query(models.Card).filter_by(id=item["card_id"]).first()
+                if card:
+                    card.section = item["old_section"]
+                    card.scheduled_at = item["old_scheduled_at"]
+                    db.commit()
+                    count += 1
+        return f"↩ Moved {count} task{'s' if count != 1 else ''} back"
 
     return "↩ Undone"
 
