@@ -261,25 +261,6 @@ async def _experiment_cleanup_scheduler() -> None:
         await asyncio.get_event_loop().run_in_executor(None, _expire_stale_experiments)
 
 
-# ── Telegram scheduler ───────────────────────────────────────────────
-
-def _check_telegram_briefing() -> None:
-    from telegram.scheduler import check_all
-    with SessionLocal() as db:
-        results = check_all(db)
-        if not results.get("skipped"):
-            print(f"[telegram] {results}")
-
-
-async def _telegram_briefing_scheduler() -> None:
-    while True:
-        await asyncio.sleep(60)
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, _check_telegram_briefing)
-        except Exception as e:
-            print(f"[telegram] scheduler error: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app):
     _run_startup_migrations()
@@ -287,12 +268,10 @@ async def lifespan(app):
     task  = asyncio.create_task(_push_scheduler())
     wtask = asyncio.create_task(_withings_scheduler())
     etask = asyncio.create_task(_experiment_cleanup_scheduler())
-    ttask = asyncio.create_task(_telegram_briefing_scheduler())
     yield
     task.cancel()
     wtask.cancel()
     etask.cancel()
-    ttask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
