@@ -7,17 +7,19 @@ Assistant endpoints.
 """
 import json
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests as http_requests
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 import models
 import schemas
 from database import SessionLocal
-from deps import get_db, llm_client, LLM_MODEL
+from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes
+from gcal import get_personal_events
 from health_context import build_health_context
 
 router = APIRouter()
@@ -92,6 +94,8 @@ You are a personal administrative assistant. You produce content the user can ac
 you do not perform actions yourself.
 
 What "producing content" means:
+- Request is a question about schedule, tasks, or data → answer it directly from the \
+context provided; do not invent information
 - Request is a reply to send → write the reply text, ready to copy and send
 - Request is meeting prep → produce the agenda, talking points, or briefing notes
 - Request is a summary → write the summary
@@ -104,13 +108,27 @@ Rules:
 "I have sent"). You produce drafts and information; the user takes the physical action.
 - Do not explain your reasoning or what you are about to do. Produce the output directly.
 - Match the tone and format implied by the request and context.
-- If the context is a message the user received, the output is addressed to the sender.
+- Only add salutation or sign-off when explicitly composing a letter or email reply. \
+Never add "Best regards" or "[Your Name]" for conversational questions, schedule \
+lookups, or task summaries.
+- If the context is a message the user received and they want a reply drafted, \
+the reply is addressed to the sender.
 - Keep output concise and professional unless the task implies otherwise.
 - CRITICAL: Never invent specific facts — business names, hotel names, addresses, phone \
-numbers, prices, people — that are not explicitly present in the provided context or \
-web search results. If location-specific information is needed but no location was \
-given, say: "I don't have your location — please tell me where you are and I'll help \
-from there." If other key information is missing, ask for it in one sentence.
+numbers, prices, people, or events — that are not explicitly present in the provided \
+context or web search results.
+- CRITICAL: Calendar data is always pre-loaded into this prompt when available. Never ask \
+the user to provide their calendar events — that is not information they can give you. \
+If the calendar section says "(none in the next 7 days)", report that. If it says \
+"(could not fetch)", say the calendar is temporarily unavailable. Never ask follow-up \
+questions about calendar data.
+- CRITICAL: Cards and tasks are work items — they do NOT have scheduled times and are NOT \
+calendar events. Never infer or state a time for a task (e.g. "meeting at 2 PM") unless \
+that exact time appears in the "### Upcoming calendar events" section. A task titled \
+"Team meeting" means only that meeting prep is on the to-do list, not that any meeting \
+is scheduled at a specific time.
+- If location-specific information is needed but no location was given, say: \
+"I don't have your location — please tell me where you are and I'll help from there."
 - If web search results are provided, use them as the primary source of truth. \
 Cite sources inline when useful (e.g. "Source: https://example.com").
 - Do not use markdown formatting. No asterisks for bold, no # headers, no --- dividers. \
@@ -147,6 +165,32 @@ def _maybe_web_search(user_msg: str) -> str:
     return ""
 
 
+def _calendar_context_lines(db, today, tz_offset: int) -> list[str]:
+    """Return formatted calendar event lines for the next 7 days, or an empty list."""
+    if db.query(models.CalendarMapping).count() == 0:
+        return []
+    try:
+        day_labels = {today: "Today", today + timedelta(days=1): "Tomorrow"}
+        cal_by_day: dict[str, list[str]] = {}
+        events = get_personal_events(db, today, today + timedelta(days=8), tz_offset)
+        for ev in events:
+            ev_date = ev["local_date"]
+            day_key = ev_date.isoformat()
+            label   = day_labels.get(ev_date) or ev_date.strftime("%A, %b %-d")
+            if day_key not in cal_by_day:
+                cal_by_day[day_key] = [label]
+            cal_by_day[day_key].append(f"  {ev['time_str']} — {ev['title']}")
+        if not cal_by_day:
+            return ["### Upcoming calendar events", "  No events scheduled in the next 7 days."]
+        lines = ["### Upcoming calendar events"]
+        for day_key in sorted(cal_by_day):
+            lines.extend(cal_by_day[day_key])
+        return lines
+    except Exception as e:
+        print(f"[assist/calendar] fetch error: {e}")
+        return ["### Upcoming calendar events", "  Calendar temporarily unavailable."]
+
+
 # ── Card thread endpoints ──────────────────────────────────────────────────────
 
 def _get_or_none(db: Session, card_id: int) -> models.CardThread | None:
@@ -167,7 +211,7 @@ def get_thread(card_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/api/cards/{card_id}/thread/message")
-def send_message(card_id: int, req: schemas.ThreadMessageRequest, db: Session = Depends(get_db)):
+def send_message(request: Request, card_id: int, req: schemas.ThreadMessageRequest, db: Session = Depends(get_db)):
     """Stream a new assistant turn, then persist both user and assistant messages."""
     card = db.query(models.Card).filter(models.Card.id == card_id).first()
     if card is None:
@@ -177,11 +221,17 @@ def send_message(card_id: int, req: schemas.ThreadMessageRequest, db: Session = 
     history = json.loads(thread.messages or "[]") if thread else []
     context = thread.context if thread else None
 
-    # Build system prompt — task identity + pasted document
+    today = local_date(request)
+    tz_offset = utc_offset_minutes(request)
+
+    # Build system prompt — task identity + calendar context + pasted document
     system_parts = [_ASSIST_SYSTEM]
     system_parts.append(f"\nTask the user is working on: {card.title}")
     if card.description:
         system_parts.append(f"Task description: {card.description}")
+    cal_lines = _calendar_context_lines(db, today, tz_offset)
+    if cal_lines:
+        system_parts.append("\n" + "\n".join(cal_lines))
     if context:
         system_parts.append(f"\nReference document provided by the user:\n{context}")
     system_prompt = "\n".join(system_parts)
@@ -283,6 +333,82 @@ def clear_thread(card_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/api/cards/{card_id}/thread/context-from")
+def context_from(card_id: int, req: schemas.ContextFromRequest, db: Session = Depends(get_db)):
+    """Generate context text from a structured source (section, tag, or similar cards)."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    cards = []
+    label = ""
+
+    if req.source == "section":
+        section = req.section or "today"
+        label_map = {"today": "Today", "week": "This Week", "month": "This Month", "later": "Stash"}
+        label = label_map.get(section, section)
+        cards = (
+            db.query(models.Card)
+            .filter(
+                models.Card.section == section,
+                models.Card.archived == False,   # noqa: E712
+                models.Card.completed == False,  # noqa: E712
+                models.Card.id != card_id,
+            )
+            .order_by(models.Card.position)
+            .limit(20)
+            .all()
+        )
+
+    elif req.source == "tag":
+        if not req.tag_id:
+            raise HTTPException(status_code=400, detail="tag_id required for tag source")
+        tag = db.query(models.Tag).filter(models.Tag.id == req.tag_id).first()
+        label = tag.name if tag else f"tag #{req.tag_id}"
+        cards = (
+            db.query(models.Card)
+            .join(models.card_tags, models.Card.id == models.card_tags.c.card_id)
+            .filter(
+                models.card_tags.c.tag_id == req.tag_id,
+                models.Card.archived == False,   # noqa: E712
+                models.Card.completed == False,  # noqa: E712
+                models.Card.id != card_id,
+            )
+            .limit(20)
+            .all()
+        )
+
+    elif req.source == "similar":
+        label = "Similar cards"
+        try:
+            import embeddings as _embeddings
+            query_text = f"{card.title} {card.description or ''}".strip()
+            card_ids = _embeddings.search(db, query_text, top_k=9)
+            card_ids = [cid for cid in card_ids if cid != card_id][:8]
+            if card_ids:
+                id_order = {cid: i for i, cid in enumerate(card_ids)}
+                cards = db.query(models.Card).filter(
+                    models.Card.archived == False,  # noqa: E712
+                    models.Card.id.in_(card_ids),
+                ).all()
+                cards.sort(key=lambda c: id_order.get(c.id, 999))
+        except Exception:
+            pass
+
+    if not cards:
+        return {"context_text": "", "label": label, "count": 0}
+
+    lines = [f"### {label}"]
+    for c in cards:
+        line = f"- {c.title}"
+        if c.description:
+            snippet = c.description[:120].replace("\n", " ")
+            line += f": {snippet}"
+        lines.append(line)
+
+    return {"context_text": "\n".join(lines), "label": label, "count": len(cards)}
+
+
 # ── One-shot card assist (used by QuickAddModal) ───────────────────────────────
 
 @router.post("/api/assist/stream")
@@ -331,11 +457,14 @@ def stream_assist(req: schemas.AssistRequest):
 # ── Global assist (header-level, section/tag context) ─────────────────────────
 
 @router.post("/api/assist/global")
-def global_assist(req: schemas.GlobalAssistRequest):
+def global_assist(request: Request, req: schemas.GlobalAssistRequest):
     """Header-level assistant: fetches card context by section or tag, then streams a response."""
     location_str = None
     if req.lat is not None and req.lon is not None:
         location_str = _reverse_geocode(req.lat, req.lon)
+
+    today = local_date(request)
+    tz_offset = utc_offset_minutes(request)
 
     card_context_parts: list[str] = []
     with SessionLocal() as db:
@@ -357,7 +486,7 @@ def global_assist(req: schemas.GlobalAssistRequest):
                     "month": "This Month", "later": "Stash",
                 }
                 label = label_map.get(req.section, req.section)
-                card_context_parts.append(f"### Cards in '{label}'")
+                card_context_parts.append(f"### Tasks (work items, not calendar events) — {label}")
                 for c in cards:
                     card_context_parts.append(
                         f"- **{c.title}**" + (f": {c.description}" if c.description else "")
@@ -377,7 +506,7 @@ def global_assist(req: schemas.GlobalAssistRequest):
             )
             if tag_cards:
                 label = tag.name if tag else f"tag #{req.tag_id}"
-                card_context_parts.append(f"### Cards tagged '{label}'")
+                card_context_parts.append(f"### Tasks tagged '{label}' (work items, not calendar events)")
                 for c in tag_cards:
                     card_context_parts.append(
                         f"- **{c.title}**" + (f": {c.description}" if c.description else "")
@@ -396,7 +525,7 @@ def global_assist(req: schemas.GlobalAssistRequest):
                     ).all()
                     sem_cards.sort(key=lambda c: id_order.get(c.id, 999))
                     if sem_cards:
-                        card_context_parts.append("### Potentially relevant cards")
+                        card_context_parts.append("### Potentially relevant tasks (work items, not calendar events)")
                         for c in sem_cards:
                             card_context_parts.append(
                                 f"- **{c.title}**" + (f": {c.description}" if c.description else "")
@@ -417,8 +546,12 @@ def global_assist(req: schemas.GlobalAssistRequest):
             except Exception:
                 pass
 
+        # Calendar events (next 7 days)
+        cal_lines = _calendar_context_lines(db, today, tz_offset)
+        if cal_lines:
+            card_context_parts.extend(cal_lines)
+
         background_parts: list[str] = []
-        today = date.today()
         today_str = today.isoformat()
         _, health_ctx = build_health_context(db, today)
         if health_ctx:

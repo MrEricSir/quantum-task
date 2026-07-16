@@ -113,6 +113,10 @@ async function mockAPIs(page) {
   await page.route('**/api/engineering/sync', r => r.fulfill({ json: { created: 0, closed: 0, skipped: 0, cards_created: 0, error: null } }))
   await page.route('**/api/engineering/config', r => r.fulfill({ json: { configured: false, repos: [] } }))
   await page.route('**/api/engineering/status-config', r => r.fulfill({ json: {} }))
+
+  await page.route('**/api/cards/*/thread/context-from', r =>
+    r.fulfill({ json: { context_text: '### Today\n- Buy milk\n- Call dentist', label: 'Today', count: 2 } }))
+  await page.route('**/api/cards/*/thread', r => r.fulfill({ json: { messages: [], context: null, output: null } }))
   // habits: handle both active and archived requests
   await page.route(/\/api\/habits(\?|$)/, r => {
     const url = r.request().url()
@@ -1399,6 +1403,43 @@ test.describe('tag filter bar', () => {
     await expect(allPill).toBeVisible()
     await allPill.click()
     await expect(page).toHaveURL(/\/board$/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Assistant modal — context picker
+// ---------------------------------------------------------------------------
+test.describe('assistant modal — context picker', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await expect(page.locator('.assist-inline')).toBeVisible()
+  })
+
+  test('context panel is collapsible and labelled "Context"', async ({ page }) => {
+    await expect(page.locator('.assist-context-toggle')).toContainText('Context')
+  })
+
+  test('context source select is visible when context panel is expanded', async ({ page }) => {
+    await page.locator('.assist-context-toggle').click()
+    await expect(page.locator('.assist-context-source-select')).toBeVisible()
+  })
+
+  test('selecting a source loads context text into the textarea', async ({ page }) => {
+    await page.locator('.assist-context-toggle').click()
+    await page.locator('.assist-context-source-select').selectOption('section:today')
+    await expect(page.locator('.assist-context-input')).toHaveValue(/Today/)
+    await expect(page.locator('.assist-context-loaded-note')).toContainText('Today')
+  })
+
+  test('textarea placeholder mentions loading cards or pasting text', async ({ page }) => {
+    await page.locator('.assist-context-toggle').click()
+    const placeholder = await page.locator('.assist-context-input').getAttribute('placeholder')
+    expect(placeholder).toMatch(/load cards|paste/i)
   })
 })
 

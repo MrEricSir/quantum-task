@@ -4,12 +4,12 @@ import { Cross2Icon, CopyIcon, CheckIcon, TrashIcon } from '@radix-ui/react-icon
 import {
   breakdownCard, commitBreakdown, bulkCreateCards,
   fetchCardThread, sendThreadMessage, saveThreadOutput,
-  updateThreadContext, clearCardThread,
+  updateThreadContext, clearCardThread, fetchContextFrom,
 } from '../../api'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './AssistModal.css'
 
-export default function AssistModal({ open, onClose, task, onBreakdown, onOutputSaved, inline = false }) {
+export default function AssistModal({ open, onClose, task, allTags = [], onBreakdown, onOutputSaved, inline = false }) {
   const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown'
 
   // Thread state
@@ -23,10 +23,12 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
   const [searching, setSearching] = useState(false)
 
   // Context panel
-  const [showDesc,    setShowDesc]    = useState(false)
-  const [showContext, setShowContext] = useState(false)
-  const [editContext, setEditContext] = useState('')
-  const [savingCtx,  setSavingCtx]   = useState(false)
+  const [showDesc,      setShowDesc]      = useState(false)
+  const [showContext,   setShowContext]   = useState(false)
+  const [editContext,   setEditContext]   = useState('')
+  const [savingCtx,     setSavingCtx]     = useState(false)
+  const [loadingCtxSrc, setLoadingCtxSrc] = useState(false)
+  const [ctxLoadedFrom, setCtxLoadedFrom] = useState('')
 
   // Output save state
   const [savingOutput, setSavingOutput] = useState(null)  // index of msg being saved, or null
@@ -174,6 +176,34 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
       setShowContext(false)
     } catch { /* ignore */ }
     setSavingCtx(false)
+  }
+
+  const loadContextFrom = async (e) => {
+    const val = e.target.value
+    if (!val) return
+    e.target.value = ''  // reset select to placeholder
+    setLoadingCtxSrc(true)
+    setCtxLoadedFrom('')
+    try {
+      let source, section, tagId
+      if (val.startsWith('section:')) {
+        source = 'section'; section = val.split(':')[1]
+      } else if (val.startsWith('tag:')) {
+        source = 'tag'; tagId = parseInt(val.split(':')[1], 10)
+      } else if (val === 'similar') {
+        source = 'similar'
+      }
+      const data = await fetchContextFrom(task.id, source, { section, tagId })
+      if (data.context_text) {
+        setEditContext(data.context_text)
+        setCtxLoadedFrom(`${data.count} card${data.count !== 1 ? 's' : ''} from ${data.label}`)
+      } else {
+        setCtxLoadedFrom(`No cards found in ${data.label}`)
+      }
+    } catch {
+      setCtxLoadedFrom('Failed to load context')
+    }
+    setLoadingCtxSrc(false)
   }
 
   // ── Output ────────────────────────────────────────────────────────────────
@@ -331,23 +361,56 @@ export default function AssistModal({ open, onClose, task, onBreakdown, onOutput
               <div className="assist-context-panel">
                 <button
                   className="assist-context-toggle"
-                  onClick={() => { setShowContext(v => !v); setEditContext(context) }}
+                  onClick={() => { setShowContext(v => !v); setEditContext(context); setCtxLoadedFrom('') }}
                 >
-                  <span>Reference document</span>
+                  <span>Context</span>
                   <span className={`assist-context-caret${showContext ? ' assist-context-caret--open' : ''}`}>▾</span>
                   {context && <span className="assist-context-dot" />}
                 </button>
                 {showContext && (
                   <div className="assist-context-body">
+                    <div className="assist-context-source-row">
+                      <span className="assist-context-source-label">Load from</span>
+                      <select
+                        className="assist-context-source-select"
+                        defaultValue=""
+                        onChange={loadContextFrom}
+                        disabled={loadingCtxSrc}
+                      >
+                        <option value="" disabled>Choose a source…</option>
+                        <optgroup label="Sections">
+                          <option value="section:today">Today's tasks</option>
+                          <option value="section:week">This week's tasks</option>
+                          <option value="section:month">This month's tasks</option>
+                        </optgroup>
+                        {(task.tags ?? []).length > 0 && (
+                          <optgroup label="Tags">
+                            {(task.tags ?? []).map(tag => (
+                              <option key={tag.id} value={`tag:${tag.id}`}>{tag.name} tasks</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        <optgroup label="Semantic">
+                          <option value="similar">Similar cards</option>
+                        </optgroup>
+                      </select>
+                      {loadingCtxSrc && <span className="assist-context-loading">…</span>}
+                    </div>
+                    {ctxLoadedFrom && (
+                      <div className="assist-context-loaded-note">{ctxLoadedFrom}</div>
+                    )}
                     <textarea
                       className="assist-context-input"
-                      placeholder="Paste an email, document, or any reference text here. The assistant will use it throughout the conversation."
+                      placeholder="Paste an email, document, or any reference text here — or load cards above. The assistant will use it throughout the conversation."
                       value={editContext}
                       onChange={e => setEditContext(e.target.value)}
                       rows={5}
                     />
                     <div className="assist-context-actions">
-                      <button className="assist-copy" onClick={() => { setShowContext(false); setEditContext(context) }}>Cancel</button>
+                      {editContext && (
+                        <button className="assist-copy" onClick={() => setEditContext('')}>Clear</button>
+                      )}
+                      <button className="assist-copy" onClick={() => { setShowContext(false); setEditContext(context); setCtxLoadedFrom('') }}>Cancel</button>
                       <button className="assist-run assist-run--sm" onClick={saveContext} disabled={savingCtx}>
                         {savingCtx ? 'Saving…' : 'Save'}
                       </button>

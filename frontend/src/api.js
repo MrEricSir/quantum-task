@@ -625,3 +625,13 @@ export async function clearCardThread(cardId) {
   const res = await apiFetch(`/api/cards/${cardId}/thread`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to clear thread')
 }
+
+export async function fetchContextFrom(cardId, source, { section, tagId } = {}) {
+  const res = await apiFetch(`/api/cards/${cardId}/thread/context-from`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source, section: section || null, tag_id: tagId || null }),
+  })
+  if (!res.ok) throw new Error('Failed to fetch context')
+  return res.json()
+}

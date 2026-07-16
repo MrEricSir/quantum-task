@@ -222,6 +222,7 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
           open={showAssist}
           onClose={() => setShowAssist(false)}
           task={card}
+          allTags={allTags}
           onBreakdown={onBreakdown}
           onOutputSaved={output => setSavedOutput(output)}
         />

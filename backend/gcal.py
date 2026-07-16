@@ -8,7 +8,7 @@ No authentication required. Uses Google Calendar's
 import base64
 import re
 import urllib.parse
-from datetime import date, datetime, time as dt_time, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 
 import requests
 import icalendar
@@ -95,6 +95,68 @@ def _cached_fetch_events(ical_url: str, start: date, end: date, *, force: bool =
     events = fetch_events(ical_url, start, end)
     _ical_cache[key] = (now, events)
     return events
+
+
+def get_personal_events(
+    db,
+    start_date: date,
+    end_date: date,
+    tz_offset_minutes: int = 0,
+) -> list[dict]:
+    """Fetch and filter personal calendar events from all configured CalendarMappings.
+
+    - Skips OOO events
+    - Skips past timed events (end or start < now_utc)
+    - Adds ``local_date`` (date in user's timezone) and ``time_str`` ("3:30 PM" / "All day")
+    - Skips events whose local_date falls outside [start_date, end_date)
+
+    Returns enriched event dicts (all fields from fetch_events() plus local_date and time_str).
+    ``end_date`` is exclusive.
+    """
+    import models
+
+    now_utc = datetime.now(timezone.utc)
+    try:
+        mappings = db.query(models.CalendarMapping).all()
+    except Exception as e:
+        print(f"[calendar] failed to query mappings: {e}")
+        return []
+
+    results = []
+    fetch_errors = []
+    for m in mappings:
+        try:
+            for ev in _cached_fetch_events(m.ical_url, start_date, end_date):
+                if ev.get("is_ooo"):
+                    continue
+                ev_start = ev["start"]
+                ev_end = ev.get("end")
+
+                if ev["all_day"]:
+                    ev_date = ev_start.date() if isinstance(ev_start, datetime) else ev_start
+                    time_str = "All day"
+                else:
+                    cutoff = ev_end if ev_end else ev_start
+                    if cutoff < now_utc:
+                        continue
+                    local_dt = ev_start.replace(tzinfo=None) - timedelta(minutes=tz_offset_minutes)
+                    ev_date = local_dt.date()
+                    time_str = local_dt.strftime("%-I:%M %p").lstrip("0") or "12:00 AM"
+
+                if ev_date < start_date or ev_date >= end_date:
+                    continue
+
+                results.append({**ev, "local_date": ev_date, "time_str": time_str})
+        except Exception as e:
+            print(f"[calendar] fetch error for mapping {m.id}: {e}")
+            fetch_errors.append(e)
+
+    # If every mapping failed and we have nothing to show, surface the error
+    # so callers can distinguish "fetch failed" from "genuinely no events".
+    if fetch_errors and not results:
+        raise fetch_errors[0]
+
+    return results
 
 
 _FETCH_HEADERS = {

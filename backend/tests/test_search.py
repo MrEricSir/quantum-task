@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock, call
 
 import pytest
@@ -254,7 +254,7 @@ class TestGlobalAssistSemanticInjection:
         messages = call_args[1]["messages"]
         user_content = next(m["content"] for m in messages if m["role"] == "user")
         assert "Deploy authentication service" in user_content
-        assert "relevant cards" in user_content.lower()
+        assert "relevant tasks" in user_content.lower()
 
     def test_injects_relevant_engineering_items_when_no_filter(self, client):
         eng_id = _make_eng_item("Fix OAuth flow", repo="org/api", project_status="In Progress")
@@ -290,7 +290,7 @@ class TestGlobalAssistSemanticInjection:
         assert resp.status_code == 200
 
     def test_no_relevant_cards_section_omitted(self, client):
-        """If no cards match semantically, the 'relevant cards' section is not injected."""
+        """If no cards match semantically, the 'relevant tasks' section is not injected."""
         with patch("embeddings.search", return_value=[]):
             with patch("embeddings.search_eng", return_value=[]):
                 mock_llm, resp = self._stream_assist(client, "random query")
@@ -298,7 +298,7 @@ class TestGlobalAssistSemanticInjection:
         call_args = mock_llm.return_value.chat.completions.create.call_args
         messages = call_args[1]["messages"]
         user_content = next(m["content"] for m in messages if m["role"] == "user")
-        assert "relevant cards" not in user_content.lower()
+        assert "relevant tasks" not in user_content.lower()
         assert "relevant github" not in user_content.lower()
 
 
@@ -367,3 +367,123 @@ class TestGithubSyncEmbedding:
                             result = sync(db)
 
         assert result["error"] is None
+
+
+# ── Calendar context injection ─────────────────────────────────────────────────
+
+class TestCalendarContextInjection:
+    """Calendar events are injected into both the card thread and global assist."""
+
+    TOMORROW = date.today() + timedelta(days=1)
+
+    def _make_mapping(self):
+        """Create a CalendarMapping in the test DB (SQLite won't enforce the tag FK)."""
+        with TestSession() as db:
+            db.add(models.CalendarMapping(tag_id=1, ical_url="https://example.com/cal.ics", name="Work"))
+            db.commit()
+
+    def _fake_events(self):
+        tomorrow = self.TOMORROW
+        return [{
+            "id": "ev1", "uid": "ev1@test", "sequence": 0,
+            "title": "Team standup", "description": None, "location": None, "url": None,
+            "start": datetime(tomorrow.year, tomorrow.month, tomorrow.day, 9, 0, tzinfo=timezone.utc),
+            "end": None, "all_day": False, "is_ooo": False,
+            "local_date": tomorrow, "time_str": "9:00 AM",
+        }]
+
+    def _stream_thread(self, client, card_id, message):
+        with patch("routers.assist._maybe_web_search", return_value=""):
+            with patch("routers.assist.llm_client") as mock_llm:
+                stream_mock = MagicMock()
+                chunk = MagicMock()
+                chunk.choices[0].delta.content = "Team standup at 9 AM"
+                stream_mock.__iter__ = MagicMock(return_value=iter([chunk]))
+                mock_llm.return_value.chat.completions.create.return_value = stream_mock
+                resp = client.post(
+                    f"/api/cards/{card_id}/thread/message",
+                    json={"content": message},
+                    headers={"X-Local-Date": date.today().isoformat(), "X-UTC-Offset": "0"},
+                )
+        return mock_llm, resp
+
+    def test_card_thread_injects_calendar_into_system_prompt(self, client):
+        """Calendar events appear in the system prompt when a mapping is configured."""
+        card_id = _make_card("Prepare weekly report")
+        self._make_mapping()
+
+        with patch("routers.assist.get_personal_events", return_value=self._fake_events()):
+            mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar tomorrow?")
+
+        assert resp.status_code == 200
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        system_content = next(
+            m["content"] for m in call_args[1]["messages"] if m["role"] == "system"
+        )
+        assert "Team standup" in system_content
+        assert "### Upcoming calendar events" in system_content
+
+    def test_card_thread_no_calendar_section_when_no_mapping(self, client):
+        """When no CalendarMapping exists, get_personal_events is never called."""
+        card_id = _make_card("Some task")
+
+        with patch("routers.assist.get_personal_events") as mock_gpe:
+            mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar?")
+
+        assert resp.status_code == 200
+        # assert_not_called proves no calendar data was fetched or injected
+        mock_gpe.assert_not_called()
+
+    def test_card_thread_shows_none_message_when_no_events(self, client):
+        """When a mapping exists but no events fall in the window, the prompt says so."""
+        card_id = _make_card("Weekend planning")
+        self._make_mapping()
+
+        with patch("routers.assist.get_personal_events", return_value=[]):
+            mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar?")
+
+        assert resp.status_code == 200
+        system_content = next(
+            m["content"] for m in mock_llm.return_value.chat.completions.create.call_args[1]["messages"]
+            if m["role"] == "system"
+        )
+        assert "No events scheduled in the next 7 days" in system_content
+
+    def test_card_thread_shows_error_message_when_fetch_fails(self, client):
+        """When the iCal feed is unreachable, the prompt says 'could not fetch'."""
+        card_id = _make_card("Incident review")
+        self._make_mapping()
+
+        with patch("routers.assist.get_personal_events", side_effect=Exception("Connection refused")):
+            mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar?")
+
+        assert resp.status_code == 200
+        system_content = next(
+            m["content"] for m in mock_llm.return_value.chat.completions.create.call_args[1]["messages"]
+            if m["role"] == "system"
+        )
+        assert "Calendar temporarily unavailable" in system_content
+
+    def test_global_assist_injects_calendar_into_user_message(self, client):
+        """Calendar events appear in the user message context for global assist."""
+        self._make_mapping()
+
+        with patch("routers.assist.SessionLocal", TestSession):
+            with patch("routers.assist.get_personal_events", return_value=self._fake_events()):
+                with patch("routers.assist._maybe_web_search", return_value=""):
+                    with patch("routers.assist.llm_client") as mock_llm:
+                        stream_mock = MagicMock()
+                        chunk = MagicMock()
+                        chunk.choices[0].delta.content = "Team standup"
+                        stream_mock.__iter__ = MagicMock(return_value=iter([chunk]))
+                        mock_llm.return_value.chat.completions.create.return_value = stream_mock
+                        resp = client.post(
+                            "/api/assist/global",
+                            json={"prompt": "what's on my calendar tomorrow?"},
+                        )
+
+        assert resp.status_code == 200
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        user_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "user")
+        assert "Team standup" in user_content
+        assert "### Upcoming calendar events" in user_content

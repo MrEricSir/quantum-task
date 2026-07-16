@@ -22,7 +22,7 @@ import app_setting_keys as setting_keys
 from briefing.context import build_today_context, compute_observations, event_local_date
 from database import SessionLocal
 from deps import llm_client, LLM_MODEL
-from gcal import _cached_fetch_events
+from gcal import get_personal_events
 from health_context import build_health_context
 from weather import fetch_weather
 
@@ -270,7 +270,6 @@ def _fetch_briefing_data(today: date, tz_offset: int, lat: float | None = None, 
         ]
 
         # ── Supporting data ───────────────────────────────────────────────────
-        mappings     = db.query(models.CalendarMapping).all()
         observations = compute_observations(db, today)
         health_data, health_ctx = build_health_context(db, today)
         steps_today = int(health_data["today"].get("steps", 0)) or None
@@ -301,42 +300,30 @@ def _fetch_briefing_data(today: date, tz_offset: int, lat: float | None = None, 
                     lon = float(lon_row.value)
                 except (ValueError, TypeError):
                     pass
+
+        # ── Calendar events (today + week) ────────────────────────────────────
+        week_end: date = today + timedelta(days=8)
+        all_cal_events: list[schemas.CalendarEvent] = [
+            schemas.CalendarEvent(
+                id=f"sched::{ev['id']}",
+                title=ev["title"],
+                description=ev.get("description"),
+                location=ev.get("location"),
+                url=ev.get("url"),
+                start=ev["start"],
+                end=ev.get("end"),
+                all_day=ev["all_day"],
+                section="today",
+                is_ooo=False,
+            )
+            for ev in get_personal_events(db, today, week_end, tz_offset)
+        ]
+        today_events = [e for e in all_cal_events if event_local_date(e, tz_offset) == today]
+        week_events  = [e for e in all_cal_events
+                        if today < event_local_date(e, tz_offset) <= today + timedelta(days=7)]
     finally:
         if _own_db:
             db.close()
-
-    # ── Calendar events (today + week) ────────────────────────────────────────
-    week_end: date = today + timedelta(days=8)
-    all_cal_events: list[schemas.CalendarEvent] = []
-    for m in mappings:
-        try:
-            for ev in _cached_fetch_events(m.ical_url, today, week_end):
-                if ev.get("is_ooo"):
-                    continue
-                start = ev["start"]
-                end   = ev.get("end")
-                if not ev["all_day"]:
-                    cutoff = end if end else start
-                    if cutoff < now_utc:
-                        continue
-                all_cal_events.append(schemas.CalendarEvent(
-                    id=f"sched::{ev['id']}",
-                    title=ev["title"],
-                    description=ev.get("description"),
-                    location=ev.get("location"),
-                    url=ev.get("url"),
-                    start=start,
-                    end=end,
-                    all_day=ev["all_day"],
-                    section="today",
-                    is_ooo=False,
-                ))
-        except Exception as e:
-            print(f"[briefing] calendar fetch error for mapping {m.id}: {e}")
-
-    today_events = [e for e in all_cal_events if event_local_date(e, tz_offset) == today]
-    week_events  = [e for e in all_cal_events
-                    if today < event_local_date(e, tz_offset) <= today + timedelta(days=7)]
 
     # ── Weather ───────────────────────────────────────────────────────────────
     weather = fetch_weather(lat, lon) if lat is not None and lon is not None else None

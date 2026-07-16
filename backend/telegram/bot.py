@@ -15,10 +15,9 @@ import capabilities.habit_check as _habit_check
 import capabilities.mood as _mood
 import capabilities.task_complete as _task_complete
 import models
-from briefing.context import event_local_date
 from database import SessionLocal
 from deps import llm_client, LLM_MODEL
-from gcal import _cached_fetch_events
+from gcal import get_personal_events
 from settings import Settings
 from telegram.notify import send_message
 
@@ -435,45 +434,14 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
 # ── Calendar helpers ──────────────────────────────────────────────────────────
 
-def _fetch_cal_events_for_date(target_date, tz_offset: int) -> list:
-    """Fetch calendar events from all configured iCal feeds for a given date."""
-    import schemas
-    now_utc = datetime.now(timezone.utc)
-    events = []
+def _fetch_cal_events_for_date(target_date, tz_offset: int) -> list[dict]:
+    """Fetch calendar events for a specific date using the shared calendar helper."""
     try:
         with SessionLocal() as db:
-            mappings = db.query(models.CalendarMapping).all()
-        week_end = target_date + timedelta(days=2)
-        for m in mappings:
-            try:
-                for ev in _cached_fetch_events(m.ical_url, target_date, week_end):
-                    if ev.get("is_ooo"):
-                        continue
-                    if not ev["all_day"]:
-                        cutoff = ev.get("end") or ev["start"]
-                        if cutoff < now_utc:
-                            continue
-                    cal_ev = schemas.CalendarEvent(
-                        id=ev["id"], title=ev["title"],
-                        start=ev["start"], end=ev.get("end"),
-                        all_day=ev["all_day"], section="today", is_ooo=False,
-                    )
-                    if event_local_date(cal_ev, tz_offset) == target_date:
-                        events.append(cal_ev)
-            except Exception as e:
-                print(f"[telegram] calendar fetch error for mapping {m.id}: {e}")
+            return get_personal_events(db, target_date, target_date + timedelta(days=1), tz_offset)
     except Exception as e:
         print(f"[telegram] calendar fetch error: {e}")
-    return events
-
-
-def _fmt_event_time(ev, tz_offset: int) -> str:
-    if ev.all_day:
-        return "all day"
-    start = ev.start
-    if start.tzinfo is not None:
-        start = start.replace(tzinfo=None) - timedelta(minutes=tz_offset)
-    return start.strftime("%-I:%M %p")
+        return []
 
 
 # ── Reply functions ───────────────────────────────────────────────────────────
@@ -509,8 +477,8 @@ def _reply_today(tz_offset: int) -> str:
 
     if cal_events:
         lines.append("\n<b>📅 Calendar</b>")
-        for ev in sorted(cal_events, key=lambda e: (e.all_day, e.start)):
-            lines.append(f"• {ev.title} @ {_fmt_event_time(ev, tz_offset)}")
+        for ev in sorted(cal_events, key=lambda e: (e["all_day"], e["start"])):
+            lines.append(f"• {ev['title']} @ {ev['time_str']}")
 
     if timed:
         lines.append("\n<b>⏰ Scheduled tasks</b>")
@@ -556,8 +524,8 @@ def _reply_date(target_date, tz_offset: int) -> str:
 
     if cal_events:
         lines.append("\n<b>Calendar</b>")
-        for ev in sorted(cal_events, key=lambda e: (e.all_day, e.start)):
-            lines.append(f"• {ev.title} @ {_fmt_event_time(ev, tz_offset)}")
+        for ev in sorted(cal_events, key=lambda e: (e["all_day"], e["start"])):
+            lines.append(f"• {ev['title']} @ {ev['time_str']}")
 
     if day_cards:
         lines.append("\n<b>Tasks</b>")

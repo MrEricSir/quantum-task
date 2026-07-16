@@ -84,3 +84,9 @@ class GlobalAssistRequest(BaseModel):
     tag_id: Optional[int] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+
+
+class ContextFromRequest(BaseModel):
+    source: Literal["section", "tag", "similar"]
+    section: Optional[str] = None
+    tag_id: Optional[int] = None

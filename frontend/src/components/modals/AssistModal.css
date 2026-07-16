@@ -305,6 +305,56 @@
 .assist-context-input:focus { border-color: rgba(139, 92, 246, 0.5); }
 .assist-context-input::placeholder { color: var(--text-muted); }
 
+.assist-context-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assist-context-source-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.assist-context-source-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.assist-context-source-select:hover,
+.assist-context-source-select:focus { border-color: rgba(139, 92, 246, 0.5); }
+
+.assist-context-source-select option,
+.assist-context-source-select optgroup { background: #1a1a2e; color: var(--text); }
+
+.assist-context-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  animation: assist-pulse 1s ease-in-out infinite;
+}
+
+@keyframes assist-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.assist-context-loaded-note {
+  font-size: 11px;
+  color: #a78bfa;
+  padding: 2px 0;
+}
+
 .assist-context-actions {
   display: flex;
   gap: 8px;

@@ -25,7 +25,7 @@ from schemas.briefing import BriefingRequest
 from schemas.jobs import (
     JobSearchResult, JobSource, JobCreate, JobUpdate, Job,
     ThreadMessageRequest, ThreadContextRequest, ThreadOutputRequest,
-    AssistRequest, GlobalAssistRequest,
+    AssistRequest, GlobalAssistRequest, ContextFromRequest,
 )
 from schemas.withings import WithingsStatus, WithingsMeasurementOut, WithingsHealthData
 from schemas.engineering import EngineeringItem
@@ -77,7 +77,7 @@ __all__ = [
     # jobs
     "JobSearchResult", "JobSource", "JobCreate", "JobUpdate", "Job",
     "ThreadMessageRequest", "ThreadContextRequest", "ThreadOutputRequest",
-    "AssistRequest", "GlobalAssistRequest",
+    "AssistRequest", "GlobalAssistRequest", "ContextFromRequest",
     # withings
     "WithingsStatus", "WithingsMeasurementOut", "WithingsHealthData",
     # engineering
