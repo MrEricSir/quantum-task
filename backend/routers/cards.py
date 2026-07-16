@@ -4,7 +4,8 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, Query, Request
+import embeddings as _embeddings
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.exceptions import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -87,6 +88,21 @@ def _section_for_date(d, today) -> str:
 
 @router.get("/api/cards/search", response_model=List[schemas.Card])
 def search_cards(q: str = Query(default="", min_length=1), db: Session = Depends(get_db)):
+    # Try semantic search first; fall back to substring if unavailable
+    card_ids = _embeddings.search(db, q, top_k=20)
+    if card_ids:
+        id_order = {cid: i for i, cid in enumerate(card_ids)}
+        cards = (
+            db.query(models.Card)
+            .filter(
+                models.Card.archived == False,  # noqa: E712
+                models.Card.id.in_(card_ids),
+            )
+            .all()
+        )
+        cards.sort(key=lambda c: id_order.get(c.id, 999))
+        return cards
+
     pattern = f"%{q}%"
     return (
         db.query(models.Card)
@@ -114,7 +130,7 @@ def get_cards(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/api/cards", response_model=schemas.Card, status_code=201)
-def create_card(card: schemas.CardCreate, db: Session = Depends(get_db)):
+def create_card(card: schemas.CardCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     count = db.query(models.Card).filter(models.Card.section == card.section).count()
     data = card.model_dump()
     tag_ids = data.pop("tag_ids", [])
@@ -127,6 +143,7 @@ def create_card(card: schemas.CardCreate, db: Session = Depends(get_db)):
     db.add(db_card)
     db.commit()
     db.refresh(db_card)
+    background_tasks.add_task(_embeddings.upsert_bg, db_card.id, db_card.title, db_card.description)
     return db_card
 
 
@@ -295,7 +312,7 @@ def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depe
 
 
 @router.put("/api/cards/{card_id}", response_model=schemas.Card)
-def update_card(request: Request, card_id: int, card: schemas.CardUpdate, db: Session = Depends(get_db)):
+def update_card(request: Request, card_id: int, card: schemas.CardUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     db_card = db.query(models.Card).filter(models.Card.id == card_id).first()
     if not db_card:
         raise HTTPException(status_code=404, detail="Card not found")
@@ -343,6 +360,8 @@ def update_card(request: Request, card_id: int, card: schemas.CardUpdate, db: Se
     db.commit()
     db.refresh(db_card)
     invalidate_insights_cache()
+    if "title" in data or "description" in data:
+        background_tasks.add_task(_embeddings.upsert_bg, db_card.id, db_card.title, db_card.description)
     return db_card
 
 
@@ -513,4 +532,5 @@ def delete_card(card_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Card not found")
     db.delete(db_card)
     db.commit()
+    _embeddings.delete(db, card_id)
     return {"ok": True}

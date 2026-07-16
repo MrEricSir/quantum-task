@@ -210,6 +210,14 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | `undo` | Reverses your last action (capture, completion, or reschedule) |
 | `undo both` | Reverses the last two actions |
 
+#### Search
+
+| What you send | What happens |
+|---|---|
+| `find cards about billing` | Semantic search across tasks, notes, and GitHub items |
+| `what did I write about the deployment?` | Returns matching cards ranked by relevance |
+| `show me anything related to authentication` | Includes GitHub issues and PRs in results |
+
 #### Notes
 
 | What you send | What happens |
@@ -279,6 +287,11 @@ Configured in **Settings → Telegram** — set a send time for each:
 - Completed tasks collected in a collapsible section, sorted by completion time
 - Restore or permanently delete archived tasks
 
+### Search
+- The header search bar searches cards (tasks + notes) by keyword; results are ranked by semantic similarity when embeddings are configured
+- The Telegram bot's search intent also searches GitHub engineering items by semantic similarity
+- The AI Assist header bar (no section/tag filter active) automatically injects semantically relevant cards and GitHub items as context
+
 ### Other
 - Responsive layout, works on mobile
 - Dark "cyber" theme with animated background
@@ -327,6 +340,22 @@ export LLM_MODEL="llama-3.3-70b-versatile"
 | `AUTH_PASSWORD` | _(unset)_ | Login password — auth disabled if not set |
 
 When set, the password is also accepted as a Bearer token (`Authorization: Bearer <password>`) for API clients such as the iOS Shortcut.
+
+### Semantic search (optional)
+
+Semantic search uses embedding vectors to rank results by meaning rather than exact keyword match. It covers cards (tasks + notes) and GitHub engineering items.
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMBEDDING_BASE_URL` | falls back to `LLM_BASE_URL` | OpenAI-compatible embeddings API base URL |
+| `EMBEDDING_API_KEY` | falls back to `LLM_API_KEY` | API key for the embeddings endpoint |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
+
+If these are not set, search falls back to substring matching automatically. With Ollama, pull the model once:
+
+```bash
+ollama pull nomic-embed-text
+```
 
 ### Workshop web search (optional)
 

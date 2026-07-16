@@ -276,6 +276,24 @@ class AppSetting(Base):
     value = Column(String, nullable=False)
 
 
+class CardEmbedding(Base):
+    """Semantic embedding vector for a card, used for natural-language search."""
+    __tablename__ = "card_embeddings"
+
+    card_id    = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), primary_key=True)
+    embedding  = Column(Text, nullable=False)   # JSON array of floats
+    updated_at = Column(DateTime, nullable=False)
+
+
+class EngineeringItemEmbedding(Base):
+    """Semantic embedding vector for a GitHub engineering item."""
+    __tablename__ = "engineering_item_embeddings"
+
+    item_id    = Column(Integer, ForeignKey("engineering_items.id", ondelete="CASCADE"), primary_key=True)
+    embedding  = Column(Text, nullable=False)   # JSON array of floats
+    updated_at = Column(DateTime, nullable=False)
+
+
 class EngineeringItem(Base):
     """Read-only mirror of GitHub issues / PRs assigned to the user."""
     __tablename__ = "engineering_items"

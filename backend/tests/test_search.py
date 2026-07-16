@@ -1,0 +1,369 @@
+"""
+Tests for semantic search integration across:
+  - telegram/bot.py _reply_search_cards — covers cards + GitHub items
+  - routers/assist.py global_assist — injects semantic context when no filter
+  - github_sync.py — calls upsert_eng_bg after sync
+"""
+import json
+import math
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from unittest.mock import patch, MagicMock, call
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+import models
+from main import app
+from deps import get_db
+
+
+# ── DB fixtures ───────────────────────────────────────────────────────────────
+
+engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestSession = sessionmaker(bind=engine)
+
+
+def override_get_db():
+    db = TestSession()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def setup_db():
+    models.Base.metadata.create_all(bind=engine)
+    yield
+    models.Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def client():
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def session():
+    s = TestSession()
+    yield s
+    s.close()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _unit(v):
+    mag = math.sqrt(sum(x * x for x in v))
+    return [x / mag for x in v]
+
+
+def _make_card(title, section="today", description=None, completed=False, archived=False):
+    with TestSession() as db:
+        c = models.Card(title=title, section=section, description=description,
+                        completed=completed, archived=archived, position=0)
+        db.add(c)
+        db.commit()
+        return c.id
+
+
+def _make_eng_item(title, repo="owner/repo", state="open", project_status=None):
+    with TestSession() as db:
+        e = models.EngineeringItem(
+            external_id=f"github:{repo}/{title}",
+            title=title, item_type="issue", repo=repo,
+            number=1, url=f"https://github.com/{repo}/issues/1",
+            state=state, project_status=project_status,
+            synced_at=datetime.now(timezone.utc),
+        )
+        db.add(e)
+        db.commit()
+        return e.id
+
+
+# ── _reply_search_cards ───────────────────────────────────────────────────────
+
+class TestReplySearchCards:
+
+    def test_missing_query_returns_prompt(self):
+        from telegram.bot import _reply_search_cards
+        with patch("telegram.bot.SessionLocal", TestSession):
+            reply = _reply_search_cards({})
+        assert "search" in reply.lower() or "?" in reply
+
+    def test_finds_card_by_semantic_search(self):
+        card_id = _make_card("Deploy the authentication service")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[card_id]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    reply = _reply_search_cards({"query": "auth deployment"})
+
+        assert "Deploy the authentication service" in reply
+
+    def test_finds_engineering_item_by_semantic_search(self):
+        eng_id = _make_eng_item("Fix OAuth token refresh", repo="org/backend")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[]):
+                with patch("embeddings.search_eng", return_value=[eng_id]):
+                    reply = _reply_search_cards({"query": "oauth token"})
+
+        assert "Fix OAuth token refresh" in reply
+        assert "GitHub" in reply
+
+    def test_shows_both_cards_and_engineering_items(self):
+        card_id = _make_card("Write auth docs")
+        eng_id  = _make_eng_item("Auth service refactor")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[card_id]):
+                with patch("embeddings.search_eng", return_value=[eng_id]):
+                    reply = _reply_search_cards({"query": "auth"})
+
+        assert "Write auth docs" in reply
+        assert "Auth service refactor" in reply
+        assert "Tasks" in reply or "Notes" in reply
+        assert "GitHub" in reply
+
+    def test_falls_back_to_substring_for_cards_when_no_embeddings(self):
+        _make_card("Deploy authentication module")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    reply = _reply_search_cards({"query": "authentication"})
+
+        assert "Deploy authentication module" in reply
+
+    def test_falls_back_to_substring_for_eng_items_when_no_embeddings(self):
+        _make_eng_item("Fix authentication bug")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    reply = _reply_search_cards({"query": "authentication"})
+
+        assert "Fix authentication bug" in reply
+
+    def test_returns_no_results_message_when_nothing_matches(self):
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    reply = _reply_search_cards({"query": "xyzzy nonexistent"})
+
+        assert "No results" in reply or "no results" in reply.lower()
+
+    def test_completed_card_shows_checkmark(self):
+        card_id = _make_card("Finished task", completed=True)
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[card_id]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    reply = _reply_search_cards({"query": "finished"})
+
+        assert "✅" in reply
+
+    def test_engineering_item_shows_project_status(self):
+        eng_id = _make_eng_item("API rate limiting", project_status="In Progress")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[]):
+                with patch("embeddings.search_eng", return_value=[eng_id]):
+                    reply = _reply_search_cards({"query": "api rate"})
+
+        assert "In Progress" in reply
+
+    def test_archived_cards_excluded_from_results(self):
+        archived_id = _make_card("Archived task", archived=True)
+        active_id   = _make_card("Active task")
+        from telegram.bot import _reply_search_cards
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[archived_id, active_id]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    reply = _reply_search_cards({"query": "task"})
+
+        assert "Active task" in reply
+        assert "Archived task" not in reply
+
+    def test_sets_last_card_in_session(self):
+        card_id = _make_card("My task")
+        from telegram.bot import _reply_search_cards, _sessions
+        chat_id = "test_session_card"
+        _sessions.pop(chat_id, None)
+
+        with patch("telegram.bot.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[card_id]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    _reply_search_cards({"query": "task"}, chat_id=chat_id)
+
+        assert _sessions[chat_id]["last_card"]["id"] == card_id
+
+
+# ── global_assist semantic injection ──────────────────────────────────────────
+
+class TestGlobalAssistSemanticInjection:
+    """When no section/tag filter is set, global_assist injects semantically relevant context."""
+
+    def _stream_assist(self, client, prompt, **kwargs):
+        payload = {"prompt": prompt, **kwargs}
+        with patch("routers.assist._maybe_web_search", return_value=""):
+            with patch("routers.assist.llm_client") as mock_llm:
+                stream_mock = MagicMock()
+                chunk = MagicMock()
+                chunk.choices[0].delta.content = "OK"
+                stream_mock.__iter__ = MagicMock(return_value=iter([chunk]))
+                mock_llm.return_value.chat.completions.create.return_value = stream_mock
+                resp = client.post("/api/assist/global", json=payload)
+        return mock_llm, resp
+
+    def test_injects_relevant_cards_when_no_filter(self, client):
+        card_id = _make_card("Deploy authentication service", description="JWT refresh flow")
+
+        with patch("routers.assist.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[card_id]):
+                with patch("embeddings.search_eng", return_value=[]):
+                    mock_llm, resp = self._stream_assist(client, "tell me about auth")
+
+        assert resp.status_code == 200
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        assert "Deploy authentication service" in user_content
+        assert "relevant cards" in user_content.lower()
+
+    def test_injects_relevant_engineering_items_when_no_filter(self, client):
+        eng_id = _make_eng_item("Fix OAuth flow", repo="org/api", project_status="In Progress")
+
+        with patch("routers.assist.SessionLocal", TestSession):
+            with patch("embeddings.search", return_value=[]):
+                with patch("embeddings.search_eng", return_value=[eng_id]):
+                    mock_llm, resp = self._stream_assist(client, "oauth issues")
+
+        assert resp.status_code == 200
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        assert "Fix OAuth flow" in user_content
+        assert "GitHub" in user_content
+
+    def test_no_semantic_injection_when_section_filter_set(self, client):
+        card_id = _make_card("Deploy authentication service")
+
+        search_mock = MagicMock(return_value=[card_id])
+        with patch("embeddings.search", search_mock):
+            with patch("embeddings.search_eng", return_value=[]):
+                mock_llm, resp = self._stream_assist(client, "auth", section="today")
+
+        # search() should NOT be called for semantic injection when section is set
+        search_mock.assert_not_called()
+
+    def test_semantic_injection_skips_gracefully_on_error(self, client):
+        """If embedding service errors, the assistant still responds."""
+        with patch("embeddings.search", side_effect=Exception("embed down")):
+            mock_llm, resp = self._stream_assist(client, "some query")
+
+        assert resp.status_code == 200
+
+    def test_no_relevant_cards_section_omitted(self, client):
+        """If no cards match semantically, the 'relevant cards' section is not injected."""
+        with patch("embeddings.search", return_value=[]):
+            with patch("embeddings.search_eng", return_value=[]):
+                mock_llm, resp = self._stream_assist(client, "random query")
+
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        assert "relevant cards" not in user_content.lower()
+        assert "relevant github" not in user_content.lower()
+
+
+# ── github_sync embedding hook ────────────────────────────────────────────────
+
+class TestGithubSyncEmbedding:
+    """github_sync.sync() should call upsert_eng_bg for open items after sync."""
+
+    def _mock_fetch_items(self, items):
+        """Build a fake _fetch_items return value."""
+        return [
+            {
+                "title": it["title"],
+                "number": i + 1,
+                "html_url": f"https://github.com/{it['repo']}/issues/{i + 1}",
+                "pull_request": None,
+            }
+            for i, it in enumerate(items)
+        ]
+
+    def test_upsert_eng_bg_called_for_open_items(self):
+        """After a successful sync, upsert_eng_bg is called for every open item."""
+        from github_sync import sync
+        import app_setting_keys as sk
+
+        with TestSession() as db:
+            db.add(models.AppSetting(key=sk.GITHUB_TOKEN, value="token"))
+            db.add(models.AppSetting(key=sk.GITHUB_REPOS, value="owner/repo"))
+            db.commit()
+
+        fetch_items = self._mock_fetch_items([
+            {"title": "Fix login bug", "repo": "owner/repo"},
+            {"title": "Add dark mode",  "repo": "owner/repo"},
+        ])
+
+        with TestSession() as db:
+            with patch("github_sync._fetch_items", return_value=fetch_items):
+                with patch("github_sync._fetch_project_statuses", return_value={}):
+                    with patch("github_sync.get_status_config", return_value={}):
+                        with patch("embeddings.upsert_eng_bg") as mock_upsert:
+                            result = sync(db)
+
+        assert result["error"] is None
+        assert mock_upsert.call_count == 2
+        called_titles = {c.args[1] for c in mock_upsert.call_args_list}
+        assert "Fix login bug" in called_titles
+        assert "Add dark mode" in called_titles
+
+    def test_sync_continues_when_embedding_fails(self):
+        """If embedding raises an exception, sync still completes successfully."""
+        from github_sync import sync
+        import app_setting_keys as sk
+
+        with TestSession() as db:
+            db.add(models.AppSetting(key=sk.GITHUB_TOKEN, value="token"))
+            db.add(models.AppSetting(key=sk.GITHUB_REPOS, value="owner/repo"))
+            db.commit()
+
+        fetch_items = self._mock_fetch_items([{"title": "Some issue", "repo": "owner/repo"}])
+
+        with TestSession() as db:
+            with patch("github_sync._fetch_items", return_value=fetch_items):
+                with patch("github_sync._fetch_project_statuses", return_value={}):
+                    with patch("github_sync.get_status_config", return_value={}):
+                        with patch("embeddings.upsert_eng_bg", side_effect=Exception("embed down")):
+                            result = sync(db)
+
+        assert result["error"] is None

@@ -261,6 +261,15 @@ async def _experiment_cleanup_scheduler() -> None:
         await asyncio.get_event_loop().run_in_executor(None, _expire_stale_experiments)
 
 
+async def _embedding_backfill() -> None:
+    await asyncio.sleep(10)  # let the server finish startup first
+    try:
+        import embeddings
+        await asyncio.get_event_loop().run_in_executor(None, embeddings.backfill)
+    except Exception as e:
+        print(f"[embeddings] backfill error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app):
     _run_startup_migrations()
@@ -268,10 +277,12 @@ async def lifespan(app):
     task  = asyncio.create_task(_push_scheduler())
     wtask = asyncio.create_task(_withings_scheduler())
     etask = asyncio.create_task(_experiment_cleanup_scheduler())
+    btask = asyncio.create_task(_embedding_backfill())
     yield
     task.cancel()
     wtask.cancel()
     etask.cancel()
+    btask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

@@ -382,6 +382,40 @@ def global_assist(req: schemas.GlobalAssistRequest):
                     card_context_parts.append(
                         f"- **{c.title}**" + (f": {c.description}" if c.description else "")
                     )
+        else:
+            # No section/tag filter — use semantic search to find relevant cards and GitHub items
+            try:
+                import embeddings as _embeddings
+
+                card_ids = _embeddings.search(db, req.prompt, top_k=8)
+                if card_ids:
+                    id_order = {cid: i for i, cid in enumerate(card_ids)}
+                    sem_cards = db.query(models.Card).filter(
+                        models.Card.archived == False,  # noqa: E712
+                        models.Card.id.in_(card_ids),
+                    ).all()
+                    sem_cards.sort(key=lambda c: id_order.get(c.id, 999))
+                    if sem_cards:
+                        card_context_parts.append("### Potentially relevant cards")
+                        for c in sem_cards:
+                            card_context_parts.append(
+                                f"- **{c.title}**" + (f": {c.description}" if c.description else "")
+                            )
+
+                eng_ids = _embeddings.search_eng(db, req.prompt, top_k=5)
+                if eng_ids:
+                    id_order = {iid: i for i, iid in enumerate(eng_ids)}
+                    sem_eng = db.query(models.EngineeringItem).filter(
+                        models.EngineeringItem.id.in_(eng_ids),
+                    ).all()
+                    sem_eng.sort(key=lambda e: id_order.get(e.id, 999))
+                    if sem_eng:
+                        card_context_parts.append("### Potentially relevant GitHub items")
+                        for e in sem_eng:
+                            status = f" ({e.project_status})" if e.project_status else ""
+                            card_context_parts.append(f"- **{e.title}**{status} — {e.repo} [{e.state}]")
+            except Exception:
+                pass
 
         background_parts: list[str] = []
         today = date.today()

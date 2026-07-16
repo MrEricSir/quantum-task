@@ -64,6 +64,14 @@ The "action" field must be one of:
       Examples: "what did I complete today?", "what did I get done?", "show me my wins",
                 "what have I accomplished?", "completed tasks", "what did I finish today?"
 
+  "search_cards"
+      User wants to find tasks or notes by topic, concept, or keyword — not by exact title.
+      Also return:
+        "query" — the topic or phrase to search for (required)
+      Examples: "what did I write about the deployment?", "find cards about billing",
+                "do I have anything about the API?", "show me everything about marketing",
+                "what notes do I have on the sprint?"
+
   "capture"
       User is stating a new task, event, or item to save.
       Also return:
@@ -379,6 +387,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "query_completed":
         return _reply_completed(tz_offset, intent.get("date"))
+
+    if action == "search_cards":
+        return _reply_search_cards(intent, chat_id)
 
     if action == "add_note":
         return _reply_add_note(intent, chat_id)
@@ -740,6 +751,75 @@ def _reply_read_note(intent: dict, chat_id: str = "") -> str:
     if not description:
         return f'<b>{title}</b> has no notes.'
     return f'<b>{title}</b>\n\n{description}'
+
+
+def _reply_search_cards(intent: dict, chat_id: str = "") -> str:
+    """Semantic search across cards and GitHub engineering items."""
+    query = (intent.get("query") or "").strip()
+    if not query:
+        return "What would you like to search for?"
+
+    import embeddings as _embeddings
+    lines = []
+
+    with SessionLocal() as db:
+        # --- Cards ---
+        card_ids = _embeddings.search(db, query, top_k=5)
+        if card_ids:
+            id_order = {cid: i for i, cid in enumerate(card_ids)}
+            cards = db.query(models.Card).filter(
+                models.Card.archived == False,  # noqa: E712
+                models.Card.id.in_(card_ids),
+            ).all()
+            cards.sort(key=lambda c: id_order.get(c.id, 999))
+        else:
+            q = query.lower()
+            cards = db.query(models.Card).filter(
+                models.Card.archived == False,  # noqa: E712
+                (models.Card.title.ilike(f"%{q}%") | models.Card.description.ilike(f"%{q}%")),
+            ).limit(5).all()
+
+        if cards:
+            lines.append("<b>Tasks / Notes</b>")
+            for c in cards:
+                status = "✅" if c.completed else ("📌" if c.section == "none" else "⬜")
+                lines.append(f"{status} <b>{c.title}</b>")
+                if c.description:
+                    snippet = c.description[:80].replace("\n", " ")
+                    if len(c.description) > 80:
+                        snippet += "…"
+                    lines.append(f"   <i>{snippet}</i>")
+            if chat_id:
+                _get_session(chat_id)["last_card"] = {"id": cards[0].id, "title": cards[0].title}
+
+        # --- Engineering items ---
+        eng_ids = _embeddings.search_eng(db, query, top_k=3)
+        if eng_ids:
+            id_order = {iid: i for i, iid in enumerate(eng_ids)}
+            eng_items = db.query(models.EngineeringItem).filter(
+                models.EngineeringItem.id.in_(eng_ids),
+            ).all()
+            eng_items.sort(key=lambda e: id_order.get(e.id, 999))
+        else:
+            q = query.lower()
+            eng_items = db.query(models.EngineeringItem).filter(
+                models.EngineeringItem.title.ilike(f"%{q}%"),
+            ).limit(3).all()
+
+        if eng_items:
+            if lines:
+                lines.append("")
+            lines.append("<b>GitHub</b>")
+            for e in eng_items:
+                icon = "🔴" if e.state == "closed" else "🟢"
+                status_tag = f" [{e.project_status}]" if e.project_status else ""
+                lines.append(f"{icon} <b>{e.title}</b>{status_tag}")
+                lines.append(f"   <i>{e.repo}</i>")
+
+    if not lines:
+        return f'No results found matching "{query}".'
+
+    return f'Search results for "<b>{query}</b>":\n\n' + "\n".join(lines)
 
 
 def _reply_bulk_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:

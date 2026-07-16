@@ -287,7 +287,16 @@ def sync(db: Session) -> dict:
             ))
             created += 1
 
-    db.flush()  # ensure new items have IDs before GraphQL enrichment
+    db.flush()  # ensure new items have IDs before GraphQL enrichment and embedding
+
+    # Embed new/updated items in the background
+    try:
+        import embeddings as _embeddings
+        all_open = db.query(models.EngineeringItem).filter_by(state="open").all()
+        for eng_item in all_open:
+            _embeddings.upsert_eng_bg(eng_item.id, eng_item.title, eng_item.repo)
+    except Exception:
+        pass
 
     # Enrich open items with Projects v2 board status; detect In Progress / Done transitions
     open_eng_items = db.query(models.EngineeringItem).filter_by(state="open").all()
