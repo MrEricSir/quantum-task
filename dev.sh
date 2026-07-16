@@ -305,6 +305,7 @@ gcp_setup() {
     --region "$GCP_REGION" \
     --platform managed \
     --allow-unauthenticated \
+    --min-instances 0 \
     --service-account "$CLOUD_RUN_SA" \
     --add-volume "name=db,type=cloud-storage,bucket=$GCS_BUCKET" \
     --add-volume-mount "volume=db,mount-path=/app/data" \
@@ -386,6 +387,7 @@ gcp_deploy() {
     --image "$IMAGE:$TAG" \
     --region "$GCP_REGION" \
     --platform managed \
+    --min-instances 0 \
     --project "$GCP_PROJECT_ID" \
     --quiet
 
