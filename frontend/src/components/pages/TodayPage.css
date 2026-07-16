@@ -59,7 +59,7 @@
   cursor: pointer;
   text-align: left;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
 }
 
 .focus-next-title--btn:hover {

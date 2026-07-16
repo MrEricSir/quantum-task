@@ -7,6 +7,8 @@ external_id format: "github:{owner}/{repo}/issues/{number}"
                  or "github:{owner}/{repo}/pull/{number}"
 """
 import re
+import json
+import logging
 from datetime import datetime, timezone
 
 import requests
@@ -16,6 +18,9 @@ import models
 import app_setting_keys as setting_keys
 
 GITHUB_API = "https://api.github.com"
+GITHUB_GRAPHQL = "https://api.github.com/graphql"
+
+log = logging.getLogger(__name__)
 
 
 def get_config(db: Session) -> tuple[str | None, list[str]]:
@@ -32,7 +37,10 @@ def get_config(db: Session) -> tuple[str | None, list[str]]:
 
 
 def save_config(db: Session, token: str | None, repos: list[str]) -> None:
-    for key, value in [(setting_keys.GITHUB_TOKEN, token or ""), (setting_keys.GITHUB_REPOS, "\n".join(repos))]:
+    updates = [(setting_keys.GITHUB_REPOS, "\n".join(repos))]
+    if token:  # only overwrite stored token when a new value is provided
+        updates.append((setting_keys.GITHUB_TOKEN, token))
+    for key, value in updates:
         row = db.query(models.AppSetting).filter_by(key=key).first()
         if row:
             row.value = value
@@ -102,6 +110,142 @@ def _fetch_items(token: str, repos: list[str]) -> list[dict]:
     return items
 
 
+_DEFAULT_IN_PROGRESS = "In Progress"
+_DEFAULT_DONE = "Done"
+
+
+def get_status_config(db: Session) -> dict:
+    """Return the per-repo status name config dict. Falls back to {} if not set."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_STATUS_CONFIG).first()
+    if row and row.value:
+        try:
+            return json.loads(row.value)
+        except Exception:
+            pass
+    return {}
+
+
+def save_status_config(db: Session, config: dict) -> None:
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_STATUS_CONFIG).first()
+    if row:
+        row.value = json.dumps(config)
+    else:
+        db.add(models.AppSetting(key=setting_keys.GITHUB_STATUS_CONFIG, value=json.dumps(config)))
+    db.commit()
+
+
+def _get_status_names(config: dict, repo: str) -> tuple[str, str]:
+    """Return (in_progress_name, done_name) for a repo, falling back to defaults."""
+    cfg = config.get(repo) or config.get("default") or {}
+    return (
+        cfg.get("in_progress") or _DEFAULT_IN_PROGRESS,
+        cfg.get("done") or _DEFAULT_DONE,
+    )
+
+
+def _parse_external_id(external_id: str) -> tuple[str, str, str, int] | None:
+    """
+    Parse 'github:owner/repo/issues/123' or 'github:owner/repo/pull/123'
+    into (owner, repo, graphql_type, number).
+    graphql_type is 'issue' or 'pullRequest'.
+    """
+    m = re.match(r"github:([^/]+)/([^/]+)/(issues|pull)/(\d+)$", external_id)
+    if not m:
+        return None
+    owner, repo, kind, number = m.groups()
+    gql_type = "pullRequest" if kind == "pull" else "issue"
+    return owner, repo, gql_type, int(number)
+
+
+def _fetch_project_statuses(token: str, items: list[models.EngineeringItem]) -> dict[int, dict]:
+    """
+    Fetch GitHub Projects v2 board status for a list of EngineeringItems in a
+    single batched GraphQL request.
+
+    Returns {item.id: {"project_name": str, "project_status": str}} for items
+    that belong to a project. Items not in any project are omitted.
+
+    Requires the token to have the `read:project` OAuth scope; silently returns
+    {} if the request fails (e.g. missing scope).
+    """
+    if not items:
+        return {}
+
+    # Build one alias per item
+    fragments = []
+    index_map: dict[str, int] = {}  # alias → item.id
+    for i, item in enumerate(items):
+        parsed = _parse_external_id(item.external_id)
+        if not parsed:
+            continue
+        owner, repo, gql_type, number = parsed
+        alias = f"item{i}"
+        index_map[alias] = item.id
+        sub = f"""
+          {alias}: repository(owner: "{owner}", name: "{repo}") {{
+            {gql_type}(number: {number}) {{
+              projectItems(first: 5) {{
+                nodes {{
+                  project {{ title }}
+                  fieldValues(first: 20) {{
+                    nodes {{
+                      ... on ProjectV2ItemFieldSingleSelectValue {{
+                        name
+                        field {{ ... on ProjectV2SingleSelectField {{ name }} }}
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}"""
+        fragments.append(sub)
+
+    if not fragments:
+        return {}
+
+    query = "query {" + "\n".join(fragments) + "\n}"
+    try:
+        resp = requests.post(
+            GITHUB_GRAPHQL,
+            json={"query": query},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data") or {}
+    except Exception as exc:
+        log.warning("GitHub Projects GraphQL fetch failed: %s", exc)
+        return {}
+
+    result: dict[int, dict] = {}
+    for alias, item_id in index_map.items():
+        repo_data = data.get(alias) or {}
+        # repo_data has one key: "issue" or "pullRequest"
+        inner = next(iter(repo_data.values()), None) if repo_data else None
+        if not inner:
+            continue
+        project_items = (inner.get("projectItems") or {}).get("nodes") or []
+        if not project_items:
+            continue
+        # Use the first project item found
+        pi = project_items[0]
+        project_name = (pi.get("project") or {}).get("title")
+        project_status = None
+        for fv in (pi.get("fieldValues") or {}).get("nodes") or []:
+            field_name = (fv.get("field") or {}).get("name", "")
+            if field_name.lower() == "status":
+                project_status = fv.get("name")
+                break
+        if project_name:
+            result[item_id] = {"project_name": project_name, "project_status": project_status}
+
+    return result
+
+
 def sync(db: Session) -> dict:
     """
     Main sync entry point. Returns {created, closed, skipped, error}.
@@ -143,21 +287,68 @@ def sync(db: Session) -> dict:
             ))
             created += 1
 
-    # Close items no longer in the open set; auto-archive linked cards
+    db.flush()  # ensure new items have IDs before GraphQL enrichment
+
+    # Enrich open items with Projects v2 board status; detect In Progress / Done transitions
+    open_eng_items = db.query(models.EngineeringItem).filter_by(state="open").all()
+    project_data = _fetch_project_statuses(token, open_eng_items)
+    status_config = get_status_config(db)
+    cards_created = 0
+    for eng_item in open_eng_items:
+        if eng_item.id not in project_data:
+            continue
+        old_status = eng_item.project_status
+        new_status = project_data[eng_item.id]["project_status"]
+        eng_item.project_name = project_data[eng_item.id]["project_name"]
+        eng_item.project_status = new_status
+
+        in_progress_name, done_name = _get_status_names(status_config, eng_item.repo)
+
+        if new_status == in_progress_name and old_status != in_progress_name:
+            # Transition → In Progress: create a linked card if one doesn't exist yet
+            exists = db.query(models.Card).filter_by(
+                external_id=eng_item.external_id, archived=False
+            ).first()
+            if not exists:
+                db.add(models.Card(
+                    title=eng_item.title,
+                    description=eng_item.url,
+                    section="today",
+                    external_id=eng_item.external_id,
+                    position=0,
+                    today_since=now,
+                    created_at=now,
+                    updated_at=now,
+                ))
+                cards_created += 1
+
+        elif new_status == done_name and old_status != done_name:
+            # Transition → Done: complete the linked card
+            card = db.query(models.Card).filter_by(
+                external_id=eng_item.external_id, archived=False, completed=False
+            ).first()
+            if card:
+                card.completed = True
+                card.completed_at = now
+                card.updated_at = now
+
+    # Close items no longer in the open set; complete + archive linked cards
     tracked_open = db.query(models.EngineeringItem).filter_by(state="open").all()
     for eng_item in tracked_open:
         if eng_item.external_id not in open_items:
             eng_item.state = "closed"
             eng_item.synced_at = now
             closed += 1
-            # Archive any cards linked to this item via external_id
             linked_cards = db.query(models.Card).filter_by(
                 external_id=eng_item.external_id, archived=False
             ).all()
             for card in linked_cards:
+                if not card.completed:
+                    card.completed = True
+                    card.completed_at = now
                 card.archived = True
                 card.archived_at = now
                 card.updated_at = now
 
     db.commit()
-    return {"created": created, "closed": closed, "skipped": skipped, "error": None}
+    return {"created": created, "closed": closed, "skipped": skipped, "cards_created": cards_created, "error": None}

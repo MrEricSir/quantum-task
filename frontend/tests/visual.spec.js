@@ -110,8 +110,9 @@ async function mockAPIs(page) {
   await page.route('**/api/calendar-events', r => r.fulfill({ json: CALENDAR_EVENTS }))
   await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
   await page.route('**/api/engineering/items', r => r.fulfill({ json: [] }))
-  await page.route('**/api/engineering/sync', r => r.fulfill({ json: { created: 0, closed: 0, skipped: 0, error: null } }))
+  await page.route('**/api/engineering/sync', r => r.fulfill({ json: { created: 0, closed: 0, skipped: 0, cards_created: 0, error: null } }))
   await page.route('**/api/engineering/config', r => r.fulfill({ json: { configured: false, repos: [] } }))
+  await page.route('**/api/engineering/status-config', r => r.fulfill({ json: {} }))
   // habits: handle both active and archived requests
   await page.route(/\/api\/habits(\?|$)/, r => {
     const url = r.request().url()
@@ -576,10 +577,10 @@ test.describe('engineering page', () => {
     await page.route('**/api/engineering/items', r => r.fulfill({ json: [
       { id: 1, external_id: 'github:org/repo/pull/1', title: 'Fix login bug', item_type: 'pr',
         repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
-        synced_at: new Date().toISOString() },
+        project_name: null, project_status: null, synced_at: new Date().toISOString() },
       { id: 2, external_id: 'github:org/repo/issues/2', title: 'Add dark mode', item_type: 'issue',
         repo: 'org/repo', number: 2, url: 'https://github.com/org/repo/issues/2', state: 'open',
-        synced_at: new Date().toISOString() },
+        project_name: 'My Board', project_status: 'In Progress', synced_at: new Date().toISOString() },
     ]}))
     await page.goto('/engineering')
     await waitForApp(page)

@@ -24,6 +24,11 @@ function ItemCard({ item, onAddToBoard, isAdded }) {
         </span>
         <span className="eng-item-title">{item.title}</span>
         <span className="eng-item-meta">{item.repo}#{item.number} ↗</span>
+        {item.project_status && (
+          <span className="eng-item-status" title={item.project_name || undefined}>
+            {item.project_status}
+          </span>
+        )}
       </a>
       <button
         type="button"

@@ -356,6 +356,22 @@ export async function saveEngineeringConfig(data) {
   return res.json()
 }
 
+export async function fetchStatusConfig() {
+  const res = await apiFetch('/api/engineering/status-config')
+  if (!res.ok) throw new Error('Failed to fetch status config')
+  return res.json()
+}
+
+export async function saveStatusConfig(config) {
+  const res = await apiFetch('/api/engineering/status-config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) throw new Error('Failed to save status config')
+  return res.json()
+}
+
 export async function syncEngineering() {
   const res = await apiFetch('/api/engineering/sync', { method: 'POST' })
   if (!res.ok) throw new Error('Failed to sync engineering items')

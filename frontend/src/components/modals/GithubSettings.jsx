@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { fetchEngineeringConfig, saveEngineeringConfig, syncEngineering } from '../../api'
+import { fetchEngineeringConfig, saveEngineeringConfig, syncEngineering, fetchStatusConfig, saveStatusConfig } from '../../api'
 import Modal from './Modal'
 import './GithubSettings.css'
 
 export default function GithubSettings({ onClose, onSynced }) {
   const [token, setToken] = useState('')
   const [repos, setRepos] = useState('')
+  const [statusConfig, setStatusConfig] = useState({})
   const [configured, setConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -19,6 +20,7 @@ export default function GithubSettings({ onClose, onSynced }) {
       .then((cfg) => {
         setConfigured(cfg.configured)
         setRepos(cfg.repos.join('\n'))
+        return fetchStatusConfig().then(setStatusConfig).catch(() => {})
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
@@ -30,7 +32,10 @@ export default function GithubSettings({ onClose, onSynced }) {
     setSyncResult(null)
     try {
       const repoList = repos.split('\n').map((r) => r.trim()).filter(Boolean)
-      await saveEngineeringConfig({ token: token.trim(), repos: repoList })
+      await Promise.all([
+        saveEngineeringConfig({ token: token.trim(), repos: repoList }),
+        saveStatusConfig(statusConfig),
+      ])
       const result = await syncEngineering()
       setSyncResult(result)
       if ((result.created > 0 || result.closed > 0) && onSynced) onSynced()
@@ -63,6 +68,7 @@ export default function GithubSettings({ onClose, onSynced }) {
     const parts = []
     if (syncResult.created > 0) parts.push(`${syncResult.created} new`)
     if (syncResult.closed > 0) parts.push(`${syncResult.closed} closed`)
+    if (syncResult.cards_created > 0) parts.push(`${syncResult.cards_created} card${syncResult.cards_created === 1 ? '' : 's'} added to board`)
     if (parts.length === 0) parts.push('Already up to date')
     return <span className="gh-sync-ok">{parts.join(', ')}</span>
   }
@@ -97,7 +103,7 @@ export default function GithubSettings({ onClose, onSynced }) {
             />
             <p className="gh-hint gh-hint--small">
               Generate at GitHub → Settings → Developer settings → Personal access tokens.
-              Required scopes: <code>repo</code> (or <code>public_repo</code> for public repos only).
+              Required scopes: <code>repo</code> (or <code>public_repo</code> for public repos only), <code>read:project</code> for board status.
             </p>
           </div>
 
@@ -114,6 +120,39 @@ export default function GithubSettings({ onClose, onSynced }) {
             <p className="gh-hint gh-hint--small">
               One <code>owner/repo</code> per line. Leave blank to watch all repos you have access to.
             </p>
+          </div>
+
+          <div className="gh-field">
+            <label className="gh-label">
+              Project board columns <span className="gh-optional">(optional)</span>
+            </label>
+            <p className="gh-hint gh-hint--small">
+              Column names that trigger auto card creation and completion. Leave blank to use defaults ("In Progress" / "Done").
+            </p>
+            <div className="gh-status-table">
+              <div className="gh-status-header">
+                <span>Repo</span>
+                <span>In Progress column</span>
+                <span>Done column</span>
+              </div>
+              {[{ key: 'default', label: 'Default' }, ...repos.split('\n').map((r) => r.trim()).filter(Boolean).map((r) => ({ key: r, label: r }))].map(({ key, label }) => (
+                <div className="gh-status-row" key={key}>
+                  <span className="gh-status-repo">{label}</span>
+                  <input
+                    className="gh-status-input"
+                    placeholder="In Progress"
+                    value={(statusConfig[key] || {}).in_progress || ''}
+                    onChange={(e) => setStatusConfig((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), in_progress: e.target.value } }))}
+                  />
+                  <input
+                    className="gh-status-input"
+                    placeholder="Done"
+                    value={(statusConfig[key] || {}).done || ''}
+                    onChange={(e) => setStatusConfig((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), done: e.target.value } }))}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
 
           {configured && (

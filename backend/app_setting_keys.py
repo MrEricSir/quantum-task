@@ -24,6 +24,9 @@ VAPID_PUBLIC_KEY = "vapid_public_key"
 GITHUB_TOKEN = "github_token"
 # JSON array of "owner/repo" strings to sync; empty array means all accessible repos.
 GITHUB_REPOS = "github_repos"
+# JSON dict mapping repo ("owner/repo" or "default") to {"in_progress": str, "done": str}
+# column names on the GitHub Projects v2 board.
+GITHUB_STATUS_CONFIG = "github_status_config"
 
 # ── Withings health goals (still in AppSetting — not yet migrated) ─────────────
 # JSON object {"steps": N|null, "fat_ratio": N|null, "weight": N|null}.

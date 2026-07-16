@@ -287,8 +287,10 @@ class EngineeringItem(Base):
     repo        = Column(String, nullable=False)   # "owner/repo"
     number      = Column(Integer, nullable=False)
     url         = Column(String, nullable=False)
-    state       = Column(String, nullable=False, default="open")  # "open" | "closed"
-    synced_at   = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    state          = Column(String, nullable=False, default="open")  # "open" | "closed"
+    project_name   = Column(String, nullable=True)
+    project_status = Column(String, nullable=True)
+    synced_at      = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class Job(Base):

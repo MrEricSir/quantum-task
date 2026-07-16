@@ -1,6 +1,6 @@
-from typing import List
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,17 @@ def set_engineering_config(body: _EngineeringConfig, db: Session = Depends(get_d
 @router.post("/api/engineering/sync")
 def run_engineering_sync(db: Session = Depends(get_db)):
     return github_sync.sync(db)
+
+
+@router.get("/api/engineering/status-config")
+def get_status_config(db: Session = Depends(get_db)):
+    return github_sync.get_status_config(db)
+
+
+@router.put("/api/engineering/status-config")
+def set_status_config(body: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    github_sync.save_status_config(db, body)
+    return {"ok": True}
 
 
 @router.get("/api/engineering/items", response_model=List[schemas.EngineeringItem])
