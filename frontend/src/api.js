@@ -626,6 +626,43 @@ export async function clearCardThread(cardId) {
   if (!res.ok) throw new Error('Failed to clear thread')
 }
 
+export async function queueBridgeJob(cardId) {
+  const res = await apiFetch('/api/bridge/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ card_id: cardId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to queue bridge job')
+  }
+  return res.json()
+}
+
+export async function getBridgeJob(jobId) {
+  const res = await apiFetch(`/api/bridge/jobs/${jobId}`)
+  if (!res.ok) throw new Error('Failed to fetch bridge job')
+  return res.json()
+}
+
+export async function getLatestBridgeJob(cardId) {
+  const res = await apiFetch(`/api/bridge/jobs/card/${cardId}/latest`)
+  if (!res.ok) throw new Error('Failed to fetch bridge job')
+  return res.json()
+}
+
+export async function generateSpec(cardId) {
+  const res = await apiFetch(`/api/cards/${cardId}/spec/generate`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to generate spec')
+  return res.json()
+}
+
+export async function refreshEngineeringItem(itemId) {
+  const res = await apiFetch(`/api/engineering/${itemId}/refresh`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to refresh GitHub item')
+  return res.json()
+}
+
 export async function fetchContextFrom(cardId, source, { section, tagId } = {}) {
   const res = await apiFetch(`/api/cards/${cardId}/thread/context-from`, {
     method: 'POST',

@@ -277,6 +277,53 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
     return f"sent: {sent} milestone(s)"
 
 
+def check_bridge_jobs(db: Session, token: str, chat_id: str) -> str:
+    """Notify about recently completed or failed bridge jobs (once per job)."""
+    # Find jobs that finished since last check and haven't been notified yet.
+    # We use a simple convention: jobs with status done/error and no notified_at flag.
+    # Since we don't have a notified_at column, we track via AppSetting last notified job id.
+    s = Settings(db)
+    last_notified_raw = s.get(keys.BRIDGE_LAST_NOTIFIED_JOB, "0")
+    try:
+        last_notified = int(last_notified_raw)
+    except (ValueError, TypeError):
+        last_notified = 0
+
+    finished_jobs = (
+        db.query(models.BridgeJob)
+        .filter(
+            models.BridgeJob.id > last_notified,
+            models.BridgeJob.status.in_(["done", "error"]),
+        )
+        .order_by(models.BridgeJob.id)
+        .all()
+    )
+
+    if not finished_jobs:
+        return "none"
+
+    sent = 0
+    for job in finished_jobs:
+        card = db.query(models.Card).filter_by(id=job.card_id).first()
+        card_title = card.title if card else f"card #{job.card_id}"
+        if job.status == "done":
+            msg = f'Build complete: <b>{card_title}</b>'
+            if job.result:
+                msg += f'\n{job.result}'
+        else:
+            msg = f'Build failed for <b>{card_title}</b>'
+            if job.result:
+                msg += f'\n{job.result}'
+        if send_message(token, chat_id, msg):
+            sent += 1
+
+    # Update the high-water mark
+    s.set(keys.BRIDGE_LAST_NOTIFIED_JOB, str(finished_jobs[-1].id))
+    db.commit()
+
+    return f"notified: {sent} job(s)"
+
+
 def check_all(db: Session) -> dict:
     """Run all scheduled checks. Called by the main.py background scheduler."""
     s = Settings(db)
@@ -296,4 +343,5 @@ def check_all(db: Session) -> dict:
         "overdue_nudge":      check_overdue_nudge(db, token, chat_id, now_local, today),
         "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
         "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),
+        "bridge_jobs":        check_bridge_jobs(db, token, chat_id),
     }

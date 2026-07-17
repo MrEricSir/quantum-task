@@ -247,6 +247,16 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | `energy 4` | Logs today's energy level (1–5 scale) |
 | `feeling tired, 2/5` | Same — natural phrasing works |
 
+#### Claude Code Bridge
+
+| What you send | What happens |
+|---|---|
+| `/build auth feature` | Queues a Claude Code build job for the matching card |
+| `/build 42` | Queues by card ID |
+| `build the dashboard card` | Natural phrasing works too |
+
+The bridge picks up the job automatically (if `todo-bridge --watch` is running locally) and launches Claude Code with the card's spec. When the session ends, the bot sends a follow-up with the result or PR link.
+
 #### Proactive notifications
 
 Configured in **Settings → Telegram** — set a send time for each:

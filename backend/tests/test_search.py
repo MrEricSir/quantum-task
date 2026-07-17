@@ -487,3 +487,111 @@ class TestCalendarContextInjection:
         user_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "user")
         assert "Team standup" in user_content
         assert "### Upcoming calendar events" in user_content
+
+
+class TestGithubContextInjection:
+    """GitHub issue body and comments are injected into the card thread system prompt."""
+
+    def _make_card_with_issue(self, body="Fix the login bug", with_comments=True):
+        with TestSession() as db:
+            ext_id = "github:owner/repo/issues/42"
+            eng = models.EngineeringItem(
+                external_id=ext_id,
+                title="Fix login bug",
+                item_type="issue",
+                repo="owner/repo",
+                number=42,
+                url="https://github.com/owner/repo/issues/42",
+                state="open",
+                body=body,
+                synced_at=datetime.now(timezone.utc),
+            )
+            db.add(eng)
+            db.flush()
+            if with_comments:
+                db.add(models.EngineeringItemComment(
+                    item_id=eng.id,
+                    github_id=1001,
+                    author="alice",
+                    body="We should also handle the OAuth flow here.",
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ))
+            card = models.Card(
+                title="Fix login bug",
+                description="",
+                section="today",
+                external_id=ext_id,
+                position=0,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(card)
+            db.commit()
+            return card.id
+
+    def test_github_body_injected_into_system_prompt(self):
+        card_id = self._make_card_with_issue()
+        app.dependency_overrides[get_db] = override_get_db
+        mock_stream = MagicMock()
+        mock_stream.__iter__ = MagicMock(return_value=iter([]))
+        with patch("routers.assist.llm_client") as mock_llm:
+            mock_llm.return_value.chat.completions.create.return_value = mock_stream
+            with TestClient(app) as client:
+                client.post(
+                    f"/api/cards/{card_id}/thread/message",
+                    json={"content": "What needs to be done here?"},
+                )
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        system_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "system")
+        assert "### GitHub Issue" in system_content
+        assert "owner/repo#42" in system_content
+        assert "Fix the login bug" in system_content
+
+    def test_github_comments_injected_into_system_prompt(self):
+        card_id = self._make_card_with_issue()
+        app.dependency_overrides[get_db] = override_get_db
+        mock_stream = MagicMock()
+        mock_stream.__iter__ = MagicMock(return_value=iter([]))
+        with patch("routers.assist.llm_client") as mock_llm:
+            mock_llm.return_value.chat.completions.create.return_value = mock_stream
+            with TestClient(app) as client:
+                client.post(
+                    f"/api/cards/{card_id}/thread/message",
+                    json={"content": "What needs to be done here?"},
+                )
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        system_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "system")
+        assert "alice" in system_content
+        assert "OAuth flow" in system_content
+
+    def test_no_github_section_when_no_external_id(self):
+        with TestSession() as db:
+            card = models.Card(
+                title="Plain task",
+                description="",
+                section="today",
+                position=0,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(card)
+            db.commit()
+            card_id = card.id
+        app.dependency_overrides[get_db] = override_get_db
+        mock_stream = MagicMock()
+        mock_stream.__iter__ = MagicMock(return_value=iter([]))
+        with patch("routers.assist.llm_client") as mock_llm:
+            mock_llm.return_value.chat.completions.create.return_value = mock_stream
+            with TestClient(app) as client:
+                client.post(
+                    f"/api/cards/{card_id}/thread/message",
+                    json={"content": "Help me with this"},
+                )
+        call_args = mock_llm.return_value.chat.completions.create.call_args
+        system_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "system")
+        # The injected header has format "### GitHub Issue: repo#N" (with colon + repo)
+        # The system prompt rules reference "### GitHub Issue" without a colon, so we
+        # check for the colon to distinguish injected content from the rule text.
+        assert "### GitHub Issue:" not in system_content
+        assert "### GitHub PR:" not in system_content

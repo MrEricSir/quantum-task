@@ -53,6 +53,7 @@ import {
   checkAuth, logout,
   createFoodEntry,
   logMood,
+  refreshEngineeringItem,
 } from './api'
 import './App.css'
 import { SECTIONS, SECTION_LABELS } from './lib/sections'
@@ -855,7 +856,7 @@ export default function App() {
                 title: item.item_type === 'pr'
                   ? `GitHub PR: ${item.title}`
                   : `GitHub Issue: ${item.title}`,
-                description: item.url,
+                description: '',
                 section: item.item_type === 'pr' ? 'today' : 'week',
                 tag_ids: [],
                 external_id: item.external_id,
@@ -871,6 +872,7 @@ export default function App() {
           initialMode={panelInitialMode}
           defaultSection={panelDefaultSection}
           allTags={visibleTags}
+          engineeringItems={engineeringItems}
           onClose={() => { setSelectedCardId(null); setPanelInitialMode('view') }}
           onCreate={handleAddCard}
           onSave={handleUpdateCard}
@@ -879,6 +881,10 @@ export default function App() {
           onDelete={handleDeleteCard}
           onArchive={handleArchiveCard}
           onBreakdown={handleBreakdownCommit}
+          onRefreshGithubItem={async (itemId) => {
+            await refreshEngineeringItem(itemId)
+            await refreshEngineeringItems()
+          }}
         />
       )}
       </div>{/* app-body */}

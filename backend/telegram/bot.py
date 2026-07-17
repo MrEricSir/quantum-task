@@ -167,6 +167,13 @@ The "action" field must be one of:
                 "clear today's list" (filter=today, section=later),
                 "move today's tasks to tomorrow" (filter=today, section=today, date=tomorrow)
 
+  "queue_bridge"
+      User wants to queue a Claude Code build job for a specific task/card.
+      Also return:
+        "match_query" — task title or fragment to find (required)
+      Examples: "/build auth feature", "build the login card", "run claude on the API task",
+                "/build 42", "queue build for the dashboard feature"
+
 Reply ONLY with valid JSON. No explanation.\
 """
 )
@@ -316,6 +323,7 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "<b>move all overdue to next week</b> — bulk reschedule\n"
             "<b>avoiding</b> — see what you've been putting off\n"
             "<b>undo</b> — reverse your last action\n"
+            "<b>/build [task]</b> — queue a Claude Code build job for a card\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"
             "You'll also get your daily briefing and reminders automatically."
         )
@@ -344,6 +352,10 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_avoiding(tz_offset)
     if lower in ("completed", "done today", "wins", "accomplished", "finished"):
         return _reply_completed(tz_offset)
+    if lower.startswith("/build ") or lower.startswith("build "):
+        query = text.split(" ", 1)[1].strip() if " " in text else ""
+        if query:
+            return _reply_queue_bridge({"match_query": query}, chat_id)
 
     # LLM intent classification for everything else
     print(f"[telegram] classifying intent: {text[:60]!r}")
@@ -398,6 +410,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "bulk_reschedule":
         return _reply_bulk_reschedule(intent, tz_offset, chat_id)
+
+    if action == "queue_bridge":
+        return _reply_queue_bridge(intent, chat_id)
 
     if action == "log_food":
         return _reply_log_food(intent, tz_offset, chat_id)
@@ -979,6 +994,11 @@ def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: s
         if not description:
             return f'<b>{title}</b> has no notes.'
         return f'<b>{title}</b>\n\n{description}'
+
+    if action == "queue_bridge":
+        intent = dict(pending["intent"])
+        intent["match_query"] = selected["title"]
+        return _reply_queue_bridge(intent, chat_id)
 
     return None
 
@@ -1644,6 +1664,69 @@ def _undo_single_action(action: dict) -> str:
         return f"↩ Moved {count} task{'s' if count != 1 else ''} back"
 
     return "↩ Undone"
+
+
+def _reply_queue_bridge(intent: dict, chat_id: str = "") -> str:
+    """Queue a Claude Code bridge job for a card."""
+    query = (intent.get("match_query") or "").strip()
+    if not query:
+        return "Which card? Try: <b>/build auth feature</b>"
+
+    session = _get_session(chat_id) if chat_id else {}
+
+    if query.lower() in _PRONOUN_REFS and session.get("last_card"):
+        query = session["last_card"]["title"]
+
+    with SessionLocal() as db:
+        # Support numeric ID lookup (e.g. "/build 42")
+        card = None
+        if query.isdigit():
+            card = db.query(models.Card).filter_by(id=int(query), archived=False).first()
+
+        if card is None:
+            cards = db.query(models.Card).filter_by(archived=False).all()
+            matches = _fuzzy_find_cards(cards, query)
+            if not matches:
+                return f'Couldn\'t find a card matching "{query}". Try <b>today</b> to see your list.'
+            if len(matches) > 1:
+                if chat_id:
+                    session["pending"] = {
+                        "action": "queue_bridge",
+                        "intent": intent,
+                        "candidates": [{"id": c.id, "title": c.title} for c in matches],
+                    }
+                numbered = "\n".join(f"{i + 1}. {c.title}" for i, c in enumerate(matches))
+                return f"Which card?\n{numbered}"
+            card = matches[0]
+
+        if not card.spec:
+            return (
+                f'<b>{card.title}</b> has no spec yet.\n'
+                'Open the card in the app and generate a spec first, then try again.'
+            )
+
+        now = datetime.now(timezone.utc)
+        job = models.BridgeJob(
+            card_id=card.id,
+            status="pending",
+            spec_snapshot=card.spec,
+            created_at=now,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        title = card.title
+        card_id = card.id
+        job_id = job.id
+
+    if chat_id:
+        session["last_card"] = {"id": card_id, "title": title}
+
+    return (
+        f'Queued build job #{job_id} for <b>{title}</b>.\n'
+        'The bridge agent will pick it up next time it polls.\n'
+        'I\'ll notify you when it\'s done.'
+    )
 
 
 def _reply_undo(chat_id: str, count: int = 1) -> str:

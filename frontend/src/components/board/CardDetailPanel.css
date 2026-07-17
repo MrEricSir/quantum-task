@@ -246,7 +246,400 @@
   border-color: #a78bfa;
 }
 
-/* ── GitHub badge ── */
+/* ── GitHub context section ── */
+.cdp-gh-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cdp-gh-type {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.cdp-gh-type--issue {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.cdp-gh-type--pr {
+  background: rgba(130, 80, 255, 0.15);
+  color: #a371f7;
+  border: 1px solid rgba(130, 80, 255, 0.3);
+}
+
+.cdp-gh-link {
+  font-size: 12px;
+  color: #58a6ff;
+  font-family: monospace;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdp-gh-link:hover { text-decoration: underline; }
+
+.cdp-gh-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cdp-gh-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cdp-gh-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.cdp-gh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cdp-gh-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.cdp-gh-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Markdown rendered content */
+.cdp-gh-markdown {
+  font-size: 13px;
+  color: #c9d1d9;
+  line-height: 1.6;
+}
+
+.cdp-gh-markdown p { margin: 0 0 8px; }
+.cdp-gh-markdown p:last-child { margin-bottom: 0; }
+.cdp-gh-markdown h1, .cdp-gh-markdown h2, .cdp-gh-markdown h3 {
+  color: #e6edf3;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.cdp-gh-markdown h1:first-child,
+.cdp-gh-markdown h2:first-child,
+.cdp-gh-markdown h3:first-child { margin-top: 0; }
+.cdp-gh-markdown ul, .cdp-gh-markdown ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+.cdp-gh-markdown li { margin-bottom: 2px; }
+.cdp-gh-markdown code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  background: rgba(110, 118, 129, 0.2);
+  border: 1px solid rgba(110, 118, 129, 0.3);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+.cdp-gh-markdown pre {
+  background: rgba(110, 118, 129, 0.1);
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.cdp-gh-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+}
+.cdp-gh-markdown a { color: #58a6ff; }
+.cdp-gh-markdown a:hover { text-decoration: underline; }
+.cdp-gh-markdown blockquote {
+  border-left: 3px solid #30363d;
+  margin: 6px 0;
+  padding: 2px 0 2px 12px;
+  color: #8b949e;
+}
+.cdp-gh-markdown hr {
+  border: none;
+  border-top: 1px solid #30363d;
+  margin: 8px 0;
+}
+
+/* Comments list */
+.cdp-gh-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid #21262d;
+  padding-top: 10px;
+}
+
+.cdp-gh-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cdp-gh-comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cdp-gh-comment-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6edf3;
+}
+
+.cdp-gh-comment-date {
+  font-size: 11px;
+  color: #8b949e;
+}
+
+/* ── Spec panel ── */
+.cdp-spec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cdp-spec-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cdp-spec-gen-btn {
+  border-color: rgba(139, 92, 246, 0.35);
+  color: #a78bfa;
+}
+
+.cdp-spec-gen-btn:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: #a78bfa;
+  color: #c4b5fd;
+}
+
+.cdp-spec-copy-btn {
+  border-color: rgba(88, 166, 255, 0.3);
+  color: #58a6ff;
+}
+
+.cdp-spec-copy-btn:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.08);
+  border-color: #58a6ff;
+}
+
+.cdp-spec-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.cdp-spec-error {
+  font-size: 12px;
+  color: #f87171;
+  padding: 4px 0;
+}
+
+.cdp-spec-markdown {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.65;
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+.cdp-spec-markdown h1, .cdp-spec-markdown h2 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 12px 0 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+.cdp-spec-markdown h1:first-child,
+.cdp-spec-markdown h2:first-child { margin-top: 0; }
+
+.cdp-spec-markdown h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c4b5fd;
+  margin: 10px 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cdp-spec-markdown p { margin: 0 0 7px; }
+.cdp-spec-markdown p:last-child { margin-bottom: 0; }
+
+.cdp-spec-markdown ul, .cdp-spec-markdown ol {
+  margin: 0 0 7px;
+  padding-left: 18px;
+}
+.cdp-spec-markdown li { margin-bottom: 3px; }
+
+/* Checkbox list items */
+.cdp-spec-markdown li input[type="checkbox"] {
+  margin-right: 6px;
+  accent-color: #7c3aed;
+}
+
+.cdp-spec-markdown code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: #c4b5fd;
+}
+
+.cdp-spec-markdown pre {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 5px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.cdp-spec-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #e2e8f0;
+}
+
+.cdp-spec-markdown a { color: #a78bfa; }
+
+.cdp-spec-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cdp-spec-textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.cdp-spec-textarea:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.cdp-spec-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.cdp-spec-bridge-btn {
+  border-color: rgba(52, 211, 153, 0.3);
+  color: #34d399;
+}
+
+.cdp-spec-bridge-btn:hover:not(:disabled) {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: #34d399;
+}
+
+/* Bridge job status */
+.cdp-bridge-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid;
+}
+
+.cdp-bridge-status--pending {
+  background: rgba(251, 191, 36, 0.07);
+  border-color: rgba(251, 191, 36, 0.25);
+  color: #fbbf24;
+}
+
+.cdp-bridge-status--running {
+  background: rgba(52, 211, 153, 0.07);
+  border-color: rgba(52, 211, 153, 0.25);
+  color: #34d399;
+}
+
+.cdp-bridge-status--done {
+  background: rgba(139, 92, 246, 0.07);
+  border-color: rgba(139, 92, 246, 0.2);
+  color: #a78bfa;
+}
+
+.cdp-bridge-status--error {
+  background: rgba(239, 68, 68, 0.07);
+  border-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.cdp-bridge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+
+.cdp-bridge-status--running .cdp-bridge-dot {
+  animation: cdp-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cdp-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* ── GitHub badge (legacy — for cards where description is a bare URL) ── */
 .cdp-github-badge {
   display: inline-flex;
   align-items: center;

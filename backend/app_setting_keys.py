@@ -66,6 +66,10 @@ MEETING_ALERTS_SENT = "meeting_alerts_sent"
 # JSON {"habit_id:milestone": "YYYY-MM-DD"} — tracks when each streak milestone was sent.
 STREAK_MILESTONES_SENT = "streak_milestones_sent"
 
+# ── Bridge job notifications ───────────────────────────────────────────────────
+# Integer string: the highest BridgeJob.id that has already been Telegram-notified.
+BRIDGE_LAST_NOTIFIED_JOB = "bridge_last_notified_job"
+
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.
 STREAK_DAYS_V1 = "streak_days_v1"

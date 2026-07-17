@@ -71,6 +71,59 @@ def _repo_full_name(html_url: str) -> str:
     return m.group(1) if m else ""
 
 
+def _fetch_comments(token: str, owner: str, repo: str, number: int) -> list[dict]:
+    """Fetch all comments for a single issue (up to 100)."""
+    h = _headers(token)
+    r = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/issues/{number}/comments",
+        params={"per_page": 100},
+        headers=h, timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _sync_comments(db: Session, eng_item: models.EngineeringItem, token: str) -> None:
+    """Upsert comments for one engineering item, deleting any removed from GitHub."""
+    parsed = _parse_external_id(eng_item.external_id)
+    if not parsed:
+        return
+    owner, repo, _, number = parsed
+
+    try:
+        gh_comments = _fetch_comments(token, owner, repo, number)
+    except Exception as e:
+        log.warning("Failed to fetch comments for %s: %s", eng_item.external_id, e)
+        return
+
+    gh_ids = {c["id"] for c in gh_comments}
+
+    # Upsert each returned comment
+    for c in gh_comments:
+        existing = db.query(models.EngineeringItemComment).filter_by(github_id=c["id"]).first()
+        created_at = datetime.fromisoformat(c["created_at"].replace("Z", "+00:00"))
+        updated_at = datetime.fromisoformat(c["updated_at"].replace("Z", "+00:00"))
+        if existing:
+            existing.author = (c.get("user") or {}).get("login")
+            existing.body = c["body"] or ""
+            existing.updated_at = updated_at
+        else:
+            db.add(models.EngineeringItemComment(
+                item_id=eng_item.id,
+                github_id=c["id"],
+                author=(c.get("user") or {}).get("login"),
+                body=c["body"] or "",
+                created_at=created_at,
+                updated_at=updated_at,
+            ))
+
+    # Delete comments removed from GitHub
+    db.query(models.EngineeringItemComment).filter(
+        models.EngineeringItemComment.item_id == eng_item.id,
+        models.EngineeringItemComment.github_id.notin_(gh_ids),
+    ).delete(synchronize_session=False)
+
+
 def _fetch_items(token: str, repos: list[str]) -> list[dict]:
     """Fetch open assigned issues + open PRs requesting my review."""
     h = _headers(token)
@@ -268,14 +321,29 @@ def sync(db: Session) -> dict:
 
     # Upsert open items
     for ext_id, item in open_items.items():
+        gh_updated_at = None
+        raw_updated = item.get("updated_at")
+        if raw_updated:
+            try:
+                gh_updated_at = datetime.fromisoformat(raw_updated.replace("Z", "+00:00"))
+            except Exception:
+                pass
+
         existing = db.query(models.EngineeringItem).filter_by(external_id=ext_id).first()
         if existing:
             existing.title = item["title"]
             existing.state = "open"
             existing.synced_at = now
+            existing.body = item.get("body") or existing.body
+            needs_comment_sync = (
+                gh_updated_at is not None
+                and (existing.body_updated_at is None or gh_updated_at > existing.body_updated_at)
+            )
+            if gh_updated_at:
+                existing.body_updated_at = gh_updated_at
             skipped += 1
         else:
-            db.add(models.EngineeringItem(
+            new_item = models.EngineeringItem(
                 external_id=ext_id,
                 title=item["title"],
                 item_type="pr" if _is_pr(item) else "issue",
@@ -284,8 +352,17 @@ def sync(db: Session) -> dict:
                 url=item["html_url"],
                 state="open",
                 synced_at=now,
-            ))
+                body=item.get("body"),
+                body_updated_at=gh_updated_at,
+            )
+            db.add(new_item)
+            existing = new_item
+            needs_comment_sync = True
             created += 1
+
+        if needs_comment_sync:
+            db.flush()  # ensure item has an id before syncing comments
+            _sync_comments(db, existing, token)
 
     db.flush()  # ensure new items have IDs before GraphQL enrichment and embedding
 
@@ -321,7 +398,7 @@ def sync(db: Session) -> dict:
             if not exists:
                 db.add(models.Card(
                     title=eng_item.title,
-                    description=eng_item.url,
+                    description="",
                     section="today",
                     external_id=eng_item.external_id,
                     position=0,

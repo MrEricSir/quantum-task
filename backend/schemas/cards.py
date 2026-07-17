@@ -28,6 +28,7 @@ class CardUpdate(BaseModel):
     archived: Optional[bool] = None
     snoozed_until: Optional[str] = None   # YYYY-MM-DD
     waiting_reason: Optional[str] = None
+    spec: Optional[str] = None
 
 
 class ParseRequest(BaseModel):
@@ -102,6 +103,7 @@ class Card(BaseModel):
     tags: List[Tag] = []
     thread_output: Optional[str] = None
     today_since: Optional[datetime] = None
+    spec: Optional[str] = None
 
     @computed_field
     @property

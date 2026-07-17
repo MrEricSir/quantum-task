@@ -64,6 +64,7 @@ class Card(Base):
     recurrence_rule = Column(String, nullable=True)  # daily | weekly | monthly | yearly
     external_id = Column(String, nullable=True, index=True)  # e.g. "github:owner/repo/issues/123"
     body = Column(String, nullable=True)  # legacy column — not used in new code, kept to avoid migration
+    spec = Column(Text, nullable=True)    # AI-synthesized implementation spec (markdown)
     updated_at = Column(DateTime, nullable=True)
     archived = Column(Boolean, default=False)
     archived_at = Column(DateTime, nullable=True)
@@ -309,6 +310,42 @@ class EngineeringItem(Base):
     project_name   = Column(String, nullable=True)
     project_status = Column(String, nullable=True)
     synced_at      = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    body           = Column(Text, nullable=True)
+    body_updated_at = Column(DateTime, nullable=True)
+
+    comments = relationship("EngineeringItemComment", back_populates="item",
+                            cascade="all, delete-orphan", order_by="EngineeringItemComment.created_at")
+
+
+class EngineeringItemComment(Base):
+    """A GitHub issue comment synced from the GitHub API."""
+    __tablename__ = "engineering_item_comments"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    item_id    = Column(Integer, ForeignKey("engineering_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    github_id  = Column(Integer, nullable=False, unique=True)
+    author     = Column(String, nullable=True)
+    body       = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+    item = relationship("EngineeringItem", back_populates="comments")
+
+
+class BridgeJob(Base):
+    """A queued Claude Code bridge job — picked up by the local todo-bridge agent."""
+    __tablename__ = "bridge_jobs"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    card_id        = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
+    status         = Column(String, nullable=False, default="pending")  # pending|running|done|error
+    spec_snapshot  = Column(Text, nullable=True)   # spec text at time of queuing
+    prompt_snapshot = Column(Text, nullable=True)  # full Claude Code prompt at time of queuing
+    result         = Column(Text, nullable=True)   # PR link / summary posted by bridge
+    created_at     = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at     = Column(DateTime, nullable=True)
+
+    card = relationship("Card")
 
 
 class Job(Base):

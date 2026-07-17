@@ -21,6 +21,7 @@ from database import SessionLocal
 from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes
 from gcal import get_personal_events
 from health_context import build_health_context
+from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
@@ -122,6 +123,11 @@ the user to provide their calendar events — that is not information they can g
 If the calendar section says "(none in the next 7 days)", report that. If it says \
 "(could not fetch)", say the calendar is temporarily unavailable. Never ask follow-up \
 questions about calendar data.
+- CRITICAL: GitHub issue context is pre-loaded into this prompt when the task is linked \
+to a GitHub issue. Never ask the user to paste or describe the issue — it is already \
+present in the "### GitHub Issue" section. Use it as primary source of truth for \
+requirements, acceptance criteria, and design decisions. Comments reflect the discussion \
+thread and may contain important decisions or clarifications.
 - CRITICAL: Cards and tasks are work items — they do NOT have scheduled times and are NOT \
 calendar events. Never infer or state a time for a task (e.g. "meeting at 2 PM") unless \
 that exact time appears in the "### Upcoming calendar events" section. A task titled \
@@ -191,6 +197,46 @@ def _calendar_context_lines(db, today, tz_offset: int) -> list[str]:
         return ["### Upcoming calendar events", "  Calendar temporarily unavailable."]
 
 
+def _github_context_lines(db, card) -> list[str]:
+    """Return formatted GitHub issue/PR context lines for a card linked via external_id."""
+    if not card.external_id:
+        return []
+    try:
+        eng_item = (
+            db.query(models.EngineeringItem)
+            .options(selectinload(models.EngineeringItem.comments))
+            .filter_by(external_id=card.external_id)
+            .first()
+        )
+        if not eng_item:
+            return []
+
+        kind = "PR" if eng_item.item_type == "pr" else "Issue"
+        lines = [
+            f"### GitHub {kind}: {eng_item.repo}#{eng_item.number}",
+            f"Title: {eng_item.title}",
+            f"Status: {eng_item.state}",
+            f"URL: {eng_item.url}",
+        ]
+
+        if eng_item.body and eng_item.body.strip():
+            lines.append("\n**Description:**")
+            lines.append(eng_item.body.strip())
+
+        if eng_item.comments:
+            lines.append("\n**Comments:**")
+            for c in eng_item.comments:
+                date_str = c.created_at.strftime("%Y-%m-%d") if c.created_at else ""
+                author = c.author or "unknown"
+                lines.append(f"\n[{author}] ({date_str}):")
+                lines.append(c.body.strip() if c.body else "")
+
+        return lines
+    except Exception as e:
+        print(f"[assist/github] context error: {e}")
+        return []
+
+
 # ── Card thread endpoints ──────────────────────────────────────────────────────
 
 def _get_or_none(db: Session, card_id: int) -> models.CardThread | None:
@@ -224,11 +270,14 @@ def send_message(request: Request, card_id: int, req: schemas.ThreadMessageReque
     today = local_date(request)
     tz_offset = utc_offset_minutes(request)
 
-    # Build system prompt — task identity + calendar context + pasted document
+    # Build system prompt — task identity + GitHub context + calendar + pasted document
     system_parts = [_ASSIST_SYSTEM]
     system_parts.append(f"\nTask the user is working on: {card.title}")
     if card.description:
-        system_parts.append(f"Task description: {card.description}")
+        system_parts.append(f"Task notes: {card.description}")
+    gh_lines = _github_context_lines(db, card)
+    if gh_lines:
+        system_parts.append("\n" + "\n".join(gh_lines))
     cal_lines = _calendar_context_lines(db, today, tz_offset)
     if cal_lines:
         system_parts.append("\n" + "\n".join(cal_lines))
@@ -322,6 +371,114 @@ def save_output(card_id: int, req: schemas.ThreadOutputRequest, db: Session = De
     thread.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True, "output": thread.output}
+
+
+_SPEC_SYSTEM = """\
+You are a technical spec writer. Synthesize the provided GitHub issue, discussion \
+comments, and developer notes into a structured implementation spec in markdown.
+
+Be concrete — base everything strictly on the provided context. Do not invent \
+requirements, file paths, or technical details that are not mentioned. If the context \
+is thin on a section, keep it brief rather than speculating.
+
+Produce exactly these sections in order:
+## Problem Statement
+One or two sentences: what needs to change and why.
+
+## Context & Background
+Relevant technical context from the issue and comments. What exists today, what broke, \
+or what the feature is replacing.
+
+## Acceptance Criteria
+Specific, testable outcomes as a checklist. Use `- [ ]` format. Be as concrete as \
+the issue allows.
+
+## Technical Approach
+How to implement it: which components, layers, or patterns to use. Keep it \
+high-level but actionable.
+
+## Files Likely Involved
+List file paths or modules that likely need changing, one per line with a brief reason. \
+Infer from the issue context; skip this section if there are no strong signals.
+
+## Open Questions
+Anything ambiguous or that needs clarification before work begins. Omit this section \
+if there are no open questions.
+"""
+
+
+@router.post("/api/cards/{card_id}/spec/generate")
+def generate_spec(card_id: int, db: Session = Depends(get_db)):
+    """Synthesize a structured implementation spec from the card's GitHub issue + thread."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    # Build user message — compile all available context
+    parts: list[str] = [f"## Task\n{card.title}"]
+
+    if card.description and card.description.strip():
+        parts.append(f"## Developer Notes\n{card.description.strip()}")
+
+    # GitHub issue body + comments
+    if card.external_id:
+        eng_item = (
+            db.query(models.EngineeringItem)
+            .options(selectinload(models.EngineeringItem.comments))
+            .filter_by(external_id=card.external_id)
+            .first()
+        )
+        if eng_item:
+            kind = "PR" if eng_item.item_type == "pr" else "Issue"
+            gh_header = (
+                f"## GitHub {kind}: {eng_item.repo}#{eng_item.number}\n"
+                f"Status: {eng_item.state}\n"
+                f"URL: {eng_item.url}"
+            )
+            if eng_item.body and eng_item.body.strip():
+                gh_header += f"\n\n### Description\n{eng_item.body.strip()}"
+            else:
+                gh_header += "\n\n### Description\n(no description)"
+            parts.append(gh_header)
+
+            if eng_item.comments:
+                comment_lines = ["### Comments"]
+                for c in eng_item.comments:
+                    date_str = c.created_at.strftime("%Y-%m-%d") if c.created_at else ""
+                    comment_lines.append(f"\n[{c.author or 'unknown'}] ({date_str}):\n{c.body.strip()}")
+                parts.append("\n".join(comment_lines))
+
+    # Prior AI assist thread (up to last 10 messages for context)
+    thread = db.query(models.CardThread).filter_by(card_id=card_id).first()
+    if thread and thread.messages:
+        msgs = json.loads(thread.messages or "[]")[-10:]
+        if msgs:
+            thread_lines = ["## Prior Assistant Conversation"]
+            for m in msgs:
+                role = "User" if m["role"] == "user" else "Assistant"
+                thread_lines.append(f"[{role}]: {m['content'].strip()}")
+            parts.append("\n".join(thread_lines))
+
+    user_msg = "\n\n---\n\n".join(parts)
+
+    try:
+        resp = llm_client().chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _SPEC_SYSTEM},
+                {"role": "user",   "content": user_msg},
+            ],
+            temperature=0.2,
+        )
+        spec_text = resp.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+
+    card.spec = spec_text
+    card.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {"spec": spec_text}
 
 
 @router.delete("/api/cards/{card_id}/thread")
