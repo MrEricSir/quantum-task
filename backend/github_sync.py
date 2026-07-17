@@ -335,9 +335,11 @@ def sync(db: Session) -> dict:
             existing.state = "open"
             existing.synced_at = now
             existing.body = item.get("body") or existing.body
+            # SQLite returns naive datetimes; compare as naive UTC throughout
+            _gh_naive = gh_updated_at.replace(tzinfo=None) if gh_updated_at else None
             needs_comment_sync = (
-                gh_updated_at is not None
-                and (existing.body_updated_at is None or gh_updated_at > existing.body_updated_at)
+                _gh_naive is not None
+                and (existing.body_updated_at is None or _gh_naive > existing.body_updated_at)
             )
             if gh_updated_at:
                 existing.body_updated_at = gh_updated_at

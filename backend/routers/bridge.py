@@ -139,6 +139,20 @@ def get_next_pending(db: Session = Depends(get_db)):
     if not job:
         return {"job": None}
 
+    # Lazily build prompt if not set (e.g. job queued via Telegram, not the frontend)
+    if not job.prompt_snapshot:
+        card = db.query(models.Card).filter_by(id=job.card_id).first()
+        if card:
+            eng_item = None
+            if card.external_id:
+                eng_item = (
+                    db.query(models.EngineeringItem)
+                    .options(selectinload(models.EngineeringItem.comments))
+                    .filter_by(external_id=card.external_id)
+                    .first()
+                )
+            job.prompt_snapshot = _build_prompt(card, eng_item)
+
     job.status = "running"
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -342,13 +356,13 @@ def get_agent_script():
 
             result_text = ""
             try:
+                # Launch Claude Code interactively with the spec as the opening prompt.
+                # Claude Code treats a positional string argument as the initial message.
                 proc = subprocess.run(
-                    ["claude", "--print-path-to-claude-code-settings", SPEC_FILENAME],
+                    ["claude", f"Please implement the feature described in {SPEC_FILENAME} "
+                               f"(already written to your working directory)."],
                     check=False,
                 )
-                # Fallback: just launch claude interactively with spec as initial context
-                if proc.returncode != 0:
-                    proc = subprocess.run(["claude", SPEC_FILENAME], check=False)
             except FileNotFoundError:
                 print("[bridge] ERROR: 'claude' not found. Install Claude Code:", file=sys.stderr)
                 print("[bridge]   npm install -g @anthropic-ai/claude-code", file=sys.stderr)

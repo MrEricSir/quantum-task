@@ -421,3 +421,194 @@ class TestBotBulkReschedule:
             cards = db.query(models.Card).all()
             for c in cards:
                 assert c.section == "today"
+
+
+# ── Bridge intent tests ───────────────────────────────────────────────────────
+
+NOW_UTC = datetime.now(timezone.utc)
+
+
+def _make_card_with_spec(title, spec=None, external_id=None):
+    with BotTestSession() as db:
+        card = models.Card(
+            title=title, section="today", position=0, spec=spec,
+            external_id=external_id,
+        )
+        db.add(card)
+        db.commit()
+        return card.id
+
+
+class TestBotQueueBridge:
+
+    def test_creates_job_for_card_with_spec(self):
+        card_id = _make_card_with_spec("Auth feature", spec="## Fix\nOAuth")
+        from telegram.bot import _reply_queue_bridge
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": "auth feature"})
+        assert "Auth feature" in reply
+        assert "Queued" in reply
+        with BotTestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(card_id=card_id).first()
+            assert job is not None
+            assert job.status == "pending"
+
+    def test_looks_up_card_by_numeric_id(self):
+        card_id = _make_card_with_spec("Billing feature", spec="## Spec\nAdd invoices")
+        from telegram.bot import _reply_queue_bridge
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": str(card_id)})
+        assert "Billing feature" in reply
+        assert "Queued" in reply
+
+    def test_returns_error_when_card_not_found(self):
+        from telegram.bot import _reply_queue_bridge
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": "nonexistent xyz card"})
+        assert "Couldn't find" in reply
+
+    def test_returns_error_when_card_has_no_spec(self):
+        _make_card_with_spec("No spec card", spec=None)
+        from telegram.bot import _reply_queue_bridge
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": "no spec"})
+        assert "no spec" in reply.lower()
+
+    def test_returns_error_when_query_is_empty(self):
+        from telegram.bot import _reply_queue_bridge
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": ""})
+        assert "Which card" in reply
+
+    def test_disambiguation_when_multiple_matches(self):
+        _make_card_with_spec("Auth login feature", spec="s")
+        _make_card_with_spec("Auth oauth feature", spec="s")
+        from telegram.bot import _reply_queue_bridge, _sessions
+        chat_id = "test_bridge_disambig"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": "auth"}, chat_id=chat_id)
+        assert "Which card" in reply
+        assert _sessions[chat_id]["pending"]["action"] == "queue_bridge"
+
+    def test_includes_job_id_in_reply(self):
+        _make_card_with_spec("Dashboard feature", spec="## Spec")
+        from telegram.bot import _reply_queue_bridge
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_queue_bridge({"match_query": "dashboard"})
+        assert "#" in reply  # job ID formatted as #N
+
+    def test_sets_last_card_in_session(self):
+        _make_card_with_spec("Track feature", spec="## Spec")
+        from telegram.bot import _reply_queue_bridge, _sessions
+        chat_id = "test_bridge_lastcard"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_queue_bridge({"match_query": "track"}, chat_id=chat_id)
+        assert _sessions[chat_id]["last_card"]["title"] == "Track feature"
+
+
+class TestCheckBridgeJobs:
+
+    def test_returns_none_when_no_finished_jobs(self):
+        from telegram.scheduler import check_bridge_jobs
+        with BotTestSession() as db:
+            result = check_bridge_jobs(db, token="tok", chat_id="123")
+        assert result == "none"
+
+    def test_notifies_on_done_job(self):
+        card_id = _make_card_with_spec("My feature", spec="spec")
+        with BotTestSession() as db:
+            db.add(models.BridgeJob(
+                card_id=card_id, status="done",
+                result="https://github.com/owner/repo/pull/5",
+                created_at=NOW_UTC, updated_at=NOW_UTC,
+            ))
+            db.commit()
+
+        from telegram.scheduler import check_bridge_jobs
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_bridge_jobs(db, token="tok", chat_id="123")
+
+        assert "1" in result
+        call_text = mock_send.call_args[0][2]
+        assert "My feature" in call_text
+        assert "pull/5" in call_text
+
+    def test_notifies_on_error_job(self):
+        card_id = _make_card_with_spec("Error feature", spec="spec")
+        with BotTestSession() as db:
+            db.add(models.BridgeJob(
+                card_id=card_id, status="error",
+                result="claude not found on PATH",
+                created_at=NOW_UTC, updated_at=NOW_UTC,
+            ))
+            db.commit()
+
+        from telegram.scheduler import check_bridge_jobs
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_bridge_jobs(db, token="tok", chat_id="123")
+
+        call_text = mock_send.call_args[0][2]
+        assert "failed" in call_text.lower() or "error" in call_text.lower()
+        assert "Error feature" in call_text
+
+    def test_does_not_double_notify(self):
+        card_id = _make_card_with_spec("Once feature", spec="spec")
+        with BotTestSession() as db:
+            job = models.BridgeJob(
+                card_id=card_id, status="done", result="PR #1",
+                created_at=NOW_UTC, updated_at=NOW_UTC,
+            )
+            db.add(job)
+            db.commit()
+            job_id = job.id
+
+        from telegram.scheduler import check_bridge_jobs
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                check_bridge_jobs(db, token="tok", chat_id="123")
+            with BotTestSession() as db:
+                check_bridge_jobs(db, token="tok", chat_id="123")
+
+        assert mock_send.call_count == 1  # second call should find no new jobs
+
+    def test_advances_watermark_after_notify(self):
+        card_id = _make_card_with_spec("Watermark feature", spec="s")
+        with BotTestSession() as db:
+            db.add(models.BridgeJob(
+                card_id=card_id, status="done", result="",
+                created_at=NOW_UTC, updated_at=NOW_UTC,
+            ))
+            db.commit()
+
+        from telegram.scheduler import check_bridge_jobs
+        import app_setting_keys as keys
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                check_bridge_jobs(db, token="tok", chat_id="123")
+
+        with BotTestSession() as db:
+            row = db.query(models.AppSetting).filter_by(
+                key=keys.BRIDGE_LAST_NOTIFIED_JOB).first()
+            assert row is not None
+            assert int(row.value) > 0
+
+    def test_skips_pending_and_running_jobs(self):
+        card_id = _make_card_with_spec("Running feature", spec="s")
+        with BotTestSession() as db:
+            db.add(models.BridgeJob(
+                card_id=card_id, status="running", result=None,
+                created_at=NOW_UTC, updated_at=NOW_UTC,
+            ))
+            db.commit()
+
+        from telegram.scheduler import check_bridge_jobs
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_bridge_jobs(db, token="tok", chat_id="123")
+
+        assert result == "none"
+        mock_send.assert_not_called()

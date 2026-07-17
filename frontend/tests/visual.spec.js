@@ -1591,6 +1591,103 @@ test.describe('insights panel — completion pattern', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Card detail panel — GitHub context + spec + bridge
+// ---------------------------------------------------------------------------
+test.describe('card detail panel — github and spec', () => {
+  // Card linked to a GitHub issue with a spec already set
+  const GH_CARD = {
+    id: 99, title: 'OAuth login feature',
+    description: 'Developer notes here',
+    section: 'today', completed: false, archived: false, position: 10,
+    tags: [], external_id: 'github:owner/repo/issues/42',
+    spec: '## Problem Statement\nLogin is broken.\n\n## Acceptance Criteria\n- [ ] Users can log in',
+    updated_at: '2026-06-03T08:00:00Z', created_at: '2026-06-03T08:00:00Z',
+  }
+
+  const GH_ENG_ITEMS = [
+    {
+      id: 10, external_id: 'github:owner/repo/issues/42',
+      title: 'OAuth login feature', item_type: 'issue',
+      repo: 'owner/repo', number: 42,
+      url: 'https://github.com/owner/repo/issues/42',
+      state: 'open', body: 'When user clicks login nothing happens.',
+      comments: [
+        { id: 1, author: 'alice', body: 'We should use PKCE flow.', created_at: '2026-06-01T10:00:00Z' },
+      ],
+    },
+  ]
+
+  test.beforeEach(async ({ page }) => {
+    // Override cards and engineering items for these tests
+    await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, GH_CARD] }))
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: GH_ENG_ITEMS }))
+    await page.route('**/api/cards/*/spec/generate', r =>
+      r.fulfill({ json: { spec: '## Problem Statement\nGenerated spec content.' } }))
+    await page.route('**/api/bridge/jobs', r =>
+      r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
+                          created_at: '2026-06-03T10:00:00Z', updated_at: null } }))
+    await page.route('**/api/bridge/jobs/card/*/latest', r =>
+      r.fulfill({ json: { job: null } }))
+    await page.goto('/board')
+    await waitForApp(page)
+    // Open the detail panel for the GitHub-linked card
+    const card = page.locator('.event-card', { hasText: 'OAuth login feature' })
+    await card.click()
+    await expect(page.locator('.card-detail-panel')).toBeVisible()
+  })
+
+  test('GitHub context section is visible for linked cards', async ({ page }) => {
+    await expect(page.locator('.cdp-gh-header')).toBeVisible()
+  })
+
+  test('GitHub issue type badge is shown', async ({ page }) => {
+    await expect(page.locator('.cdp-gh-type')).toBeVisible()
+  })
+
+  test('GitHub link is rendered', async ({ page }) => {
+    const link = page.locator('.cdp-gh-link')
+    await expect(link).toBeVisible()
+    await expect(link).toHaveAttribute('href', /github\.com/)
+  })
+
+  test('spec section is visible with existing spec', async ({ page }) => {
+    await expect(page.locator('.cdp-spec-markdown')).toBeVisible()
+    await expect(page.locator('.cdp-spec-markdown')).toContainText(/Problem Statement/i)
+  })
+
+  test('Generate spec button is visible', async ({ page }) => {
+    const btn = page.locator('.cdp-spec-gen-btn')
+    await expect(btn).toBeVisible()
+  })
+
+  test('Copy for Claude Code button is visible when spec exists', async ({ page }) => {
+    await expect(page.locator('.cdp-spec-copy-btn')).toBeVisible()
+    await expect(page.locator('.cdp-spec-copy-btn')).toContainText(/Claude Code/i)
+  })
+
+  test('Bridge button is visible when spec exists', async ({ page }) => {
+    await expect(page.locator('.cdp-spec-bridge-btn')).toBeVisible()
+    await expect(page.locator('.cdp-spec-bridge-btn')).toContainText(/Bridge/i)
+  })
+
+  test('refresh button is shown in GitHub header', async ({ page }) => {
+    // Refresh button is within the GitHub actions area
+    const actions = page.locator('.cdp-gh-actions')
+    await expect(actions).toBeVisible()
+    await expect(actions.getByRole('button').first()).toBeVisible()
+  })
+
+  test('GitHub panel can be collapsed and expanded', async ({ page }) => {
+    // Content is visible initially (expanded)
+    await expect(page.locator('.cdp-gh-content')).toBeVisible()
+    // Click collapse toggle
+    await page.locator('.cdp-gh-actions').getByRole('button').last().click()
+    // Content collapses
+    await expect(page.locator('.cdp-gh-content')).not.toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // GitHub / Engineering settings modal
 // ---------------------------------------------------------------------------
 test.describe('github settings modal', () => {
