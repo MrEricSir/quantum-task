@@ -1,14 +1,14 @@
 """
-Bridge endpoints — job queue for the local todo-bridge agent.
+Bridge endpoints — job queue for the local qtask-bridge agent.
 
 Flow:
   1. Frontend POSTs /api/bridge/jobs to queue a job for a card
-  2. todo-bridge polls GET /api/bridge/jobs/next and picks up pending jobs
-  3. todo-bridge POSTs /api/bridge/jobs/{id}/complete when the session ends
+  2. qtask-bridge polls GET /api/bridge/jobs/next and picks up pending jobs
+  3. qtask-bridge POSTs /api/bridge/jobs/{id}/complete when the session ends
   4. Frontend polls GET /api/bridge/jobs/{id} for status updates
 
 Install endpoint:
-  GET /api/bridge/install.py — serves a pre-authed install script for todo-bridge
+  GET /api/bridge/install.py — serves a pre-authed install script for qtask-bridge
 """
 import os
 import textwrap
@@ -233,7 +233,7 @@ def get_latest_card_job(card_id: int, db: Session = Depends(get_db)):
 @router.get("/api/bridge/install.py", response_class=PlainTextResponse)
 def get_install_script():
     """
-    Serve a pre-authed install script for todo-bridge.
+    Serve a pre-authed install script for qtask-bridge.
     The auth token and app URL are baked in so the user just runs:
         curl https://your-app/api/bridge/install.py | python3
     """
@@ -243,21 +243,21 @@ def get_install_script():
     script = textwrap.dedent(f"""\
         #!/usr/bin/env python3
         \"\"\"
-        todo-bridge installer
-        Installs the todo-bridge CLI with your app URL and token pre-configured.
+        qtask-bridge installer
+        Installs the qtask-bridge CLI with your app URL and token pre-configured.
         \"\"\"
         import os, sys, stat, urllib.request, json
 
         APP_URL = "{app_url}"
         TOKEN   = "{token}"
         INSTALL_DIR = os.path.expanduser("~/.local/bin")
-        CONFIG_DIR  = os.path.expanduser("~/.config/todo-bridge")
+        CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
         CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-        BRIDGE_PATH = os.path.join(INSTALL_DIR, "todo-bridge")
+        BRIDGE_PATH = os.path.join(INSTALL_DIR, "qtask-bridge")
 
         def main():
             # Download the bridge script from the app
-            print("Downloading todo-bridge...")
+            print("Downloading qtask-bridge...")
             req = urllib.request.Request(
                 f"{{APP_URL}}/api/bridge/agent.py",
                 headers={{"Authorization": f"Bearer {{TOKEN}}"}},
@@ -278,13 +278,35 @@ def get_install_script():
 
             print(f"Installed: {{BRIDGE_PATH}}")
             print(f"Config:    {{CONFIG_FILE}}")
+
+            # Add ~/.local/bin to PATH if needed
+            path_export = 'export PATH="$HOME/.local/bin:$PATH"'
+            if INSTALL_DIR not in os.environ.get("PATH", "").split(os.pathsep):
+                shell = os.environ.get("SHELL", "")
+                if "zsh" in shell:
+                    rc = os.path.expanduser("~/.zshrc")
+                elif "bash" in shell:
+                    rc = os.path.expanduser("~/.bash_profile")
+                else:
+                    rc = None
+                if rc:
+                    try:
+                        existing = open(rc).read() if os.path.exists(rc) else ""
+                        if ".local/bin" not in existing:
+                            with open(rc, "a") as rf:
+                                rf.write("\\n# Added by qtask-bridge installer\\n" + path_export + "\\n")
+                            print("Added ~/.local/bin to PATH in " + rc)
+                            print("Run: source " + rc + "  (or open a new terminal)")
+                    except OSError as e:
+                        print("Could not update " + rc + ": " + str(e))
+                        print("Add manually: " + path_export)
+                else:
+                    print("\\nAdd to your shell config: " + path_export)
+
             print()
             print("Usage (run from your repo directory):")
-            print("  todo-bridge --card <card-id>   # run a specific card's job")
-            print("  todo-bridge --watch            # poll for jobs automatically")
-            print()
-            print("Add ~/.local/bin to your PATH if needed:")
-            print('  export PATH="$HOME/.local/bin:$PATH"')
+            print("  qtask-bridge --card <card-id>   # run a specific card's job")
+            print("  qtask-bridge --watch            # poll for jobs automatically")
 
         main()
     """)
@@ -293,17 +315,17 @@ def get_install_script():
 
 @router.get("/api/bridge/agent.py", response_class=PlainTextResponse)
 def get_agent_script():
-    """Serve the todo-bridge agent script (downloaded by the installer)."""
+    """Serve the qtask-bridge agent script (downloaded by the installer)."""
     script = textwrap.dedent("""\
         #!/usr/bin/env python3
         \"\"\"
-        todo-bridge — Claude Code bridge agent for the todo app.
+        qtask-bridge — Claude Code bridge agent for the todo app.
 
         Usage:
-          todo-bridge --card <id>   Fetch job for a card and launch Claude Code
-          todo-bridge --watch       Poll for pending jobs and handle them automatically
+          qtask-bridge --card <id>   Fetch job for a card and launch Claude Code
+          qtask-bridge --watch       Poll for pending jobs and handle them automatically
 
-        Config: ~/.config/todo-bridge/config.json
+        Config: ~/.config/qtask-bridge/config.json
           { "app_url": "https://...", "token": "..." }
         \"\"\"
         import argparse
@@ -316,7 +338,7 @@ def get_agent_script():
         import urllib.request
         import urllib.error
 
-        CONFIG_FILE = os.path.expanduser("~/.config/todo-bridge/config.json")
+        CONFIG_FILE = os.path.expanduser("~/.config/qtask-bridge/config.json")
         POLL_INTERVAL = 10        # seconds between polls in --watch mode
         OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
@@ -496,7 +518,7 @@ def get_agent_script():
 
 
         def main():
-            parser = argparse.ArgumentParser(description="todo-bridge: Claude Code bridge agent")
+            parser = argparse.ArgumentParser(description="qtask-bridge: Claude Code bridge agent")
             group = parser.add_mutually_exclusive_group(required=True)
             group.add_argument("--card", type=int, metavar="ID",
                                help="Queue and run job for a specific card")

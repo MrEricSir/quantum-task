@@ -188,11 +188,11 @@ In **Settings → Engineering → GitHub**, copy the install command:
 curl http://localhost:8000/api/bridge/install.py | python3
 ```
 
-This installs `todo-bridge` into your PATH. Then, in your project directory:
+This installs `qtask-bridge` into your PATH. Then, in your project directory:
 
 ```bash
-todo-bridge --watch          # poll every 30 s and auto-launch Claude Code
-todo-bridge --once           # process the next pending job once and exit
+qtask-bridge --watch          # poll every 10 s and auto-launch Claude Code
+qtask-bridge --card <id>      # queue and run a specific card's job once
 ```
 
 The agent writes the spec to `BRIDGE_SPEC.md` in the current directory, then calls `claude "Please implement the feature described in BRIDGE_SPEC.md"`.
@@ -307,7 +307,7 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | `/build 42` | Queues by card ID (shown as `#42` in the card panel header) |
 | `build the dashboard card` | Natural phrasing works too |
 
-The bridge picks up the job automatically (if `todo-bridge --watch` is running locally) and launches Claude Code with the card's spec. When the session ends, the bot sends a follow-up with the result. See [Claude Code Bridge](#claude-code-bridge) in the Features section for installation and full usage.
+The bridge picks up the job automatically (if `qtask-bridge --watch` is running locally) and launches Claude Code with the card's spec. When the session ends, the bot sends a follow-up with the result. See [Claude Code Bridge](#claude-code-bridge) in the Features section for installation and full usage.
 
 #### Proactive notifications
 

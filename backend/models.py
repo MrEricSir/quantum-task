@@ -333,7 +333,7 @@ class EngineeringItemComment(Base):
 
 
 class BridgeJob(Base):
-    """A queued Claude Code bridge job — picked up by the local todo-bridge agent."""
+    """A queued Claude Code bridge job — picked up by the local qtask-bridge agent."""
     __tablename__ = "bridge_jobs"
 
     id             = Column(Integer, primary_key=True, index=True)

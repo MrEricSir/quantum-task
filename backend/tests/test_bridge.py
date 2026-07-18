@@ -332,7 +332,7 @@ class TestInstallScript:
 
     def test_contains_install_dir(self, client):
         res = client.get("/api/bridge/install.py")
-        assert "todo-bridge" in res.text
+        assert "qtask-bridge" in res.text
 
 
 # ── GET /api/bridge/agent.py ──────────────────────────────────────────────────
