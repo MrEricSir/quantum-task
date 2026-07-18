@@ -118,14 +118,21 @@ export default function AssistModal({
     return () => document.removeEventListener('keydown', onKey)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll bridge job status while running
+  // Pick up spec that arrived via background generation while panel was open
   useEffect(() => {
-    if (!bridgeJob || bridgeJob.status !== 'running') return
+    if (task?.spec && specText === null && !specGenerating) {
+      setSpecText(task.spec)
+    }
+  }, [task?.spec]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll bridge job status while pending or running
+  useEffect(() => {
+    if (!bridgeJob || (bridgeJob.status !== 'pending' && bridgeJob.status !== 'running')) return
     const interval = setInterval(async () => {
       try {
         const updated = await getBridgeJob(bridgeJob.id)
         setBridgeJob(updated)
-        if (updated.status !== 'running') clearInterval(interval)
+        if (updated.status !== 'pending' && updated.status !== 'running') clearInterval(interval)
       } catch { /* ignore */ }
     }, 5000)
     return () => clearInterval(interval)
@@ -682,8 +689,17 @@ export default function AssistModal({
                     <button
                       className="cdp-gh-btn cdp-spec-bridge-btn"
                       onClick={handleSendToBridge}
-                      disabled={bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'}
-                      title="Send to local Claude Code bridge"
+                      disabled={
+                        bridgeQueuing ||
+                        bridgeJob?.status === 'running' ||
+                        bridgeJob?.status === 'pending' ||
+                        (bridgeJob?.spec_snapshot === specText)
+                      }
+                      title={
+                        bridgeJob?.spec_snapshot === specText
+                          ? 'Already submitted — edit the spec to queue a new job'
+                          : 'Send to local Claude Code bridge'
+                      }
                     >
                       {bridgeQueuing ? 'Queuing…' : '▶ Bridge'}
                     </button>

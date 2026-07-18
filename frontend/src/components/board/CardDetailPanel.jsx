@@ -6,6 +6,7 @@ import AssistModal from '../modals/AssistModal'
 import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
+import { getLatestBridgeJob } from '../../api'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -50,6 +51,9 @@ export default function CardDetailPanel({
   const [savedOutput,   setSavedOutput]   = useState(card?.thread_output ?? null)
   const [copiedOutput,  setCopiedOutput]  = useState(false)
 
+  // ── Latest bridge job output ───────────────────────────────────────────────
+  const [latestJob, setLatestJob] = useState(null)
+
   // ── Edit / new form state ─────────────────────────────────────────────────
   const [editTitle,          setEditTitle]          = useState('')
   const [editDescription,    setEditDescription]    = useState('')
@@ -75,6 +79,10 @@ export default function CardDetailPanel({
     setGhExpanded(true)
     setGhRefreshing(false)
     setEditError('')
+    setLatestJob(null)
+    if (card?.id) {
+      getLatestBridgeJob(card.id).then(({ job }) => setLatestJob(job)).catch(() => {})
+    }
   }, [card?.id, initialMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Populate edit form fields whenever entering edit/new mode
@@ -183,7 +191,7 @@ export default function CardDetailPanel({
             />
           )}
           <span className="cdp-title">{headerTitle}</span>
-          {mode === 'view' && card?.id && (
+          {card?.id && (
             <span className="cdp-card-id">#{card.id}</span>
           )}
           <button className="cdp-close" onClick={onClose} aria-label="Close panel">
@@ -323,6 +331,16 @@ export default function CardDetailPanel({
                     </button>
                   </div>
                   <div className="cdp-output-text">{savedOutput}</div>
+                </div>
+              )}
+
+              {/* Bridge job output */}
+              {latestJob?.output && (
+                <div className="cdp-section">
+                  <div className="cdp-section-label">
+                    {latestJob.status === 'done' ? '▶ Claude Code output' : '▶ Claude Code running…'}
+                  </div>
+                  <pre className="cdp-bridge-output">{latestJob.output}</pre>
                 </div>
               )}
 

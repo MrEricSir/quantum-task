@@ -80,13 +80,14 @@ _OUTPUT_MAX_LINES = 200
 
 def _job_response(job: models.BridgeJob) -> dict:
     return {
-        "id":         job.id,
-        "card_id":    job.card_id,
-        "status":     job.status,
-        "result":     job.result,
-        "output":     job.output,
-        "created_at": job.created_at.isoformat(),
-        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        "id":            job.id,
+        "card_id":       job.card_id,
+        "status":        job.status,
+        "result":        job.result,
+        "output":        job.output,
+        "spec_snapshot": job.spec_snapshot,
+        "created_at":    job.created_at.isoformat(),
+        "updated_at":    job.updated_at.isoformat() if job.updated_at else None,
     }
 
 
@@ -385,7 +386,9 @@ def get_agent_script():
 
         CLAUDE_PROMPT = (
             f"Please implement the feature described in {SPEC_FILENAME} "
-            f"(already written to your working directory)."
+            f"(already written to your working directory). "
+            f"Do not create any git commits or stage any files — "
+            f"leave all git operations to the developer."
         )
 
 
@@ -418,7 +421,7 @@ def get_agent_script():
             print(f"[bridge] Launching Claude Code (streaming mode)...")
             try:
                 proc = subprocess.Popen(
-                    ["claude", "--print", CLAUDE_PROMPT],
+                    ["claude", "--print", "--dangerously-skip-permissions", CLAUDE_PROMPT],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -453,6 +456,7 @@ def get_agent_script():
             proc.wait()
             flush()  # final flush
 
+            print(f"\\n[bridge] Claude Code finished (exit {proc.returncode})")
             if proc.returncode == 0:
                 api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": ""})
             else:
@@ -503,7 +507,7 @@ def get_agent_script():
 
 
         def cmd_watch(cfg):
-            print(f"[bridge] Watching for jobs (polling every {POLL_INTERVAL}s, streaming mode)... Ctrl-C to stop.\\n")
+            print(f"[bridge] Watching for jobs (polling every {POLL_INTERVAL}s)... Ctrl-C to stop.\\n")
             while True:
                 try:
                     resp = api(cfg, "GET", "/api/bridge/jobs/next/pending")
@@ -511,10 +515,14 @@ def get_agent_script():
                     if job:
                         run_job(cfg, job, streaming=True)
                     else:
+                        print(f"[bridge] No pending jobs — sleeping {POLL_INTERVAL}s...", end="\\r")
                         time.sleep(POLL_INTERVAL)
                 except KeyboardInterrupt:
                     print("\\n[bridge] Stopped.")
                     break
+                except Exception as e:
+                    print(f"\\n[bridge] Error: {e}", file=sys.stderr)
+                    time.sleep(POLL_INTERVAL)
 
 
         def main():
