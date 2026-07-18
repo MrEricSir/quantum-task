@@ -277,15 +277,54 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
     return f"sent: {sent} milestone(s)"
 
 
+_OUTPUT_TAIL_LINES = 10  # lines of Claude Code output included in completion notifications
+
+
+def _tail(text: str, n: int) -> str:
+    """Return the last n lines of text, or all of it if shorter."""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    return "\n".join(lines[-n:])
+
+
 def check_bridge_jobs(db: Session, token: str, chat_id: str) -> str:
-    """Notify about recently completed or failed bridge jobs (once per job)."""
-    # Find jobs that finished since last check and haven't been notified yet.
-    # We use a simple convention: jobs with status done/error and no notified_at flag.
-    # Since we don't have a notified_at column, we track via AppSetting last notified job id.
+    """Notify about bridge job starts and completions (once per job, per event)."""
     s = Settings(db)
-    last_notified_raw = s.get(keys.BRIDGE_LAST_NOTIFIED_JOB, "0")
+    sent = 0
+
+    # ── "Started" notifications ────────────────────────────────────────────────
     try:
-        last_notified = int(last_notified_raw)
+        last_started = int(s.get(keys.BRIDGE_LAST_NOTIFIED_RUNNING_JOB, "0"))
+    except (ValueError, TypeError):
+        last_started = 0
+
+    started_jobs = (
+        db.query(models.BridgeJob)
+        .filter(
+            models.BridgeJob.id > last_started,
+            models.BridgeJob.status.in_(["running", "done", "error"]),
+        )
+        .order_by(models.BridgeJob.id)
+        .all()
+    )
+
+    for job in started_jobs:
+        card = db.query(models.Card).filter_by(id=job.card_id).first()
+        card_title = card.title if card else f"card #{job.card_id}"
+        # Only send "started" if the job is still running — if it's already done/error
+        # the completion notification below covers it; no need for two messages.
+        if job.status == "running":
+            msg = f'▶ Claude Code started on <b>{card_title}</b>'
+            if send_message(token, chat_id, msg):
+                sent += 1
+
+    if started_jobs:
+        s.set(keys.BRIDGE_LAST_NOTIFIED_RUNNING_JOB, str(started_jobs[-1].id))
+
+    # ── Completion notifications ───────────────────────────────────────────────
+    try:
+        last_notified = int(s.get(keys.BRIDGE_LAST_NOTIFIED_JOB, "0"))
     except (ValueError, TypeError):
         last_notified = 0
 
@@ -299,29 +338,28 @@ def check_bridge_jobs(db: Session, token: str, chat_id: str) -> str:
         .all()
     )
 
-    if not finished_jobs:
-        return "none"
-
-    sent = 0
     for job in finished_jobs:
         card = db.query(models.Card).filter_by(id=job.card_id).first()
         card_title = card.title if card else f"card #{job.card_id}"
         if job.status == "done":
-            msg = f'Build complete: <b>{card_title}</b>'
+            msg = f'✅ Build complete: <b>{card_title}</b>'
             if job.result:
                 msg += f'\n{job.result}'
         else:
-            msg = f'Build failed for <b>{card_title}</b>'
+            msg = f'❌ Build failed: <b>{card_title}</b>'
             if job.result:
                 msg += f'\n{job.result}'
+        tail = _tail(job.output, _OUTPUT_TAIL_LINES)
+        if tail:
+            msg += f'\n\n<pre>{tail}</pre>'
         if send_message(token, chat_id, msg):
             sent += 1
 
-    # Update the high-water mark
-    s.set(keys.BRIDGE_LAST_NOTIFIED_JOB, str(finished_jobs[-1].id))
-    db.commit()
+    if finished_jobs:
+        s.set(keys.BRIDGE_LAST_NOTIFIED_JOB, str(finished_jobs[-1].id))
 
-    return f"notified: {sent} job(s)"
+    db.commit()
+    return f"notified: {sent} event(s)" if sent else "none"
 
 
 def check_all(db: Session) -> dict:

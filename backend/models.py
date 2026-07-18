@@ -342,6 +342,7 @@ class BridgeJob(Base):
     spec_snapshot  = Column(Text, nullable=True)   # spec text at time of queuing
     prompt_snapshot = Column(Text, nullable=True)  # full Claude Code prompt at time of queuing
     result         = Column(Text, nullable=True)   # PR link / summary posted by bridge
+    output         = Column(Text, nullable=True)   # rolling last ~200 lines of Claude Code stdout
     created_at     = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at     = Column(DateTime, nullable=True)
 

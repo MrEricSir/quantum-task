@@ -695,15 +695,20 @@ export default function AssistModal({
               {bridgeError && <div className="cdp-spec-error">{bridgeError}</div>}
 
               {bridgeJob && (
-                <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
-                  <span className="cdp-bridge-dot" />
-                  <span className="cdp-bridge-label">
-                    {bridgeJob.status === 'pending'  && 'Bridge job queued — waiting for agent…'}
-                    {bridgeJob.status === 'running'  && 'Claude Code session running…'}
-                    {bridgeJob.status === 'done'     && (bridgeJob.result || 'Session complete')}
-                    {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
-                  </span>
-                </div>
+                <>
+                  <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
+                    <span className="cdp-bridge-dot" />
+                    <span className="cdp-bridge-label">
+                      {bridgeJob.status === 'pending'  && 'Bridge job queued — waiting for agent…'}
+                      {bridgeJob.status === 'running'  && 'Claude Code session running…'}
+                      {bridgeJob.status === 'done'     && (bridgeJob.result || 'Session complete')}
+                      {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
+                    </span>
+                  </div>
+                  {bridgeJob.output && (
+                    <pre className="cdp-bridge-output">{bridgeJob.output}</pre>
+                  )}
+                </>
               )}
 
               <div className="assist-spec-content">

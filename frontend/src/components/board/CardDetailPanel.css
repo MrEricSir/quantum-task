@@ -648,6 +648,23 @@
   50%       { opacity: 0.3; }
 }
 
+/* ── Bridge output log ── */
+.cdp-bridge-output {
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+  overflow-y: auto;
+  max-height: 200px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* ── GitHub badge (legacy — for cards where description is a bare URL) ── */
 .cdp-github-badge {
   display: inline-flex;

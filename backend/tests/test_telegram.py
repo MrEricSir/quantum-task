@@ -596,7 +596,7 @@ class TestCheckBridgeJobs:
             assert row is not None
             assert int(row.value) > 0
 
-    def test_skips_pending_and_running_jobs(self):
+    def test_skips_pending_jobs_notifies_running(self):
         card_id = _make_card_with_spec("Running feature", spec="s")
         with BotTestSession() as db:
             db.add(models.BridgeJob(
@@ -610,5 +610,9 @@ class TestCheckBridgeJobs:
             with BotTestSession() as db:
                 result = check_bridge_jobs(db, token="tok", chat_id="123")
 
-        assert result == "none"
-        mock_send.assert_not_called()
+        # Running jobs get a "started" notification; no completion notification yet
+        assert result == "notified: 1 event(s)"
+        assert mock_send.call_count == 1
+        text = mock_send.call_args[0][2]
+        assert "Running feature" in text
+        assert "▶" in text

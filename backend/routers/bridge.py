@@ -36,6 +36,9 @@ class _JobCreate(BaseModel):
 class _JobComplete(BaseModel):
     result: str = ""   # PR link, summary, or empty
 
+class _JobOutput(BaseModel):
+    output: str        # chunk of stdout to append
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -72,12 +75,16 @@ def _build_prompt(card: models.Card, eng_item: models.EngineeringItem | None) ->
     return "\n".join(lines)
 
 
+_OUTPUT_MAX_LINES = 200
+
+
 def _job_response(job: models.BridgeJob) -> dict:
     return {
         "id":         job.id,
         "card_id":    job.card_id,
         "status":     job.status,
         "result":     job.result,
+        "output":     job.output,
         "created_at": job.created_at.isoformat(),
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
@@ -193,6 +200,22 @@ def error_job(job_id: int, body: _JobComplete, db: Session = Depends(get_db)):
     return _job_response(job)
 
 
+@router.post("/api/bridge/jobs/{job_id}/output")
+def post_job_output(job_id: int, body: _JobOutput, db: Session = Depends(get_db)):
+    """Bridge posts stdout chunks while the Claude Code session is running."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    combined = (job.output or "") + body.output
+    lines = combined.splitlines()
+    if len(lines) > _OUTPUT_MAX_LINES:
+        lines = lines[-_OUTPUT_MAX_LINES:]
+    job.output = "\n".join(lines)
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/api/bridge/jobs/card/{card_id}/latest")
 def get_latest_card_job(card_id: int, db: Session = Depends(get_db)):
     """Get the latest bridge job for a card (for UI status display)."""
@@ -288,13 +311,15 @@ def get_agent_script():
         import os
         import subprocess
         import sys
-        import tempfile
+        import threading
         import time
         import urllib.request
         import urllib.error
 
         CONFIG_FILE = os.path.expanduser("~/.config/todo-bridge/config.json")
-        POLL_INTERVAL = 10   # seconds between polls in --watch mode
+        POLL_INTERVAL = 10        # seconds between polls in --watch mode
+        OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
+        OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
         SPEC_FILENAME = "BRIDGE_SPEC.md"
         GITIGNORE_ENTRY = "BRIDGE_SPEC.md\\n"
 
@@ -336,11 +361,88 @@ def get_agent_script():
             # If no .gitignore exists at the spec level, skip — don't create one unexpectedly
 
 
-        def run_job(cfg, job):
-            job_id   = job["id"]
-            card_id  = job["card_id"]
-            prompt   = job.get("prompt", "")
-            spec     = job.get("spec", "")
+        CLAUDE_PROMPT = (
+            f"Please implement the feature described in {SPEC_FILENAME} "
+            f"(already written to your working directory)."
+        )
+
+
+        def _run_interactive(cfg, job_id, spec_path):
+            \"\"\"Launch Claude Code as an interactive session the user can engage with.\"\"\"
+            print(f"[bridge] Launching Claude Code interactively...")
+            print("[bridge] You can interact with Claude in the session below.")
+            print("[bridge] When done, type 'exit' or press Ctrl-D.\\n")
+            try:
+                subprocess.run(["claude", CLAUDE_PROMPT], check=False)
+            except FileNotFoundError:
+                print("[bridge] ERROR: 'claude' not found.", file=sys.stderr)
+                print("[bridge]   npm install -g @anthropic-ai/claude-code", file=sys.stderr)
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
+                    {"result": "claude not found on PATH"})
+                return False
+
+            print("\\n[bridge] Session ended.")
+            result_text = ""
+            try:
+                result_text = input("[bridge] Enter PR link or summary to save (or press Enter to skip): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                pass
+            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": result_text})
+            return True
+
+
+        def _run_streaming(cfg, job_id, spec_path):
+            \"\"\"Launch Claude Code non-interactively and stream stdout back to the app.\"\"\"
+            print(f"[bridge] Launching Claude Code (streaming mode)...")
+            try:
+                proc = subprocess.Popen(
+                    ["claude", "--print", CLAUDE_PROMPT],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except FileNotFoundError:
+                print("[bridge] ERROR: 'claude' not found.", file=sys.stderr)
+                print("[bridge]   npm install -g @anthropic-ai/claude-code", file=sys.stderr)
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
+                    {"result": "claude not found on PATH"})
+                return False
+
+            buffer = []
+            last_flush = time.time()
+
+            def flush():
+                nonlocal buffer, last_flush
+                if not buffer:
+                    return
+                chunk = "\\n".join(buffer) + "\\n"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/output", {"output": chunk})
+                buffer.clear()
+                last_flush = time.time()
+
+            for line in proc.stdout:
+                line = line.rstrip("\\n")
+                print(line)
+                buffer.append(line)
+                if len(buffer) >= OUTPUT_FLUSH_LINES or (time.time() - last_flush) >= OUTPUT_FLUSH_INTERVAL:
+                    flush()
+
+            proc.wait()
+            flush()  # final flush
+
+            if proc.returncode == 0:
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": ""})
+            else:
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
+                    {"result": f"claude exited with code {proc.returncode}"})
+            return True
+
+
+        def run_job(cfg, job, streaming=False):
+            job_id  = job["id"]
+            card_id = job["card_id"]
+            prompt  = job.get("prompt", "")
 
             print(f"\\n[bridge] Job {job_id} — card #{card_id}")
             print(f"[bridge] Writing {SPEC_FILENAME}...")
@@ -350,37 +452,13 @@ def get_agent_script():
                 f.write(prompt)
             ensure_gitignore(spec_path)
 
-            print(f"[bridge] Launching Claude Code with {SPEC_FILENAME}...")
-            print("[bridge] You can interact with Claude in the session below.")
-            print("[bridge] When done, type 'exit' or press Ctrl-D.\\n")
+            if streaming:
+                _run_streaming(cfg, job_id, spec_path)
+            else:
+                _run_interactive(cfg, job_id, spec_path)
 
-            result_text = ""
-            try:
-                # Launch Claude Code interactively with the spec as the opening prompt.
-                # Claude Code treats a positional string argument as the initial message.
-                proc = subprocess.run(
-                    ["claude", f"Please implement the feature described in {SPEC_FILENAME} "
-                               f"(already written to your working directory)."],
-                    check=False,
-                )
-            except FileNotFoundError:
-                print("[bridge] ERROR: 'claude' not found. Install Claude Code:", file=sys.stderr)
-                print("[bridge]   npm install -g @anthropic-ai/claude-code", file=sys.stderr)
-                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
-                    {"result": "claude not found on PATH"})
-                return
-
-            # Prompt for result (PR link, notes) — optional
-            print("\\n[bridge] Session ended.")
-            try:
-                result_text = input("[bridge] Enter PR link or summary to save (or press Enter to skip): ").strip()
-            except (EOFError, KeyboardInterrupt):
-                pass
-
-            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": result_text})
             print(f"[bridge] Job {job_id} marked done.\\n")
 
-            # Clean up spec file
             try:
                 os.remove(spec_path)
             except OSError:
@@ -393,29 +471,23 @@ def get_agent_script():
             if not job_wrap:
                 print("[bridge] Failed to queue job.", file=sys.stderr)
                 sys.exit(1)
-            # Fetch the full job (with prompt)
-            job_id = job_wrap["id"]
-            full = api(cfg, "GET", f"/api/bridge/jobs/{job_id}")
-            # The job was created as pending; mark it running + get prompt
-            pending = api(cfg, "GET", "/api/bridge/jobs/next/pending")
-            job = pending.get("job") if pending else None
+            # Mark it running and get the prompt
+            resp = api(cfg, "GET", "/api/bridge/jobs/next/pending")
+            job = resp.get("job") if resp else None
             if not job:
-                # Our job is the only one; fetch it directly
-                job = {**job_wrap, "prompt": "", "spec": ""}
-                detail = api(cfg, "GET", f"/api/bridge/jobs/{job_id}")
-                if detail:
-                    job.update(detail)
-            run_job(cfg, job)
+                print("[bridge] Could not claim job (another agent may have picked it up).", file=sys.stderr)
+                sys.exit(1)
+            run_job(cfg, job, streaming=False)
 
 
         def cmd_watch(cfg):
-            print(f"[bridge] Watching for jobs (polling every {POLL_INTERVAL}s)... Ctrl-C to stop.\\n")
+            print(f"[bridge] Watching for jobs (polling every {POLL_INTERVAL}s, streaming mode)... Ctrl-C to stop.\\n")
             while True:
                 try:
                     resp = api(cfg, "GET", "/api/bridge/jobs/next/pending")
                     job = resp.get("job") if resp else None
                     if job:
-                        run_job(cfg, job)
+                        run_job(cfg, job, streaming=True)
                     else:
                         time.sleep(POLL_INTERVAL)
                 except KeyboardInterrupt:

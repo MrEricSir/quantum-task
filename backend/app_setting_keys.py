@@ -67,8 +67,10 @@ MEETING_ALERTS_SENT = "meeting_alerts_sent"
 STREAK_MILESTONES_SENT = "streak_milestones_sent"
 
 # ── Bridge job notifications ───────────────────────────────────────────────────
-# Integer string: the highest BridgeJob.id that has already been Telegram-notified.
+# Integer string: the highest BridgeJob.id whose completion has been Telegram-notified.
 BRIDGE_LAST_NOTIFIED_JOB = "bridge_last_notified_job"
+# Integer string: the highest BridgeJob.id whose start (running) has been Telegram-notified.
+BRIDGE_LAST_NOTIFIED_RUNNING_JOB = "bridge_last_notified_running_job"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.
