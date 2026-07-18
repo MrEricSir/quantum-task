@@ -52,6 +52,41 @@
   }
 }
 
+/* ── Code tab ── */
+.assist-spec-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assist-spec-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.assist-spec-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  padding: 40px 0;
+}
+
+.assist-spec-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
 /* ── Header ── */
 .assist-header {
   display: flex;

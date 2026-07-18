@@ -5,6 +5,7 @@ import Modal from './Modal'
 import './GithubSettings.css'
 
 export default function GithubSettings({ onClose, onSynced }) {
+  const [copiedInstall, setCopiedInstall] = useState(false)
   const [token, setToken] = useState('')
   const [repos, setRepos] = useState('')
   const [statusConfig, setStatusConfig] = useState({})
@@ -172,6 +173,32 @@ export default function GithubSettings({ onClose, onSynced }) {
       )}
 
       {error && <p className="form-error">{error}</p>}
+
+      <div className="gh-bridge-section">
+        <div className="gh-label">Claude Code Bridge</div>
+        <p className="gh-hint gh-hint--small">
+          Run a local agent that picks up build jobs queued from this app and launches Claude Code automatically.
+        </p>
+        <div className="gh-install-row">
+          <code className="gh-install-cmd">
+            {`curl ${window.location.origin}/api/bridge/install.py | python3`}
+          </code>
+          <button
+            className="gh-install-copy"
+            onClick={() => {
+              navigator.clipboard.writeText(`curl ${window.location.origin}/api/bridge/install.py | python3`)
+              setCopiedInstall(true)
+              setTimeout(() => setCopiedInstall(false), 2000)
+            }}
+          >
+            {copiedInstall ? '✓' : 'Copy'}
+          </button>
+        </div>
+        <p className="gh-hint gh-hint--small">
+          After installing, run <code>todo-bridge --watch</code> in your project directory.
+          Open any card, generate a spec, then click <strong>▶ Bridge</strong> to queue a job.
+        </p>
+      </div>
 
       <div className="modal-footer">
         <button className="btn-cancel" onClick={onClose}>Cancel</button>

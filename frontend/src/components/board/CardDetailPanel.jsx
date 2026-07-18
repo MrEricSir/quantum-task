@@ -6,7 +6,6 @@ import AssistModal from '../modals/AssistModal'
 import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
-import { generateSpec, queueBridgeJob, getBridgeJob, getLatestBridgeJob } from '../../api'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -68,19 +67,6 @@ export default function CardDetailPanel({
   const [ghExpanded,  setGhExpanded]  = useState(true)
   const [ghRefreshing, setGhRefreshing] = useState(false)
 
-  // ── Spec panel ────────────────────────────────────────────────────────────
-  const [specText,       setSpecText]       = useState(card?.spec ?? null)
-  const [specGenerating, setSpecGenerating] = useState(false)
-  const [specEditing,    setSpecEditing]    = useState(false)
-  const [specDraft,      setSpecDraft]      = useState('')
-  const [specError,      setSpecError]      = useState('')
-  const [copiedSpec,     setCopiedSpec]     = useState(false)
-
-  // ── Bridge job ────────────────────────────────────────────────────────────
-  const [bridgeJob,     setBridgeJob]     = useState(null)   // {id, status, result}
-  const [bridgeQueuing, setBridgeQueuing] = useState(false)
-  const [bridgeError,   setBridgeError]   = useState('')
-
   // ── Reset when a different card is opened or initialMode changes ──────────
   useEffect(() => {
     setMode(initialMode)
@@ -88,30 +74,8 @@ export default function CardDetailPanel({
     setShowFullDesc(false)
     setGhExpanded(true)
     setGhRefreshing(false)
-    setSpecText(card?.spec ?? null)
-    setSpecEditing(false)
-    setSpecError('')
-    setBridgeJob(null)
-    setBridgeError('')
     setEditError('')
-    // Load latest bridge job for this card
-    if (card?.id && card?.spec) {
-      getLatestBridgeJob(card.id).then(({ job }) => setBridgeJob(job)).catch(() => {})
-    }
   }, [card?.id, initialMode]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Poll bridge job status while running
-  useEffect(() => {
-    if (!bridgeJob || bridgeJob.status !== 'running') return
-    const interval = setInterval(async () => {
-      try {
-        const updated = await getBridgeJob(bridgeJob.id)
-        setBridgeJob(updated)
-        if (updated.status !== 'running') clearInterval(interval)
-      } catch { /* ignore */ }
-    }, 5000)
-    return () => clearInterval(interval)
-  }, [bridgeJob?.id, bridgeJob?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Populate edit form fields whenever entering edit/new mode
   useEffect(() => {
@@ -196,85 +160,6 @@ export default function CardDetailPanel({
     }
   }
 
-  const handleGenerateSpec = async () => {
-    if (!card || specGenerating) return
-    setSpecGenerating(true)
-    setSpecError('')
-    try {
-      const { spec } = await generateSpec(card.id)
-      setSpecText(spec)
-      // Persist to card so it survives panel close/reopen
-      await onSave?.(card.id, { spec })
-    } catch {
-      setSpecError('Failed to generate spec. Please try again.')
-    } finally {
-      setSpecGenerating(false)
-    }
-  }
-
-  const handleSaveSpec = async () => {
-    if (!card) return
-    await onSave?.(card.id, { spec: specDraft })
-    setSpecText(specDraft)
-    setSpecEditing(false)
-  }
-
-  const buildClaudeCodePrompt = () => {
-    const lines = []
-    lines.push(`# Feature: ${card.title}`)
-    if (engItem) lines.push(`Source: ${engItem.url}`)
-    lines.push('')
-    if (specText) {
-      lines.push(specText)
-      lines.push('')
-    }
-    if (engItem) {
-      lines.push('---')
-      lines.push(`## GitHub ${engItem.item_type === 'pr' ? 'PR' : 'Issue'}: ${engItem.repo}#${engItem.number}`)
-      if (engItem.body) {
-        lines.push('')
-        lines.push(engItem.body)
-      }
-      if ((engItem.comments ?? []).length > 0) {
-        lines.push('')
-        lines.push('### Comments')
-        for (const c of engItem.comments) {
-          lines.push('')
-          lines.push(`**${c.author}**: ${c.body}`)
-        }
-      }
-    }
-    if (card.description) {
-      lines.push('')
-      lines.push('---')
-      lines.push('## Developer Notes')
-      lines.push(card.description)
-    }
-    return lines.join('\n')
-  }
-
-  const handleSendToBridge = async () => {
-    if (!card || bridgeQueuing) return
-    setBridgeQueuing(true)
-    setBridgeError('')
-    try {
-      const job = await queueBridgeJob(card.id)
-      setBridgeJob(job)
-    } catch (e) {
-      setBridgeError(e.message || 'Failed to queue bridge job')
-    } finally {
-      setBridgeQueuing(false)
-    }
-  }
-
-  const handleCopyForClaude = () => {
-    const prompt = buildClaudeCodePrompt()
-    navigator.clipboard.writeText(prompt).then(() => {
-      setCopiedSpec(true)
-      setTimeout(() => setCopiedSpec(false), 2000)
-    })
-  }
-
   // ── Header ────────────────────────────────────────────────────────────────
   const headerTitle =
     mode === 'assist' ? 'Assistant' :
@@ -298,6 +183,9 @@ export default function CardDetailPanel({
             />
           )}
           <span className="cdp-title">{headerTitle}</span>
+          {mode === 'view' && card?.id && (
+            <span className="cdp-card-id">#{card.id}</span>
+          )}
           <button className="cdp-close" onClick={onClose} aria-label="Close panel">
             <Cross2Icon />
           </button>
@@ -392,96 +280,6 @@ export default function CardDetailPanel({
                           ))}
                         </div>
                       )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Spec */}
-              {(engItem || specText) && (
-                <div className="cdp-section">
-                  <div className="cdp-spec-header">
-                    <div className="cdp-section-label">Spec</div>
-                    <div className="cdp-spec-actions">
-                      {specText && !specEditing && (
-                        <>
-                          <button
-                            className="cdp-gh-btn"
-                            onClick={() => { setSpecDraft(specText); setSpecEditing(true) }}
-                            title="Edit spec"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            className="cdp-gh-btn cdp-spec-copy-btn"
-                            onClick={handleCopyForClaude}
-                            title="Copy prompt for Claude Code"
-                          >
-                            {copiedSpec ? '✓ Copied' : '⎘ Claude Code'}
-                          </button>
-                        </>
-                      )}
-                      <button
-                        className="cdp-gh-btn cdp-spec-gen-btn"
-                        onClick={handleGenerateSpec}
-                        disabled={specGenerating}
-                        title={specText ? 'Re-generate spec' : 'Generate spec from issue context'}
-                      >
-                        {specGenerating ? 'Generating…' : specText ? '↻ Regenerate' : '✦ Generate Spec'}
-                      </button>
-                      {specText && (
-                        <button
-                          className="cdp-gh-btn cdp-spec-bridge-btn"
-                          onClick={handleSendToBridge}
-                          disabled={bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'}
-                          title="Send to local Claude Code bridge"
-                        >
-                          {bridgeQueuing ? 'Queuing…' : '▶ Bridge'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {specError && <div className="cdp-spec-error">{specError}</div>}
-                  {bridgeError && <div className="cdp-spec-error">{bridgeError}</div>}
-
-                  {bridgeJob && (
-                    <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
-                      <span className="cdp-bridge-dot" />
-                      <span className="cdp-bridge-label">
-                        {bridgeJob.status === 'pending'  && 'Bridge job queued — waiting for agent…'}
-                        {bridgeJob.status === 'running'  && 'Claude Code session running…'}
-                        {bridgeJob.status === 'done'     && (bridgeJob.result || 'Session complete')}
-                        {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
-                      </span>
-                    </div>
-                  )}
-
-                  {specEditing ? (
-                    <div className="cdp-spec-edit">
-                      <textarea
-                        className="cdp-spec-textarea"
-                        value={specDraft}
-                        onChange={e => setSpecDraft(e.target.value)}
-                        rows={20}
-                      />
-                      <div className="cdp-spec-edit-actions">
-                        <button className="cdp-btn cdp-btn--cancel" onClick={() => setSpecEditing(false)}>
-                          Cancel
-                        </button>
-                        <button className="cdp-btn cdp-btn--save" onClick={handleSaveSpec}>
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ) : specText ? (
-                    <div
-                      className="cdp-spec-markdown"
-                      dangerouslySetInnerHTML={{ __html: renderMarkdown(specText) }}
-                    />
-                  ) : (
-                    <div className="cdp-spec-empty">
-                      No spec yet. Click "✦ Generate Spec" to synthesize one from the GitHub issue and discussion.
                     </div>
                   )}
                 </div>
@@ -631,6 +429,8 @@ export default function CardDetailPanel({
             task={card}
             onBreakdown={onBreakdown}
             onOutputSaved={(output) => setSavedOutput(output)}
+            onSpecSaved={(spec) => onSave?.(card.id, { spec })}
+            engItem={engItem}
             inline
           />
         )}

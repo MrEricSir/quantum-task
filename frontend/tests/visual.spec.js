@@ -1628,6 +1628,8 @@ test.describe('card detail panel — github and spec', () => {
                           created_at: '2026-06-03T10:00:00Z', updated_at: null } }))
     await page.route('**/api/bridge/jobs/card/*/latest', r =>
       r.fulfill({ json: { job: null } }))
+    await page.route('**/api/cards/*/thread', r =>
+      r.fulfill({ json: { messages: [], context: '', output: null } }))
     await page.goto('/board')
     await waitForApp(page)
     // Open the detail panel for the GitHub-linked card
@@ -1650,22 +1652,29 @@ test.describe('card detail panel — github and spec', () => {
     await expect(link).toHaveAttribute('href', /github\.com/)
   })
 
-  test('spec section is visible with existing spec', async ({ page }) => {
+  test('code section is visible in Assist → Code tab', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-markdown')).toBeVisible()
     await expect(page.locator('.cdp-spec-markdown')).toContainText(/Problem Statement/i)
   })
 
-  test('Generate spec button is visible', async ({ page }) => {
-    const btn = page.locator('.cdp-spec-gen-btn')
-    await expect(btn).toBeVisible()
+  test('Generate Code button is visible in Code tab', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await expect(page.locator('.cdp-spec-gen-btn')).toBeVisible()
   })
 
-  test('Copy for Claude Code button is visible when spec exists', async ({ page }) => {
+  test('Copy for Claude Code button is visible in Code tab when spec exists', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-copy-btn')).toBeVisible()
     await expect(page.locator('.cdp-spec-copy-btn')).toContainText(/Claude Code/i)
   })
 
-  test('Bridge button is visible when spec exists', async ({ page }) => {
+  test('Bridge button is visible in Code tab when spec exists', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-bridge-btn')).toBeVisible()
     await expect(page.locator('.cdp-spec-bridge-btn')).toContainText(/Bridge/i)
   })

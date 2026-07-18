@@ -167,6 +167,58 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - **Research**: agentic mode — the AI generates search queries, executes them via Tavily, then synthesizes a sourced answer; each step is shown live as it runs
 - Requires `TAVILY_API_KEY` for the Research mode; Run works with any LLM
 
+### Claude Code Bridge
+
+Automate implementation work by sending cards to a local Claude Code agent. The bridge monitors a job queue and launches Claude Code automatically when a new job arrives.
+
+#### How it works
+
+1. Open any card and click **✦ Assist** in the footer
+2. Click the **Code** tab
+3. Click **✦ Generate Code** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
+4. Review and optionally edit the requirements inline, then click **▶ Bridge** to queue a job
+5. The local bridge agent picks up the job and runs `claude <spec>` in your project directory
+6. When the session ends, the job status updates in the panel (and Telegram sends a notification if configured)
+
+#### Install the bridge agent
+
+In **Settings → Engineering → GitHub**, copy the install command:
+
+```bash
+curl http://localhost:8000/api/bridge/install.py | python3
+```
+
+This installs `todo-bridge` into your PATH. Then, in your project directory:
+
+```bash
+todo-bridge --watch          # poll every 30 s and auto-launch Claude Code
+todo-bridge --once           # process the next pending job once and exit
+```
+
+The agent writes the spec to `BRIDGE_SPEC.md` in the current directory, then calls `claude "Please implement the feature described in BRIDGE_SPEC.md"`.
+
+#### Code tab actions
+
+| Button | What it does |
+|---|---|
+| **✦ Generate Code** | AI synthesises requirements from card + GitHub context |
+| **↻ Regenerate** | Overwrites the current requirements with a fresh generation |
+| **⎘ Claude Code** | Copies the full prompt (requirements + GitHub body + comments + notes) to clipboard for manual paste into Claude Code |
+| **▶ Bridge** | Queues a job for the local bridge agent |
+| **Edit** (footer) | Opens an inline textarea to manually write or adjust the requirements |
+
+#### Telegram `/build`
+
+You can also queue jobs from Telegram:
+
+| What you send | What happens |
+|---|---|
+| `/build auth feature` | Queues a build job for the matching card |
+| `/build 42` | Queues by card ID (shown as `#42` in the panel header) |
+| `build the login card` | Natural phrasing works too |
+
+The bot replies with the job number and notifies you when it's done or errored. See [Claude Code Bridge](#claude-code-bridge-1) in the Telegram section for more detail.
+
 ### Daily Briefing
 - Streaming AI summary of your day: weather, schedule, tasks, and habits
 - Respects the active tag filter
@@ -252,10 +304,10 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | What you send | What happens |
 |---|---|
 | `/build auth feature` | Queues a Claude Code build job for the matching card |
-| `/build 42` | Queues by card ID |
+| `/build 42` | Queues by card ID (shown as `#42` in the card panel header) |
 | `build the dashboard card` | Natural phrasing works too |
 
-The bridge picks up the job automatically (if `todo-bridge --watch` is running locally) and launches Claude Code with the card's spec. When the session ends, the bot sends a follow-up with the result or PR link.
+The bridge picks up the job automatically (if `todo-bridge --watch` is running locally) and launches Claude Code with the card's spec. When the session ends, the bot sends a follow-up with the result. See [Claude Code Bridge](#claude-code-bridge) in the Features section for installation and full usage.
 
 #### Proactive notifications
 

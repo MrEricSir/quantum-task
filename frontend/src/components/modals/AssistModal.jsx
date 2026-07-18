@@ -1,16 +1,27 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Cross2Icon, CopyIcon, CheckIcon, TrashIcon } from '@radix-ui/react-icons'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import {
   breakdownCard, commitBreakdown, bulkCreateCards,
   fetchCardThread, sendThreadMessage, saveThreadOutput,
   updateThreadContext, clearCardThread, fetchContextFrom,
+  generateSpec, queueBridgeJob, getBridgeJob, getLatestBridgeJob,
 } from '../../api'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './AssistModal.css'
 
-export default function AssistModal({ open, onClose, task, allTags = [], onBreakdown, onOutputSaved, inline = false }) {
-  const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown'
+function renderMarkdown(text) {
+  if (!text) return ''
+  return DOMPurify.sanitize(marked.parse(text, { breaks: true }), { ADD_ATTR: ['target', 'rel'] })
+}
+
+export default function AssistModal({
+  open, onClose, task, allTags = [], onBreakdown, onOutputSaved,
+  inline = false, engItem = null, onSpecSaved,
+}) {
+  const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown' | 'spec'
 
   // Thread state
   const [messages,  setMessages]  = useState([])   // [{role, content, ts}]
@@ -41,6 +52,19 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
   const [bdTagName,  setBdTagName]  = useState('')
   const [bdError,    setBdError]    = useState('')
 
+  // Spec state
+  const [specText,       setSpecText]       = useState(null)
+  const [specGenerating, setSpecGenerating] = useState(false)
+  const [specEditing,    setSpecEditing]    = useState(false)
+  const [specDraft,      setSpecDraft]      = useState('')
+  const [specError,      setSpecError]      = useState('')
+  const [copiedSpec,     setCopiedSpec]     = useState(false)
+
+  // Bridge job state
+  const [bridgeJob,     setBridgeJob]     = useState(null)
+  const [bridgeQueuing, setBridgeQueuing] = useState(false)
+  const [bridgeError,   setBridgeError]   = useState('')
+
   const abortRef    = useRef(null)
   const scrollRef   = useRef(null)
   const inputRef    = useRef(null)
@@ -54,6 +78,8 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
     setInput(''); setThreadErr(''); setSearching(false); setSending(false); setStreaming(false)
     setShowDesc(false); setShowContext(false); setSavingOutput(null); setCopied(null)
     setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
+    setSpecText(task.spec ?? null); setSpecEditing(false); setSpecError(''); setCopiedSpec(false)
+    setBridgeJob(null); setBridgeError('')
 
     fetchCardThread(task.id)
       .then(data => {
@@ -65,7 +91,12 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
       .catch(() => {
         setMessages([]); setContext(''); setEditContext(''); setOutput(null)
       })
-  }, [open, task?.id])
+
+    // Load latest bridge job if card has a spec
+    if (task.spec) {
+      getLatestBridgeJob(task.id).then(({ job }) => setBridgeJob(job)).catch(() => {})
+    }
+  }, [open, task?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -86,6 +117,19 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll bridge job status while running
+  useEffect(() => {
+    if (!bridgeJob || bridgeJob.status !== 'running') return
+    const interval = setInterval(async () => {
+      try {
+        const updated = await getBridgeJob(bridgeJob.id)
+        setBridgeJob(updated)
+        if (updated.status !== 'running') clearInterval(interval)
+      } catch { /* ignore */ }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [bridgeJob?.id, bridgeJob?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send a message ────────────────────────────────────────────────────────
 
@@ -278,6 +322,90 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
     }
   }
 
+  // ── Spec ──────────────────────────────────────────────────────────────────
+
+  const handleGenerateSpec = async () => {
+    if (!task || specGenerating) return
+    if (specEditing && specDraft !== specText) {
+      if (!window.confirm('Your unsaved edits will be discarded and the requirements will be regenerated. Continue?')) return
+      setSpecEditing(false)
+    }
+    setSpecGenerating(true)
+    setSpecError('')
+    try {
+      const { spec } = await generateSpec(task.id)
+      setSpecText(spec)
+      onSpecSaved?.(spec)
+    } catch {
+      setSpecError('Failed to generate requirements. Please try again.')
+    } finally {
+      setSpecGenerating(false)
+    }
+  }
+
+  const handleSaveSpec = async () => {
+    if (!task) return
+    onSpecSaved?.(specDraft)
+    setSpecText(specDraft)
+    setSpecEditing(false)
+  }
+
+  const buildClaudeCodePrompt = () => {
+    const lines = []
+    lines.push(`# Feature: ${task.title}`)
+    if (engItem) lines.push(`Source: ${engItem.url}`)
+    lines.push('')
+    if (specText) {
+      lines.push(specText)
+      lines.push('')
+    }
+    if (engItem) {
+      lines.push('---')
+      lines.push(`## GitHub ${engItem.item_type === 'pr' ? 'PR' : 'Issue'}: ${engItem.repo}#${engItem.number}`)
+      if (engItem.body) {
+        lines.push('')
+        lines.push(engItem.body)
+      }
+      if ((engItem.comments ?? []).length > 0) {
+        lines.push('')
+        lines.push('### Comments')
+        for (const c of engItem.comments) {
+          lines.push('')
+          lines.push(`**${c.author}**: ${c.body}`)
+        }
+      }
+    }
+    if (task.description) {
+      lines.push('')
+      lines.push('---')
+      lines.push('## Developer Notes')
+      lines.push(task.description)
+    }
+    return lines.join('\n')
+  }
+
+  const handleCopyForClaude = () => {
+    const prompt = buildClaudeCodePrompt()
+    navigator.clipboard.writeText(prompt).then(() => {
+      setCopiedSpec(true)
+      setTimeout(() => setCopiedSpec(false), 2000)
+    })
+  }
+
+  const handleSendToBridge = async () => {
+    if (!task || bridgeQueuing) return
+    setBridgeQueuing(true)
+    setBridgeError('')
+    try {
+      const job = await queueBridgeJob(task.id)
+      setBridgeJob(job)
+    } catch (e) {
+      setBridgeError(e.message || 'Failed to queue bridge job')
+    } finally {
+      setBridgeQueuing(false)
+    }
+  }
+
   // ── Shared ────────────────────────────────────────────────────────────────
 
   const handleClose = () => { abortRef.current?.abort(); onClose() }
@@ -336,6 +464,9 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
             </button>
             <button className={`assist-tab${mode === 'breakdown' ? ' assist-tab--active' : ''}`} onClick={() => setMode('breakdown')}>
               Break down
+            </button>
+            <button className={`assist-tab${mode === 'spec' ? ' assist-tab--active' : ''}`} onClick={() => setMode('spec')}>
+              Code
             </button>
           </div>
 
@@ -484,7 +615,7 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
                 </button>
               </div>
             </>
-          ) : (
+          ) : mode === 'breakdown' ? (
             <>
               {bdStatus === 'loading' && (
                 <div className="assist-bd-loading">
@@ -524,6 +655,106 @@ export default function AssistModal({ open, onClose, task, allTags = [], onBreak
                 </>
               )}
             </>
+          ) : (
+            /* Code tab */
+            <div className="assist-spec-tab">
+              <div className="cdp-spec-header">
+                <div className="cdp-section-label">Code</div>
+                <div className="cdp-spec-actions">
+                  {specText && !specEditing && (
+                    <button
+                      className="cdp-gh-btn cdp-spec-copy-btn"
+                      onClick={handleCopyForClaude}
+                      title="Copy prompt for Claude Code"
+                    >
+                      {copiedSpec ? '✓ Copied' : '⎘ Claude Code'}
+                    </button>
+                  )}
+                  <button
+                    className="cdp-gh-btn cdp-spec-gen-btn"
+                    onClick={handleGenerateSpec}
+                    disabled={specGenerating}
+                    title={specText ? 'Re-generate' : 'Generate requirements from card context'}
+                  >
+                    {specGenerating ? 'Generating…' : specText ? '↻ Regenerate' : '✦ Generate Code'}
+                  </button>
+                  {specText && !specEditing && (
+                    <button
+                      className="cdp-gh-btn cdp-spec-bridge-btn"
+                      onClick={handleSendToBridge}
+                      disabled={bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'}
+                      title="Send to local Claude Code bridge"
+                    >
+                      {bridgeQueuing ? 'Queuing…' : '▶ Bridge'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {specError && <div className="cdp-spec-error">{specError}</div>}
+              {bridgeError && <div className="cdp-spec-error">{bridgeError}</div>}
+
+              {bridgeJob && (
+                <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
+                  <span className="cdp-bridge-dot" />
+                  <span className="cdp-bridge-label">
+                    {bridgeJob.status === 'pending'  && 'Bridge job queued — waiting for agent…'}
+                    {bridgeJob.status === 'running'  && 'Claude Code session running…'}
+                    {bridgeJob.status === 'done'     && (bridgeJob.result || 'Session complete')}
+                    {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
+                  </span>
+                </div>
+              )}
+
+              <div className="assist-spec-content">
+                {specGenerating ? (
+                  <div className="assist-spec-loading">
+                    <span className="assist-spinner" />
+                    {specText ? 'Regenerating…' : 'Generating…'}
+                  </div>
+                ) : specEditing ? (
+                  <textarea
+                    className="cdp-spec-textarea"
+                    value={specDraft}
+                    onChange={e => setSpecDraft(e.target.value)}
+                    rows={20}
+                  />
+                ) : specText ? (
+                  <div
+                    className="cdp-spec-markdown"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(specText) }}
+                  />
+                ) : (
+                  <div className="cdp-spec-empty">
+                    No requirements yet. Click "✦ Generate Code" to synthesize from the card context.
+                  </div>
+                )}
+              </div>
+
+              {specEditing ? (
+                <div className="assist-spec-footer">
+                  <button className="cdp-btn cdp-btn--cancel" onClick={() => {
+                    if (specDraft !== specText && !window.confirm('Discard your unsaved changes?')) return
+                    setSpecEditing(false)
+                  }}>
+                    Cancel
+                  </button>
+                  <button className="cdp-btn cdp-btn--save" onClick={handleSaveSpec}>
+                    Save
+                  </button>
+                </div>
+              ) : specText ? (
+                <div className="assist-spec-footer">
+                  <button
+                    className="cdp-btn cdp-btn--secondary"
+                    onClick={() => { setSpecDraft(specText); setSpecEditing(true) }}
+                    disabled={specGenerating}
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : null}
+            </div>
           )}
 
       </div>

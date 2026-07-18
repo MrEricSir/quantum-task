@@ -374,32 +374,36 @@ def save_output(card_id: int, req: schemas.ThreadOutputRequest, db: Session = De
 
 
 _SPEC_SYSTEM = """\
-You are a technical spec writer. Synthesize the provided GitHub issue, discussion \
-comments, and developer notes into a structured implementation spec in markdown.
+You are a requirements writer. Synthesize the provided GitHub issue, discussion \
+comments, and developer notes into a structured requirements document in markdown.
+
+This document will be handed to a developer (or an AI coding agent with full codebase \
+access) to implement. Your job is to describe WHAT needs to be built and WHY — not HOW \
+to build it. Do not guess at file paths, function names, or implementation details; \
+the developer has the actual source code and can make better decisions than you can.
+
+Output ONLY the markdown. No preamble, no summary, no commentary about what \
+you are doing or ignoring. Start immediately with the first section heading.
 
 Be concrete — base everything strictly on the provided context. Do not invent \
-requirements, file paths, or technical details that are not mentioned. If the context \
-is thin on a section, keep it brief rather than speculating.
+requirements or technical details not explicitly mentioned. If context is thin \
+on a section, keep it brief rather than speculating.
 
 Produce exactly these sections in order:
 ## Problem Statement
 One or two sentences: what needs to change and why.
 
 ## Context & Background
-Relevant technical context from the issue and comments. What exists today, what broke, \
-or what the feature is replacing.
+Relevant context from the issue and comments. What exists today, what broke, \
+or what the feature is replacing. Focus on user-facing behaviour and intent.
 
 ## Acceptance Criteria
 Specific, testable outcomes as a checklist. Use `- [ ]` format. Be as concrete as \
 the issue allows.
 
-## Technical Approach
-How to implement it: which components, layers, or patterns to use. Keep it \
-high-level but actionable.
-
-## Files Likely Involved
-List file paths or modules that likely need changing, one per line with a brief reason. \
-Infer from the issue context; skip this section if there are no strong signals.
+## Constraints & Notes
+Any technical constraints, edge cases, or design decisions mentioned in the issue \
+or comments. Only include what is explicitly stated — do not speculate.
 
 ## Open Questions
 Anything ambiguous or that needs clarification before work begins. Omit this section \
