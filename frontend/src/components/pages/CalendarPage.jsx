@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { UpdateIcon, ChevronLeftIcon, ChevronRightIcon } from '@radix-ui/react-icons'
 import CalendarEventCard from '../board/CalendarEventCard'
-import { fetchDiscoveryEvents, fetchDiscoveryFeedback, saveDiscoveryFeedback, createCard } from '../../api'
+import { fetchDiscoveryEvents, fetchDiscoveryFeedback, saveDiscoveryFeedback } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './CalendarPage.css'
@@ -107,6 +107,53 @@ function formatDiscoveryTime(isoStr, allDay) {
   return new Date(isoStr).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
+function _icsDate(isoStr, allDay) {
+  const d = new Date(isoStr)
+  if (allDay) return d.toISOString().slice(0, 10).replace(/-/g, '')
+  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+}
+
+function googleCalendarUrl(ev) {
+  const start = _icsDate(ev.start, ev.all_day)
+  const end   = ev.end
+    ? _icsDate(ev.end, ev.all_day)
+    : ev.all_day
+      ? (() => { const d = new Date(ev.start); d.setDate(d.getDate() + 1); return _icsDate(d.toISOString(), true) })()
+      : (() => { const d = new Date(ev.start); d.setHours(d.getHours() + 1);  return _icsDate(d.toISOString(), false) })()
+  const p = new URLSearchParams({ action: 'TEMPLATE', text: ev.title, dates: `${start}/${end}` })
+  if (ev.description) p.set('details', ev.description)
+  if (ev.location)    p.set('location', ev.location)
+  return `https://calendar.google.com/calendar/render?${p}`
+}
+
+function downloadIcs(ev) {
+  const fmt = (s) => _icsDate(s, ev.all_day)
+  const end = ev.end
+    ? fmt(ev.end)
+    : ev.all_day
+      ? (() => { const d = new Date(ev.start); d.setDate(d.getDate() + 1); return _icsDate(d.toISOString(), true) })()
+      : (() => { const d = new Date(ev.start); d.setHours(d.getHours() + 1);  return _icsDate(d.toISOString(), false) })()
+  const dtProp = ev.all_day ? ';VALUE=DATE' : ''
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//QuantumTask//EN',
+    'BEGIN:VEVENT',
+    `DTSTART${dtProp}:${fmt(ev.start)}`,
+    `DTEND${dtProp}:${end}`,
+    `SUMMARY:${ev.title}`,
+  ]
+  if (ev.description) lines.push(`DESCRIPTION:${ev.description.replace(/[\r\n]+/g, '\\n')}`)
+  if (ev.location)    lines.push(`LOCATION:${ev.location}`)
+  if (ev.url)         lines.push(`URL:${ev.url}`)
+  lines.push('END:VEVENT', 'END:VCALENDAR')
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar' })
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob),
+    download: `${ev.title.replace(/[^a-z0-9]/gi, '_')}.ics`,
+  })
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 function DiscoveryPanel({ refreshTrigger }) {
   const { openCalendarSettings } = useModalContext()
   const [events, setEvents] = useState(null)  // null = not yet loaded
@@ -115,8 +162,6 @@ function DiscoveryPanel({ refreshTrigger }) {
   const [feedback, setFeedback] = useState({})
   // UIDs that were already disliked when the view loaded — hidden from the list entirely
   const [initialDisliked, setInitialDisliked] = useState(new Set())
-  // added: set of event ids added to calendar
-  const [added, setAdded] = useState(new Set())
 
   const load = useCallback(async (force = false) => {
     setLoading(true)
@@ -172,19 +217,6 @@ function DiscoveryPanel({ refreshTrigger }) {
     })
   }, [])
 
-  const handleAddToCalendar = useCallback(async (ev) => {
-    try {
-      await createCard({
-        title: ev.title,
-        description: ev.url || ev.description || '',
-        scheduled_at: ev.start,
-        section: 'later',
-      })
-      setAdded((prev) => new Set([...prev, ev.id]))
-    } catch {
-      // silently ignore
-    }
-  }, [])
 
   const hasInterests = events?.some((e) => e.score != null)
 
@@ -223,7 +255,6 @@ function DiscoveryPanel({ refreshTrigger }) {
                   const uid = ev.uid || ev.id
                   const liked = feedback[uid]
                   const isDismissed = liked === false
-                  const isAdded = added.has(ev.id)
                   const isExpanded = expanded.has(ev.id)
 
                   if (isDismissed) return (
@@ -314,12 +345,22 @@ function DiscoveryPanel({ refreshTrigger }) {
 
                       {liked === true && (
                         <div className="disc-event-footer">
-                          {isAdded
-                            ? <span className="disc-added-confirm">Added to calendar ✓</span>
-                            : <button className="disc-add-cal-btn" onClick={() => handleAddToCalendar(ev)}>
-                                + Add to calendar
-                              </button>
-                          }
+                          <a
+                            className="disc-add-cal-btn"
+                            href={googleCalendarUrl(ev)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            + Google Calendar
+                          </a>
+                          <button
+                            className="disc-add-cal-btn disc-add-cal-btn--ics"
+                            onClick={(e) => { e.stopPropagation(); downloadIcs(ev) }}
+                            title="Download .ics — works with Apple Calendar, Outlook, and others"
+                          >
+                            ↓ Apple / Outlook
+                          </button>
                         </div>
                       )}
                     </div>
