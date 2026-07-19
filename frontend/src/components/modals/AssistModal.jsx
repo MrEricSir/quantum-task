@@ -4,7 +4,7 @@ import { Cross2Icon, CopyIcon, CheckIcon, TrashIcon } from '@radix-ui/react-icon
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
-  breakdownCard, commitBreakdown, bulkCreateCards,
+  breakdownCard, commitBreakdown,
   fetchCardThread, sendThreadMessage, saveThreadOutput,
   updateThreadContext, clearCardThread, fetchContextFrom,
   generateSpec, queueBridgeJob, getBridgeJob, getLatestBridgeJob,
@@ -19,9 +19,9 @@ function renderMarkdown(text) {
 
 export default function AssistModal({
   open, onClose, task, allTags = [], onBreakdown, onOutputSaved,
-  inline = false, engItem = null, onSpecSaved,
+  inline = false, onSpecSaved,
 }) {
-  const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown' | 'spec'
+  const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown' | 'code'
 
   // Thread state
   const [messages,  setMessages]  = useState([])   // [{role, content, ts}]
@@ -52,18 +52,16 @@ export default function AssistModal({
   const [bdTagName,  setBdTagName]  = useState('')
   const [bdError,    setBdError]    = useState('')
 
-  // Spec state
+  // Spec / Code state
   const [specText,       setSpecText]       = useState(null)
   const [specGenerating, setSpecGenerating] = useState(false)
   const [specEditing,    setSpecEditing]    = useState(false)
   const [specDraft,      setSpecDraft]      = useState('')
   const [specError,      setSpecError]      = useState('')
   const [copiedSpec,     setCopiedSpec]     = useState(false)
-
-  // Bridge job state
-  const [bridgeJob,     setBridgeJob]     = useState(null)
-  const [bridgeQueuing, setBridgeQueuing] = useState(false)
-  const [bridgeError,   setBridgeError]   = useState('')
+  const [bridgeJob,      setBridgeJob]      = useState(null)
+  const [bridgeQueuing,  setBridgeQueuing]  = useState(false)
+  const [bridgeError,    setBridgeError]    = useState('')
 
   const abortRef    = useRef(null)
   const scrollRef   = useRef(null)
@@ -92,7 +90,6 @@ export default function AssistModal({
         setMessages([]); setContext(''); setEditContext(''); setOutput(null)
       })
 
-    // Load latest bridge job if card has a spec
     if (task.spec) {
       getLatestBridgeJob(task.id).then(({ job }) => setBridgeJob(job)).catch(() => {})
     }
@@ -118,24 +115,22 @@ export default function AssistModal({
     return () => document.removeEventListener('keydown', onKey)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Pick up spec that arrived via background generation while panel was open
+  // Pick up spec generated in background while panel was open
   useEffect(() => {
-    if (task?.spec && specText === null && !specGenerating) {
-      setSpecText(task.spec)
-    }
+    if (task?.spec && specText === null && !specGenerating) setSpecText(task.spec)
   }, [task?.spec]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll bridge job status while pending or running
+  // Poll bridge job while pending / running
   useEffect(() => {
     if (!bridgeJob || (bridgeJob.status !== 'pending' && bridgeJob.status !== 'running')) return
-    const interval = setInterval(async () => {
+    const iv = setInterval(async () => {
       try {
         const updated = await getBridgeJob(bridgeJob.id)
         setBridgeJob(updated)
-        if (updated.status !== 'pending' && updated.status !== 'running') clearInterval(interval)
+        if (updated.status !== 'pending' && updated.status !== 'running') clearInterval(iv)
       } catch { /* ignore */ }
     }, 5000)
-    return () => clearInterval(interval)
+    return () => clearInterval(iv)
   }, [bridgeJob?.id, bridgeJob?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send a message ────────────────────────────────────────────────────────
@@ -329,71 +324,34 @@ export default function AssistModal({
     }
   }
 
-  // ── Spec ──────────────────────────────────────────────────────────────────
+  // ── Spec / Code ───────────────────────────────────────────────────────────
 
   const handleGenerateSpec = async () => {
     if (!task || specGenerating) return
     if (specEditing && specDraft !== specText) {
-      if (!window.confirm('Your unsaved edits will be discarded and the requirements will be regenerated. Continue?')) return
+      if (!window.confirm('Your unsaved edits will be discarded and regenerated. Continue?')) return
       setSpecEditing(false)
     }
-    setSpecGenerating(true)
-    setSpecError('')
+    setSpecGenerating(true); setSpecError('')
     try {
       const { spec } = await generateSpec(task.id)
       setSpecText(spec)
       onSpecSaved?.(spec)
     } catch {
-      setSpecError('Failed to generate requirements. Please try again.')
+      setSpecError('Failed to generate brief. Please try again.')
     } finally {
       setSpecGenerating(false)
     }
   }
 
-  const handleSaveSpec = async () => {
-    if (!task) return
+  const handleSaveSpec = () => {
     onSpecSaved?.(specDraft)
     setSpecText(specDraft)
     setSpecEditing(false)
   }
 
-  const buildClaudeCodePrompt = () => {
-    const lines = []
-    lines.push(`# Feature: ${task.title}`)
-    if (engItem) lines.push(`Source: ${engItem.url}`)
-    lines.push('')
-    if (specText) {
-      lines.push(specText)
-      lines.push('')
-    }
-    if (engItem) {
-      lines.push('---')
-      lines.push(`## GitHub ${engItem.item_type === 'pr' ? 'PR' : 'Issue'}: ${engItem.repo}#${engItem.number}`)
-      if (engItem.body) {
-        lines.push('')
-        lines.push(engItem.body)
-      }
-      if ((engItem.comments ?? []).length > 0) {
-        lines.push('')
-        lines.push('### Comments')
-        for (const c of engItem.comments) {
-          lines.push('')
-          lines.push(`**${c.author}**: ${c.body}`)
-        }
-      }
-    }
-    if (task.description) {
-      lines.push('')
-      lines.push('---')
-      lines.push('## Developer Notes')
-      lines.push(task.description)
-    }
-    return lines.join('\n')
-  }
-
-  const handleCopyForClaude = () => {
-    const prompt = buildClaudeCodePrompt()
-    navigator.clipboard.writeText(prompt).then(() => {
+  const handleCopySpec = () => {
+    navigator.clipboard.writeText(specText).then(() => {
       setCopiedSpec(true)
       setTimeout(() => setCopiedSpec(false), 2000)
     })
@@ -401,8 +359,7 @@ export default function AssistModal({
 
   const handleSendToBridge = async () => {
     if (!task || bridgeQueuing) return
-    setBridgeQueuing(true)
-    setBridgeError('')
+    setBridgeQueuing(true); setBridgeError('')
     try {
       const job = await queueBridgeJob(task.id)
       setBridgeJob(job)
@@ -472,7 +429,7 @@ export default function AssistModal({
             <button className={`assist-tab${mode === 'breakdown' ? ' assist-tab--active' : ''}`} onClick={() => setMode('breakdown')}>
               Break down
             </button>
-            <button className={`assist-tab${mode === 'spec' ? ' assist-tab--active' : ''}`} onClick={() => setMode('spec')}>
+            <button className={`assist-tab${mode === 'code' ? ' assist-tab--active' : ''}`} onClick={() => setMode('code')}>
               Code
             </button>
           </div>
@@ -663,27 +620,23 @@ export default function AssistModal({
               )}
             </>
           ) : (
-            /* Code tab */
+            /* ── Code tab ── */
             <div className="assist-spec-tab">
               <div className="cdp-spec-header">
-                <div className="cdp-section-label">Code</div>
+                <div className="cdp-section-label">Brief</div>
                 <div className="cdp-spec-actions">
                   {specText && !specEditing && (
-                    <button
-                      className="cdp-gh-btn cdp-spec-copy-btn"
-                      onClick={handleCopyForClaude}
-                      title="Copy prompt for Claude Code"
-                    >
-                      {copiedSpec ? '✓ Copied' : '⎘ Claude Code'}
+                    <button className="cdp-gh-btn" onClick={handleCopySpec} title="Copy brief">
+                      {copiedSpec ? '✓ Copied' : '⎘ Copy'}
                     </button>
                   )}
                   <button
                     className="cdp-gh-btn cdp-spec-gen-btn"
                     onClick={handleGenerateSpec}
                     disabled={specGenerating}
-                    title={specText ? 'Re-generate' : 'Generate requirements from card context'}
+                    title={specText ? 'Regenerate brief' : 'Generate brief from card context'}
                   >
-                    {specGenerating ? 'Generating…' : specText ? '↻ Regenerate' : '✦ Generate Code'}
+                    {specGenerating ? 'Generating…' : specText ? '↻ Regen' : '✦ Generate'}
                   </button>
                   {specText && !specEditing && (
                     <button
@@ -693,15 +646,15 @@ export default function AssistModal({
                         bridgeQueuing ||
                         bridgeJob?.status === 'running' ||
                         bridgeJob?.status === 'pending' ||
-                        (bridgeJob?.spec_snapshot === specText)
+                        bridgeJob?.spec_snapshot === specText
                       }
                       title={
                         bridgeJob?.spec_snapshot === specText
-                          ? 'Already submitted — edit the spec to queue a new job'
-                          : 'Send to local Claude Code bridge'
+                          ? 'Already submitted — edit the brief to queue a new job'
+                          : 'Send to local Claude Code agent'
                       }
                     >
-                      {bridgeQueuing ? 'Queuing…' : '▶ Bridge'}
+                      {bridgeQueuing ? 'Queuing…' : '▶ Run'}
                     </button>
                   )}
                 </div>
@@ -711,20 +664,22 @@ export default function AssistModal({
               {bridgeError && <div className="cdp-spec-error">{bridgeError}</div>}
 
               {bridgeJob && (
-                <>
-                  <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
-                    <span className="cdp-bridge-dot" />
-                    <span className="cdp-bridge-label">
-                      {bridgeJob.status === 'pending'  && 'Bridge job queued — waiting for agent…'}
-                      {bridgeJob.status === 'running'  && 'Claude Code session running…'}
-                      {bridgeJob.status === 'done'     && (bridgeJob.result || 'Session complete')}
-                      {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
-                    </span>
-                  </div>
-                  {bridgeJob.output && (
-                    <pre className="cdp-bridge-output">{bridgeJob.output}</pre>
-                  )}
-                </>
+                <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
+                  <span className="cdp-bridge-dot" />
+                  <span className="cdp-bridge-label">
+                    {bridgeJob.status === 'pending'  && 'Queued — waiting for agent…'}
+                    {bridgeJob.status === 'running'  && 'Claude Code running…'}
+                    {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
+                    {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
+                  </span>
+                </div>
+              )}
+
+              {bridgeJob?.output && (
+                <div
+                  className="cdp-gh-markdown cdp-bridge-md-output"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(bridgeJob.output) }}
+                />
               )}
 
               <div className="assist-spec-content">
@@ -747,7 +702,7 @@ export default function AssistModal({
                   />
                 ) : (
                   <div className="cdp-spec-empty">
-                    No requirements yet. Click "✦ Generate Code" to synthesize from the card context.
+                    No brief yet — click <strong>✦ Generate</strong> to synthesize from the card context.
                   </div>
                 )}
               </div>
@@ -760,9 +715,7 @@ export default function AssistModal({
                   }}>
                     Cancel
                   </button>
-                  <button className="cdp-btn cdp-btn--save" onClick={handleSaveSpec}>
-                    Save
-                  </button>
+                  <button className="cdp-btn cdp-btn--save" onClick={handleSaveSpec}>Save</button>
                 </div>
               ) : specText ? (
                 <div className="assist-spec-footer">

@@ -1652,31 +1652,31 @@ test.describe('card detail panel — github and spec', () => {
     await expect(link).toHaveAttribute('href', /github\.com/)
   })
 
-  test('code section is visible in Assist → Code tab', async ({ page }) => {
+  test('Code tab in Assistant shows spec', async ({ page }) => {
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-markdown')).toBeVisible()
     await expect(page.locator('.cdp-spec-markdown')).toContainText(/Problem Statement/i)
   })
 
-  test('Generate Code button is visible in Code tab', async ({ page }) => {
+  test('Generate/Regen button is visible in Code tab', async ({ page }) => {
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-gen-btn')).toBeVisible()
   })
 
-  test('Copy for Claude Code button is visible in Code tab when spec exists', async ({ page }) => {
-    await page.locator('.cdp-btn--assist-footer').click()
-    await page.locator('.assist-tab', { hasText: 'Code' }).click()
-    await expect(page.locator('.cdp-spec-copy-btn')).toBeVisible()
-    await expect(page.locator('.cdp-spec-copy-btn')).toContainText(/Claude Code/i)
-  })
-
-  test('Bridge button is visible in Code tab when spec exists', async ({ page }) => {
+  test('Run button is visible in Code tab when spec exists', async ({ page }) => {
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-bridge-btn')).toBeVisible()
-    await expect(page.locator('.cdp-spec-bridge-btn')).toContainText(/Bridge/i)
+    await expect(page.locator('.cdp-spec-bridge-btn')).toContainText(/Run/i)
+  })
+
+  test('Copy button is visible in Code tab when spec exists', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    const copyBtn = page.locator('.assist-spec-tab .cdp-gh-btn', { hasText: /Copy/i })
+    await expect(copyBtn).toBeVisible()
   })
 
   test('refresh button is shown in GitHub header', async ({ page }) => {

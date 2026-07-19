@@ -793,6 +793,99 @@
   font-size: 11px;
 }
 
+/* ── Code footer button ── */
+.cdp-btn--code {
+  background: none;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: #34d399;
+}
+
+.cdp-btn--code:hover {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: #34d399;
+}
+
+/* Small buttons (used inside code panel) */
+.cdp-btn--sm {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+/* "View" link next to bridge output preview */
+.cdp-btn--code-link {
+  background: none;
+  border: none;
+  color: #a78bfa;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* Code panel spec actions row */
+.cdp-code-spec-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Spec editor textarea */
+.cdp-spec-editor {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.cdp-spec-editor:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+/* Rendered spec — inherits .cdp-gh-markdown styles */
+.cdp-spec-rendered {
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+/* Placeholder for empty spec */
+.cdp-spec-placeholder {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+/* Generic error */
+.cdp-error {
+  font-size: 12px;
+  color: #f87171;
+  padding: 4px 0;
+}
+
+/* Bridge result text (shown below output when status != done) */
+.cdp-bridge-result {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+/* Preview version of bridge output (truncated in view mode) */
+.cdp-bridge-output--preview {
+  max-height: 80px;
+  overflow: hidden;
+}
+
 /* ── Hide on mobile — sheet handles it ── */
 @media (max-width: 640px) {
   .card-detail-panel,

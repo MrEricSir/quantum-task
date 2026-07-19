@@ -6,7 +6,6 @@ import AssistModal from '../modals/AssistModal'
 import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
-import { getLatestBridgeJob } from '../../api'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -51,9 +50,6 @@ export default function CardDetailPanel({
   const [savedOutput,   setSavedOutput]   = useState(card?.thread_output ?? null)
   const [copiedOutput,  setCopiedOutput]  = useState(false)
 
-  // ── Latest bridge job output ───────────────────────────────────────────────
-  const [latestJob, setLatestJob] = useState(null)
-
   // ── Edit / new form state ─────────────────────────────────────────────────
   const [editTitle,          setEditTitle]          = useState('')
   const [editDescription,    setEditDescription]    = useState('')
@@ -79,10 +75,6 @@ export default function CardDetailPanel({
     setGhExpanded(true)
     setGhRefreshing(false)
     setEditError('')
-    setLatestJob(null)
-    if (card?.id) {
-      getLatestBridgeJob(card.id).then(({ job }) => setLatestJob(job)).catch(() => {})
-    }
   }, [card?.id, initialMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Populate edit form fields whenever entering edit/new mode
@@ -98,7 +90,7 @@ export default function CardDetailPanel({
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close on Escape (but not when assist mode is active — AssistModal handles its own Escape)
+  // Close on Escape
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return
@@ -334,16 +326,6 @@ export default function CardDetailPanel({
                 </div>
               )}
 
-              {/* Bridge job output */}
-              {latestJob?.output && (
-                <div className="cdp-section">
-                  <div className="cdp-section-label">
-                    {latestJob.status === 'done' ? '▶ Claude Code output' : '▶ Claude Code running…'}
-                  </div>
-                  <pre className="cdp-bridge-output">{latestJob.output}</pre>
-                </div>
-              )}
-
               {/* Tags */}
               {(card.tags ?? []).length > 0 && (
                 <div className="cdp-section">
@@ -448,7 +430,6 @@ export default function CardDetailPanel({
             onBreakdown={onBreakdown}
             onOutputSaved={(output) => setSavedOutput(output)}
             onSpecSaved={(spec) => onSave?.(card.id, { spec })}
-            engItem={engItem}
             inline
           />
         )}
