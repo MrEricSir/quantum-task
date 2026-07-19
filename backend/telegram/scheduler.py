@@ -343,12 +343,13 @@ def check_bridge_jobs(db: Session, token: str, chat_id: str) -> str:
         card_title = card.title if card else f"card #{job.card_id}"
         if job.status == "done":
             msg = f'✅ Build complete: <b>{card_title}</b>'
-            if job.result:
-                msg += f'\n{job.result}'
         else:
             msg = f'❌ Build failed: <b>{card_title}</b>'
-            if job.result:
-                msg += f'\n{job.result}'
+        if job.branch_name:
+            suffix = f' ({job.agent_name})' if job.agent_name else ''
+            msg += f'\n<code>{job.branch_name}</code>{suffix}'
+        if job.result:
+            msg += f'\n{job.result}'
         tail = _tail(job.output, _OUTPUT_TAIL_LINES)
         if tail:
             msg += f'\n\n<pre>{tail}</pre>'

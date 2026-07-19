@@ -599,7 +599,7 @@
 /* Bridge job status */
 .cdp-bridge-status {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   font-size: 12px;
   padding: 6px 10px;
@@ -637,6 +637,27 @@
   border-radius: 50%;
   flex-shrink: 0;
   background: currentColor;
+  margin-top: 3px; /* align with first line of text */
+}
+
+.cdp-bridge-status-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cdp-bridge-branch {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cdp-bridge-agent {
+  opacity: 0.65;
 }
 
 .cdp-bridge-status--running .cdp-bridge-dot {

@@ -39,8 +39,21 @@ class _JobComplete(BaseModel):
 class _JobOutput(BaseModel):
     output: str        # chunk of stdout to append
 
+class _JobStart(BaseModel):
+    branch: str        # local branch name created by the bridge
+    agent: str         # hostname of the machine running the job
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _repo_from_external_id(external_id: str | None) -> str | None:
+    """Parse 'github:owner/repo/issues/42' → 'owner/repo', or None if not a GitHub link."""
+    if not external_id or not external_id.startswith("github:"):
+        return None
+    path = external_id[len("github:"):]   # "owner/repo/issues/42"
+    parts = path.split("/")
+    return f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else None
+
 
 def _build_prompt(card: models.Card, eng_item: models.EngineeringItem | None) -> str:
     """Compile the full Claude Code prompt from card spec + GitHub context."""
@@ -83,6 +96,9 @@ def _job_response(job: models.BridgeJob) -> dict:
         "id":            job.id,
         "card_id":       job.card_id,
         "status":        job.status,
+        "target_repo":   job.target_repo,
+        "branch_name":   job.branch_name,
+        "agent_name":    job.agent_name,
         "result":        job.result,
         "output":        job.output,
         "spec_snapshot": job.spec_snapshot,
@@ -116,6 +132,7 @@ def create_job(body: _JobCreate, db: Session = Depends(get_db)):
     job = models.BridgeJob(
         card_id=body.card_id,
         status="pending",
+        target_repo=_repo_from_external_id(card.external_id),
         spec_snapshot=card.spec,
         prompt_snapshot=prompt,
         created_at=now,
@@ -147,19 +164,18 @@ def get_next_pending(db: Session = Depends(get_db)):
     if not job:
         return {"job": None}
 
-    # Lazily build prompt if not set (e.g. job queued via Telegram, not the frontend)
-    if not job.prompt_snapshot:
-        card = db.query(models.Card).filter_by(id=job.card_id).first()
-        if card:
-            eng_item = None
-            if card.external_id:
-                eng_item = (
-                    db.query(models.EngineeringItem)
-                    .options(selectinload(models.EngineeringItem.comments))
-                    .filter_by(external_id=card.external_id)
-                    .first()
-                )
-            job.prompt_snapshot = _build_prompt(card, eng_item)
+    # Always fetch the card — needed for card_title (branch slug) and lazy prompt build
+    card = db.query(models.Card).filter_by(id=job.card_id).first()
+    if not job.prompt_snapshot and card:
+        eng_item = None
+        if card.external_id:
+            eng_item = (
+                db.query(models.EngineeringItem)
+                .options(selectinload(models.EngineeringItem.comments))
+                .filter_by(external_id=card.external_id)
+                .first()
+            )
+        job.prompt_snapshot = _build_prompt(card, eng_item)
 
     job.status = "running"
     job.updated_at = datetime.now(timezone.utc)
@@ -169,8 +185,9 @@ def get_next_pending(db: Session = Depends(get_db)):
     return {
         "job": {
             **_job_response(job),
-            "prompt": job.prompt_snapshot,
-            "spec":   job.spec_snapshot,
+            "card_title": card.title if card else "",
+            "prompt":     job.prompt_snapshot,
+            "spec":       job.spec_snapshot,
         }
     }
 
@@ -217,6 +234,20 @@ def post_job_output(job_id: int, body: _JobOutput, db: Session = Depends(get_db)
     return {"ok": True}
 
 
+@router.post("/api/bridge/jobs/{job_id}/start")
+def start_job(job_id: int, body: _JobStart, db: Session = Depends(get_db)):
+    """Bridge calls this after git setup to record the branch and agent name."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.branch_name = body.branch
+    job.agent_name  = body.agent
+    job.updated_at  = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return _job_response(job)
+
+
 @router.get("/api/bridge/jobs/card/{card_id}/latest")
 def get_latest_card_job(card_id: int, db: Session = Depends(get_db)):
     """Get the latest bridge job for a card (for UI status display)."""
@@ -254,7 +285,29 @@ def get_install_script():
         INSTALL_DIR = os.path.expanduser("~/.local/bin")
         CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
         CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+        TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
         BRIDGE_PATH = os.path.join(INSTALL_DIR, "qtask-bridge")
+
+        TOML_TEMPLATE = \"\"\"\\
+# qtask-bridge configuration
+
+# Friendly name shown in notifications and the job status panel.
+# Defaults to your hostname if left empty.
+name = ""
+
+# Map repo slugs to local checkout paths.
+# When a job is queued for a card linked to a GitHub issue, the bridge uses
+# these mappings to find the right directory automatically.
+#
+# [repos]
+# "owner/myapp" = "/Users/you/code/myapp"
+# "owner/api"   = "/Users/you/code/api"
+
+# Alternatively, list root directories and the bridge will discover repos by
+# scanning for matching .git remotes automatically.
+#
+# repo_roots = ["~/code", "~/work"]
+\"\"\"
 
         def main():
             # Download the bridge script from the app
@@ -276,6 +329,14 @@ def get_install_script():
             config = {{"app_url": APP_URL, "token": TOKEN}}
             with open(CONFIG_FILE, "w") as f:
                 json.dump(config, f, indent=2)
+
+            # Write config.toml only if it doesn't exist — preserve user edits on reinstall
+            if not os.path.exists(TOML_FILE):
+                with open(TOML_FILE, "w") as f:
+                    f.write(TOML_TEMPLATE)
+                print(f"Created:   {{TOML_FILE}}")
+            else:
+                print(f"Kept:      {{TOML_FILE}}  (already exists)")
 
             print(f"Installed: {{BRIDGE_PATH}}")
             print(f"Config:    {{CONFIG_FILE}}")
@@ -326,12 +387,15 @@ def get_agent_script():
           qtask-bridge --card <id>   Fetch job for a card and launch Claude Code
           qtask-bridge --watch       Poll for pending jobs and handle them automatically
 
-        Config: ~/.config/qtask-bridge/config.json
-          { "app_url": "https://...", "token": "..." }
+        Config files in ~/.config/qtask-bridge/:
+          config.json  — app URL and auth token (written by installer)
+          claude.toml  — repo mappings and agent name (edit to configure multi-repo)
         \"\"\"
         import argparse
         import json
         import os
+        import re
+        import socket
         import subprocess
         import sys
         import threading
@@ -384,21 +448,133 @@ def get_agent_script():
             # If no .gitignore exists at the spec level, skip — don't create one unexpectedly
 
 
-        CLAUDE_PROMPT = (
-            f"Please implement the feature described in {SPEC_FILENAME} "
-            f"(already written to your working directory). "
-            f"Do not create any git commits or stage any files — "
-            f"leave all git operations to the developer."
-        )
+        def _make_prompt(branch):
+            return (
+                f"Please implement the feature described in {SPEC_FILENAME} "
+                f"(already written to your working directory). "
+                f"You are working on branch {branch} — commit your changes locally as you go. "
+                f"Do NOT push to the remote repository; the developer will review and push."
+            )
 
 
-        def _run_interactive(cfg, job_id, spec_path):
+        def _detect_primary_branch(work_dir):
+            \"\"\"Return 'main', 'master', or similar — the primary branch of the repo.\"\"\"
+            r = subprocess.run(
+                ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+                cwd=work_dir, capture_output=True, text=True,
+            )
+            if r.returncode == 0:
+                return r.stdout.strip().split("/")[-1]
+            for name in ("main", "master"):
+                r2 = subprocess.run(["git", "rev-parse", "--verify", name],
+                                    cwd=work_dir, capture_output=True)
+                if r2.returncode == 0:
+                    return name
+            return None
+
+
+        def _git_setup(cfg, job, work_dir):
+            \"\"\"
+            Prepare the repo before launching Claude Code:
+            1. Abort if there are uncommitted changes.
+            2. Detect the primary branch, check it out, and pull.
+            3. Create a new local branch qtask/<card_id>-<slug>.
+            4. Disable remote push for the duration of the session.
+            5. Register branch + agent name with the app.
+            Returns (branch_name, push_url_info) or None on failure (error already posted).
+            \"\"\"
+            job_id  = job["id"]
+            card_id = job["card_id"]
+            title   = job.get("card_title", "")
+
+            # 1. Uncommitted changes check
+            r = subprocess.run(["git", "status", "--porcelain"],
+                               cwd=work_dir, capture_output=True, text=True)
+            if r.returncode != 0:
+                msg = f"git status failed — is this a git repo? ({r.stderr.strip()})"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                return None
+            if r.stdout.strip():
+                msg = "Uncommitted changes detected — commit or stash before running the bridge"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                print(r.stdout.rstrip(), file=sys.stderr)
+                return None
+
+            # 2. Detect primary branch, checkout, pull
+            primary = _detect_primary_branch(work_dir)
+            if not primary:
+                msg = "Could not determine primary branch (expected main or master)"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                return None
+
+            print(f"[bridge] Switching to {primary} and pulling latest...")
+            for git_cmd in (["git", "checkout", primary], ["git", "pull"]):
+                r = subprocess.run(git_cmd, cwd=work_dir, capture_output=True, text=True)
+                if r.returncode != 0:
+                    msg = f"'{' '.join(git_cmd)}' failed: {r.stderr.strip()}"
+                    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                    print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                    return None
+
+            # 3. Create local branch
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40]
+            branch = f"qtask/{card_id}-{slug}" if slug else f"qtask/{card_id}"
+
+            r = subprocess.run(["git", "rev-parse", "--verify", branch],
+                               cwd=work_dir, capture_output=True)
+            if r.returncode == 0:
+                msg = f"Branch '{branch}' already exists — delete it or push it before rerunning"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                return None
+
+            r = subprocess.run(["git", "checkout", "-b", branch],
+                               cwd=work_dir, capture_output=True, text=True)
+            if r.returncode != 0:
+                msg = f"git checkout -b {branch} failed: {r.stderr.strip()}"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                return None
+            print(f"[bridge] Created branch: {branch}")
+
+            # 4. Disable remote push (safety — Claude Code must not push)
+            r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                               cwd=work_dir, capture_output=True, text=True)
+            had_push_url = r.returncode == 0
+            orig_push_url = r.stdout.strip() if had_push_url else None
+            subprocess.run(["git", "config", "remote.origin.pushurl", "no_push"], cwd=work_dir)
+            print("[bridge] Remote push disabled for this session.")
+
+            # 5. Register branch + agent with the app
+            agent = socket.gethostname().split(".")[0]
+            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/start",
+                {"branch": branch, "agent": agent})
+            print(f"[bridge] Agent: {agent}")
+
+            return branch, (had_push_url, orig_push_url)
+
+
+        def _git_teardown(work_dir, push_url_info):
+            \"\"\"Restore the remote push URL after the session ends.\"\"\"
+            had_push_url, orig_push_url = push_url_info
+            if had_push_url:
+                subprocess.run(["git", "config", "remote.origin.pushurl", orig_push_url],
+                               cwd=work_dir)
+            else:
+                subprocess.run(["git", "config", "--unset", "remote.origin.pushurl"],
+                               cwd=work_dir)
+
+
+        def _run_interactive(cfg, job_id, branch):
             \"\"\"Launch Claude Code as an interactive session the user can engage with.\"\"\"
             print(f"[bridge] Launching Claude Code interactively...")
             print("[bridge] You can interact with Claude in the session below.")
             print("[bridge] When done, type 'exit' or press Ctrl-D.\\n")
             try:
-                subprocess.run(["claude", CLAUDE_PROMPT], check=False)
+                subprocess.run(["claude", _make_prompt(branch)], check=False)
             except FileNotFoundError:
                 print("[bridge] ERROR: 'claude' not found.", file=sys.stderr)
                 print("[bridge]   npm install -g @anthropic-ai/claude-code", file=sys.stderr)
@@ -409,19 +585,19 @@ def get_agent_script():
             print("\\n[bridge] Session ended.")
             result_text = ""
             try:
-                result_text = input("[bridge] Enter PR link or summary to save (or press Enter to skip): ").strip()
+                result_text = input("[bridge] Enter a note to save with this job (or press Enter to skip): ").strip()
             except (EOFError, KeyboardInterrupt):
                 pass
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": result_text})
             return True
 
 
-        def _run_streaming(cfg, job_id, spec_path):
+        def _run_streaming(cfg, job_id, branch):
             \"\"\"Launch Claude Code non-interactively and stream stdout back to the app.\"\"\"
             print(f"[bridge] Launching Claude Code (streaming mode)...")
             try:
                 proc = subprocess.Popen(
-                    ["claude", "--print", "--dangerously-skip-permissions", CLAUDE_PROMPT],
+                    ["claude", "--print", "--dangerously-skip-permissions", _make_prompt(branch)],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -469,26 +645,35 @@ def get_agent_script():
             job_id  = job["id"]
             card_id = job["card_id"]
             prompt  = job.get("prompt", "")
+            work_dir = os.getcwd()
 
             print(f"\\n[bridge] Job {job_id} — card #{card_id}")
-            print(f"[bridge] Writing {SPEC_FILENAME}...")
 
-            spec_path = os.path.join(os.getcwd(), SPEC_FILENAME)
+            # Git safety: check clean, checkout primary, create branch, disable push
+            result = _git_setup(cfg, job, work_dir)
+            if result is None:
+                return  # error already posted to the app
+            branch, push_url_info = result
+
+            print(f"[bridge] Writing {SPEC_FILENAME}...")
+            spec_path = os.path.join(work_dir, SPEC_FILENAME)
             with open(spec_path, "w") as f:
                 f.write(prompt)
             ensure_gitignore(spec_path)
 
-            if streaming:
-                _run_streaming(cfg, job_id, spec_path)
-            else:
-                _run_interactive(cfg, job_id, spec_path)
-
-            print(f"[bridge] Job {job_id} marked done.\\n")
-
             try:
-                os.remove(spec_path)
-            except OSError:
-                pass
+                if streaming:
+                    _run_streaming(cfg, job_id, branch)
+                else:
+                    _run_interactive(cfg, job_id, branch)
+            finally:
+                _git_teardown(work_dir, push_url_info)
+                try:
+                    os.remove(spec_path)
+                except OSError:
+                    pass
+
+            print(f"[bridge] Job {job_id} done.\\n")
 
 
         def cmd_card(cfg, card_id):

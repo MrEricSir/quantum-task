@@ -109,6 +109,7 @@ cd frontend && npm run dev
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions
+- Claude Code bridge: job create/start/complete/error, agent script install endpoint
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
@@ -117,8 +118,8 @@ cd frontend && npm run dev
 Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
 
 **Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
-- 121 Playwright tests verifying key elements are visible on each page
-- Covers: app shell, today page, tasks board, cards, habits, quick-add modal, settings modals (tag manager, calendar, GitHub, Withings), engineering page, discovery panel, archive, search, insights, offline banner
+- 134 Playwright tests verifying key elements are visible on each page
+- Covers: app shell, today page, tasks board, cards, habits, quick-add modal, settings modals (tag manager, calendar, GitHub, Withings), engineering page, discovery panel, archive, search, insights, offline banner, AI assist panel (chat, breakdown, and code tabs)
 - All API calls are mocked; runs against a production build (`npm run build`)
 
 ## Features
@@ -175,10 +176,11 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 
 1. Open any card and click **✦ Assist** in the footer
 2. Click the **Code** tab
-3. Click **✦ Generate Code** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
-4. Review and optionally edit the requirements inline, then click **▶ Bridge** to queue a job
-5. The local bridge agent picks up the job and runs `claude <spec>` in your project directory
-6. When the session ends, the job status updates in the panel (and Telegram sends a notification if configured)
+3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
+4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
+5. The local bridge agent picks up the job, checks the working tree is clean, checks out the primary branch, pulls latest, and creates a `qtask/<id>-<slug>` branch
+6. Claude Code runs on that branch — push is disabled for the session so no changes leave your machine until you review them
+7. When the session ends, the branch name and machine are shown in the Code tab and sent via Telegram notification
 
 #### Install the bridge agent
 
@@ -195,16 +197,16 @@ qtask-bridge --watch          # poll every 10 s and auto-launch Claude Code
 qtask-bridge --card <id>      # queue and run a specific card's job once
 ```
 
-The agent writes the spec to `BRIDGE_SPEC.md` in the current directory, then calls `claude "Please implement the feature described in BRIDGE_SPEC.md"`.
+The agent writes the spec to `BRIDGE_SPEC.md` in the project directory, then calls `claude "Please implement the feature described in BRIDGE_SPEC.md"` on a fresh `qtask/<id>-<slug>` branch. When done, the branch is waiting locally for your review — the bridge never pushes.
 
 #### Code tab actions
 
 | Button | What it does |
 |---|---|
-| **✦ Generate Code** | AI synthesises requirements from card + GitHub context |
+| **✦ Generate** | AI synthesises requirements from card + GitHub context |
 | **↻ Regenerate** | Overwrites the current requirements with a fresh generation |
-| **⎘ Claude Code** | Copies the full prompt (requirements + GitHub body + comments + notes) to clipboard for manual paste into Claude Code |
-| **▶ Bridge** | Queues a job for the local bridge agent |
+| **⎘ Copy** | Copies the full prompt (requirements + GitHub body + comments + notes) to clipboard for manual paste into Claude Code |
+| **▶ Run** | Queues a job for the local bridge agent |
 | **Edit** (footer) | Opens an inline textarea to manually write or adjust the requirements |
 
 #### Telegram `/build`
@@ -479,37 +481,43 @@ todo/
   backend/
     main.py              # FastAPI app: startup migrations, middleware, router mounts
     models.py            # SQLAlchemy models
-    schemas.py           # Pydantic schemas
+    schemas/             # Pydantic schemas (cards, habits, calendar, briefing, jobs, …)
     database.py          # DB engine, reads DATABASE_URL from env
     deps.py              # Shared dependencies: DB session, LLM client, auth constants
     app_setting_keys.py  # Constants for all AppSetting key strings
     streak.py            # Habit streak computation
     push.py              # Web Push / VAPID helpers
-    telegram_notify.py   # Telegram Bot API helpers: send message, set/delete webhook
     weather.py           # Open-Meteo fetch + WMO condition helpers
-    briefing_context.py  # Today/week context builders for AI briefing
-    health_context.py    # Health data context builder (Withings + goals)
     github_sync.py       # GitHub issue/PR sync logic
     gcal.py              # iCal/ICS parsing helpers
+    briefing/            # Daily briefing feature package
+      router.py          # /api/briefing/stream + /weather endpoints
+      generate.py        # LLM briefing generation, cache helpers
+      context.py         # Today/week context builders
+    telegram/            # Telegram feature package
+      router.py          # Config, test, webhook, scheduler-trigger endpoints
+      bot.py             # handle_update, intent parsing, reply handlers
+      scheduler.py       # check_all — briefing, reminders, bridge job notifications
+      notify.py          # Raw Telegram HTTP calls
     routers/             # One file per feature area
       auth.py            # Login/logout, session management
       cards.py           # Tasks + reference cards CRUD, AI parse, iOS Shortcut
       habits.py          # Habits CRUD, completion toggle
       calendar.py        # iCal feed sync, export
-      briefing.py        # Daily briefing SSE, AI assist, daily plan
       jobs.py            # Workshop jobs + agentic research
       withings.py        # Withings OAuth, sync, health data
+      bridge.py          # Claude Code bridge: job queue, agent script install endpoint
       discovery.py       # Public iCal discovery feeds + LLM ranking
       food.py            # Food/drink logging + nutritional assessment
       insights.py        # Habit insights and health experiment suggestions
       correlations.py    # Health experiment tracking
-      telegram.py        # Telegram config, daily briefing, webhook registration, and two-way chat handler
       tags.py            # Tag CRUD
       engineering.py     # GitHub engineering feed
       push.py            # Push subscription management
       search.py          # Cross-entity search
+      assist.py          # AI assist endpoint
     model_plugins/       # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini, llama3.3-70b)
-    alembic/             # Database migrations (00001–00013)
+    alembic/             # Database migrations (00001–00026)
     tests/
       test_calendar.py       # Calendar feed CRUD, timezone, iCal export/import
       test_briefing.py       # Briefing SSE unit tests
@@ -523,6 +531,7 @@ todo/
       test_localtime.py      # Local date header handling
       test_food.py           # Food entry parsing
       test_telegram.py       # Telegram config, test, and daily-briefing endpoints
+      test_bridge.py         # Claude Code bridge job queue and agent endpoints
       test_parse.py          # Quick Add parse integration tests (requires Ollama)
       benchmark.py           # Parse quality benchmark across Ollama models
     Dockerfile

@@ -336,15 +336,18 @@ class BridgeJob(Base):
     """A queued Claude Code bridge job — picked up by the local qtask-bridge agent."""
     __tablename__ = "bridge_jobs"
 
-    id             = Column(Integer, primary_key=True, index=True)
-    card_id        = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
-    status         = Column(String, nullable=False, default="pending")  # pending|running|done|error
-    spec_snapshot  = Column(Text, nullable=True)   # spec text at time of queuing
-    prompt_snapshot = Column(Text, nullable=True)  # full Claude Code prompt at time of queuing
-    result         = Column(Text, nullable=True)   # PR link / summary posted by bridge
-    output         = Column(Text, nullable=True)   # rolling last ~200 lines of Claude Code stdout
-    created_at     = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    updated_at     = Column(DateTime, nullable=True)
+    id              = Column(Integer, primary_key=True, index=True)
+    card_id         = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
+    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error
+    target_repo     = Column(String, nullable=True)   # "owner/repo" — null means any bridge can claim
+    branch_name     = Column(String, nullable=True)   # local branch created by bridge, e.g. qtask/42-fix-login
+    agent_name      = Column(String, nullable=True)   # hostname of the machine that ran the job
+    spec_snapshot   = Column(Text, nullable=True)
+    prompt_snapshot = Column(Text, nullable=True)
+    result          = Column(Text, nullable=True)
+    output          = Column(Text, nullable=True)   # rolling last ~200 lines of Claude Code stdout
+    created_at      = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at      = Column(DateTime, nullable=True)
 
     card = relationship("Card")
 
