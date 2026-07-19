@@ -2,14 +2,16 @@
 Tests for the bridge job queue endpoints (routers/bridge.py).
 
 Covers:
-  - POST /api/bridge/jobs          — queue job (no spec → 400, valid → 200)
-  - GET  /api/bridge/jobs/{id}     — get status
+  - POST /api/bridge/jobs              — queue job (no spec → 400, valid → 200)
+  - GET  /api/bridge/jobs/{id}         — get status
   - GET  /api/bridge/jobs/next/pending — atomic claim, lazy prompt build, double-claim
+  - POST /api/bridge/jobs/{id}/start   — record branch + agent name
+  - POST /api/bridge/jobs/{id}/output  — stdout chunking + line-cap truncation
   - POST /api/bridge/jobs/{id}/complete
   - POST /api/bridge/jobs/{id}/error
   - GET  /api/bridge/jobs/card/{id}/latest
-  - GET  /api/bridge/install.py    — installer script content
-  - GET  /api/bridge/agent.py      — agent script content
+  - GET  /api/bridge/install.py        — installer script content
+  - GET  /api/bridge/agent.py          — agent script content
 """
 import sys
 import os
@@ -142,6 +144,22 @@ class TestCreateBridgeJob:
         res = client.post("/api/bridge/jobs", json={"card_id": card_id})
         assert res.json()["result"] is None
 
+    def test_target_repo_derived_from_github_external_id(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/myapp/issues/42")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert res.status_code == 200
+        assert res.json()["target_repo"] == "owner/myapp"
+
+    def test_target_repo_is_null_for_card_without_external_id(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert res.json()["target_repo"] is None
+
+    def test_target_repo_is_null_for_non_github_external_id(self, client):
+        card_id = _make_card(spec="s", external_id="jira:PROJ-123")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert res.json()["target_repo"] is None
+
 
 # ── GET /api/bridge/jobs/{id} ─────────────────────────────────────────────────
 
@@ -234,6 +252,82 @@ class TestGetNextPending:
 
         res = client.get("/api/bridge/jobs/next/pending")
         assert res.json()["job"]["card_id"] == card1
+
+    def test_includes_card_title_for_slug_generation(self, client):
+        card_id = _make_card("Fix login bug", spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending")
+        job = res.json()["job"]
+        assert job["card_title"] == "Fix login bug"
+
+
+# ── POST /api/bridge/jobs/{id}/start ─────────────────────────────────────────
+
+class TestStartJob:
+
+    def test_records_branch_and_agent(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/start",
+                          json={"branch": "qtask/7-fix-login", "agent": "work-mac"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["branch_name"] == "qtask/7-fix-login"
+        assert data["agent_name"] == "work-mac"
+
+    def test_branch_and_agent_visible_via_get(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start",
+                    json={"branch": "qtask/7-fix-login", "agent": "work-mac"})
+
+        res = client.get(f"/api/bridge/jobs/{job_id}")
+        assert res.json()["branch_name"] == "qtask/7-fix-login"
+        assert res.json()["agent_name"] == "work-mac"
+
+    def test_404_for_missing_job(self, client):
+        res = client.post("/api/bridge/jobs/9999/start",
+                          json={"branch": "qtask/1-foo", "agent": "x"})
+        assert res.status_code == 404
+
+
+# ── POST /api/bridge/jobs/{id}/output ────────────────────────────────────────
+
+class TestJobOutput:
+
+    def _make_running_job(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.get("/api/bridge/jobs/next/pending")  # sets to running
+        return job_id
+
+    def test_appends_output_chunks(self, client):
+        job_id = self._make_running_job(client)
+        client.post(f"/api/bridge/jobs/{job_id}/output", json={"output": "line one\n"})
+        client.post(f"/api/bridge/jobs/{job_id}/output", json={"output": "line two\n"})
+
+        res = client.get(f"/api/bridge/jobs/{job_id}")
+        assert "line one" in res.json()["output"]
+        assert "line two" in res.json()["output"]
+
+    def test_truncates_to_200_lines(self, client):
+        job_id = self._make_running_job(client)
+        # Post 250 lines in one chunk
+        big_output = "\n".join(f"line {i}" for i in range(250))
+        client.post(f"/api/bridge/jobs/{job_id}/output", json={"output": big_output})
+
+        res = client.get(f"/api/bridge/jobs/{job_id}")
+        stored = res.json()["output"]
+        assert stored.count("\n") <= 200
+        # Should keep the tail (most recent lines)
+        assert "line 249" in stored
+        assert "line 0" not in stored
+
+    def test_404_for_missing_job(self, client):
+        res = client.post("/api/bridge/jobs/9999/output", json={"output": "x"})
+        assert res.status_code == 404
 
 
 # ── POST /api/bridge/jobs/{id}/complete ───────────────────────────────────────
@@ -333,6 +427,14 @@ class TestInstallScript:
     def test_contains_install_dir(self, client):
         res = client.get("/api/bridge/install.py")
         assert "qtask-bridge" in res.text
+
+    def test_writes_claude_toml(self, client):
+        res = client.get("/api/bridge/install.py")
+        assert "claude.toml" in res.text
+
+    def test_claude_toml_only_written_if_not_exists(self, client):
+        res = client.get("/api/bridge/install.py")
+        assert "already exists" in res.text  # skips on reinstall
 
 
 # ── GET /api/bridge/agent.py ──────────────────────────────────────────────────
