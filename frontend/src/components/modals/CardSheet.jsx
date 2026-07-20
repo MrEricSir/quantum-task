@@ -16,7 +16,7 @@ function parseGitHubUrl(str) {
 }
 
 // card=null means "new card" mode (starts directly in edit mode)
-export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove, onBreakdown }) {
+export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], topTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove, onBreakdown, onCreateTag }) {
   const isNew = !card?.id
   const [mode, setMode] = useState(isNew ? 'edit' : 'view')
   const [showAssist, setShowAssist] = useState(false)
@@ -26,7 +26,7 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
   const [section, setSection] = useState(card?.section ?? defaultSection)
   const [scheduledAt, setScheduledAt] = useState(card?.scheduled_at ? isoToLocal(card.scheduled_at) : '')
   const [recurrenceRule, setRecurrenceRule] = useState(card?.recurrence_rule ?? '')
-  const [selectedTagIds, setSelectedTagIds] = useState((card?.tags ?? []).map((t) => t.id))
+  const [selectedTags, setSelectedTags] = useState(card?.tags ?? [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [copiedOutput, setCopiedOutput] = useState(false)
@@ -38,22 +38,28 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
     })
   }, [savedOutput])
 
-  const toggleTag = (id) =>
-    setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
-
   const handleSave = async (e) => {
     e.preventDefault()
     const resolvedTitle = title.trim()
     if (!resolvedTitle) { setError('Title is required.'); return }
     setSaving(true)
     try {
+      const resolvedTags = []
+      for (const tag of selectedTags) {
+        if (tag.id) {
+          resolvedTags.push(tag)
+        } else if (onCreateTag) {
+          const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
+          if (created) resolvedTags.push(created)
+        }
+      }
       const data = {
         title: resolvedTitle,
         description: description.trim() || null,
         section,
         scheduled_at: scheduledAt || null,
         recurrence_rule: recurrenceRule || null,
-        tag_ids: selectedTagIds,
+        tag_ids: resolvedTags.map(t => t.id),
       }
       if (isNew) {
         await onCreate?.(data)
@@ -194,8 +200,9 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
                 recurrenceRule={recurrenceRule}
                 setRecurrenceRule={setRecurrenceRule}
                 allTags={allTags}
-                selectedTagIds={selectedTagIds}
-                onToggleTag={toggleTag}
+                topTags={topTags}
+                selectedTags={selectedTags}
+                onSelectedTagsChange={setSelectedTags}
                 titleError={error}
                 autoFocus={false}
               />

@@ -32,10 +32,12 @@ export default function CardDetailPanel({
   initialMode = 'view',
   defaultSection = 'today',
   allTags = [],
+  topTags = [],
   engineeringItems = [],
   onClose,
   onCreate,
   onSave,
+  onCreateTag,
   onToggle,
   onMove,
   onDelete,
@@ -56,7 +58,7 @@ export default function CardDetailPanel({
   const [editSection,        setEditSection]        = useState(defaultSection)
   const [editScheduledAt,    setEditScheduledAt]    = useState('')
   const [editRecurrenceRule, setEditRecurrenceRule] = useState('')
-  const [editTagIds,         setEditTagIds]         = useState([])
+  const [editTags,           setEditTags]           = useState([])
   const [editError,          setEditError]          = useState('')
   const [editSaving,         setEditSaving]         = useState(false)
 
@@ -85,7 +87,7 @@ export default function CardDetailPanel({
       setEditSection(card?.section ?? defaultSection)
       setEditScheduledAt(card?.scheduled_at ? isoToLocal(card.scheduled_at) : '')
       setEditRecurrenceRule(card?.recurrence_rule ?? '')
-      setEditTagIds((card?.tags ?? []).map(t => t.id))
+      setEditTags(card?.tags ?? [])
       setEditError('')
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -109,13 +111,22 @@ export default function CardDetailPanel({
     if (!resolvedTitle) { setEditError('Title is required.'); return }
     setEditSaving(true)
     try {
+      const resolvedTags = []
+      for (const tag of editTags) {
+        if (tag.id) {
+          resolvedTags.push(tag)
+        } else if (onCreateTag) {
+          const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
+          if (created) resolvedTags.push(created)
+        }
+      }
       const data = {
         title: resolvedTitle,
         description: editDescription.trim() || null,
         section: editSection,
         scheduled_at: editScheduledAt || null,
         recurrence_rule: editRecurrenceRule || null,
-        tag_ids: editTagIds,
+        tag_ids: resolvedTags.map(t => t.id),
       }
       if (mode === 'new') {
         await onCreate?.(data)
@@ -137,8 +148,6 @@ export default function CardDetailPanel({
     }
   }
 
-  const toggleEditTag = (id) =>
-    setEditTagIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
   const isNew = mode === 'new'
 
@@ -399,8 +408,9 @@ export default function CardDetailPanel({
                 recurrenceRule={editRecurrenceRule}
                 setRecurrenceRule={setEditRecurrenceRule}
                 allTags={allTags}
-                selectedTagIds={editTagIds}
-                onToggleTag={toggleEditTag}
+                topTags={topTags}
+                selectedTags={editTags}
+                onSelectedTagsChange={setEditTags}
                 titleError={editError}
                 autoFocus
               />

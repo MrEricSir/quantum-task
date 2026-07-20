@@ -9,7 +9,7 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function CardModal({ card, defaultSection = 'today', allTags = [], onClose, onSave, onDelete, onArchive }) {
+export default function CardModal({ card, defaultSection = 'today', allTags = [], topTags = [], onClose, onSave, onDelete, onArchive, onCreateTag }) {
   const isEdit = !!card?.id
 
   const [title, setTitle] = useState(card?.title ?? '')
@@ -19,17 +19,9 @@ export default function CardModal({ card, defaultSection = 'today', allTags = []
     card?.scheduled_at ? isoToLocal(card.scheduled_at) : ''
   )
   const [recurrenceRule, setRecurrenceRule] = useState(card?.recurrence_rule ?? '')
-  const [selectedTagIds, setSelectedTagIds] = useState(
-    (card?.tags ?? []).map((t) => t.id)
-  )
+  const [selectedTags, setSelectedTags] = useState(card?.tags ?? [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-
-  const toggleTag = (id) => {
-    setSelectedTagIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    )
-  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -37,13 +29,22 @@ export default function CardModal({ card, defaultSection = 'today', allTags = []
     if (!resolvedTitle) { setError('Title is required.'); return }
     setSaving(true)
     try {
+      const resolvedTags = []
+      for (const tag of selectedTags) {
+        if (tag.id) {
+          resolvedTags.push(tag)
+        } else if (onCreateTag) {
+          const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
+          if (created) resolvedTags.push(created)
+        }
+      }
       await onSave({
         title: resolvedTitle,
         description: description.trim() || null,
         section,
         scheduled_at: scheduledAt || null,
         recurrence_rule: recurrenceRule || null,
-        tag_ids: selectedTagIds,
+        tag_ids: resolvedTags.map(t => t.id),
       })
     } catch {
       setError('Something went wrong. Please try again.')
@@ -69,8 +70,9 @@ export default function CardModal({ card, defaultSection = 'today', allTags = []
           recurrenceRule={recurrenceRule}
           setRecurrenceRule={setRecurrenceRule}
           allTags={allTags}
-          selectedTagIds={selectedTagIds}
-          onToggleTag={toggleTag}
+          topTags={topTags}
+          selectedTags={selectedTags}
+          onSelectedTagsChange={setSelectedTags}
           titleError={error}
         />
 

@@ -3,6 +3,7 @@
  * Used by both CardModal and QuickAddModal's confirm/bulk-edit steps.
  */
 
+import TagInput from '../shared/TagInput'
 import { ALL_SECTIONS } from '../../lib/sections'
 export { ALL_SECTIONS }
 
@@ -38,8 +39,9 @@ export default function CardForm({
   scheduledAt, setScheduledAt,
   recurrenceRule, setRecurrenceRule,
   allTags = [],
-  selectedTagIds,
-  onToggleTag,
+  topTags = [],
+  selectedTags = [],
+  onSelectedTagsChange,
   titleError,
   autoFocus = true,
 }) {
@@ -113,30 +115,15 @@ export default function CardForm({
         </select>
       </div>
 
-      {allTags.length > 0 && (
-        <div className="form-group">
-          <label>Tags</label>
-          <div className="tag-toggles">
-            {allTags.map((tag) => {
-              const on = selectedTagIds.includes(tag.id)
-              return (
-                <button
-                  key={tag.id}
-                  type="button"
-                  className={`tag-toggle ${on ? 'tag-toggle--on' : ''}`}
-                  style={on
-                    ? { background: tag.color, borderColor: tag.color, color: '#fff' }
-                    : { borderColor: tag.color, color: tag.color }
-                  }
-                  onClick={() => onToggleTag(tag.id)}
-                >
-                  {tag.name}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
+      <div className="form-group">
+        <label>Tags</label>
+        <TagInput
+          allTags={allTags}
+          topTags={topTags}
+          value={selectedTags}
+          onChange={onSelectedTagsChange}
+        />
+      </div>
     </>
   )
 }

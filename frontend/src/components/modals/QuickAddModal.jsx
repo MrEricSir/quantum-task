@@ -81,6 +81,7 @@ function formatGoalDisplay(metric, goal, isImperial) {
 
 export default function QuickAddModal({
   allTags = [],
+  topTags = [],
   visibleTags = [],
   habits = [],
   cards = [],
@@ -93,6 +94,7 @@ export default function QuickAddModal({
   onLogMood,
   onToggleHabit,
   onCompleteTask,
+  onCreateTag,
   isImperial = false,
   initialText = '',
   initialStep = 'input',
@@ -110,7 +112,7 @@ export default function QuickAddModal({
   const [section, setSection] = useState('later')
   const [scheduledAt, setScheduledAt] = useState('')
   const [recurrenceRule, setRecurrenceRule] = useState('')
-  const [selectedTagIds, setSelectedTagIds] = useState([])
+  const [selectedTags, setSelectedTags] = useState([])
   const [clarificationQuestion, setClarificationQuestion] = useState('')
   const [withingsMetric, setWithingsMetric] = useState(null)
   const [withingsGoal, setWithingsGoal] = useState(null)
@@ -143,8 +145,18 @@ export default function QuickAddModal({
 
   // ── Add tab handlers ──
 
-  const toggleTag = (id) =>
-    setSelectedTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  const resolveNewTags = async (tags) => {
+    const out = []
+    for (const tag of tags) {
+      if (tag.id) {
+        out.push(tag)
+      } else if (onCreateTag) {
+        const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
+        if (created) out.push(created)
+      }
+    }
+    return out
+  }
 
   const handleMic = () => {
     if (listening) {
@@ -196,8 +208,8 @@ export default function QuickAddModal({
           setStep('confirm')
           return
         }
-        const tagIds = (result.suggested_tags ?? [])
-          .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
+        const suggestedTags = (result.suggested_tags ?? [])
+          .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase()))
           .filter(Boolean)
         setDetectedType(result.type ?? 'task')
         setTitle(result.title ?? '')
@@ -205,7 +217,7 @@ export default function QuickAddModal({
         setSection(result.section ?? 'later')
         setScheduledAt(result.scheduled_at ? isoToLocal(result.scheduled_at) : '')
         setRecurrenceRule(result.recurrence_rule ?? '')
-        setSelectedTagIds(tagIds)
+        setSelectedTags(suggestedTags)
         setClarificationQuestion(result.clarification_question ?? '')
         setWithingsMetric(result.withings_metric ?? null)
         setWithingsGoal(result.withings_goal ?? null)
@@ -224,15 +236,18 @@ export default function QuickAddModal({
     }
   }
 
-  const buildCardPayload = () => ({
-    title: title.trim(),
-    description: description.trim() || null,
-    section,
-    scheduled_at: scheduledAt || null,
-    recurrence_rule: recurrenceRule || null,
-    tag_ids: selectedTagIds,
-    raw_input: text,
-  })
+  const buildCardPayload = async () => {
+    const resolvedTags = await resolveNewTags(selectedTags)
+    return {
+      title: title.trim(),
+      description: description.trim() || null,
+      section,
+      scheduled_at: scheduledAt || null,
+      recurrence_rule: recurrenceRule || null,
+      tag_ids: resolvedTags.map(t => t.id),
+      raw_input: text,
+    }
+  }
 
   const handleConfirm = async () => {
     setSaving(true)
@@ -249,13 +264,13 @@ export default function QuickAddModal({
           await onCompleteTask(matchedItem.id)
         }
       } else if (detectedType === 'habit') {
-        await onSaveHabit({ name: title, tag_ids: selectedTagIds, withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
+        await onSaveHabit({ name: title, tag_ids: [], withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
       } else if (detectedType === 'mood' && onLogMood) {
         await onLogMood(moodEnergy, description.trim() || null)
       } else {
-        await onSaveCard(buildCardPayload())
+        await onSaveCard(await buildCardPayload())
       }
       onClose()
     } catch {
@@ -274,8 +289,8 @@ export default function QuickAddModal({
     setSection(item.section ?? 'later')
     setScheduledAt(item.scheduled_at ? isoToLocal(item.scheduled_at) : '')
     setRecurrenceRule(item.recurrence_rule ?? '')
-    setSelectedTagIds(item._tag_ids ?? (item.suggested_tags ?? [])
-      .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
+    setSelectedTags(item._tags ?? (item.suggested_tags ?? [])
+      .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase()))
       .filter(Boolean))
     setWithingsMetric(item.withings_metric ?? null)
     setWithingsGoal(item.withings_goal ?? null)
@@ -292,7 +307,7 @@ export default function QuickAddModal({
       section,
       scheduled_at: scheduledAt || null,
       recurrence_rule: recurrenceRule || null,
-      _tag_ids: selectedTagIds,
+      _tags: selectedTags,
       withings_metric: withingsMetric || null,
       withings_goal: withingsGoal ?? null,
     } : it))
@@ -346,8 +361,8 @@ export default function QuickAddModal({
     setSaving(true)
     for (const item of bulkItems) {
       if (item._removed) continue
-      const tagIds = item._tag_ids ?? (item.suggested_tags ?? [])
-        .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
+      const rawTags = item._tags ?? (item.suggested_tags ?? [])
+        .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase()))
         .filter(Boolean)
       try {
         if (item.type === 'goal' && item.withings_metric === 'steps') {
@@ -363,17 +378,18 @@ export default function QuickAddModal({
             await onCompleteTask(m.id)
           }
         } else if (item.type === 'habit') {
-          await onSaveHabit({ name: item.title, tag_ids: tagIds, withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
+          await onSaveHabit({ name: item.title, tag_ids: [], withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
         } else if (item.type === 'food') {
           await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
         } else {
+          const resolvedTags = await resolveNewTags(rawTags)
           await onSaveCard({
             title: item.title,
             description: item.description || null,
             section: item.section ?? 'later',
             scheduled_at: item.scheduled_at || null,
             recurrence_rule: item.recurrence_rule || null,
-            tag_ids: tagIds,
+            tag_ids: resolvedTags.map(t => t.id),
             raw_input: text,
           })
         }
@@ -411,8 +427,9 @@ export default function QuickAddModal({
       recurrenceRule={recurrenceRule}
       setRecurrenceRule={setRecurrenceRule}
       allTags={allTags}
-      selectedTagIds={selectedTagIds}
-      onToggleTag={toggleTag}
+      topTags={topTags}
+      selectedTags={selectedTags}
+      onSelectedTagsChange={setSelectedTags}
       autoFocus={detectedType === 'task'}
     />
   )

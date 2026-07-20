@@ -397,6 +397,19 @@ export default function App() {
     [tags, cards]
   )
 
+  // Top ~5 tags by usage across ALL cards (including archived) — used for quick-pick pills in tag input
+  const topTags = useMemo(() => {
+    const counts = {}
+    for (const card of cards) {
+      for (const tag of card.tags ?? []) {
+        counts[tag.id] = (counts[tag.id] || 0) + 1
+      }
+    }
+    return [...tags]
+      .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0))
+      .slice(0, 5)
+  }, [cards, tags])
+
   const visibleCalendarEvents = selectedTagId === null
     ? calendarEvents
     : calendarEvents.filter((e) => e.tag_id === selectedTagId)
@@ -871,7 +884,9 @@ export default function App() {
           card={selectedCard}
           initialMode={panelInitialMode}
           defaultSection={panelDefaultSection}
-          allTags={visibleTags}
+          allTags={tags}
+          topTags={topTags}
+          onCreateTag={handleCreateTag}
           engineeringItems={engineeringItems}
           onClose={() => { setSelectedCardId(null); setPanelInitialMode('view') }}
           onCreate={handleAddCard}
@@ -898,7 +913,9 @@ export default function App() {
         <CardModal
           card={editingCard}
           defaultSection={defaultSection}
-          allTags={visibleTags}
+          allTags={tags}
+          topTags={topTags}
+          onCreateTag={handleCreateTag}
           onClose={closeModal}
           onSave={handleModalSave}
           onDelete={editingCard ? async () => { await handleDeleteCard(editingCard.id); closeModal() } : undefined}
@@ -909,7 +926,9 @@ export default function App() {
       {showNewSheet && (
         <CardSheet
           defaultSection={defaultSection}
-          allTags={visibleTags}
+          allTags={tags}
+          topTags={topTags}
+          onCreateTag={handleCreateTag}
           onClose={() => setShowNewSheet(false)}
           onCreate={handleAddCard}
         />
@@ -996,8 +1015,10 @@ export default function App() {
 
       {showQuickAdd && (
         <QuickAddModal
-          allTags={visibleTags}
+          allTags={tags}
+          topTags={topTags}
           visibleTags={visibleTags}
+          onCreateTag={handleCreateTag}
           habits={habits}
           cards={cards}
           initialStep={quickAddStep}
