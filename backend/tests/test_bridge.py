@@ -4,14 +4,15 @@ Tests for the bridge job queue endpoints (routers/bridge.py).
 Covers:
   - POST /api/bridge/jobs              — queue job (no spec → 400, valid → 200)
   - GET  /api/bridge/jobs/{id}         — get status
-  - GET  /api/bridge/jobs/next/pending — atomic claim, lazy prompt build, double-claim
+  - GET  /api/bridge/jobs/next/pending — atomic claim, lazy prompt build, double-claim,
+                                         ?repos= filtering
   - POST /api/bridge/jobs/{id}/start   — record branch + agent name
   - POST /api/bridge/jobs/{id}/output  — stdout chunking + line-cap truncation
   - POST /api/bridge/jobs/{id}/complete
   - POST /api/bridge/jobs/{id}/error
   - GET  /api/bridge/jobs/card/{id}/latest
   - GET  /api/bridge/install.py        — installer script content
-  - GET  /api/bridge/agent.py          — agent script content
+  - GET  /api/bridge/agent.py          — agent script content + config reading
 """
 import sys
 import os
@@ -460,3 +461,68 @@ class TestAgentScript:
         res = client.get("/api/bridge/agent.py")
         assert '"claude"' in res.text or "'claude'" in res.text
         assert "BRIDGE_SPEC" in res.text
+
+    def test_agent_reads_claude_toml(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "claude.toml" in res.text
+        assert "tomllib" in res.text
+
+    def test_agent_has_resolve_work_dir(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "_resolve_work_dir" in res.text
+
+    def test_agent_has_repo_from_git_url(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "_repo_from_git_url" in res.text
+
+    def test_agent_passes_repos_filter_to_api(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "repos=" in res.text
+
+
+# ── GET /api/bridge/jobs/next/pending?repos= ─────────────────────────────────
+
+class TestReposFilter:
+
+    def test_returns_matching_repo_job(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/myapp/issues/1")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending?repos=owner/myapp")
+        assert res.json()["job"] is not None
+
+    def test_excludes_other_repo_job(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/other/issues/1")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending?repos=owner/myapp")
+        assert res.json()["job"] is None
+
+    def test_null_target_repo_returned_when_filter_set(self, client):
+        """Jobs with no target_repo (no GitHub link) should be returned to any bridge."""
+        card_id = _make_card(spec="s")  # no external_id → target_repo=None
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending?repos=owner/myapp")
+        assert res.json()["job"] is not None
+
+    def test_no_filter_returns_any_repo_job(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/other/issues/1")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending")
+        assert res.json()["job"] is not None
+
+    def test_multiple_repos_in_filter(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/second/issues/5")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending?repos=owner/first,owner/second")
+        assert res.json()["job"] is not None
+
+    def test_multiple_repos_excludes_non_matching(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/third/issues/5")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/next/pending?repos=owner/first,owner/second")
+        assert res.json()["job"] is None

@@ -109,7 +109,7 @@ cd frontend && npm run dev
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions
-- Claude Code bridge: job create/start/complete/error, agent script install endpoint
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
@@ -563,9 +563,9 @@ todo/
         layout/        # Sidebar, MobileNav, TagFilterBar
         modals/        # QuickAddModal, CardSheet, CalendarSettings, GithubSettings,
                        # WithingsSettings, TagManager, AssistModal, ...
-        shared/        # QueueIndicator and other shared components
+        shared/        # QueueIndicator, TagInput, and other shared components
     tests/
-      visual.spec.js   # Playwright functional tests (all APIs mocked, 121 tests)
+      visual.spec.js   # Playwright functional tests (all APIs mocked, 134 tests)
     dist/              # Production build output (gitignored)
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide

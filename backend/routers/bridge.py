@@ -14,7 +14,8 @@ import os
 import textwrap
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
@@ -153,14 +154,23 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/api/bridge/jobs/next/pending")
-def get_next_pending(db: Session = Depends(get_db)):
-    """Bridge polls this to pick up the next pending job."""
-    job = (
-        db.query(models.BridgeJob)
-        .filter_by(status="pending")
-        .order_by(models.BridgeJob.created_at)
-        .first()
-    )
+def get_next_pending(repos: str = Query(None), db: Session = Depends(get_db)):
+    """Bridge polls this to pick up the next pending job.
+
+    Optional ?repos=owner/a,owner/b filter — returns jobs whose target_repo matches
+    one of the listed repos, or whose target_repo is null (claimable by any bridge).
+    """
+    query = db.query(models.BridgeJob).filter_by(status="pending")
+    if repos:
+        repo_list = [r.strip() for r in repos.split(",") if r.strip()]
+        if repo_list:
+            query = query.filter(
+                or_(
+                    models.BridgeJob.target_repo.in_(repo_list),
+                    models.BridgeJob.target_repo.is_(None),
+                )
+            )
+    job = query.order_by(models.BridgeJob.created_at).first()
     if not job:
         return {"job": None}
 
@@ -400,10 +410,17 @@ def get_agent_script():
         import sys
         import threading
         import time
+        import urllib.parse
         import urllib.request
         import urllib.error
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            tomllib = None
 
-        CONFIG_FILE = os.path.expanduser("~/.config/qtask-bridge/config.json")
+        CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
+        CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+        TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
         POLL_INTERVAL = 10        # seconds between polls in --watch mode
         OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
@@ -417,7 +434,21 @@ def get_agent_script():
                 print("Re-run the installer or create the config manually.", file=sys.stderr)
                 sys.exit(1)
             with open(CONFIG_FILE) as f:
-                return json.load(f)
+                cfg = json.load(f)
+            cfg.setdefault("name", None)
+            cfg.setdefault("repos", {})
+            cfg.setdefault("repo_roots", [])
+            if tomllib and os.path.exists(TOML_FILE):
+                try:
+                    with open(TOML_FILE, "rb") as f:
+                        toml = tomllib.load(f)
+                    if toml.get("name"):
+                        cfg["name"] = toml["name"]
+                    cfg["repos"]      = dict(toml.get("repos") or {})
+                    cfg["repo_roots"] = list(toml.get("repo_roots") or [])
+                except Exception as e:
+                    print(f"[bridge] Warning: could not parse {TOML_FILE}: {e}", file=sys.stderr)
+            return cfg
 
 
         def api(cfg, method, path, body=None):
@@ -446,6 +477,53 @@ def get_agent_script():
                 with open(gitignore, "a") as f:
                     f.write("\\n" + GITIGNORE_ENTRY)
             # If no .gitignore exists at the spec level, skip — don't create one unexpectedly
+
+
+        def _repo_from_git_url(url):
+            \"\"\"Extract 'owner/repo' from a GitHub remote URL (SSH or HTTPS).\"\"\"
+            m = re.search(r"github\\.com[:/]([^/]+/[^/\\s]+?)(\\.git)?$", url.strip())
+            return m.group(1) if m else None
+
+
+        def _resolve_work_dir(cfg, target_repo):
+            \"\"\"
+            Return the local working directory for a job.
+
+            - target_repo is None  → use cwd (card has no GitHub link)
+            - found in [repos]     → use that explicit path
+            - found via repo_roots → use auto-discovered path
+            - set but not found    → return None (caller posts an error to the app)
+            \"\"\"
+            if not target_repo:
+                return os.getcwd()
+
+            repos = cfg.get("repos") or {}
+            if target_repo in repos:
+                return os.path.expanduser(repos[target_repo])
+
+            for root in (cfg.get("repo_roots") or []):
+                root = os.path.expanduser(root)
+                if not os.path.isdir(root):
+                    continue
+                try:
+                    entries = os.listdir(root)
+                except OSError:
+                    continue
+                for entry in entries:
+                    candidate = os.path.join(root, entry)
+                    git_cfg = os.path.join(candidate, ".git", "config")
+                    if not os.path.isfile(git_cfg):
+                        continue
+                    try:
+                        with open(git_cfg) as f:
+                            for line in f:
+                                m = re.search(r"url\\s*=\\s*(.+)", line.strip())
+                                if m and _repo_from_git_url(m.group(1)) == target_repo:
+                                    return candidate
+                    except OSError:
+                        continue
+
+            return None
 
 
         def _make_prompt(branch):
@@ -549,7 +627,7 @@ def get_agent_script():
             print("[bridge] Remote push disabled for this session.")
 
             # 5. Register branch + agent with the app
-            agent = socket.gethostname().split(".")[0]
+            agent = cfg.get("name") or socket.gethostname().split(".")[0]
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/start",
                 {"branch": branch, "agent": agent})
             print(f"[bridge] Agent: {agent}")
@@ -643,12 +721,30 @@ def get_agent_script():
 
 
         def run_job(cfg, job, streaming=False, prompt_note=True):
-            job_id  = job["id"]
-            card_id = job["card_id"]
-            prompt  = job.get("prompt", "")
-            work_dir = os.getcwd()
+            job_id      = job["id"]
+            card_id     = job["card_id"]
+            prompt      = job.get("prompt", "")
+            target_repo = job.get("target_repo")
 
             print(f"\\n[bridge] Job {job_id} — card #{card_id}")
+
+            # Resolve working directory from claude.toml; fall back to cwd for unlinked cards
+            work_dir = _resolve_work_dir(cfg, target_repo)
+            if work_dir is None:
+                msg = (
+                    f"No local path configured for '{target_repo}'. "
+                    f"Add it to {TOML_FILE} under [repos] or repo_roots."
+                )
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                return
+            if not os.path.isdir(work_dir):
+                msg = f"Configured path for '{target_repo}' does not exist: {work_dir}"
+                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
+                return
+            if target_repo:
+                print(f"[bridge] Repo: {target_repo} → {work_dir}")
 
             # Git safety: check clean, checkout primary, create branch, disable push
             result = _git_setup(cfg, job, work_dir)
@@ -693,10 +789,14 @@ def get_agent_script():
 
 
         def cmd_watch(cfg):
+            known_repos = list((cfg.get("repos") or {}).keys())
+            repos_qs = ("?repos=" + urllib.parse.quote(",".join(known_repos))) if known_repos else ""
             print(f"[bridge] Watching for jobs (polling every {POLL_INTERVAL}s)... Ctrl-C to stop.\\n")
+            if known_repos:
+                print(f"[bridge] Filtering to repos: {', '.join(known_repos)}\\n")
             while True:
                 try:
-                    resp = api(cfg, "GET", "/api/bridge/jobs/next/pending")
+                    resp = api(cfg, "GET", f"/api/bridge/jobs/next/pending{repos_qs}")
                     job = resp.get("job") if resp else None
                     if job:
                         run_job(cfg, job, streaming=False, prompt_note=False)
