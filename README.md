@@ -179,8 +179,8 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
 4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
 5. The local bridge agent picks up the job, checks the working tree is clean, checks out the primary branch, pulls latest, and creates a `qtask/<id>-<slug>` branch
-6. Claude Code runs on that branch — push is disabled for the session so no changes leave your machine until you review them
-7. When the session ends, the branch name and machine are shown in the Code tab and sent via Telegram notification
+6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them
+7. When the session ends, the branch name and machine are shown in the Code tab and sent via Telegram; the bridge picks up the next queued job automatically
 
 #### Install the bridge agent
 
@@ -190,14 +190,18 @@ In **Settings → Engineering → GitHub**, copy the install command:
 curl http://localhost:8000/api/bridge/install.py | python3
 ```
 
-This installs `qtask-bridge` into your PATH. Then, in your project directory:
+This installs `qtask-bridge` into your PATH and creates `~/.config/qtask-bridge/claude.toml` (repo mappings, edit to configure multi-repo support). Then, in your project directory:
 
 ```bash
-qtask-bridge --watch          # poll every 10 s and auto-launch Claude Code
+qtask-bridge --watch          # poll for jobs; launch Claude Code interactively when one arrives
 qtask-bridge --card <id>      # queue and run a specific card's job once
 ```
 
-The agent writes the spec to `BRIDGE_SPEC.md` in the project directory, then calls `claude "Please implement the feature described in BRIDGE_SPEC.md"` on a fresh `qtask/<id>-<slug>` branch. When done, the branch is waiting locally for your review — the bridge never pushes.
+The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in your terminal on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The branch is waiting locally for your review — the bridge never pushes.
+
+**`--watch` mode** runs interactively: you can participate in the Claude session, ask questions, or provide direction. When Claude finishes and you exit the session, the job is marked complete and the bridge immediately polls for the next one — no intervention needed between jobs.
+
+**`--card` mode** is the same but prompts you for an optional note to attach to the job before moving on, useful for one-off runs where you want to record context.
 
 #### Code tab actions
 

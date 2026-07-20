@@ -568,7 +568,7 @@ def get_agent_script():
                                cwd=work_dir)
 
 
-        def _run_interactive(cfg, job_id, branch):
+        def _run_interactive(cfg, job_id, branch, prompt_note=True):
             \"\"\"Launch Claude Code as an interactive session the user can engage with.\"\"\"
             print(f"[bridge] Launching Claude Code interactively...")
             print("[bridge] You can interact with Claude in the session below.")
@@ -584,10 +584,11 @@ def get_agent_script():
 
             print("\\n[bridge] Session ended.")
             result_text = ""
-            try:
-                result_text = input("[bridge] Enter a note to save with this job (or press Enter to skip): ").strip()
-            except (EOFError, KeyboardInterrupt):
-                pass
+            if prompt_note:
+                try:
+                    result_text = input("[bridge] Enter a note to save with this job (or press Enter to skip): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    pass
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": result_text})
             return True
 
@@ -641,7 +642,7 @@ def get_agent_script():
             return True
 
 
-        def run_job(cfg, job, streaming=False):
+        def run_job(cfg, job, streaming=False, prompt_note=True):
             job_id  = job["id"]
             card_id = job["card_id"]
             prompt  = job.get("prompt", "")
@@ -665,7 +666,7 @@ def get_agent_script():
                 if streaming:
                     _run_streaming(cfg, job_id, branch)
                 else:
-                    _run_interactive(cfg, job_id, branch)
+                    _run_interactive(cfg, job_id, branch, prompt_note=prompt_note)
             finally:
                 _git_teardown(work_dir, push_url_info)
                 try:
@@ -698,7 +699,7 @@ def get_agent_script():
                     resp = api(cfg, "GET", "/api/bridge/jobs/next/pending")
                     job = resp.get("job") if resp else None
                     if job:
-                        run_job(cfg, job, streaming=True)
+                        run_job(cfg, job, streaming=False, prompt_note=False)
                     else:
                         print(f"[bridge] No pending jobs — sleeping {POLL_INTERVAL}s...", end="\\r")
                         time.sleep(POLL_INTERVAL)
