@@ -421,7 +421,7 @@ def get_agent_script():
         CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
         CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
         TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
-        POLL_INTERVAL = 10        # seconds between polls in --watch mode
+        POLL_INTERVAL = 30        # seconds between polls in --watch mode
         OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
         SPEC_FILENAME = "BRIDGE_SPEC.md"
