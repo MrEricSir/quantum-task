@@ -125,7 +125,7 @@ export default function App() {
   } = useCards({ authed, tags, setTags, invalidateBriefing })
 
   const {
-    habits, archivedHabits,
+    habits, archivedHabits, loading: habitsLoading,
     handleAddHabit, handleUpdateHabit, handleDeleteHabit,
     handleArchiveHabit, handleUnarchiveHabit, handleToggleHabit,
   } = useHabits({ authed, invalidateBriefing })
@@ -744,6 +744,8 @@ export default function App() {
           onNavigate={handlePageNavigate}
         />
         {loading ? (
+          <div className="loading">Loading...</div>
+        ) : isTodayPage && (habitsLoading || calendarLoading) ? (
           <div className="loading">Loading...</div>
         ) : isTodayPage ? (
           <TodayPage

@@ -18,7 +18,7 @@ export const ARCHIVED_HABITS_QUERY_KEY = ['habits', 'archived']
 export function useHabits({ authed, invalidateBriefing }) {
   const queryClient = useQueryClient()
 
-  const { data: habits = [] } = useQuery({
+  const { data: habits = [], isLoading: loading } = useQuery({
     queryKey: HABITS_QUERY_KEY,
     queryFn: fetchHabits,
     enabled: !!authed,
@@ -123,6 +123,7 @@ export function useHabits({ authed, invalidateBriefing }) {
 
   return {
     habits,
+    loading,
     setHabits,
     archivedHabits,
     setArchivedHabits,

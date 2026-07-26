@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { fetchInsights, updateCard } from '../../api'
+import { CollapseBody } from '../layout/Collapsible'
 import './InsightsPanel.css'
 
 // ── Habit snooze via localStorage ─────────────────────────────────────────────
@@ -318,28 +319,42 @@ export default function InsightsPanel({ refreshKey, onArchive }) {
     [insights, dismissed]
   )
 
-  if (loading || visible.length === 0) return null
+  const shouldShow = !loading && visible.length > 0
+
+  // Stay mounted (closed = zero height) at all times so that when insights
+  // do arrive, the panel animates open instead of snapping in and shoving
+  // the rest of the page down. The rAF delay guarantees the "closed" state
+  // has actually painted before flipping to "open", so the CSS transition
+  // has something to animate from.
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!shouldShow) { setOpen(false); return }
+    const id = requestAnimationFrame(() => setOpen(true))
+    return () => cancelAnimationFrame(id)
+  }, [shouldShow])
 
   return (
-    <section className="insights-panel">
-      <h3 className="insights-title">Insights</h3>
-      <div className="insights-list">
-        {visible.map((ins) => {
-          const key = insightKey(ins)
-          if (ins.type === 'stuck_task') return (
-            <StuckTaskInsight key={key} insight={ins} onDismiss={handleDismiss} onArchive={handleArchive} />
-          )
-          if (ins.type === 'habit_trend') return (
-            <HabitInsight key={key} insight={ins} onDismiss={handleDismiss} />
-          )
-          if (ins.type === 'completion_pattern') return (
-            <CompletionPatternInsight key={key} insight={ins} onDismiss={handleDismiss} />
-          )
-          return (
-            <HealthInsight key={key} insight={ins} onDismiss={handleDismiss} />
-          )
-        })}
-      </div>
-    </section>
+    <CollapseBody open={open}>
+      <section className="insights-panel">
+        <h3 className="insights-title">Insights</h3>
+        <div className="insights-list">
+          {visible.map((ins) => {
+            const key = insightKey(ins)
+            if (ins.type === 'stuck_task') return (
+              <StuckTaskInsight key={key} insight={ins} onDismiss={handleDismiss} onArchive={handleArchive} />
+            )
+            if (ins.type === 'habit_trend') return (
+              <HabitInsight key={key} insight={ins} onDismiss={handleDismiss} />
+            )
+            if (ins.type === 'completion_pattern') return (
+              <CompletionPatternInsight key={key} insight={ins} onDismiss={handleDismiss} />
+            )
+            return (
+              <HealthInsight key={key} insight={ins} onDismiss={handleDismiss} />
+            )
+          })}
+        </div>
+      </section>
+    </CollapseBody>
   )
 }

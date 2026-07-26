@@ -4,7 +4,9 @@ import './DailyBriefing.css'
 
 export default function DailyBriefing({ tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
   const [sections, setSections] = useState({ today: '', week: '' })
-  const [status, setStatus] = useState('idle') // idle | loading | done | error
+  // Initialize straight into 'loading' when already ready, so the very first
+  // render already reserves space instead of appearing a frame later.
+  const [status, setStatus] = useState(ready ? 'loading' : 'idle') // idle | loading | done | error
   const [showSpinner, setShowSpinner] = useState(false)
   const [error, setError] = useState('')
   const [speaking, setSpeaking] = useState(false)
@@ -180,7 +182,6 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
   }
 
   if (status === 'idle') return null
-  if (status === 'loading' && !hasContent && !showSpinner) return null
 
   if (status === 'error') return (
     <div className="briefing briefing--error">
@@ -193,23 +194,26 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
   return (
     <div className="briefing" ref={containerRef}>
       <div className="briefing-sections">
-        {showSpinner && !hasContent
-          ? <span className="briefing-spinner" />
-          : <>
-              {sections.today && (
-                <div className="briefing-row">
-                  <span className="briefing-label">Today</span>
-                  <span className="briefing-text">{cleanBriefingText(sections.today)}</span>
-                </div>
-              )}
-              {sections.week && !todayOnly && (
-                <div className="briefing-row">
-                  <span className="briefing-label">This week</span>
-                  <span className="briefing-text">{cleanBriefingText(sections.week)}</span>
-                </div>
-              )}
-            </>
-        }
+        {hasContent ? (
+          <>
+            {sections.today && (
+              <div className="briefing-row">
+                <span className="briefing-label">Today</span>
+                <span className="briefing-text">{cleanBriefingText(sections.today)}</span>
+              </div>
+            )}
+            {sections.week && !todayOnly && (
+              <div className="briefing-row">
+                <span className="briefing-label">This week</span>
+                <span className="briefing-text">{cleanBriefingText(sections.week)}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          // Always reserve the spinner's space during load; only its
+          // visibility is delayed, so the card never jumps in height.
+          <span className="briefing-spinner" style={{ visibility: showSpinner ? 'visible' : 'hidden' }} />
+        )}
       </div>
       <div className="briefing-actions">
         <button
