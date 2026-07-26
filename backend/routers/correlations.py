@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, ttest_ind
 from sqlalchemy.orm import Session
 
 import models
@@ -141,6 +141,26 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
         wk = _isoweek(d)
         week_food_calories.setdefault(wk, []).extend(cals)
 
+    # Workout days: keyed by date, value is set of workout types logged that day
+    workout_days_by_date: dict[str, set[str]] = {}
+    for entry in db.query(models.WorkoutEntry).all():
+        d_str = str(entry.logged_at)[:10]
+        if d_str >= start_str:
+            workout_days_by_date.setdefault(d_str, set()).add(entry.type)
+
+    CARDIO_TYPES = {"run", "cycle", "row", "swim", "sport"}
+
+    week_workout_days: dict[str, int] = {}
+    week_cardio_days:  dict[str, int] = {}
+    week_strength_days: dict[str, int] = {}
+    for d, types in workout_days_by_date.items():
+        wk = _isoweek(d)
+        week_workout_days[wk]  = week_workout_days.get(wk, 0) + 1
+        if types & CARDIO_TYPES:
+            week_cardio_days[wk]   = week_cardio_days.get(wk, 0) + 1
+        if "strength" in types:
+            week_strength_days[wk] = week_strength_days.get(wk, 0) + 1
+
     def build_obs(outcome_metric: str) -> list[dict]:
         weeks = sorted(wk for wk, avgs in week_avgs.items() if outcome_metric in avgs)
         rows = []
@@ -170,8 +190,11 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
                     if week_avgs[curr_wk].get("sleep_minutes") is not None else None
                 ),
                 "avg_spo2":         week_avgs[curr_wk].get("spo2"),
-                "avg_food_quality": sum(fq) / len(fq) if fq else None,
-                "avg_calories":     sum(fc) / len(fc) if (fc := week_food_calories.get(curr_wk)) else None,
+                "avg_food_quality":  sum(fq) / len(fq) if fq else None,
+                "avg_calories":      sum(fc) / len(fc) if (fc := week_food_calories.get(curr_wk)) else None,
+                "workout_days":      week_workout_days.get(curr_wk) or None,
+                "cardio_days":       week_cardio_days.get(curr_wk)  or None,
+                "strength_days":     week_strength_days.get(curr_wk) or None,
             })
         return rows
 
@@ -190,6 +213,9 @@ FACTORS = [
     ("avg_calories",     "Daily calories"),
     ("habit_rate",       "Habit completion rate"),
     ("cards_done",       "Tasks completed"),
+    ("workout_days",     "Workout days"),
+    ("cardio_days",      "Cardio days"),
+    ("strength_days",    "Strength days"),
 ]
 
 
@@ -248,12 +274,22 @@ def _compute_segments(weight_obs: list[dict], fat_obs: list[dict]) -> list[dict]
         mid = len(pairs) // 2
         lo, hi = pairs[:mid], pairs[mid:]
         threshold = (pairs[mid - 1][0] + pairs[mid][0]) / 2
+        hi_deltas = [y for _, y, _ in hi]
+        lo_deltas = [y for _, y, _ in lo]
+        p_value = None
+        try:
+            if len(hi_deltas) >= 2 and len(lo_deltas) >= 2:
+                result = ttest_ind(hi_deltas, lo_deltas, equal_var=False)
+                p_value = round(float(result.pvalue), 4)
+        except Exception:
+            pass
         return {
             "factor":       flabel,
             "factor_key":   fkey,
             "outcome":      outcome_label,
             "outcome_unit": outcome_unit,
             "threshold":    round(threshold, 2),
+            "p":            p_value,
             "high": {
                 "n":           len(hi),
                 "mean_factor": round(sum(x for x, _, _ in hi) / len(hi), 1),

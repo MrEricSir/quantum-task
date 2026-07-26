@@ -15,7 +15,7 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes
 
 router = APIRouter()
 
@@ -124,9 +124,14 @@ def create_food_entry(payload: dict, request: Request, db: Session = Depends(get
     if not raw:
         raise HTTPException(status_code=422, detail="raw_input is required")
 
-    # Allow caller to override consumed_at (e.g. quick add knows the local time).
+    # Default to the client's local time (derived from the UTC offset header),
+    # stored as a naive datetime so date-range filtering works correctly.
     # Parse it first so we can pass the local hour to the LLM for meal classification.
-    consumed_at = datetime.now(timezone.utc)
+    offset_mins = utc_offset_minutes(request)
+    local_now = datetime.now(timezone.utc) - timedelta(minutes=offset_mins)
+    consumed_at = local_now.replace(tzinfo=None)
+
+    # Allow explicit override (e.g. health page date picker for logging to a past day).
     if payload.get("consumed_at"):
         try:
             consumed_at = datetime.fromisoformat(payload["consumed_at"])
@@ -165,6 +170,29 @@ def get_food_entries(request: Request, date_str: str = None, db: Session = Depen
         .all()
     )
     return [_entry_dict(e) for e in result]
+
+
+@router.get("/api/food/quality-trend")
+def get_food_quality_trend(days: int = 30, db: Session = Depends(get_db)):
+    """Return daily average food quality score for the last N days."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    entries = (
+        db.query(models.FoodEntry)
+        .filter(
+            models.FoodEntry.quality.isnot(None),
+            models.FoodEntry.consumed_at >= cutoff,
+        )
+        .order_by(models.FoodEntry.consumed_at)
+        .all()
+    )
+    by_date: dict[str, list[int]] = {}
+    for e in entries:
+        d = str(e.consumed_at)[:10]
+        by_date.setdefault(d, []).append(e.quality)
+    return [
+        {"date": d, "value": round(sum(qs) / len(qs), 2)}
+        for d, qs in sorted(by_date.items())
+    ]
 
 
 @router.delete("/api/food/{entry_id}")

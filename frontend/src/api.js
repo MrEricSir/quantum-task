@@ -4,8 +4,14 @@ const TAGS_BASE = '/api/tags'
 // Send the browser's local date on every request so the server uses the
 // user's clock for section assignment, habit resets, and event filtering
 // rather than the server clock (which is UTC on Cloud Run).
-function localDate() {
+export function localDate() {
   const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// Returns YYYY-MM-DD for a Date object, using local time (not UTC).
+export function localDateOf(d) {
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
@@ -512,6 +518,43 @@ export async function fetchFoodEntries(date) {
 export async function deleteFoodEntry(id) {
   const res = await apiFetch(`/api/food/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete food entry')
+}
+
+export async function fetchFoodQualityTrend(days = 30) {
+  const res = await apiFetch(`/api/food/quality-trend?days=${days}`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function createWorkoutEntry(data) {
+  const res = await apiFetch('/api/workouts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to log workout')
+  return res.json()
+}
+
+export async function fetchWorkoutEntries(date) {
+  const url = date ? `/api/workouts?date_str=${date}` : '/api/workouts'
+  const res = await apiFetch(url)
+  if (!res.ok) throw new Error('Failed to fetch workouts')
+  return res.json()
+}
+
+export async function fetchWorkoutChart(start, end) {
+  const params = new URLSearchParams()
+  if (start) params.set('start', start)
+  if (end)   params.set('end', end)
+  const res = await apiFetch(`/api/workouts/chart?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch workout chart')
+  return res.json()
+}
+
+export async function deleteWorkoutEntry(id) {
+  const res = await apiFetch(`/api/workouts/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete workout entry')
 }
 
 export async function fetchMoodToday() {

@@ -21,6 +21,7 @@ import capabilities.food as _food
 import capabilities.habit_check as _habit_check
 import capabilities.mood as _mood
 import capabilities.task_complete as _task_complete
+import capabilities.workout as _workout
 
 # ── Shared prompt instructions ────────────────────────────────────────────────
 # Examples are intentionally excluded here — each plugin supplies its own.
@@ -43,7 +44,7 @@ Reference dates:
 {{tags_section}}
 
 Fields:
-  type          — "task" | "habit" | "goal" | "food" | "habit_check" | "task_complete" | "assist"
+  type          — "task" | "habit" | "goal" | "food" | "workout" | "habit_check" | "task_complete" | "assist"
                   task  = a discrete, completable item with a clear done state
                           (e.g. "send Bob the report", "dentist appointment", "buy groceries")
                   habit = something you do repeatedly on an ongoing, indefinite basis with
@@ -54,6 +55,7 @@ Fields:
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
                           Always set withings_metric and withings_goal when type="goal"
                   {_food.PARSE_DESCRIPTION}
+                  {_workout.PARSE_DESCRIPTION}
                   {_habit_check.PARSE_DESCRIPTION}
                   {_task_complete.PARSE_DESCRIPTION}
                   assist = a conversational or planning request — NOT a specific item to capture
@@ -346,7 +348,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit", "goal", "assist", "food", "habit_check", "task_complete", "mood"}
+    _VALID_TYPES = {"task", "habit", "goal", "assist", "food", "workout", "habit_check", "task_complete", "mood"}
 
     def normalize_raw(self, raw: dict) -> dict:
         """
@@ -455,16 +457,32 @@ class BaseModelPlugin:
         re.I,
     )
 
+    # Past-tense exercise verbs — deterministically force type=workout when matched.
+    # Only covers unambiguously completed-activity forms, not future/habitual ("run daily").
+    _WORKOUT_PAST_RE = re.compile(
+        r'\b(?:rowed|ran|cycled|biked|swam|swum|lifted|benched|squatted|deadlifted|'
+        r'did\s+(?:yoga|pilates|stretching|weights)|worked\s+out|played\s+\w+|'
+        r'went\s+for\s+a\s+(?:run|ride|swim|bike|jog)|jogged|hiked|sprinted)\b',
+        re.I,
+    )
+
     def post_process(self, parsed: Any, *, text: str = "") -> Any:
         """
         Called on the validated ParsedCard after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
-        # Assist and mood items need no further processing.
-        if parsed.type in ("assist", "mood"):
+        # These types need no further post-processing.
+        if parsed.type in ("assist", "mood", "food", "workout"):
             return parsed
 
         lowered = text.strip().lower()
+
+        # Deterministically correct workout misclassification.
+        # LLMs sometimes return "habit" for past-tense exercise ("rowed 2 mi").
+        if self._WORKOUT_PAST_RE.search(lowered):
+            parsed.type = "workout"
+            parsed.recurrence_rule = None
+            return parsed
 
         # Enforce section from explicit temporal phrases in the input text.
         # This catches cases where the LLM correctly understands the phrase but

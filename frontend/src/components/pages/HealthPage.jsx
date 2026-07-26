@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime, fetchMoodToday, logMood } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import HabitsPage from './HabitsPage'
 import './HealthPage.css'
@@ -323,15 +323,105 @@ function fmtDelta(val, unit, isImperial = false) {
   return `${weekly >= 0 ? '+' : ''}${display} ${displayUnit}`
 }
 
+function segmentSignal(p, n) {
+  const totalN = (n?.high?.n ?? 0) + (n?.low?.n ?? 0)
+  if (p != null && p < 0.05 && totalN >= 6) return { label: 'strong signal', cls: 'seg-signal--strong' }
+  if (totalN < 6) return { label: 'limited data', cls: 'seg-signal--weak' }
+  if (p != null && p < 0.15) return { label: 'weak signal', cls: 'seg-signal--borderline' }
+  return { label: 'no clear signal', cls: 'seg-signal--weak' }
+}
+
+function formatThreshold(factor, threshold) {
+  if (factor === 'Daily steps') return `${Math.round(threshold).toLocaleString()} steps`
+  if (factor === 'Resting heart rate') return `${Math.round(threshold)} bpm`
+  if (factor === 'Habit completion rate') return `${Math.round(threshold * 100)}%`
+  if (factor === 'Tasks completed') return `${Math.round(threshold)} tasks`
+  if (factor === 'Workout days' || factor === 'Cardio days' || factor === 'Strength days')
+    return `${Math.round(threshold)} days`
+  return threshold
+}
+
+// ── Scatter plot (inline, shown when a correlation bar is expanded) ───────────
+
+function ScatterPlot({ scatter, factor, outcome }) {
+  const [tooltip, setTooltip] = useState(null)
+  if (!scatter?.length) return null
+
+  const xs = scatter.map(d => d.x)
+  const ys = scatter.map(d => d.y)
+  const minX = Math.min(...xs), maxX = Math.max(...xs)
+  const minY = Math.min(...ys), maxY = Math.max(...ys)
+  const padX = (maxX - minX) * 0.1 || 1
+  const padY = (maxY - minY) * 0.1 || 0.001
+  const W = 320, H = 140, PL = 44, PR = 8, PT = 8, PB = 28
+  const IW = W - PL - PR, IH = H - PT - PB
+
+  const sx = v => PL + ((v - (minX - padX)) / ((maxX + padX) - (minX - padX))) * IW
+  const sy = v => PT + IH - ((v - (minY - padY)) / ((maxY + padY) - (minY - padY))) * IH
+
+  // Regression line
+  const n = scatter.length
+  const meanX = xs.reduce((a, b) => a + b, 0) / n
+  const meanY = ys.reduce((a, b) => a + b, 0) / n
+  const num = xs.reduce((s, x, i) => s + (x - meanX) * (ys[i] - meanY), 0)
+  const den = xs.reduce((s, x) => s + (x - meanX) ** 2, 0)
+  const slope = den !== 0 ? num / den : 0
+  const intercept = meanY - slope * meanX
+  const x1r = minX - padX, x2r = maxX + padX
+  const y1r = slope * x1r + intercept, y2r = slope * x2r + intercept
+
+  const fmtY = v => {
+    const abs = Math.abs(v * 7)
+    return `${v * 7 >= 0 ? '+' : ''}${abs < 0.01 ? (v * 7).toFixed(3) : (v * 7).toFixed(2)}/wk`
+  }
+  const fmtX = v => v > 1000 ? `${(v / 1000).toFixed(1)}k` : v % 1 === 0 ? String(v) : v.toFixed(1)
+
+  return (
+    <div className="corr-scatter-wrap">
+      <svg viewBox={`0 0 ${W} ${H}`} className="corr-scatter-svg">
+        {/* zero line */}
+        {minY < 0 && maxY > 0 && (
+          <line x1={PL} x2={PL + IW} y1={sy(0)} y2={sy(0)} stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
+        )}
+        {/* regression line */}
+        <line x1={sx(x1r)} y1={sy(y1r)} x2={sx(x2r)} y2={sy(y2r)} className="scatter-regression" />
+        {/* dots */}
+        {scatter.map((d, i) => (
+          <circle
+            key={i} cx={sx(d.x)} cy={sy(d.y)} r={4}
+            className="scatter-dot"
+            onMouseEnter={() => setTooltip({ x: sx(d.x), y: sy(d.y), label: `${d.date}: ${fmtX(d.x)} → ${fmtY(d.y)}` })}
+            onMouseLeave={() => setTooltip(null)}
+          />
+        ))}
+        {/* x axis labels */}
+        {[minX, maxX].map((v, i) => (
+          <text key={i} x={i === 0 ? PL : PL + IW} y={H - 4} className="chart-axis-label" textAnchor={i === 0 ? 'start' : 'end'}>{fmtX(v)}</text>
+        ))}
+        {/* y axis labels */}
+        {[minY, maxY].map((v, i) => (
+          <text key={i} x={PL - 4} y={i === 0 ? PT + IH : PT + 8} className="chart-axis-label" textAnchor="end">{fmtY(v)}</text>
+        ))}
+        <SvgTooltip tooltip={tooltip} />
+      </svg>
+      <div className="scatter-axis-labels">
+        <span>{factor}</span>
+        <span>{outcome}</span>
+      </div>
+    </div>
+  )
+}
+
 function SegmentCard({ segment, isImperial }) {
-  const { factor, outcome, outcome_unit, threshold, high, low } = segment
-  // For weight/fat loss, a more-negative delta is better
+  const { factor, outcome, outcome_unit, threshold, high, low, p } = segment
   const highIsBetter = high.mean_delta < low.mean_delta
+  const signal = segmentSignal(p, segment)
   return (
     <div className="seg-card">
       <div className="seg-header">
         <span className="seg-factor">{factor}</span>
         <span className="seg-outcome">→ {outcome}</span>
+        <span className={`seg-signal ${signal.cls}`}>{signal.label}</span>
       </div>
       <div className="seg-rows">
         <div className={`seg-row ${highIsBetter ? 'seg-row--better' : 'seg-row--worse'}`}>
@@ -349,22 +439,15 @@ function SegmentCard({ segment, isImperial }) {
   )
 }
 
-function formatThreshold(factor, threshold) {
-  if (factor === 'Daily steps') return `${Math.round(threshold).toLocaleString()} steps`
-  if (factor === 'Resting heart rate') return `${Math.round(threshold)} bpm`
-  if (factor === 'Habit completion rate') return `${Math.round(threshold * 100)}%`
-  if (factor === 'Tasks completed') return `${Math.round(threshold)} tasks`
-  return threshold
-}
-
-function CorrelationBar({ r, p, factor, outcome, n }) {
+function CorrelationBar({ r, p, factor, outcome, n, scatter }) {
+  const [expanded, setExpanded] = useState(false)
   const abs = Math.abs(r)
   const positive = r >= 0
   const sig = p != null && p < 0.05
   const borderline = p != null && p >= 0.05 && p < 0.10
   return (
     <div className="corr-row">
-      <div className="corr-labels">
+      <div className="corr-labels" onClick={() => scatter?.length && setExpanded(v => !v)} style={scatter?.length ? { cursor: 'pointer' } : {}}>
         <span className="corr-factor">{factor}</span>
         <span className="corr-arrow">→</span>
         <span className="corr-outcome">{outcome}</span>
@@ -373,6 +456,7 @@ function CorrelationBar({ r, p, factor, outcome, n }) {
             p={p < 0.001 ? '<0.001' : p.toFixed(3)}{sig ? ' ✓' : ''}
           </span>
         )}
+        {scatter?.length > 0 && <span className="corr-expand">{expanded ? '▲' : '▼'}</span>}
       </div>
       <div className="corr-bar-wrap">
         <div className="corr-bar-track">
@@ -386,13 +470,31 @@ function CorrelationBar({ r, p, factor, outcome, n }) {
         </span>
         <span className="corr-n">n={n}</span>
       </div>
+      {expanded && scatter?.length > 0 && (
+        <ScatterPlot scatter={scatter} factor={factor} outcome={outcome} />
+      )}
     </div>
   )
 }
 
+// ── ISO week helpers (client-side) ────────────────────────────────────────────
+
+function isoWeekDates(weekStr) {
+  const m = weekStr?.match(/^(\d{4})-W(\d{2})$/)
+  if (!m) return []
+  const y = parseInt(m[1]), w = parseInt(m[2])
+  const jan4 = new Date(y, 0, 4)
+  const isoDay = (jan4.getDay() + 6) % 7
+  const weekStart = new Date(jan4.getTime() - isoDay * 86400000 + (w - 1) * 7 * 86400000)
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart.getTime() + i * 86400000)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+}
+
 // ── Experiment card ───────────────────────────────────────────────────────────
 
-function ExperimentCard({ onDismiss }) {
+function ExperimentCard({ onDismiss, habitCompletions }) {
   const [exp, setExp] = useState(null)
   const [loading, setLoading] = useState(true)
   const [dismissing, setDismissing] = useState(false)
@@ -418,20 +520,17 @@ function ExperimentCard({ onDismiss }) {
   if (loading) return null
   if (!exp) return null
 
-  // Calculate days remaining in the experiment week
-  const weekMatch = exp.week?.match(/^(\d{4})-W(\d{2})$/)
-  let daysLeft = null
-  if (weekMatch) {
-    const y = parseInt(weekMatch[1]), w = parseInt(weekMatch[2])
-    const jan4 = new Date(y, 0, 4)
-    // ISO weeks start Monday; getDay() is 0=Sun so shift: Mon=0 .. Sun=6
-    const isoDay = (jan4.getDay() + 6) % 7
-    const weekOneMonday = new Date(jan4.getTime() - isoDay * 86400000)
-    const weekStart = new Date(weekOneMonday.getTime() + (w - 1) * 7 * 86400000)
-    const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    daysLeft = Math.max(0, Math.ceil((weekEnd - today) / 86400000))
-  }
+  const weekDates = isoWeekDates(exp.week)
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const daysLeft = weekDates.length
+    ? Math.max(0, Math.ceil((new Date(weekDates[6] + 'T23:59:59').getTime() - today.getTime()) / 86400000))
+    : null
+
+  // Mid-week progress: which days has the experiment habit been completed?
+  const completedSet = new Set(
+    exp.habit_id ? (habitCompletions?.[String(exp.habit_id)] ?? []) : []
+  )
+  const showProgress = exp.habit_id && weekDates.length === 7
 
   return (
     <div className="experiment-card">
@@ -448,7 +547,25 @@ function ExperimentCard({ onDismiss }) {
           {exp.hypothesis}
         </p>
       )}
-      {exp.needs_habit && exp.habit_id && !exp.withings_metric && (
+      {showProgress && (
+        <div className="experiment-progress">
+          {weekDates.map((d, i) => {
+            const done = completedSet.has(d)
+            const isPast = new Date(d + 'T23:59:59') < today
+            const isToday = d === localDate()
+            return (
+              <div
+                key={d}
+                className={`exp-day${done ? ' exp-day--done' : isPast ? ' exp-day--missed' : isToday ? ' exp-day--today' : ' exp-day--future'}`}
+                title={d}
+              >
+                {done ? '✓' : ['M','T','W','T','F','S','S'][i]}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {exp.needs_habit && exp.habit_id && !exp.withings_metric && !showProgress && (
         <p className="experiment-habit-note">
           A tracking habit has been created for you — check it off each day you complete the experiment.
         </p>
@@ -468,6 +585,19 @@ function ExperimentCard({ onDismiss }) {
 
 // ── Experiment history ────────────────────────────────────────────────────────
 
+function experimentVerdict(exp) {
+  const wDiff = exp.weight_delta != null && exp.weight_baseline != null
+    ? exp.weight_delta - exp.weight_baseline : null
+  const fDiff = exp.fat_delta != null && exp.fat_baseline != null
+    ? exp.fat_delta - exp.fat_baseline : null
+  const diffs = [wDiff, fDiff].filter(v => v != null)
+  if (!diffs.length) return null
+  const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length
+  if (avg < -0.002) return { label: 'Better than usual', cls: 'verdict--good' }
+  if (avg > 0.002)  return { label: 'Worse than usual',  cls: 'verdict--bad'  }
+  return { label: 'No clear effect', cls: 'verdict--neutral' }
+}
+
 function ExperimentsHistory({ isImperial }) {
   const [history, setHistory] = useState(null)
   const [open, setOpen] = useState(false)
@@ -476,7 +606,6 @@ function ExperimentsHistory({ isImperial }) {
     fetchHealthExperiments().then(setHistory).catch(() => setHistory([]))
   }, [])
 
-  // Only show past (dismissed) experiments
   const past = (history ?? []).filter(e => e.status === 'dismissed')
   if (!past.length) return null
 
@@ -488,12 +617,12 @@ function ExperimentsHistory({ isImperial }) {
       {open && (
         <div className="exp-history-list">
           {past.map(exp => {
-            const hasDelta = exp.weight_delta != null || exp.fat_delta != null
-            const weekLabel = exp.week
+            const verdict = experimentVerdict(exp)
             return (
               <div key={exp.id} className="exp-history-row">
                 <div className="exp-history-header">
-                  <span className="exp-history-week">{weekLabel}</span>
+                  <span className="exp-history-week">{exp.week}</span>
+                  {verdict && <span className={`exp-verdict ${verdict.cls}`}>{verdict.label}</span>}
                   {exp.habit_completion_rate != null && (
                     <span className="exp-history-rate">
                       {Math.round(exp.habit_completion_rate * 100)}% completion
@@ -501,30 +630,6 @@ function ExperimentsHistory({ isImperial }) {
                   )}
                 </div>
                 <p className="exp-history-action">{exp.action ?? exp.text}</p>
-                {hasDelta && (
-                  <div className="exp-history-outcome">
-                    {exp.weight_delta != null && (
-                      <span className="exp-history-metric">
-                        Weight: <strong>{fmtDelta(exp.weight_delta, 'kg/day', isImperial)}</strong>
-                        {exp.weight_baseline != null && (
-                          <span className="exp-history-baseline">
-                            {' '}(baseline {fmtDelta(exp.weight_baseline, 'kg/day', isImperial)})
-                          </span>
-                        )}
-                      </span>
-                    )}
-                    {exp.fat_delta != null && (
-                      <span className="exp-history-metric">
-                        Body fat: <strong>{fmtDelta(exp.fat_delta, '%/day', false)}</strong>
-                        {exp.fat_baseline != null && (
-                          <span className="exp-history-baseline">
-                            {' '}(baseline {fmtDelta(exp.fat_baseline, '%/day', false)})
-                          </span>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
             )
           })}
@@ -536,11 +641,11 @@ function ExperimentsHistory({ isImperial }) {
 
 // ── Analysis section (correlations + experiment) ──────────────────────────────
 
-function AnalysisSection({ isImperial }) {
+function AnalysisSection({ isImperial, habitCompletions }) {
   const [corrData, setCorrData] = useState(null)
   const [corrLoading, setCorrLoading] = useState(true)
   const [showCorr, setShowCorr] = useState(false)
-  const [expKey, setExpKey] = useState(0)  // bump to reload experiment after dismiss
+  const [expKey, setExpKey] = useState(0)
 
   useEffect(() => {
     fetchHealthCorrelations()
@@ -557,13 +662,11 @@ function AnalysisSection({ isImperial }) {
         <h3 className="health-section-title">Analysis</h3>
       </div>
 
-      {/* Experiment subsection */}
       <div className="analysis-subsection">
-        <ExperimentCard key={expKey} onDismiss={() => setExpKey(k => k + 1)} />
+        <ExperimentCard key={expKey} onDismiss={() => setExpKey(k => k + 1)} habitCompletions={habitCompletions} />
         <ExperimentsHistory key={expKey} isImperial={isImperial} />
       </div>
 
-      {/* Correlations subsection */}
       {hasCorr && (() => {
         const { correlations = [], segments = [], summary, weight_n, fat_n } = corrData
         const n = Math.max(weight_n, fat_n)
@@ -590,10 +693,10 @@ function AnalysisSection({ isImperial }) {
                 {showCorr && (
                   <div className="corr-list">
                     {correlations.map((c, i) => (
-                      <CorrelationBar key={i} r={c.r} p={c.p} factor={c.factor} outcome={c.outcome} n={c.n} />
+                      <CorrelationBar key={i} r={c.r} p={c.p} factor={c.factor} outcome={c.outcome} n={c.n} scatter={c.scatter} />
                     ))}
                     <p className="corr-note">
-                      Negative r = factor correlates with improvement · correlation ≠ causation
+                      Negative r = factor correlates with improvement · correlation ≠ causation · click a row to see scatter
                     </p>
                   </div>
                 )}
@@ -603,6 +706,173 @@ function AnalysisSection({ isImperial }) {
         )
       })()}
     </section>
+  )
+}
+
+// ── Workout log ───────────────────────────────────────────────────────────────
+
+const WORKOUT_COLORS = {
+  run:      'var(--color-today)',
+  cycle:    '#06b6d4',
+  row:      '#8b5cf6',
+  swim:     '#22d3ee',
+  strength: '#f97316',
+  yoga:     '#a78bfa',
+  sport:    '#22c55e',
+  other:    '#6b7280',
+}
+
+function WorkoutLog({ range, revision = 0 }) {
+  const [entries, setEntries] = useState([])
+  const [chartData, setChartData] = useState([])
+  const [input, setInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(() => localDate())
+  const inputRef = useRef(null)
+
+  const load = (d) => fetchWorkoutEntries(d).then(setEntries).catch(() => {})
+
+  // Load chart data: single request for the full date range
+  const loadChart = () => {
+    const today = new Date()
+    const end = localDateOf(today)
+    const startD = new Date(today)
+    startD.setDate(today.getDate() - (range - 1))
+    const start = localDateOf(startD)
+    fetchWorkoutChart(start, end).then(setChartData).catch(() => {})
+  }
+
+  useEffect(() => { load(date) }, [date, revision])   // revision triggers reload after capture modal saves
+  useEffect(() => { loadChart() }, [range, revision]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAdd = async () => {
+    if (!input.trim() || saving) return
+    setSaving(true)
+    try {
+      await createWorkoutEntry({ raw_input: input.trim(), logged_at: localDateTime() })
+      setInput('')
+      await load(date)
+      loadChart()
+    } catch {
+      // keep input
+    } finally {
+      setSaving(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  const handleDelete = async (id) => {
+    await deleteWorkoutEntry(id).catch(() => {})
+    setEntries(prev => prev.filter(e => e.id !== id))
+    loadChart()
+  }
+
+  // Chart: stacked presence dots — one column per day, colored dots per type
+  const labelIndices = labelIndicesFor(chartData.length)
+
+  return (
+    <section className="health-section">
+      <div className="health-section-header">
+        <h3 className="health-section-title">Workouts</h3>
+        <input
+          type="date"
+          className="food-date-picker"
+          value={date}
+          onChange={e => setDate(e.target.value)}
+        />
+      </div>
+
+      {/* Presence chart */}
+      {chartData.some(d => d.types.length > 0) && (
+        <div className="workout-chart">
+          {chartData.map((day, i) => (
+            <div key={day.date} className="workout-chart-col">
+              <div className="workout-chart-dots">
+                {day.types.length > 0
+                  ? day.types.map(t => (
+                    <span
+                      key={t}
+                      className="workout-chart-dot"
+                      style={{ background: WORKOUT_COLORS[t] ?? WORKOUT_COLORS.other }}
+                      title={`${day.date}: ${t}`}
+                    />
+                  ))
+                  : <span className="workout-chart-dot workout-chart-dot--empty" />
+                }
+              </div>
+              {labelIndices.has(i) && (
+                <span className="workout-chart-label">
+                  {new Date(day.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Legend */}
+      {chartData.some(d => d.types.length > 0) && (() => {
+        const seen = [...new Set(chartData.flatMap(d => d.types))]
+        return (
+          <ChartLegend items={seen.map(t => ({ color: WORKOUT_COLORS[t] ?? WORKOUT_COLORS.other, label: t }))} />
+        )
+      })()}
+
+      <div className="food-input-row">
+        <input
+          ref={inputRef}
+          type="text"
+          className="workout-input"
+          placeholder="rowed 5000m · bench pressed 185 lbs · ran 3 miles · yoga 45 min…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          disabled={saving}
+        />
+        <button className="food-add-btn" onClick={handleAdd} disabled={!input.trim() || saving}>
+          {saving ? '…' : 'Log'}
+        </button>
+      </div>
+
+      {entries.length === 0 && (
+        <p className="food-empty">No workouts logged for this day.</p>
+      )}
+
+      {entries.map(e => (
+        <div key={e.id} className="food-entry">
+          <span className="workout-type-dot" style={{ background: WORKOUT_COLORS[e.type] ?? WORKOUT_COLORS.other }} />
+          <span className="food-entry-name">{e.type}{e.value != null ? ` · ${e.value}${e.unit ? ' ' + e.unit : ''}` : ''}</span>
+          {e.notes && <span className="food-entry-notes">{e.notes}</span>}
+          <button className="food-entry-delete" onClick={() => handleDelete(e.id)} aria-label="Remove">✕</button>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+// ── Food quality trend chart ──────────────────────────────────────────────────
+
+function FoodQualityTrend({ range }) {
+  const [data, setData] = useState([])
+
+  useEffect(() => {
+    fetchFoodQualityTrend(range).then(setData).catch(() => {})
+  }, [range])
+
+  if (data.length < 3) return null
+
+  return (
+    <div style={{ marginTop: '12px' }}>
+      <p className="health-chart-sublabel">Diet quality trend (avg score/day)</p>
+      <LineChart
+        data={data}
+        goal={null}
+        completionDates={[]}
+        unit="/10"
+        emptyMsg=""
+        ariaLabel="Food quality trend"
+      />
+    </div>
   )
 }
 
@@ -618,7 +888,7 @@ function qualityColor(q) {
   return '#ef4444'
 }
 
-function FoodLog() {
+function FoodLog({ range = 30, revision = 0 }) {
   const [entries, setEntries] = useState([])
   const [input, setInput] = useState('')
   const [saving, setSaving] = useState(false)
@@ -630,7 +900,7 @@ function FoodLog() {
 
   const load = (d) => fetchFoodEntries(d).then(setEntries).catch(() => {})
 
-  useEffect(() => { load(date) }, [date])
+  useEffect(() => { load(date) }, [date, revision]) // revision triggers reload after capture modal saves
 
   const handleAdd = async () => {
     if (!input.trim() || saving) return
@@ -738,13 +1008,14 @@ function FoodLog() {
           })}
         </div>
       ))}
+      <FoodQualityTrend range={range} />
     </section>
   )
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function HealthPage({ habits = [], archivedHabits = [], onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false }) {
+export default function HealthPage({ habits = [], archivedHabits = [], onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0 }) {
   const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
   const [moodToday, setMoodToday] = useState(null)
@@ -852,8 +1123,9 @@ export default function HealthPage({ habits = [], archivedHabits = [], onToggleH
         </div>
       </div>
 
-      {/* Food log — always visible, independent of Withings */}
-      <FoodLog />
+      {/* Food and workout logs — always visible, independent of Withings */}
+      <FoodLog range={range} revision={healthLogRevision} />
+      <WorkoutLog range={range} revision={healthLogRevision} />
 
       {!showCharts && (
         <div className="health-not-connected">
@@ -1103,7 +1375,7 @@ export default function HealthPage({ habits = [], archivedHabits = [], onToggleH
         )}
 
         {/* Analysis */}
-        <AnalysisSection isImperial={isImperial} />
+        <AnalysisSection isImperial={isImperial} habitCompletions={habitCompletions} />
 
       </>)}
     </div>

@@ -221,6 +221,22 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '"description":"Trader Joe\'s\\nmuffin mix\\nyogurt\\nsalad",'
             '"section":"later","scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}}]}}',
         ),
+        # Single past-tense workout → type=workout
+        (
+            "rowed 5 mi",
+            '{{"items":[{{"type":"workout","title":"Rowed 5 mi","description":null,'
+            '"section":"later","scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}}]}}',
+        ),
+        # Workout + food together → separate items
+        (
+            "ran 3 miles, had a protein shake",
+            '{{"items":['
+            '{{"type":"workout","title":"Ran 3 miles","description":null,"section":"later",'
+            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}},'
+            '{{"type":"food","title":"Protein shake","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}}'
+            ']}}',
+        ),
     ]
 
     def post_process(self, parsed, *, text: str = ""):

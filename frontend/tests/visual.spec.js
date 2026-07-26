@@ -1266,6 +1266,7 @@ test.describe('health page', () => {
     await page.route('**/api/health/experiment', r => r.fulfill({ json: null }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [] }))
     await page.route('**/api/food**', r => r.fulfill({ json: [] }))
+    await page.route('**/api/workouts**', r => r.fulfill({ json: [] }))
     await page.goto('/health')
     await waitForApp(page)
   })

@@ -108,8 +108,10 @@ cd frontend && npm run dev
 - Withings goal detection, `_auto_check_habits`, health metric regex
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
-- Plugin post-processing: section/type overrides, tag suggestions
+- Plugin post-processing: section/type overrides, tag suggestions, workout type detection
 - Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering
+- Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
+- Food quality trend: daily averages, null-quality exclusion, date range filtering
 
 **Quick Add parse integration tests** (`test_parse.py`) — requires Ollama:
 - Section assignment, scheduled datetime, title preservation, tag suggestions
@@ -139,12 +141,12 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Recurring tasks auto-spawn the next occurrence on completion
 
 ### Capture (AI Quick Add)
-- Describe anything in plain English — the LLM classifies it as a **task**, **habit**, **food log**, **habit completion**, **task completion**, or **assist** request automatically
+- Describe anything in plain English — the LLM classifies it as a **task**, **habit**, **food log**, **workout log**, **habit completion**, **task completion**, or **assist** request automatically
 - Paste or type multiple items at once ("call sam at 3pm, buy milk and eggs, meditate daily") — each is split and parsed individually
 - Date and time phrases are resolved to real datetimes: "call dentist tomorrow at 9am", "project review next Friday", "standup at 9"
 - A confirm screen shows the detected type with a one-click override, then type-specific fields to review before saving
 - Multiple items show a bulk-confirm list; click any item to open its full edit form before saving
-- Deterministic post-processing catches common patterns: explicit recurrence → habit, "add a habit to X" → habit, natural past tense ("talked to a stranger", "went for a run") → habit completion
+- Deterministic post-processing catches common patterns: explicit recurrence → habit, "add a habit to X" → habit, natural past tense ("talked to a stranger", "went for a run") → habit completion, past-tense exercise verbs ("rowed 5000m", "bench pressed 185 lbs", "jogged 3 miles") → workout log
 - Tags are auto-suggested from your existing tags
 - **Assist mode**: conversational or planning requests ("help me plan my week") stream an AI response instead of creating a card
 
@@ -160,6 +162,10 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Set a numeric goal per metric; step habits auto-check when the daily goal is synced
 - Charts showing steps (bar) and body fat % (line) over the past 90 days
 - Habit completion overlay on each chart to see how habits track with progress
+- **Workout log**: log any workout in plain English ("rowed 5000m", "bench pressed 185 lbs"); entries appear on the day's log and on a 30/60/90-day type-presence chart
+- **Food quality trend**: daily average food quality score plotted over the selected range, averaged from individual food log ratings
+- **Health experiments**: set a hypothesis, start/end date, and metric; the app tracks experiment progress and evaluates outcomes
+- **Correlation scatter plots**: explore relationships between tracked metrics (e.g. steps vs. sleep, food quality vs. energy)
 
 ### Workshop
 - A freeform AI workspace for research, drafts, brainstorming, and planning
@@ -302,8 +308,11 @@ Receive your daily briefing as a Telegram message each morning, and send message
 |---|---|
 | `had a salad for lunch` | Logs a food entry |
 | `coffee this morning` | Logs with meal type detected |
-| `energy 4` | Logs today's energy level (1–5 scale) |
-| `feeling tired, 2/5` | Same — natural phrasing works |
+| `energy 4` | Logs today's energy level (1--5 scale) |
+| `feeling tired, 2/5` | Same -- natural phrasing works |
+| `rowed 5000m` | Logs a workout entry (type, value, and unit parsed automatically) |
+| `bench pressed 185 lbs` | Logs a strength workout |
+| `went for a 3 mile run` | Logs a run |
 
 #### Claude Code Bridge
 
@@ -466,6 +475,14 @@ In production (Cloud Run), set this to your deployed service URL.
 
 Compares parse quality and speed across all locally available Ollama models and writes `benchmark_report.md`.
 
+## Data notes
+
+### Workout and food log timestamps
+
+Workout and food log entries are stored as **naive local datetimes** (no timezone suffix). The backend derives the user's local time from the `X-UTC-Offset` request header that the frontend injects automatically via `apiFetch`. Date-range queries compare this stored local time against the requested date string directly.
+
+If you have existing workout or food entries that were logged before this convention was adopted (i.e., they were stored as UTC timestamps instead of local time), those entries may appear under the wrong date for users in UTC-offset timezones. There is no automatic migration -- to correct affected entries, update the `logged_at` / `consumed_at` column values directly in SQLite using the known UTC offset at the time of logging.
+
 ## Deploying to GCP
 
 See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitHub secrets, LLM provider options, and CI/CD details.
@@ -513,6 +530,7 @@ todo/
       bridge.py          # Claude Code bridge: job queue, agent script install endpoint
       discovery.py       # Public iCal discovery feeds + LLM ranking
       food.py            # Food/drink logging + nutritional assessment
+      workouts.py        # Workout log CRUD + batch chart endpoint
       insights.py        # Habit insights and health experiment suggestions
       correlations.py    # Health experiment tracking
       tags.py            # Tag CRUD
@@ -533,7 +551,8 @@ todo/
       test_daily_plan.py     # Daily plan time normalization helpers
       test_recurring.py      # Recurring card scheduling
       test_localtime.py      # Local date header handling
-      test_food.py           # Food entry parsing
+      test_food.py           # Food entry CRUD, date filtering, quality trend
+      test_workouts.py       # Workout log CRUD, timezone handling, chart endpoint
       test_telegram.py       # Telegram config, test, and daily-briefing endpoints
       test_bridge.py         # Claude Code bridge job queue and agent endpoints
       test_parse.py          # Quick Add parse integration tests (requires Ollama)

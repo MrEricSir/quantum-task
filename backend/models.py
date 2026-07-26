@@ -172,6 +172,20 @@ class HabitStreakDay(Base):
     streak   = Column(Integer, nullable=False)
 
 
+class WorkoutEntry(Base):
+    """One logged workout session."""
+    __tablename__ = "workout_entries"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    raw_input   = Column(String, nullable=False)   # original text from user
+    type        = Column(String, nullable=False)   # normalized: run|cycle|row|swim|strength|yoga|sport|other
+    value       = Column(Float,  nullable=True)    # e.g. 5000 (distance), 185 (weight), 45 (minutes)
+    unit        = Column(String, nullable=True)    # e.g. "m", "lbs", "min" — display only, not interpreted
+    notes       = Column(String, nullable=True)    # brief LLM note
+    logged_at   = Column(DateTime, nullable=False) # when the workout happened
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class FoodEntry(Base):
     """One logged food or drink item."""
     __tablename__ = "food_entries"

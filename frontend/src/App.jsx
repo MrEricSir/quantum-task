@@ -52,6 +52,7 @@ import {
   parseCard,
   checkAuth, logout,
   createFoodEntry,
+  createWorkoutEntry,
   logMood,
   refreshEngineeringItem,
 } from './api'
@@ -73,6 +74,7 @@ export default function App() {
   const [tags, setTags] = useState([])
   const [tagsLoading, setTagsLoading] = useState(true)
   const [briefingKey, setBriefingKey] = useState(0)
+  const [healthLogRevision, setHealthLogRevision] = useState(0)
   const invalidateBriefing = useCallback(() => setBriefingKey((k) => k + 1), [])
 
   const showUndo = useCallback((label, onUndo) => {
@@ -850,6 +852,7 @@ export default function App() {
             withingsConnected={withingsStatus?.connected ?? false}
             isImperial={isImperial}
             onToggleUnit={toggleUnit}
+            healthLogRevision={healthLogRevision}
           />
         ) : isWorkshopPage ? (
           <WorkshopPage
@@ -1031,7 +1034,8 @@ export default function App() {
           onSaveHabit={async (data) => { await handleAddHabit(data) }}
           onSaveGoals={handleSaveWithingsGoals}
           onSaveStepGoal={handleSaveStepGoal}
-          onSaveFood={createFoodEntry}
+          onSaveFood={async (data) => { const r = await createFoodEntry(data); setHealthLogRevision(v => v + 1); return r }}
+          onSaveWorkout={async (data) => { const r = await createWorkoutEntry(data); setHealthLogRevision(v => v + 1); return r }}
           onLogMood={logMood}
           onToggleHabit={handleToggleHabit}
           onCompleteTask={async (id) => {

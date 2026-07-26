@@ -19,7 +19,7 @@ function MicIcon() {
   )
 }
 
-const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', habit_check: 'Check Off', task_complete: 'Complete Task', mood: 'Energy Log' }
+const TYPE_LABELS = { task: 'Task', habit: 'Habit', goal: 'Health Goal', food: 'Food Log', workout: 'Workout', habit_check: 'Check Off', task_complete: 'Complete Task', mood: 'Energy Log' }
 const ENERGY_LEVELS = [
   { value: 1, emoji: '😴', label: 'Drained' },
   { value: 2, emoji: '😔', label: 'Low' },
@@ -91,6 +91,7 @@ export default function QuickAddModal({
   onSaveGoals,
   onSaveStepGoal,
   onSaveFood,
+  onSaveWorkout,
   onLogMood,
   onToggleHabit,
   onCompleteTask,
@@ -267,6 +268,8 @@ export default function QuickAddModal({
         await onSaveHabit({ name: title, tag_ids: [], withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
+      } else if (detectedType === 'workout') {
+        await onSaveWorkout({ raw_input: text, logged_at: localDateTime() })
       } else if (detectedType === 'mood' && onLogMood) {
         await onLogMood(moodEnergy, description.trim() || null)
       } else {
@@ -381,6 +384,8 @@ export default function QuickAddModal({
           await onSaveHabit({ name: item.title, tag_ids: [], withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
         } else if (item.type === 'food') {
           await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
+        } else if (item.type === 'workout') {
+          await onSaveWorkout({ raw_input: item.source_text || item.title || text, logged_at: localDateTime() })
         } else {
           const resolvedTags = await resolveNewTags(rawTags)
           await onSaveCard({
@@ -406,7 +411,7 @@ export default function QuickAddModal({
       ? !moodEnergy
       : detectedType === 'goal'
         ? (!withingsMetric || withingsGoal == null)
-        : detectedType === 'food'
+        : (detectedType === 'food' || detectedType === 'workout')
           ? !text.trim()
           : (detectedType === 'habit_check' || detectedType === 'task_complete')
             ? !matchedItem
@@ -689,10 +694,10 @@ export default function QuickAddModal({
           )}
 
           {/* Type tabs — only for creation types */}
-          {['task', 'habit', 'food'].includes(detectedType) && (
+          {['task', 'habit', 'food', 'workout'].includes(detectedType) && (
             <div className="quick-type-row">
               <div className="quick-type-tabs">
-                {['task', 'habit', 'food'].map((t) => (
+                {['task', 'habit', 'food', 'workout'].map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -768,6 +773,13 @@ export default function QuickAddModal({
             </div>
           )}
 
+          {detectedType === 'workout' && (
+            <div className="quick-food-preview">
+              <span className="quick-food-icon">🏃</span>
+              <span className="quick-food-text">{title || text}</span>
+            </div>
+          )}
+
           {(detectedType === 'habit_check' || detectedType === 'task_complete') && (() => {
             const manualHabits = habits.filter((h) => !h.archived && !h.withings_metric)
             const activeTasks = cards.filter((c) => !c.completed && !c.archived)
@@ -815,6 +827,7 @@ export default function QuickAddModal({
                 : detectedType === 'mood' ? 'Log Energy'
                 : detectedType === 'goal' ? 'Set Goal'
                 : detectedType === 'food' ? 'Log Food'
+                : detectedType === 'workout' ? 'Log Workout'
                 : (detectedType === 'habit_check' || detectedType === 'task_complete') ? 'Mark Done'
                 : `Add ${TYPE_LABELS[detectedType]}`}
             </button>
