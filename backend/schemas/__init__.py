@@ -23,7 +23,6 @@ from schemas.calendar import (
 )
 from schemas.briefing import BriefingRequest
 from schemas.jobs import (
-    JobSearchResult, JobSource, JobCreate, JobUpdate, Job,
     ThreadMessageRequest, ThreadContextRequest, ThreadOutputRequest,
     AssistRequest, GlobalAssistRequest, ContextFromRequest,
 )
@@ -75,7 +74,6 @@ __all__ = [
     # briefing
     "BriefingRequest",
     # jobs
-    "JobSearchResult", "JobSource", "JobCreate", "JobUpdate", "Job",
     "ThreadMessageRequest", "ThreadContextRequest", "ThreadOutputRequest",
     "AssistRequest", "GlobalAssistRequest", "ContextFromRequest",
     # withings

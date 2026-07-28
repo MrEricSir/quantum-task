@@ -715,57 +715,6 @@ test.describe('offline banner', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Edit modal — scheduled_at persistence
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Workshop page
-// ---------------------------------------------------------------------------
-test.describe('workshop page', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.route('**/api/jobs', r => {
-      if (r.request().method() === 'GET') return r.fulfill({ json: [] })
-      // POST → return a new job
-      return r.fulfill({ json: {
-        id: 1, title: null, prompt: '', input_sources: [],
-        last_output: null, output_card_id: null,
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      }})
-    })
-    await page.goto('/workshop')
-    await waitForApp(page)
-  })
-
-  test('Workshop is not in the primary sidebar nav', async ({ page }) => {
-    await expect(page.locator('.sidebar-item', { hasText: /^workshop$/i })).toHaveCount(0)
-  })
-
-  test('"New Job" button is visible', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /new job/i })).toBeVisible()
-  })
-
-  test('empty state shown when no jobs exist', async ({ page }) => {
-    await expect(page.getByText(/select a job or create a new one/i)).toBeVisible()
-  })
-
-  test('clicking "New Job" shows compose area with all input buttons', async ({ page }) => {
-    await page.route('**/api/jobs/1', r => r.fulfill({ json: {
-      id: 1, title: null, prompt: '', input_sources: [],
-      last_output: null, output_card_id: null,
-      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    }}))
-    await page.getByRole('button', { name: /new job/i }).click()
-    await expect(page.getByPlaceholder(/job title/i)).toBeVisible()
-    await expect(page.getByPlaceholder(/paste additional context/i)).toBeVisible()
-    await expect(page.locator('#ws-prompt')).toBeVisible()
-    await expect(page.getByRole('button', { name: /run/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /by tag/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /add card/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /search web/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /fetch url/i })).toBeVisible()
-  })
-})
-
-// ---------------------------------------------------------------------------
 // Assistant modal
 // ---------------------------------------------------------------------------
 const ASSIST_LIST_SSE =

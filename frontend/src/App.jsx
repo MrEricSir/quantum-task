@@ -27,7 +27,6 @@ import GithubSettings from './components/modals/GithubSettings'
 import TodayPage from './components/pages/TodayPage'
 import CalendarPage from './components/pages/CalendarPage'
 import EngineeringPage from './components/pages/EngineeringPage'
-import WorkshopPage from './components/pages/WorkshopPage'
 import HealthPage from './components/pages/HealthPage'
 import LoginPage from './components/pages/LoginPage'
 import WithingsSettings from './components/modals/WithingsSettings'
@@ -183,10 +182,9 @@ export default function App() {
   const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
   const isEngineeringPage = location.pathname === '/engineering'
-  const isWorkshopPage    = location.pathname === '/workshop'
   // /habits is a legacy URL — treat it as the health page
   const isHealthPage      = location.pathname === '/health' || location.pathname === '/habits' || location.pathname.startsWith('/habits/')
-  const currentPage       = isTodayPage ? 'today' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isWorkshopPage ? 'workshop' : isHealthPage ? 'health' : 'today'
+  const currentPage       = isTodayPage ? 'today' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isHealthPage ? 'health' : 'today'
 
   const tagMatch =
     location.pathname.match(/^\/today\/tag\/(\d+)$/)    ||
@@ -229,7 +227,6 @@ export default function App() {
     { key: 'h', label: 'Health & Habits',   group: 'nav',    action: ()  => navigate('/health') },
     { key: 'c', label: 'Calendar',          group: 'nav',    action: ()  => navigate('/calendar') },
     { key: 'e', label: 'Engineering',       group: 'nav',    action: ()  => navigate('/engineering') },
-    { key: 'w', label: 'Workshop',          group: 'nav',    action: ()  => navigate('/workshop') },
   ]
 
   useEffect(() => {
@@ -579,7 +576,6 @@ export default function App() {
   const handlePageNavigate = (page, tagId) => {
     if (page === 'today')       return navigate(tagId ? `/today/tag/${tagId}` : '/today')
     if (page === 'engineering') return navigate('/engineering')
-    if (page === 'workshop')    return navigate('/workshop')
     if (page === 'health')      return navigate('/health')
     if (page === 'habits')      return navigate('/health')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
@@ -855,12 +851,6 @@ export default function App() {
             isImperial={isImperial}
             onToggleUnit={toggleUnit}
             healthLogRevision={healthLogRevision}
-          />
-        ) : isWorkshopPage ? (
-          <WorkshopPage
-            cards={cards.filter(t => !t.archived && !t.completed)}
-            tags={tags}
-            onAddCard={handleAddCard}
           />
         ) : isEngineeringPage ? (
           <EngineeringPage

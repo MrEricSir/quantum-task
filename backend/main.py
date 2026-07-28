@@ -27,7 +27,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, jobs, habits, calendar, cards, withings, search, insights, correlations, food, discovery, assist, mood, bridge, workouts
+from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, assist, mood, bridge, workouts
 import briefing as briefing_pkg
 import telegram as telegram_pkg
 
@@ -302,13 +302,11 @@ app.include_router(auth.router)
 app.include_router(engineering.router)
 app.include_router(push.router)
 app.include_router(tags.router)
-app.include_router(jobs.router)
 app.include_router(habits.router)
 app.include_router(calendar.router)
 app.include_router(cards.router)
 app.include_router(briefing_pkg.router)
 app.include_router(withings.router)
-app.include_router(search.router)
 app.include_router(insights.router)
 app.include_router(correlations.router)
 app.include_router(food.router)

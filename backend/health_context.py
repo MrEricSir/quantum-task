@@ -1,5 +1,5 @@
 """
-Shared health context builder for all AI features (briefing, daily plan, workshop).
+Shared health context builder for all AI features (briefing, daily plan, assist).
 
 Queries the DB directly so the backend owns the full picture — callers don't
 need to pass health data from the client.

@@ -1,6 +1,6 @@
 # Quantum Task
 
-A personal productivity dashboard with AI-powered quick add, calendar integration, habits tracking, health data, a daily briefing, and an agentic research workshop.
+A personal productivity dashboard with AI-powered quick add, calendar integration, habits tracking, health data, and a daily briefing.
 
 ## Stack
 
@@ -120,7 +120,7 @@ cd frontend && npm run dev
 Tests that call Ollama are skipped automatically when Ollama is not running — no failures.
 
 **Frontend tests** (`frontend/tests/visual.spec.js`) — no backend required:
-- 134 Playwright tests verifying key elements are visible on each page
+- 130 Playwright tests verifying key elements are visible on each page
 - Covers: app shell, today page, tasks board, cards, habits, quick-add modal, settings modals (tag manager, calendar, GitHub, Withings), engineering page, discovery panel, archive, search, insights, offline banner, AI assist panel (chat, breakdown, and code tabs)
 - All API calls are mocked; runs against a production build (`npm run build`)
 
@@ -166,13 +166,6 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - **Food quality trend**: daily average food quality score plotted over the selected range, averaged from individual food log ratings
 - **Health experiments**: set a hypothesis, start/end date, and metric; the app tracks experiment progress and evaluates outcomes
 - **Correlation scatter plots**: explore relationships between tracked metrics (e.g. steps vs. sleep, food quality vs. energy)
-
-### Workshop
-- A freeform AI workspace for research, drafts, brainstorming, and planning
-- Create named jobs with a goal prompt and optional input cards (tasks, habits, or reference cards as context)
-- **Run**: streams a direct AI response to your prompt
-- **Research**: agentic mode — the AI generates search queries, executes them via Tavily, then synthesizes a sourced answer; each step is shown live as it runs
-- Requires `TAVILY_API_KEY` for the Research mode; Run works with any LLM
 
 ### Claude Code Bridge
 
@@ -388,7 +381,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 
 All configuration is via environment variables. Defaults work for local development — no config file needed.
 
-### LLM (AI Quick Add + Daily Briefing + Workshop)
+### LLM (AI Quick Add + Daily Briefing + Assist)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -435,11 +428,11 @@ If these are not set, search falls back to substring matching automatically. Wit
 ollama pull nomic-embed-text
 ```
 
-### Workshop web search (optional)
+### Assist web search (optional)
 
 | Variable | Default | Description |
 |---|---|---|
-| `TAVILY_API_KEY` | _(unset)_ | API key from [tavily.com](https://tavily.com) — enables Research mode in the Workshop. Free tier available. |
+| `TAVILY_API_KEY` | _(unset)_ | API key from [tavily.com](https://tavily.com) — enables the AI Assist panel to search the web when a request needs current information. Free tier available. |
 
 ### Withings (optional)
 
@@ -526,7 +519,6 @@ todo/
       cards.py           # Tasks + reference cards CRUD, AI parse, iOS Shortcut
       habits.py          # Habits CRUD, completion toggle
       calendar.py        # iCal feed sync, export
-      jobs.py            # Workshop jobs + agentic research
       withings.py        # Withings OAuth, sync, health data
       bridge.py          # Claude Code bridge: job queue, agent script install endpoint
       discovery.py       # Public iCal discovery feeds + LLM ranking
@@ -537,7 +529,6 @@ todo/
       tags.py            # Tag CRUD
       engineering.py     # GitHub engineering feed
       push.py            # Push subscription management
-      search.py          # Cross-entity search
       assist.py          # AI assist endpoint
     model_plugins/       # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini, llama3.3-70b)
     alembic/             # Database migrations (00001–00026)
@@ -577,7 +568,7 @@ todo/
         ModalContext.jsx  # Context for opening modals from nested components
       components/
         pages/         # TodayPage, HabitsPage, CalendarPage,
-                       # EngineeringPage, WorkshopPage, HealthPage, LoginPage
+                       # EngineeringPage, HealthPage, LoginPage
                        # (board is rendered inline in App.jsx)
         board/         # Column, TodoCard, CalendarEventCard, Archive
         layout/        # Sidebar, MobileNav, TagFilterBar
@@ -585,7 +576,7 @@ todo/
                        # WithingsSettings, TagManager, AssistModal, ...
         shared/        # QueueIndicator, TagInput, and other shared components
     tests/
-      visual.spec.js   # Playwright functional tests (all APIs mocked, 134 tests)
+      visual.spec.js   # Playwright functional tests (all APIs mocked, 130 tests)
     dist/              # Production build output (gitignored)
   Dockerfile           # Multi-stage build (frontend + backend)
   deploy-gcp.md        # Full GCP deployment guide
