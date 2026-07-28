@@ -154,19 +154,31 @@ function downloadIcs(ev) {
   URL.revokeObjectURL(a.href)
 }
 
+// How long to keep polling for the background-ranked result before giving up
+// and just leaving whatever (unranked) events are already on screen.
+const RANKING_POLL_MS = 3000
+const RANKING_POLL_MAX_ATTEMPTS = 10
+
 function DiscoveryPanel({ refreshTrigger }) {
   const { openCalendarSettings } = useModalContext()
   const [events, setEvents] = useState(null)  // null = not yet loaded
   const [loading, setLoading] = useState(false)
+  // true while the LLM ranks events in the background — events on screen are
+  // shown immediately (chronological, or a stale previous ranking) rather
+  // than blocking on this.
+  const [ranking, setRanking] = useState(false)
   // feedback: { [event_uid]: true (liked) | false (disliked) | null (cleared) }
   const [feedback, setFeedback] = useState({})
   // UIDs that were already disliked when the view loaded — hidden from the list entirely
   const [initialDisliked, setInitialDisliked] = useState(new Set())
 
+  // Returns whether the server is still ranking in the background, so the
+  // polling loop below can drive off the fresh result instead of a
+  // (potentially stale, same-value) React state closure.
   const load = useCallback(async (force = false) => {
     setLoading(true)
     try {
-      const [data, fb] = await Promise.all([fetchDiscoveryEvents({ force }), fetchDiscoveryFeedback()])
+      const [{ events: data, pending }, fb] = await Promise.all([fetchDiscoveryEvents({ force }), fetchDiscoveryFeedback()])
       const fbMap = {}
       const disliked = new Set()
       for (const r of fb) {
@@ -177,8 +189,12 @@ function DiscoveryPanel({ refreshTrigger }) {
       // Strip events the user already disliked in a previous session
       setEvents(data.filter(ev => !disliked.has(ev.uid || ev.id)))
       setFeedback(fbMap)
+      setRanking(pending)
+      return pending
     } catch {
       setEvents([])
+      setRanking(false)
+      return false
     } finally {
       setLoading(false)
     }
@@ -187,7 +203,20 @@ function DiscoveryPanel({ refreshTrigger }) {
   useEffect(() => {
     // refreshTrigger === 0 → initial load (serve from cache).
     // refreshTrigger > 0  → user clicked refresh (bypass ranking cache).
-    load(refreshTrigger > 0)
+    let cancelled = false
+    ;(async () => {
+      let pending = await load(refreshTrigger > 0)
+      let attempts = 0
+      // While the LLM ranks events in the background, poll for the finished
+      // result instead of leaving the events unranked indefinitely.
+      while (pending && !cancelled && attempts < RANKING_POLL_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, RANKING_POLL_MS))
+        if (cancelled) return
+        attempts += 1
+        pending = await load(false)
+      }
+    })()
+    return () => { cancelled = true }
   }, [load, refreshTrigger])
 
   const handleFeedback = useCallback(async (ev, interested) => {
@@ -240,7 +269,10 @@ function DiscoveryPanel({ refreshTrigger }) {
 
         {events && events.length > 0 && (
           <div className="disc-event-list">
-            {!hasInterests && (
+            {ranking && (
+              <p className="disc-ranking-hint">Ranking recommendations…</p>
+            )}
+            {!hasInterests && !ranking && (
               <p className="disc-no-interests-hint">
                 Add a description of your interests in{' '}
                 <button className="disc-inline-link" onClick={openCalendarSettings}>

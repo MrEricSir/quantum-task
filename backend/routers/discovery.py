@@ -8,7 +8,7 @@ from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 import gcal as gcal_lib
@@ -28,6 +28,15 @@ _ICAL_CACHE_TTL_SECONDS = 3 * 3600
 # No TTL — entries are auto-invalidated when any input changes.
 _ranking_cache: dict[str, list] = {}
 _RANKING_CACHE_MAX = 64  # evict oldest when over limit
+
+# rkeys with a background ranking task currently running — prevents duplicate
+# LLM calls when e.g. React StrictMode double-fires an effect in dev, or the
+# user hits refresh again before the first call has finished.
+_ranking_inflight: set[str] = set()
+
+# Events sent to the LLM for scoring — kept small so the local model returns
+# quickly rather than churning through a large batch.
+_RANK_BATCH_SIZE = 12
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -148,6 +157,73 @@ Respond ONLY with JSON: {"results": [{"id": "...", "score": 7, "reason": "One se
 """
 
 
+def _rank_events_bg(rkey: str, interests: str, feedback_context: str,
+                     ranked_events: list[dict], events: list[dict]) -> None:
+    """Background task: call the LLM to rank events and populate the cache.
+
+    Runs after the response has already gone out, so it must not touch the
+    request-scoped DB session — everything it needs is passed in as plain
+    dicts extracted ahead of time.
+    """
+    try:
+        payload = [
+            {
+                "id": str(i),
+                "title": e["title"],
+                "description": _strip_html(e["description"] or "")[:200],
+                "date": e["start"].strftime("%a %b %-d"),
+                "location": e["location"] or "",
+            }
+            for i, e in enumerate(ranked_events)
+        ]
+
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": _RANK_SYSTEM},
+                {"role": "user", "content": (
+                    f"User interests: {interests}{feedback_context}\n\n"
+                    f"Events:\n{json.dumps(payload)}"
+                )},
+            ],
+            max_tokens=50 * len(ranked_events),
+            temperature=0.3,
+        )
+        scored_map = {
+            r["id"]: r
+            for r in json.loads(resp.choices[0].message.content).get("results", [])
+        }
+        for i, ev in enumerate(ranked_events):
+            entry = scored_map.get(str(i))
+            if entry:
+                ev["score"] = entry.get("score")
+                ev["reason"] = entry.get("reason")
+
+        # Score picks which events make the cut — highest first, then pad
+        # with upcoming unscored events so we always return ~10 results —
+        # but the final list is displayed in chronological order so same-day
+        # events don't jump around relative to each other.
+        scored_ids = {id(e) for e in ranked_events if e.get("score") is not None}
+        scored_by_rank = sorted(
+            [e for e in ranked_events if e.get("score") is not None],
+            key=lambda e: (-(e["score"] or 0), e["start"]),
+        )
+        unscored = [e for e in events if id(e) not in scored_ids]
+        selected = (scored_by_rank + unscored)[:10]
+        results = sorted(selected, key=lambda e: e["start"])
+    except Exception as e:
+        print(f"[discovery] LLM ranking error: {e}")
+        results = events[:10]
+
+    _ranking_cache[rkey] = results
+    if len(_ranking_cache) > _RANKING_CACHE_MAX:
+        oldest_key = next(iter(_ranking_cache))
+        del _ranking_cache[oldest_key]
+    _ranking_inflight.discard(rkey)
+
+
 def _to_dt(v) -> datetime | None:
     """Normalise date or datetime to a timezone-aware datetime."""
     if v is None:
@@ -235,7 +311,13 @@ def test_discovery_feeds(request: Request, db: Session = Depends(get_db)):
 # ── Fetch + rank events ────────────────────────────────────────────────────
 
 @router.get("/api/discovery/events", response_model=List[schemas.DiscoveryEventOut])
-def get_discovery_events(request: Request, db: Session = Depends(get_db), force: bool = False):
+def get_discovery_events(
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    force: bool = False,
+):
     feeds = db.query(models.EventDiscoveryFeed).all()
     if not feeds:
         return []
@@ -347,80 +429,39 @@ def get_discovery_events(request: Request, db: Session = Depends(get_db), force:
             interests,
             [r.event_uid for r in liked_rows],
             [r.event_uid for r in disliked_rows],
-            [e["id"] for e in events[:20]],
+            [e["id"] for e in events[:_RANK_BATCH_SIZE]],
         )
 
         if not force and rkey in _ranking_cache:
             results = _ranking_cache[rkey]
+            response.headers["X-Ranking-Status"] = "ready"
         else:
-            # LLM ranking: send up to 20 events using short numeric ids to
-            # prevent the model from hallucinating opaque composite id strings.
-            # 20 is a comfortable batch for smaller local models; large remote
-            # models handle it trivially.
-            ranked_events = events[:20]
-            payload = [
-                {
-                    "id": str(i),
-                    "title": e["title"],
-                    "description": _strip_html(e["description"] or "")[:200],
-                    "date": e["start"].strftime("%a %b %-d"),
-                    "location": e["location"] or "",
-                }
-                for i, e in enumerate(ranked_events)
-            ]
+            # Show something immediately — the previous ranking for this key
+            # if we have one (force refresh), otherwise plain chronological
+            # order — while the LLM re-ranks in the background. The client
+            # re-fetches shortly after to pick up the ranked result.
+            results = _ranking_cache.get(rkey, events[:10])
+            response.headers["X-Ranking-Status"] = "pending"
 
-            feedback_lines = []
-            if liked_rows:
-                feedback_lines.append("Events this user previously liked: " +
-                                       "; ".join(r.event_title for r in liked_rows))
-            if disliked_rows:
-                feedback_lines.append("Events this user did NOT like: " +
-                                       "; ".join(r.event_title for r in disliked_rows))
-            feedback_context = ("\n\n" + "\n".join(feedback_lines)) if feedback_lines else ""
+            if rkey not in _ranking_inflight:
+                _ranking_inflight.add(rkey)
 
-            try:
-                client = llm_client()
-                resp = client.chat.completions.create(
-                    model=LLM_MODEL,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": _RANK_SYSTEM},
-                        {"role": "user", "content": (
-                            f"User interests: {interests}{feedback_context}\n\n"
-                            f"Events:\n{json.dumps(payload)}"
-                        )},
-                    ],
-                    max_tokens=2000,
-                    temperature=0.3,
+                feedback_lines = []
+                if liked_rows:
+                    feedback_lines.append("Events this user previously liked: " +
+                                           "; ".join(r.event_title for r in liked_rows))
+                if disliked_rows:
+                    feedback_lines.append("Events this user did NOT like: " +
+                                           "; ".join(r.event_title for r in disliked_rows))
+                feedback_context = ("\n\n" + "\n".join(feedback_lines)) if feedback_lines else ""
+
+                # Send a small batch of events using short numeric ids to
+                # prevent the model from hallucinating opaque composite id
+                # strings, and to keep the local model's response quick.
+                background_tasks.add_task(
+                    _rank_events_bg, rkey, interests, feedback_context,
+                    events[:_RANK_BATCH_SIZE], events,
                 )
-                scored_map = {
-                    r["id"]: r
-                    for r in json.loads(resp.choices[0].message.content).get("results", [])
-                }
-                for i, ev in enumerate(ranked_events):
-                    entry = scored_map.get(str(i))
-                    if entry:
-                        ev["score"] = entry.get("score")
-                        ev["reason"] = entry.get("reason")
-
-                # Sort scored events by score desc, then pad with upcoming
-                # unscored events so we always return ~10 results.
-                scored_ids = {id(e) for e in ranked_events if e.get("score") is not None}
-                scored = sorted(
-                    [e for e in ranked_events if e.get("score") is not None],
-                    key=lambda e: (-(e["score"] or 0), e["start"]),
-                )
-                unscored = [e for e in events if id(e) not in scored_ids]
-                results = (scored + unscored)[:10]
-            except Exception as e:
-                print(f"[discovery] LLM ranking error: {e}")
-                results = events[:10]
-
-            # Store in ranking cache; evict oldest entries if over limit
-            _ranking_cache[rkey] = results
-            if len(_ranking_cache) > _RANKING_CACHE_MAX:
-                oldest_key = next(iter(_ranking_cache))
-                del _ranking_cache[oldest_key]
 
     return [
         schemas.DiscoveryEventOut(**{k: v for k, v in e.items() if k != "sequence"})

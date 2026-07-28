@@ -354,6 +354,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 - AI ranks upcoming events against your stated interests and past feedback
 - Thumbs-up / thumbs-down per event trains the ranker; dismissed events are hidden on next load with an in-session undo option
 - iCal feeds are cached for ~3 hours; LLM rankings are cached until interests or feedback change
+- Ranking runs in the background so the panel shows events immediately (a "Ranking recommendations..." hint appears while it works) instead of blocking on the LLM call
 
 ### Tags
 - Create and manage color-coded tags

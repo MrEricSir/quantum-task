@@ -254,7 +254,12 @@ export async function saveDiscoveryInterests(interests) {
 export async function fetchDiscoveryEvents({ force = false } = {}) {
   const res = await apiFetch(`/api/discovery/events${force ? '?force=true' : ''}`)
   if (!res.ok) throw new Error('Failed to fetch discovery events')
-  return res.json()
+  const events = await res.json()
+  // While ranking runs in the background, the server returns events
+  // immediately (stale or chronological) and flags them as such so the
+  // caller can poll for the freshly-ranked list instead of blocking on it.
+  const pending = res.headers.get('X-Ranking-Status') === 'pending'
+  return { events, pending }
 }
 
 export async function testDiscoveryFeeds() {

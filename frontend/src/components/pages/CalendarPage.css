@@ -49,6 +49,14 @@
   line-height: 1.5;
 }
 
+.disc-ranking-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #6b7280);
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+  font-style: italic;
+}
+
 .disc-inline-link {
   background: none;
   border: none;
