@@ -177,9 +177,9 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 2. Click the **Code** tab
 3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
 4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
-5. The local bridge agent picks up the job, checks the working tree is clean, checks out the primary branch, pulls latest, and creates a `qtask/<id>-<slug>` branch
+5. The local bridge agent picks up the job, fetches the repo, and creates an isolated `git worktree` on a fresh `qtask/<id>-<slug>` branch off the latest primary branch — your own working directory is never touched, so this works even if you have uncommitted changes there
 6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them
-7. When the session ends, the branch name and machine are shown in the Code tab and sent via Telegram; the bridge picks up the next queued job automatically
+7. When the session ends, the branch name and machine are shown in the Code tab and sent via Telegram; the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
 
 #### Install the bridge agent
 
@@ -189,18 +189,37 @@ In **Settings → Engineering → GitHub**, copy the install command:
 curl http://localhost:8000/api/bridge/install.py | python3
 ```
 
-This installs `qtask-bridge` into your PATH and creates `~/.config/qtask-bridge/claude.toml` (repo mappings, edit to configure multi-repo support). Then, in your project directory:
+This installs `qtask-bridge` into your PATH and creates `~/.config/qtask-bridge/claude.toml`.
+
+**Where you run it from only matters if you skip configuration.** For any card linked to a GitHub issue, the bridge resolves the actual repo directory from `claude.toml` — not from your current directory — so once that's set up, `qtask-bridge` can be run from anywhere (your home directory, a cron job, doesn't matter). Configure it one of two ways:
+
+```toml
+# Option A — explicit path per repo (also where a per-repo setup_cmd goes)
+[repos]
+"owner/project_1" = "~/folder_a/project_1"
+"owner/project_2" = "~/folder_a/project_2"
+
+# Option B — auto-discovery: point at the parent folder and the bridge finds
+# every repo under it by matching each subdirectory's git remote
+repo_roots = ["~/folder_a"]
+```
+
+Your current directory is used only as a fallback, for a card with *no* linked GitHub issue — for that case, run the bridge from inside the repo you want it to act on.
 
 ```bash
 qtask-bridge --watch          # poll for jobs; launch Claude Code interactively when one arrives
 qtask-bridge --card <id>      # queue and run a specific card's job once
+qtask-bridge --tag work       # queue + run every "work"-tagged card with a spec, unattended
+qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
 ```
 
-The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in your terminal on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The branch is waiting locally for your review — the bridge never pushes.
+The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in an isolated git worktree on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The worktree is left in place locally for your review — the bridge never pushes.
 
 **`--watch` mode** runs interactively: you can participate in the Claude session, ask questions, or provide direction. When Claude finishes and you exit the session, the job is marked complete and the bridge immediately polls for the next one — no intervention needed between jobs.
 
 **`--card` mode** is the same but prompts you for an optional note to attach to the job before moving on, useful for one-off runs where you want to record context.
+
+**`--tag` mode** is for batching: tag several cards (each with a spec already generated) the same way, then run `qtask-bridge --tag <name>` to work through all of them sequentially, unattended — no interactive prompts, each card gets its own worktree. Since it's unattended, it runs Claude Code with `--dangerously-skip-permissions`; only use it on cards you trust to run without a human approving each action.
 
 #### Code tab actions
 

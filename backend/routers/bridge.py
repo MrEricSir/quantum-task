@@ -34,6 +34,10 @@ class _JobCreate(BaseModel):
     card_id: int
 
 
+class _QueueByTag(BaseModel):
+    tag: str
+
+
 class _JobComplete(BaseModel):
     result: str = ""   # PR link, summary, or empty
 
@@ -108,6 +112,28 @@ def _job_response(job: models.BridgeJob) -> dict:
     }
 
 
+def _queue_job_for_card(db: Session, card: models.Card) -> models.BridgeJob:
+    """Build (but don't commit) a pending BridgeJob for a card. Caller must
+    have already verified card.spec is set."""
+    eng_item = None
+    if card.external_id:
+        eng_item = (
+            db.query(models.EngineeringItem)
+            .options(selectinload(models.EngineeringItem.comments))
+            .filter_by(external_id=card.external_id)
+            .first()
+        )
+    prompt = _build_prompt(card, eng_item)
+    return models.BridgeJob(
+        card_id=card.id,
+        status="pending",
+        target_repo=_repo_from_external_id(card.external_id),
+        spec_snapshot=card.spec,
+        prompt_snapshot=prompt,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/api/bridge/jobs")
@@ -119,29 +145,69 @@ def create_job(body: _JobCreate, db: Session = Depends(get_db)):
     if not card.spec:
         raise HTTPException(status_code=400, detail="Card has no spec — generate one first")
 
-    eng_item = None
-    if card.external_id:
-        eng_item = (
-            db.query(models.EngineeringItem)
-            .options(selectinload(models.EngineeringItem.comments))
-            .filter_by(external_id=card.external_id)
-            .first()
-        )
-
-    prompt = _build_prompt(card, eng_item)
-    now = datetime.now(timezone.utc)
-    job = models.BridgeJob(
-        card_id=body.card_id,
-        status="pending",
-        target_repo=_repo_from_external_id(card.external_id),
-        spec_snapshot=card.spec,
-        prompt_snapshot=prompt,
-        created_at=now,
-    )
+    job = _queue_job_for_card(db, card)
     db.add(job)
     db.commit()
     db.refresh(job)
     return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/queue-by-tag")
+def queue_jobs_by_tag(body: _QueueByTag, db: Session = Depends(get_db)):
+    """Queue a bridge job for every active card with the given tag.
+
+    A card is skipped (not an error) if it has no spec yet, or already has a
+    pending/running job. Response reports what was queued and what was
+    skipped (and why) so a CLI caller can print a useful summary.
+    """
+    tag_name = body.tag.strip()
+    tag = db.query(models.Tag).filter(models.Tag.name.ilike(tag_name)).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail=f"Tag '{tag_name}' not found")
+
+    cards = (
+        db.query(models.Card)
+        .join(models.card_tags, models.Card.id == models.card_tags.c.card_id)
+        .filter(
+            models.card_tags.c.tag_id == tag.id,
+            models.Card.completed == False,   # noqa: E712
+            models.Card.archived == False,    # noqa: E712
+        )
+        .all()
+    )
+
+    already_queued_card_ids = {
+        row.card_id for row in
+        db.query(models.BridgeJob.card_id)
+        .filter(models.BridgeJob.status.in_(["pending", "running"]))
+        .all()
+    }
+
+    queued: list[models.BridgeJob] = []
+    skipped_no_spec: list[dict] = []
+    skipped_already_queued: list[dict] = []
+
+    for card in cards:
+        if card.id in already_queued_card_ids:
+            skipped_already_queued.append({"id": card.id, "title": card.title})
+            continue
+        if not card.spec:
+            skipped_no_spec.append({"id": card.id, "title": card.title})
+            continue
+        job = _queue_job_for_card(db, card)
+        db.add(job)
+        queued.append(job)
+
+    db.commit()
+    for job in queued:
+        db.refresh(job)
+
+    return {
+        "tag": tag.name,
+        "queued": [_job_response(j) for j in queued],
+        "skipped_no_spec": skipped_no_spec,
+        "skipped_already_queued": skipped_already_queued,
+    }
 
 
 @router.get("/api/bridge/jobs/{job_id}")
@@ -288,7 +354,7 @@ def get_install_script():
         qtask-bridge installer
         Installs the qtask-bridge CLI with your app URL and token pre-configured.
         \"\"\"
-        import os, sys, stat, urllib.request, json
+        import os, sys, stat, textwrap, urllib.request, json
 
         APP_URL = "{app_url}"
         TOKEN   = "{token}"
@@ -298,26 +364,40 @@ def get_install_script():
         TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
         BRIDGE_PATH = os.path.join(INSTALL_DIR, "qtask-bridge")
 
-        TOML_TEMPLATE = \"\"\"\\
-# qtask-bridge configuration
+        # Indented consistently with the rest of this script (unlike a
+        # column-0 literal) so textwrap.dedent() actually has something
+        # uniform to strip — both here at generation time and again below
+        # at install time, when it's re-dedented back down to column 0
+        # before being written to claude.toml.
+        TOML_TEMPLATE = textwrap.dedent(\"\"\"\\
+            # qtask-bridge configuration
 
-# Friendly name shown in notifications and the job status panel.
-# Defaults to your hostname if left empty.
-name = ""
+            # Friendly name shown in notifications and the job status panel.
+            # Defaults to your hostname if left empty.
+            name = ""
 
-# Map repo slugs to local checkout paths.
-# When a job is queued for a card linked to a GitHub issue, the bridge uses
-# these mappings to find the right directory automatically.
-#
-# [repos]
-# "owner/myapp" = "/Users/you/code/myapp"
-# "owner/api"   = "/Users/you/code/api"
+            # Map repo slugs to local checkout paths. Either a plain path string,
+            # or a table with "path" and an optional "setup_cmd" — a one-time
+            # command run in a fresh worktree before Claude launches, for repos
+            # that need dependencies installed (npm install, pip install, etc).
+            #
+            # [repos]
+            # "owner/myapp" = "/Users/you/code/myapp"
+            #
+            # [repos."owner/api"]
+            # path = "/Users/you/code/api"
+            # setup_cmd = "npm install"
 
-# Alternatively, list root directories and the bridge will discover repos by
-# scanning for matching .git remotes automatically.
-#
-# repo_roots = ["~/code", "~/work"]
-\"\"\"
+            # Fallback setup_cmd used for any repo above that doesn't set its own.
+            #
+            # setup_cmd = "npm install"
+
+            # Alternatively, list root directories and the bridge will discover repos by
+            # scanning for matching .git remotes automatically. Auto-discovered repos
+            # don't get a setup_cmd — configure those explicitly under [repos] instead.
+            #
+            # repo_roots = ["~/code", "~/work"]
+        \"\"\")
 
         def main():
             # Download the bridge script from the app
@@ -379,6 +459,8 @@ name = ""
             print("Usage (run from your repo directory):")
             print("  qtask-bridge --card <card-id>   # run a specific card's job")
             print("  qtask-bridge --watch            # poll for jobs automatically")
+            print("  qtask-bridge --tag <name>       # run every pending-spec card with this tag")
+            print("  qtask-bridge --cleanup          # list/remove finished qtask worktrees")
 
         main()
     """)
@@ -396,6 +478,9 @@ def get_agent_script():
         Usage:
           qtask-bridge --card <id>   Fetch job for a card and launch Claude Code
           qtask-bridge --watch       Poll for pending jobs and handle them automatically
+          qtask-bridge --tag <name>  Queue + run every pending-spec card with this tag,
+                                      sequentially and unattended, each in its own git worktree
+          qtask-bridge --cleanup     List and optionally remove finished qtask worktrees
 
         Config files in ~/.config/qtask-bridge/:
           config.json  — app URL and auth token (written by installer)
@@ -426,6 +511,7 @@ def get_agent_script():
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
         SPEC_FILENAME = "BRIDGE_SPEC.md"
         GITIGNORE_ENTRY = "BRIDGE_SPEC.md\\n"
+        WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
 
 
         def load_config():
@@ -485,6 +571,32 @@ def get_agent_script():
             return m.group(1) if m else None
 
 
+        def _slugify(text, max_len=40):
+            return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len]
+
+
+        def _repo_entry(cfg, target_repo):
+            \"\"\"
+            Return (path, setup_cmd) for a configured [repos] entry, or (None, None).
+
+            Supports both the simple form:
+                [repos]
+                "owner/repo" = "/path/to/repo"
+            and the richer per-repo table form:
+                [repos."owner/repo"]
+                path = "/path/to/repo"
+                setup_cmd = "npm install"
+            \"\"\"
+            entry = (cfg.get("repos") or {}).get(target_repo)
+            if entry is None:
+                return None, None
+            if isinstance(entry, str):
+                return entry, None
+            if isinstance(entry, dict):
+                return entry.get("path"), entry.get("setup_cmd")
+            return None, None
+
+
         def _resolve_work_dir(cfg, target_repo):
             \"\"\"
             Return the local working directory for a job.
@@ -497,9 +609,9 @@ def get_agent_script():
             if not target_repo:
                 return os.getcwd()
 
-            repos = cfg.get("repos") or {}
-            if target_repo in repos:
-                return os.path.expanduser(repos[target_repo])
+            path, _setup_cmd = _repo_entry(cfg, target_repo)
+            if path:
+                return os.path.expanduser(path)
 
             for root in (cfg.get("repo_roots") or []):
                 root = os.path.expanduser(root)
@@ -536,7 +648,12 @@ def get_agent_script():
 
 
         def _detect_primary_branch(work_dir):
-            \"\"\"Return 'main', 'master', or similar — the primary branch of the repo.\"\"\"
+            \"\"\"
+            Return 'main', 'master', or similar — the primary branch of the repo.
+            Checked against the remote-tracking ref (origin/<name>), not a local
+            branch, since worktrees are created directly off origin/<primary>
+            without ever checking out the primary branch locally.
+            \"\"\"
             r = subprocess.run(
                 ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
                 cwd=work_dir, capture_output=True, text=True,
@@ -544,61 +661,53 @@ def get_agent_script():
             if r.returncode == 0:
                 return r.stdout.strip().split("/")[-1]
             for name in ("main", "master"):
-                r2 = subprocess.run(["git", "rev-parse", "--verify", name],
+                r2 = subprocess.run(["git", "rev-parse", "--verify", f"origin/{name}"],
                                     cwd=work_dir, capture_output=True)
                 if r2.returncode == 0:
                     return name
             return None
 
 
-        def _git_setup(cfg, job, work_dir):
+        def _create_worktree(cfg, job, work_dir):
             \"\"\"
-            Prepare the repo before launching Claude Code:
-            1. Abort if there are uncommitted changes.
-            2. Detect the primary branch, check it out, and pull.
-            3. Create a new local branch qtask/<card_id>-<slug>.
-            4. Disable remote push for the duration of the session.
-            5. Register branch + agent name with the app.
-            Returns (branch_name, push_url_info) or None on failure (error already posted).
+            Prepare an isolated git worktree for this job, off a freshly fetched
+            primary branch. work_dir (the base clone) is never checked out or
+            modified — this works even if you have uncommitted changes sitting
+            there, and lets multiple jobs use the same base clone without
+            colliding.
+
+            1. git fetch origin (touches no local branch or working tree)
+            2. Detect the primary branch from the remote-tracking ref
+            3. git worktree add <path> -b qtask/<card_id>-<slug> origin/<primary>
+            4. Disable remote push for the session (shared repo config)
+            5. Register branch + agent name with the app
+            Returns (worktree_path, branch_name, push_url_info) or None on
+            failure (error already posted).
             \"\"\"
             job_id  = job["id"]
             card_id = job["card_id"]
             title   = job.get("card_title", "")
 
-            # 1. Uncommitted changes check
-            r = subprocess.run(["git", "status", "--porcelain"],
+            # 1. Fetch — safe regardless of what's checked out or modified in work_dir
+            print("[bridge] Fetching latest from origin...")
+            r = subprocess.run(["git", "fetch", "origin"],
                                cwd=work_dir, capture_output=True, text=True)
             if r.returncode != 0:
-                msg = f"git status failed — is this a git repo? ({r.stderr.strip()})"
+                msg = f"git fetch origin failed — is this a git repo? ({r.stderr.strip()})"
                 api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
                 print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
-                return None
-            if r.stdout.strip():
-                msg = "Uncommitted changes detected — commit or stash before running the bridge"
-                api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
-                print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
-                print(r.stdout.rstrip(), file=sys.stderr)
                 return None
 
-            # 2. Detect primary branch, checkout, pull
+            # 2. Detect primary branch
             primary = _detect_primary_branch(work_dir)
             if not primary:
-                msg = "Could not determine primary branch (expected main or master)"
+                msg = "Could not determine primary branch (expected origin/main or origin/master)"
                 api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
                 print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
                 return None
 
-            print(f"[bridge] Switching to {primary} and pulling latest...")
-            for git_cmd in (["git", "checkout", primary], ["git", "pull"]):
-                r = subprocess.run(git_cmd, cwd=work_dir, capture_output=True, text=True)
-                if r.returncode != 0:
-                    msg = f"'{' '.join(git_cmd)}' failed: {r.stderr.strip()}"
-                    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
-                    print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
-                    return None
-
-            # 3. Create local branch
-            slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40]
+            # 3. Create worktree off origin/<primary>
+            slug = _slugify(title)
             branch = f"qtask/{card_id}-{slug}" if slug else f"qtask/{card_id}"
 
             r = subprocess.run(["git", "rev-parse", "--verify", branch],
@@ -609,16 +718,25 @@ def get_agent_script():
                 print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
                 return None
 
-            r = subprocess.run(["git", "checkout", "-b", branch],
-                               cwd=work_dir, capture_output=True, text=True)
+            repo_slug = _slugify(os.path.basename(os.path.normpath(work_dir)) or "repo")
+            worktree_path = os.path.join(WORKTREES_ROOT, repo_slug, branch.replace("/", "-"))
+            os.makedirs(os.path.dirname(worktree_path), exist_ok=True)
+
+            print(f"[bridge] Creating worktree at {worktree_path} (branch {branch})...")
+            r = subprocess.run(
+                ["git", "worktree", "add", worktree_path, "-b", branch, f"origin/{primary}"],
+                cwd=work_dir, capture_output=True, text=True,
+            )
             if r.returncode != 0:
-                msg = f"git checkout -b {branch} failed: {r.stderr.strip()}"
+                msg = f"git worktree add failed: {r.stderr.strip()}"
                 api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
                 print(f"\\n[bridge] ERROR: {msg}", file=sys.stderr)
                 return None
             print(f"[bridge] Created branch: {branch}")
 
-            # 4. Disable remote push (safety — Claude Code must not push)
+            # 4. Disable remote push (safety — Claude Code must not push). This is a
+            # shared repo-level config, not per-worktree, so only one job should be
+            # active per base repo at a time (true today: jobs run sequentially).
             r = subprocess.run(["git", "config", "remote.origin.pushurl"],
                                cwd=work_dir, capture_output=True, text=True)
             had_push_url = r.returncode == 0
@@ -632,11 +750,11 @@ def get_agent_script():
                 {"branch": branch, "agent": agent})
             print(f"[bridge] Agent: {agent}")
 
-            return branch, (had_push_url, orig_push_url)
+            return worktree_path, branch, (had_push_url, orig_push_url)
 
 
         def _git_teardown(work_dir, push_url_info):
-            \"\"\"Restore the remote push URL after the session ends.\"\"\"
+            \"\"\"Restore the remote push URL after the session ends (shared repo config).\"\"\"
             had_push_url, orig_push_url = push_url_info
             if had_push_url:
                 subprocess.run(["git", "config", "remote.origin.pushurl", orig_push_url],
@@ -646,13 +764,26 @@ def get_agent_script():
                                cwd=work_dir)
 
 
-        def _run_interactive(cfg, job_id, branch, prompt_note=True):
+        def _run_setup_cmd(worktree_path, setup_cmd):
+            \"\"\"Run a one-time dependency-install command in a freshly created
+            worktree (e.g. npm install). Non-fatal on failure — Claude Code still
+            gets a chance to run; a warning is printed so the user notices.\"\"\"
+            if not setup_cmd:
+                return
+            print(f"[bridge] Running setup_cmd in worktree: {setup_cmd}")
+            r = subprocess.run(setup_cmd, cwd=worktree_path, shell=True)
+            if r.returncode != 0:
+                print(f"[bridge] WARNING: setup_cmd exited with code {r.returncode} — continuing anyway",
+                      file=sys.stderr)
+
+
+        def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True):
             \"\"\"Launch Claude Code as an interactive session the user can engage with.\"\"\"
             print(f"[bridge] Launching Claude Code interactively...")
             print("[bridge] You can interact with Claude in the session below.")
             print("[bridge] When done, type 'exit' or press Ctrl-D.\\n")
             try:
-                subprocess.run(["claude", _make_prompt(branch)], check=False)
+                subprocess.run(["claude", _make_prompt(branch)], cwd=cwd, check=False)
             except FileNotFoundError:
                 print("[bridge] ERROR: 'claude' not found.", file=sys.stderr)
                 print("[bridge]   npm install -g @anthropic-ai/claude-code", file=sys.stderr)
@@ -671,12 +802,13 @@ def get_agent_script():
             return True
 
 
-        def _run_streaming(cfg, job_id, branch):
+        def _run_streaming(cfg, job_id, branch, cwd):
             \"\"\"Launch Claude Code non-interactively and stream stdout back to the app.\"\"\"
             print(f"[bridge] Launching Claude Code (streaming mode)...")
             try:
                 proc = subprocess.Popen(
                     ["claude", "--print", "--dangerously-skip-permissions", _make_prompt(branch)],
+                    cwd=cwd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -728,7 +860,7 @@ def get_agent_script():
 
             print(f"\\n[bridge] Job {job_id} — card #{card_id}")
 
-            # Resolve working directory from claude.toml; fall back to cwd for unlinked cards
+            # Resolve the base repo clone from claude.toml; fall back to cwd for unlinked cards
             work_dir = _resolve_work_dir(cfg, target_repo)
             if work_dir is None:
                 msg = (
@@ -746,23 +878,28 @@ def get_agent_script():
             if target_repo:
                 print(f"[bridge] Repo: {target_repo} → {work_dir}")
 
-            # Git safety: check clean, checkout primary, create branch, disable push
-            result = _git_setup(cfg, job, work_dir)
+            # Isolated worktree off a freshly fetched primary branch — work_dir itself
+            # is never touched, so this doesn't require a clean working tree there.
+            result = _create_worktree(cfg, job, work_dir)
             if result is None:
                 return  # error already posted to the app
-            branch, push_url_info = result
+            worktree_path, branch, push_url_info = result
+
+            _, setup_cmd = _repo_entry(cfg, target_repo) if target_repo else (None, None)
+            setup_cmd = setup_cmd or cfg.get("setup_cmd")
+            _run_setup_cmd(worktree_path, setup_cmd)
 
             print(f"[bridge] Writing {SPEC_FILENAME}...")
-            spec_path = os.path.join(work_dir, SPEC_FILENAME)
+            spec_path = os.path.join(worktree_path, SPEC_FILENAME)
             with open(spec_path, "w") as f:
                 f.write(prompt)
             ensure_gitignore(spec_path)
 
             try:
                 if streaming:
-                    _run_streaming(cfg, job_id, branch)
+                    _run_streaming(cfg, job_id, branch, worktree_path)
                 else:
-                    _run_interactive(cfg, job_id, branch, prompt_note=prompt_note)
+                    _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note)
             finally:
                 _git_teardown(work_dir, push_url_info)
                 try:
@@ -770,7 +907,7 @@ def get_agent_script():
                 except OSError:
                     pass
 
-            print(f"[bridge] Job {job_id} done.\\n")
+            print(f"[bridge] Job {job_id} done. Worktree left at {worktree_path} for review.\\n")
 
 
         def cmd_card(cfg, card_id):
@@ -786,6 +923,45 @@ def get_agent_script():
                 print("[bridge] Could not claim job (another agent may have picked it up).", file=sys.stderr)
                 sys.exit(1)
             run_job(cfg, job, streaming=False)
+
+
+        def cmd_tag(cfg, tag_name):
+            \"\"\"Queue every pending-spec card with this tag, then run them one at a
+            time, unattended, each in its own git worktree.\"\"\"
+            print(f"[bridge] Queueing jobs tagged '{tag_name}'...")
+            resp = api(cfg, "POST", "/api/bridge/jobs/queue-by-tag", {"tag": tag_name})
+            if resp is None:
+                print("[bridge] Failed to queue jobs.", file=sys.stderr)
+                sys.exit(1)
+
+            queued = resp.get("queued") or []
+            skipped_no_spec = resp.get("skipped_no_spec") or []
+            skipped_already_queued = resp.get("skipped_already_queued") or []
+
+            print(f"[bridge] Queued {len(queued)} job(s) for tag '{tag_name}'.")
+            if skipped_no_spec:
+                titles = ", ".join(c["title"] for c in skipped_no_spec)
+                print(f"[bridge] Skipped {len(skipped_no_spec)} card(s) with no spec yet: {titles}")
+            if skipped_already_queued:
+                titles = ", ".join(c["title"] for c in skipped_already_queued)
+                print(f"[bridge] Skipped {len(skipped_already_queued)} card(s) already queued: {titles}")
+
+            if not queued:
+                return
+
+            print(f"\\n[bridge] Running {len(queued)} job(s) sequentially, unattended...\\n")
+            for i in range(len(queued)):
+                resp2 = api(cfg, "GET", "/api/bridge/jobs/next/pending")
+                job = resp2.get("job") if resp2 else None
+                if not job:
+                    remaining = len(queued) - i
+                    print(f"[bridge] No more claimable jobs (expected {remaining} more) — stopping.",
+                          file=sys.stderr)
+                    break
+                print(f"[bridge] ({i + 1}/{len(queued)}) Job {job['id']} — card #{job['card_id']}")
+                run_job(cfg, job, streaming=True, prompt_note=False)
+
+            print("[bridge] Tag run complete.")
 
 
         def cmd_watch(cfg):
@@ -811,6 +987,101 @@ def get_agent_script():
                     time.sleep(POLL_INTERVAL)
 
 
+        def _parse_worktree_porcelain(output):
+            \"\"\"Parse `git worktree list --porcelain` output into a list of dicts
+            with 'worktree', 'head', and 'branch' keys (blocks are blank-line separated).\"\"\"
+            entries = []
+            current = {}
+            for line in output.splitlines():
+                if not line.strip():
+                    if current:
+                        entries.append(current)
+                        current = {}
+                    continue
+                if line.startswith("worktree "):
+                    current["worktree"] = line[len("worktree "):]
+                elif line.startswith("branch "):
+                    current["branch"] = line[len("branch "):]
+                elif line.startswith("HEAD "):
+                    current["head"] = line[len("HEAD "):]
+            if current:
+                entries.append(current)
+            return entries
+
+
+        def _is_branch_merged(work_dir, branch):
+            primary = _detect_primary_branch(work_dir)
+            if not primary:
+                return False
+            r = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", branch, f"origin/{primary}"],
+                cwd=work_dir, capture_output=True,
+            )
+            return r.returncode == 0
+
+
+        def cmd_cleanup(cfg):
+            \"\"\"List qtask-created worktrees across every repo in [repos], and
+            optionally remove some or all of them. Doesn't touch worktrees for
+            branches you created yourself (only ones under refs/heads/qtask/).\"\"\"
+            repos = cfg.get("repos") or {}
+            if not repos:
+                print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
+                return
+
+            found = []  # (repo_name, work_dir, worktree_path, branch)
+            for repo_name in repos:
+                path, _setup_cmd = _repo_entry(cfg, repo_name)
+                work_dir = os.path.expanduser(path) if path else None
+                if not work_dir or not os.path.isdir(work_dir):
+                    continue
+                r = subprocess.run(["git", "worktree", "list", "--porcelain"],
+                                   cwd=work_dir, capture_output=True, text=True)
+                if r.returncode != 0:
+                    continue
+                for entry in _parse_worktree_porcelain(r.stdout):
+                    branch = entry.get("branch", "")
+                    if branch.startswith("refs/heads/qtask/"):
+                        found.append((repo_name, work_dir, entry["worktree"],
+                                     branch[len("refs/heads/"):]))
+
+            if not found:
+                print("[bridge] No qtask worktrees found.")
+                return
+
+            print(f"[bridge] Found {len(found)} qtask worktree(s):\\n")
+            for i, (repo_name, work_dir, wt_path, branch) in enumerate(found, 1):
+                status = "merged" if _is_branch_merged(work_dir, branch) else "not merged"
+                print(f"  {i}. [{repo_name}] {branch}  ({status})")
+                print(f"     {wt_path}")
+
+            print()
+            try:
+                choice = input(
+                    "Remove which? (comma-separated numbers, 'merged' for all merged, "
+                    "Enter to skip): "
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            if not choice:
+                return
+
+            if choice.lower() == "merged":
+                targets = [f for f in found if _is_branch_merged(f[1], f[3])]
+            else:
+                indices = {int(x) for x in choice.split(",") if x.strip().isdigit()}
+                targets = [f for i, f in enumerate(found, 1) if i in indices]
+
+            for repo_name, work_dir, wt_path, branch in targets:
+                print(f"[bridge] Removing worktree {wt_path}...")
+                r = subprocess.run(["git", "worktree", "remove", "--force", wt_path],
+                                   cwd=work_dir, capture_output=True, text=True)
+                if r.returncode != 0:
+                    print(f"[bridge] WARNING: could not remove {wt_path}: {r.stderr.strip()}",
+                          file=sys.stderr)
+
+
         def main():
             parser = argparse.ArgumentParser(description="qtask-bridge: Claude Code bridge agent")
             group = parser.add_mutually_exclusive_group(required=True)
@@ -818,11 +1089,20 @@ def get_agent_script():
                                help="Queue and run job for a specific card")
             group.add_argument("--watch", action="store_true",
                                help="Poll for pending jobs and handle them automatically")
+            group.add_argument("--tag", metavar="NAME",
+                               help="Queue and run every pending-spec card with this tag, "
+                                    "sequentially and unattended, each in its own git worktree")
+            group.add_argument("--cleanup", action="store_true",
+                               help="List qtask worktrees across configured repos and optionally remove them")
             args = parser.parse_args()
 
             cfg = load_config()
             if args.watch:
                 cmd_watch(cfg)
+            elif args.tag:
+                cmd_tag(cfg, args.tag)
+            elif args.cleanup:
+                cmd_cleanup(cfg)
             else:
                 cmd_card(cfg, args.card)
 

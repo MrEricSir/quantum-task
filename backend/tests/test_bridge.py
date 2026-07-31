@@ -66,16 +66,29 @@ def client():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_card(title="Test card", spec=None, external_id=None, description=None):
+def _make_card(title="Test card", spec=None, external_id=None, description=None,
+                completed=False, archived=False, tags=()):
     with TestSession() as db:
         card = models.Card(
             title=title, section="today", position=0,
             spec=spec, external_id=external_id, description=description,
+            completed=completed, archived=archived,
         )
+        if tags:
+            card.tags = db.query(models.Tag).filter(models.Tag.name.in_(tags)).all()
         db.add(card)
         db.commit()
         db.refresh(card)
         return card.id
+
+
+def _make_tag(name, color="#6b7280"):
+    with TestSession() as db:
+        tag = models.Tag(name=name, color=color)
+        db.add(tag)
+        db.commit()
+        db.refresh(tag)
+        return tag.id
 
 
 def _make_eng_item(external_id, title="Issue", body="Issue body", number=1, repo="owner/repo"):
@@ -160,6 +173,114 @@ class TestCreateBridgeJob:
         card_id = _make_card(spec="s", external_id="jira:PROJ-123")
         res = client.post("/api/bridge/jobs", json={"card_id": card_id})
         assert res.json()["target_repo"] is None
+
+
+# ── POST /api/bridge/jobs/queue-by-tag ────────────────────────────────────────
+
+class TestQueueJobsByTag:
+
+    def test_404_when_tag_not_found(self, client):
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "nope"})
+        assert res.status_code == 404
+
+    def test_queues_jobs_for_tagged_cards_with_spec(self, client):
+        _make_tag("work")
+        _make_card("Fix login", spec="## Fix\nDo it", tags=("work",))
+        _make_card("Fix logout", spec="## Fix\nDo it too", tags=("work",))
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["queued"]) == 2
+        titles = {j["card_id"] for j in data["queued"]}
+        assert len(titles) == 2
+        for job in data["queued"]:
+            assert job["status"] == "pending"
+
+    def test_ignores_cards_without_the_tag(self, client):
+        _make_tag("work")
+        _make_tag("personal")
+        _make_card("Work task", spec="s", tags=("work",))
+        _make_card("Personal task", spec="s", tags=("personal",))
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        assert len(res.json()["queued"]) == 1
+
+    def test_skips_cards_without_a_spec(self, client):
+        _make_tag("work")
+        _make_card("No spec yet", spec=None, tags=("work",))
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        data = res.json()
+        assert data["queued"] == []
+        assert len(data["skipped_no_spec"]) == 1
+        assert data["skipped_no_spec"][0]["title"] == "No spec yet"
+
+    def test_skips_cards_with_an_existing_pending_job(self, client):
+        _make_tag("work")
+        card_id = _make_card("Already queued", spec="s", tags=("work",))
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        data = res.json()
+        assert data["queued"] == []
+        assert len(data["skipped_already_queued"]) == 1
+        assert data["skipped_already_queued"][0]["id"] == card_id
+
+    def test_skips_cards_with_an_existing_running_job(self, client):
+        _make_tag("work")
+        card_id = _make_card("Already running", spec="s", tags=("work",))
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+        client.get("/api/bridge/jobs/next/pending")  # claims → running
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        assert res.json()["skipped_already_queued"] != []
+
+    def test_requeues_card_whose_last_job_is_done(self, client):
+        """A card whose previous job finished (done/error) is eligible again —
+        only pending/running jobs block re-queueing."""
+        _make_tag("work")
+        card_id = _make_card("Redo this", spec="s", tags=("work",))
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.get("/api/bridge/jobs/next/pending")
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        assert len(res.json()["queued"]) == 1
+
+    def test_skips_completed_cards(self, client):
+        _make_tag("work")
+        _make_card("Done already", spec="s", tags=("work",), completed=True)
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        data = res.json()
+        assert data["queued"] == []
+        assert data["skipped_no_spec"] == []
+        assert data["skipped_already_queued"] == []
+
+    def test_skips_archived_cards(self, client):
+        _make_tag("work")
+        _make_card("Archived", spec="s", tags=("work",), archived=True)
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        assert res.json()["queued"] == []
+
+    def test_tag_match_is_case_insensitive(self, client):
+        _make_tag("Work")
+        _make_card("Fix login", spec="s", tags=("Work",))
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        assert len(res.json()["queued"]) == 1
+
+    def test_queued_job_has_correct_target_repo_and_spec(self, client):
+        _make_tag("work")
+        _make_card("GH card", spec="## Do the thing", tags=("work",),
+                    external_id="github:owner/myapp/issues/9")
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        job = res.json()["queued"][0]
+        assert job["target_repo"] == "owner/myapp"
+        assert job["spec_snapshot"] == "## Do the thing"
 
 
 # ── GET /api/bridge/jobs/{id} ─────────────────────────────────────────────────
@@ -437,6 +558,62 @@ class TestInstallScript:
         res = client.get("/api/bridge/install.py")
         assert "already exists" in res.text  # skips on reinstall
 
+    def test_toml_template_documents_setup_cmd(self, client):
+        res = client.get("/api/bridge/install.py")
+        assert "setup_cmd" in res.text
+
+    def test_toml_template_documents_per_repo_table_form(self, client):
+        res = client.get("/api/bridge/install.py")
+        assert '[repos."owner/api"]' in res.text
+
+    def test_usage_mentions_tag_and_cleanup(self, client):
+        res = client.get("/api/bridge/install.py")
+        assert "--tag" in res.text
+        assert "--cleanup" in res.text
+
+    def test_toml_template_content_is_not_indented_at_runtime(self, client):
+        """Regression guard: TOML_TEMPLATE is nested inside its own
+        textwrap.dedent() specifically so the *outer* script dedent (which
+        strips a shared 8-space prefix) isn't defeated by a column-0 line —
+        but that only matters if the nested dedent actually resolves back to
+        column 0 when the install script itself runs. Execute that part for
+        real rather than just eyeballing the source text."""
+        res = client.get("/api/bridge/install.py")
+        ns = {}
+        # Stop before main() is invoked — we only need the module-level
+        # TOML_TEMPLATE assignment, not to actually run the installer.
+        source = res.text.rsplit("def main():", 1)[0]
+        exec(compile(source, "install.py", "exec"), ns)
+        assert ns["TOML_TEMPLATE"].startswith("# qtask-bridge configuration")
+        for line in ns["TOML_TEMPLATE"].splitlines():
+            if line.strip():
+                assert not line.startswith(" "), f"indented toml line: {line!r}"
+
+
+# ── Served scripts compile as valid Python ───────────────────────────────────
+
+class TestServedScriptsCompile:
+    """Both scripts are Python source embedded as triple-quoted strings —
+    nothing statically checks their syntax, so a bad edit could silently ship
+    a script that fails the moment a user actually runs it. Compile them for
+    real on every test run to catch that."""
+
+    def test_agent_script_compiles(self, client):
+        res = client.get("/api/bridge/agent.py")
+        compile(res.text, "agent.py", "exec")
+
+    def test_install_script_compiles(self, client):
+        res = client.get("/api/bridge/install.py")
+        compile(res.text, "install.py", "exec")
+
+    def test_agent_script_top_level_statements_are_not_indented(self, client):
+        """Regression guard for the same class of dedent bug as install.py:
+        the first real statement (the module docstring) must start at column 0."""
+        res = client.get("/api/bridge/agent.py")
+        lines = res.text.splitlines()
+        first_code_line = next(l for l in lines if l.strip() and not l.startswith("#!"))
+        assert not first_code_line.startswith(" "), repr(first_code_line)
+
 
 # ── GET /api/bridge/agent.py ──────────────────────────────────────────────────
 
@@ -478,6 +655,62 @@ class TestAgentScript:
     def test_agent_passes_repos_filter_to_api(self, client):
         res = client.get("/api/bridge/agent.py")
         assert "repos=" in res.text
+
+    def test_contains_tag_and_cleanup_modes(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "--tag" in res.text
+        assert "--cleanup" in res.text
+        assert "def cmd_tag" in res.text
+        assert "def cmd_cleanup" in res.text
+
+    def test_tag_mode_queues_via_tag_endpoint(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "/api/bridge/jobs/queue-by-tag" in res.text
+
+    def test_uses_git_worktree_instead_of_in_place_checkout(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "git worktree add" in res.text
+        assert "def _create_worktree" in res.text
+        # The old in-place-checkout function is gone, not just renamed-and-kept
+        assert "def _git_setup" not in res.text
+
+    def test_worktree_branches_off_fetched_remote_not_local_checkout(self, client):
+        """Isolation only works if the worktree is created off origin/<primary>
+        without ever checking out the primary branch in the base repo."""
+        res = client.get("/api/bridge/agent.py")
+        assert '"git", "fetch", "origin"' in res.text
+        assert 'f"origin/{primary}"' in res.text
+
+    def test_no_longer_aborts_on_uncommitted_changes_in_base_repo(self, client):
+        """That check only made sense when the bridge checked out branches
+        in-place; worktrees make it obsolete."""
+        res = client.get("/api/bridge/agent.py")
+        assert "Uncommitted changes detected" not in res.text
+
+    def test_claude_launch_passes_worktree_cwd(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _run_interactive(cfg, job_id, branch, cwd" in res.text
+        assert "def _run_streaming(cfg, job_id, branch, cwd" in res.text
+
+    def test_supports_setup_cmd(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _run_setup_cmd" in res.text
+        assert "setup_cmd" in res.text
+
+    def test_repo_entry_supports_table_form_with_setup_cmd(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _repo_entry" in res.text
+
+    def test_cleanup_only_targets_qtask_branches(self, client):
+        """--cleanup should never touch a worktree for a branch the user made
+        themselves — only branches under the qtask/ prefix."""
+        res = client.get("/api/bridge/agent.py")
+        assert "refs/heads/qtask/" in res.text
+
+    def test_cleanup_checks_merge_status(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _is_branch_merged" in res.text
+        assert "--is-ancestor" in res.text
 
 
 # ── GET /api/bridge/jobs/next/pending?repos= ─────────────────────────────────
