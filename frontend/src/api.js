@@ -684,6 +684,18 @@ export async function getLatestBridgeJob(cardId) {
   return res.json()
 }
 
+export async function fetchBridgeInstallToken() {
+  const res = await apiFetch('/api/bridge/install-token')
+  if (!res.ok) throw new Error('Failed to fetch bridge install token')
+  return res.json().then((d) => d.token)
+}
+
+export async function rotateBridgeInstallToken() {
+  const res = await apiFetch('/api/bridge/install-token/rotate', { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to rotate bridge install token')
+  return res.json().then((d) => d.token)
+}
+
 export async function generateSpec(cardId) {
   const res = await apiFetch(`/api/cards/${cardId}/spec/generate`, { method: 'POST' })
   if (!res.ok) throw new Error('Failed to generate spec')

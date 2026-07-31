@@ -11,6 +11,7 @@ Install endpoint:
   GET /api/bridge/install.py — serves a pre-authed install script for qtask-bridge
 """
 import os
+import secrets
 import textwrap
 from datetime import datetime, timezone
 
@@ -21,11 +22,27 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
 
 import models
+import app_setting_keys as setting_keys
 from deps import get_db, AUTH_PASSWORD
 
 router = APIRouter()
 
 _APP_URL = os.getenv("ALLOWED_ORIGIN", "http://localhost:8000")
+
+
+def _get_bridge_install_token(db: Session) -> str:
+    """Return the current bridge install token, creating one if it doesn't exist.
+
+    This is deliberately separate from AUTH_PASSWORD: it only gates the one-time
+    curl-able install script, so it can be shared or rotated without touching the
+    real app password (mirrors calendar.py's _get_export_token)."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_INSTALL_TOKEN).first()
+    if row:
+        return row.value
+    token = secrets.token_hex(24)
+    db.add(models.AppSetting(key=setting_keys.BRIDGE_INSTALL_TOKEN, value=token))
+    db.commit()
+    return token
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -338,13 +355,36 @@ def get_latest_card_job(card_id: int, db: Session = Depends(get_db)):
     return {"job": _job_response(job)}
 
 
+@router.get("/api/bridge/install-token")
+def get_bridge_install_token(db: Session = Depends(get_db)):
+    return {"token": _get_bridge_install_token(db)}
+
+
+@router.post("/api/bridge/install-token/rotate")
+def rotate_bridge_install_token(db: Session = Depends(get_db)):
+    new_token = secrets.token_hex(24)
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_INSTALL_TOKEN).first()
+    if row:
+        row.value = new_token
+    else:
+        db.add(models.AppSetting(key=setting_keys.BRIDGE_INSTALL_TOKEN, value=new_token))
+    db.commit()
+    return {"token": new_token}
+
+
 @router.get("/api/bridge/install.py", response_class=PlainTextResponse)
-def get_install_script():
+def get_install_script(install_token: str = Query(..., alias="token"), db: Session = Depends(get_db)):
     """
     Serve a pre-authed install script for qtask-bridge.
-    The auth token and app URL are baked in so the user just runs:
-        curl https://your-app/api/bridge/install.py | python3
+    Requires ?token=<bridge install token> (separate from AUTH_PASSWORD, shown in the
+    GitHub settings modal). The app password and app URL are baked into the served
+    script so the CLI can authenticate its own ongoing requests afterward:
+        curl https://your-app/api/bridge/install.py?token=... | python3
     """
+    valid_install_token = _get_bridge_install_token(db)
+    if not secrets.compare_digest(install_token, valid_install_token):
+        raise HTTPException(status_code=401, detail="Invalid install token")
+
     token = AUTH_PASSWORD or ""
     app_url = _APP_URL.rstrip("/")
 

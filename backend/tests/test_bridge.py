@@ -110,6 +110,13 @@ def _make_eng_item(external_id, title="Issue", body="Issue body", number=1, repo
         return item.id
 
 
+def _get_install_script(client):
+    """GET /api/bridge/install.py requires ?token=<bridge install token>, so tests
+    that just want the script content fetch a fresh token first."""
+    token = client.get("/api/bridge/install-token").json()["token"]
+    return client.get(f"/api/bridge/install.py?token={token}")
+
+
 # ── POST /api/bridge/jobs ─────────────────────────────────────────────────────
 
 class TestCreateBridgeJob:
@@ -538,36 +545,36 @@ class TestLatestCardJob:
 class TestInstallScript:
 
     def test_returns_python_text(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert res.status_code == 200
         assert "python" in res.text.lower() or "import" in res.text
 
     def test_contains_main_function(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert "def main" in res.text
 
     def test_contains_install_dir(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert "qtask-bridge" in res.text
 
     def test_writes_claude_toml(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert "claude.toml" in res.text
 
     def test_claude_toml_only_written_if_not_exists(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert "already exists" in res.text  # skips on reinstall
 
     def test_toml_template_documents_setup_cmd(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert "setup_cmd" in res.text
 
     def test_toml_template_documents_per_repo_table_form(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert '[repos."owner/api"]' in res.text
 
     def test_usage_mentions_tag_and_cleanup(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         assert "--tag" in res.text
         assert "--cleanup" in res.text
 
@@ -578,7 +585,7 @@ class TestInstallScript:
         but that only matters if the nested dedent actually resolves back to
         column 0 when the install script itself runs. Execute that part for
         real rather than just eyeballing the source text."""
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         ns = {}
         # Stop before main() is invoked — we only need the module-level
         # TOML_TEMPLATE assignment, not to actually run the installer.
@@ -588,6 +595,26 @@ class TestInstallScript:
         for line in ns["TOML_TEMPLATE"].splitlines():
             if line.strip():
                 assert not line.startswith(" "), f"indented toml line: {line!r}"
+
+    def test_missing_token_is_rejected(self, client):
+        res = client.get("/api/bridge/install.py")
+        assert res.status_code == 422
+
+    def test_wrong_token_is_rejected(self, client):
+        res = client.get("/api/bridge/install.py?token=not-the-real-token")
+        assert res.status_code == 401
+
+    def test_install_token_is_stable_across_requests(self, client):
+        first = client.get("/api/bridge/install-token").json()["token"]
+        second = client.get("/api/bridge/install-token").json()["token"]
+        assert first == second
+
+    def test_rotate_install_token_changes_it_and_invalidates_the_old_one(self, client):
+        old_token = client.get("/api/bridge/install-token").json()["token"]
+        new_token = client.post("/api/bridge/install-token/rotate").json()["token"]
+        assert new_token != old_token
+        assert client.get(f"/api/bridge/install.py?token={old_token}").status_code == 401
+        assert client.get(f"/api/bridge/install.py?token={new_token}").status_code == 200
 
 
 # ── Served scripts compile as valid Python ───────────────────────────────────
@@ -603,7 +630,7 @@ class TestServedScriptsCompile:
         compile(res.text, "agent.py", "exec")
 
     def test_install_script_compiles(self, client):
-        res = client.get("/api/bridge/install.py")
+        res = _get_install_script(client)
         compile(res.text, "install.py", "exec")
 
     def test_agent_script_top_level_statements_are_not_indented(self, client):
@@ -613,6 +640,61 @@ class TestServedScriptsCompile:
         lines = res.text.splitlines()
         first_code_line = next(l for l in lines if l.strip() and not l.startswith("#!"))
         assert not first_code_line.startswith(" "), repr(first_code_line)
+
+
+class TestBridgeScriptsExemptFromAuth:
+    """Only install.py is exempt from AuthMiddleware's session-cookie/bearer-token
+    check — that's the entire point of a "pre-authed" install script: a machine
+    with no prior credentials must be able to `curl` it. It's gated instead by
+    its own scoped, rotatable install token (see TestInstallScript), so exemption
+    from the *global* check doesn't mean exemption from all checks.
+
+    agent.py is NOT exempt: the install script always fetches it with a real
+    `Authorization: Bearer <AUTH_PASSWORD>` header (see get_install_script's
+    generated `main()`), so it never needs a bare, credential-free fetch path.
+
+    The other bridge tests all run with AUTH_PASSWORD unset, which makes
+    AuthMiddleware a no-op, so they can't catch a regression here. These tests
+    turn auth on for real."""
+
+    @pytest.fixture
+    def auth_client(self, monkeypatch):
+        monkeypatch.setattr("main.AUTH_PASSWORD", "s3cret")
+        monkeypatch.setattr("main.SESSION_TOKEN", "unrelated-session-token")
+        app.dependency_overrides[get_db] = override_get_db
+        with TestClient(app) as c:
+            yield c
+        app.dependency_overrides.clear()
+
+    def test_install_script_reachable_with_its_own_token_and_no_other_credentials(self, auth_client):
+        token_res = auth_client.get(
+            "/api/bridge/install-token", headers={"Authorization": "Bearer s3cret"}
+        )
+        assert token_res.status_code == 200
+        install_token = token_res.json()["token"]
+
+        res = auth_client.get(f"/api/bridge/install.py?token={install_token}")
+        assert res.status_code == 200
+
+    def test_install_script_still_rejects_wrong_token_when_auth_password_set(self, auth_client):
+        res = auth_client.get("/api/bridge/install.py?token=wrong")
+        assert res.status_code == 401
+
+    def test_agent_script_requires_real_credentials(self, auth_client):
+        res = auth_client.get("/api/bridge/agent.py")
+        assert res.status_code == 401
+
+    def test_agent_script_reachable_with_bearer_token(self, auth_client):
+        res = auth_client.get(
+            "/api/bridge/agent.py", headers={"Authorization": "Bearer s3cret"}
+        )
+        assert res.status_code == 200
+
+    def test_other_bridge_routes_still_require_credentials(self, auth_client):
+        """Sanity check that AuthMiddleware is actually active in this test
+        and the install.py exemption above isn't just masking a broken middleware."""
+        res = auth_client.get("/api/bridge/jobs/card/1/latest")
+        assert res.status_code == 401
 
 
 # ── GET /api/bridge/agent.py ──────────────────────────────────────────────────

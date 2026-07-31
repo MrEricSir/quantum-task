@@ -47,6 +47,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or path == "/api/calendar/export.ics"
             or path == "/api/withings/callback"
             or path == "/api/telegram/webhook"
+            or path == "/api/bridge/install.py"
         ):
             return await call_next(request)
         # Session cookie (browser)

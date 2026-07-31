@@ -74,6 +74,9 @@ STREAK_MILESTONES_SENT = "streak_milestones_sent"
 BRIDGE_LAST_NOTIFIED_JOB = "bridge_last_notified_job"
 # Integer string: the highest BridgeJob.id whose start (running) has been Telegram-notified.
 BRIDGE_LAST_NOTIFIED_RUNNING_JOB = "bridge_last_notified_running_job"
+# Scoped, rotatable secret required as ?token= on GET /api/bridge/install.py — lets that
+# endpoint be curl-able with no session while keeping it separate from AUTH_PASSWORD.
+BRIDGE_INSTALL_TOKEN = "bridge_install_token"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.

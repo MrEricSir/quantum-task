@@ -114,6 +114,7 @@ async function mockAPIs(page) {
   await page.route('**/api/engineering/config', r => r.fulfill({ json: { configured: false, repos: [] } }))
   await page.route('**/api/engineering/status-config', r => r.fulfill({ json: {} }))
   await page.route('**/api/engineering/repo-tags', r => r.fulfill({ json: {} }))
+  await page.route('**/api/bridge/install-token', r => r.fulfill({ json: { token: 'test-install-token' } }))
 
   await page.route('**/api/cards/*/thread/context-from', r =>
     r.fulfill({ json: { context_text: '### Today\n- Buy milk\n- Call dentist', label: 'Today', count: 2 } }))

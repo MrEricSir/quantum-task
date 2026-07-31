@@ -3,12 +3,15 @@ import * as Dialog from '@radix-ui/react-dialog'
 import {
   fetchEngineeringConfig, saveEngineeringConfig, syncEngineering,
   fetchStatusConfig, saveStatusConfig, fetchRepoTagsConfig, saveRepoTagsConfig,
+  fetchBridgeInstallToken, rotateBridgeInstallToken,
 } from '../../api'
 import Modal from './Modal'
 import './GithubSettings.css'
 
 export default function GithubSettings({ allTags = [], onClose, onSynced }) {
   const [copiedInstall, setCopiedInstall] = useState(false)
+  const [bridgeInstallToken, setBridgeInstallToken] = useState('')
+  const [rotatingBridgeToken, setRotatingBridgeToken] = useState(false)
   const [token, setToken] = useState('')
   const [repos, setRepos] = useState('')
   const [statusConfig, setStatusConfig] = useState({})
@@ -34,6 +37,7 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
+    fetchBridgeInstallToken().then(setBridgeInstallToken).catch(() => {})
   }, [])
 
   const handleSave = async () => {
@@ -264,12 +268,13 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
         </p>
         <div className="gh-install-row">
           <code className="gh-install-cmd">
-            {`curl ${window.location.origin}/api/bridge/install.py | python3`}
+            {`curl "${window.location.origin}/api/bridge/install.py?token=${bridgeInstallToken}" | python3`}
           </code>
           <button
             className="gh-install-copy"
+            disabled={!bridgeInstallToken}
             onClick={() => {
-              navigator.clipboard.writeText(`curl ${window.location.origin}/api/bridge/install.py | python3`)
+              navigator.clipboard.writeText(`curl "${window.location.origin}/api/bridge/install.py?token=${bridgeInstallToken}" | python3`)
               setCopiedInstall(true)
               setTimeout(() => setCopiedInstall(false), 2000)
             }}
@@ -278,7 +283,23 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
           </button>
         </div>
         <p className="gh-hint gh-hint--small">
-          After installing, run <code>todo-bridge --watch</code> in your project directory.
+          Anyone with this command can install the bridge and access this app.{' '}
+          <button
+            type="button"
+            className="gh-rotate-link"
+            disabled={rotatingBridgeToken}
+            onClick={async () => {
+              if (!window.confirm("Rotate the bridge install token? The command above will change; any copy of it you've saved elsewhere will stop working.")) return
+              setRotatingBridgeToken(true)
+              try { setBridgeInstallToken(await rotateBridgeInstallToken()) } catch { /* ignore */ }
+              setRotatingBridgeToken(false)
+            }}
+          >
+            {rotatingBridgeToken ? 'Rotating…' : 'Rotate token'}
+          </button>
+        </p>
+        <p className="gh-hint gh-hint--small">
+          After installing, run <code>qtask-bridge --watch</code> in your project directory.
           Open any card, generate a spec, then click <strong>▶ Bridge</strong> to queue a job.
         </p>
       </div>
