@@ -146,6 +146,80 @@
   border-color: var(--color-accent);
 }
 
+.gh-repo-tags-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.gh-repo-tags-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gh-repo-tags-pattern {
+  flex-shrink: 0;
+  width: 160px;
+  font-family: monospace;
+}
+
+.gh-repo-tags-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.gh-repo-tag-chip {
+  padding: 3px 10px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.gh-repo-tag-chip--active {
+  color: #fff;
+}
+
+.gh-repo-tags-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.gh-repo-tags-remove:hover {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+}
+
+.gh-add-rule-btn {
+  align-self: flex-start;
+  padding: 5px 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-add-rule-btn:hover { border-color: var(--color-accent); }
+
 .gh-bridge-section {
   border-top: 1px solid var(--color-border);
   margin-top: 8px;

@@ -102,6 +102,10 @@ export default function App() {
   const [activeCard, setActiveCard] = useState(null)
   const [selectedCardId, setSelectedCardId] = useState(null)
   const [panelInitialMode, setPanelInitialMode] = useState('view')
+  // Mobile-only: CardDetailPanel is desktop-only (hidden via CSS below 640px),
+  // so opening an arbitrary card in view mode from outside the board (e.g.
+  // the Engineering page) needs its own CardSheet instance on mobile.
+  const [sheetViewCard, setSheetViewCard] = useState(null)
   const [panelDefaultSection, setPanelDefaultSection] = useState('today')
   const [activeSection, setActiveSection] = useState('today')
   const [highlightCalendarEventId, setHighlightCalendarEventId] = useState(null)
@@ -516,6 +520,7 @@ export default function App() {
   const handleCreateTag = async (data) => {
     const created = await createTag(data)
     setTags((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+    return created
   }
 
   const processQueueItem = (id, text) => {
@@ -870,6 +875,14 @@ export default function App() {
                 external_id: item.external_id,
               })
             }}
+            onOpenCard={(card) => {
+              navigate('/board')
+              if (window.matchMedia('(max-width: 640px)').matches) {
+                setSheetViewCard(card)
+              } else {
+                handleSelectCard(card)
+              }
+            }}
           />
         ) : null}
       </main>
@@ -895,6 +908,22 @@ export default function App() {
             await refreshEngineeringItem(itemId)
             await refreshEngineeringItems()
           }}
+        />
+      )}
+
+      {sheetViewCard && (
+        <CardSheet
+          card={sheetViewCard}
+          allTags={tags}
+          topTags={topTags}
+          onCreateTag={handleCreateTag}
+          onClose={() => setSheetViewCard(null)}
+          onSave={handleUpdateCard}
+          onToggle={handleToggle}
+          onMove={handleMoveSection}
+          onDelete={handleDeleteCard}
+          onArchive={handleArchiveCard}
+          onBreakdown={handleBreakdownCommit}
         />
       )}
       </div>{/* app-body */}
@@ -942,6 +971,7 @@ export default function App() {
 
       {showGithubSettings && (
         <GithubSettings
+          allTags={visibleTags}
           onClose={() => setShowGithubSettings(false)}
           onSynced={() => fetchCards().then(setCards).catch(() => {})}
         />

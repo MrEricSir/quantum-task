@@ -112,10 +112,21 @@
   gap: 6px;
 }
 
+/* Row is a two-line grid, not a flex row: title + status + action share the
+   top line, tags + repo/issue link share a second line below. Grid track
+   sizing is computed once across all rows in a column, so fields line up
+   the same way on every item regardless of how much content that
+   particular item has. The "." in the second row leaves the action column
+   empty there, since the button belongs only on the title/status line. */
 .eng-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "title  status action"
+    "sub    sub    .";
   align-items: center;
-  gap: 10px;
+  row-gap: 4px;
+  column-gap: 10px;
   padding: 10px 14px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -128,18 +139,19 @@
   background: var(--color-surface-2);
 }
 
+/* display:contents removes the <a> from layout so its children (title,
+   status, sub) become direct grid items of .eng-item — keeps the whole
+   row clickable while still participating in the grid areas. */
 .eng-item-link {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-decoration: none;
+  display: contents;
   color: var(--color-text);
-  min-width: 0;
+  text-decoration: none;
 }
 
 .eng-add-btn {
-  flex-shrink: 0;
+  grid-area: action;
+  justify-self: center;
+  min-width: 68px;
   padding: 4px 10px;
   border: 1.5px solid var(--color-border);
   border-radius: 6px;
@@ -148,12 +160,13 @@
   font-size: 12px;
   font-weight: 500;
   font-family: inherit;
+  text-align: center;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
   white-space: nowrap;
 }
 
-.eng-add-btn:hover:not(:disabled) {
+.eng-add-btn:hover {
   border-color: var(--color-accent);
   color: var(--color-text);
 }
@@ -161,31 +174,16 @@
 .eng-add-btn--added {
   border-color: #22c55e44;
   color: #4ade80;
-  cursor: default;
 }
 
-.eng-item-type {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.eng-item-type--pr {
-  background: #1d4ed822;
-  color: #60a5fa;
-}
-
-.eng-item-type--issue {
-  background: #15803d22;
+.eng-add-btn--added:hover {
+  border-color: #22c55e;
   color: #4ade80;
 }
 
 .eng-item-title {
-  flex: 1;
+  grid-area: title;
+  min-width: 0;
   font-size: 14px;
   font-weight: 500;
   overflow: hidden;
@@ -193,15 +191,11 @@
   white-space: nowrap;
 }
 
-.eng-item-meta {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-family: monospace;
+.eng-item-status {
+  grid-area: status;
 }
 
-.eng-item-status {
-  flex-shrink: 0;
+.eng-item-status-pill {
   font-size: 11px;
   font-weight: 500;
   padding: 2px 7px;
@@ -212,9 +206,44 @@
   white-space: nowrap;
 }
 
-/* ── Mobile ── */
-@media (max-width: 640px) {
-  .eng-item-meta {
-    display: none;
-  }
+/* Second line: tags (fixed width, don't shrink) + repo/issue link (truncates
+   with whatever room is left) so a long repo name never pushes tags around. */
+.eng-item-sub {
+  grid-area: sub;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.eng-item-tags {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.eng-item-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.eng-item-tag--overflow {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--text-muted);
+}
+
+.eng-item-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

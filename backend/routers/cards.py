@@ -10,6 +10,7 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+import github_sync
 import models
 import schemas
 from card_sections import CardSection
@@ -134,6 +135,9 @@ def create_card(card: schemas.CardCreate, background_tasks: BackgroundTasks, db:
     count = db.query(models.Card).filter(models.Card.section == card.section).count()
     data = card.model_dump()
     tag_ids = data.pop("tag_ids", [])
+    # Cards linked to a GitHub item automatically pick up any tags configured
+    # for that repo (or its owner), in addition to whatever was passed in.
+    tag_ids = list(set(tag_ids) | set(github_sync.tag_ids_for_external_id(db, data.get("external_id"))))
     now = datetime.now(timezone.utc)
     db_card = models.Card(**data, position=count, updated_at=now)
     if db_card.section == "today":

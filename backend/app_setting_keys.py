@@ -27,6 +27,9 @@ GITHUB_REPOS = "github_repos"
 # JSON dict mapping repo ("owner/repo" or "default") to {"in_progress": str, "done": str}
 # column names on the GitHub Projects v2 board.
 GITHUB_STATUS_CONFIG = "github_status_config"
+# JSON dict mapping a repo pattern ("owner/repo" or just "owner", matching all
+# of that owner's repos) to a list of tag IDs applied to cards created from it.
+GITHUB_REPO_TAGS = "github_repo_tags"
 
 # ── Withings health goals (still in AppSetting — not yet migrated) ─────────────
 # JSON object {"steps": N|null, "fat_ratio": N|null, "weight": N|null}.

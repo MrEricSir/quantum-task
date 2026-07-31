@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { fetchEngineeringConfig, saveEngineeringConfig, syncEngineering, fetchStatusConfig, saveStatusConfig } from '../../api'
+import {
+  fetchEngineeringConfig, saveEngineeringConfig, syncEngineering,
+  fetchStatusConfig, saveStatusConfig, fetchRepoTagsConfig, saveRepoTagsConfig,
+} from '../../api'
 import Modal from './Modal'
 import './GithubSettings.css'
 
-export default function GithubSettings({ onClose, onSynced }) {
+export default function GithubSettings({ allTags = [], onClose, onSynced }) {
   const [copiedInstall, setCopiedInstall] = useState(false)
   const [token, setToken] = useState('')
   const [repos, setRepos] = useState('')
   const [statusConfig, setStatusConfig] = useState({})
+  const [repoTags, setRepoTags] = useState([]) // [{ pattern, tagIds: number[] }]
   const [configured, setConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -21,7 +25,12 @@ export default function GithubSettings({ onClose, onSynced }) {
       .then((cfg) => {
         setConfigured(cfg.configured)
         setRepos(cfg.repos.join('\n'))
-        return fetchStatusConfig().then(setStatusConfig).catch(() => {})
+        return Promise.all([
+          fetchStatusConfig().then(setStatusConfig).catch(() => {}),
+          fetchRepoTagsConfig()
+            .then((cfg) => setRepoTags(Object.entries(cfg).map(([pattern, tagIds]) => ({ pattern, tagIds }))))
+            .catch(() => {}),
+        ])
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
@@ -33,9 +42,16 @@ export default function GithubSettings({ onClose, onSynced }) {
     setSyncResult(null)
     try {
       const repoList = repos.split('\n').map((r) => r.trim()).filter(Boolean)
+      const repoTagsPayload = Object.fromEntries(
+        repoTags
+          .map((r) => ({ pattern: r.pattern.trim(), tagIds: r.tagIds }))
+          .filter((r) => r.pattern)
+          .map((r) => [r.pattern, r.tagIds])
+      )
       await Promise.all([
         saveEngineeringConfig({ token: token.trim(), repos: repoList }),
         saveStatusConfig(statusConfig),
+        saveRepoTagsConfig(repoTagsPayload),
       ])
       const result = await syncEngineering()
       setSyncResult(result)
@@ -46,6 +62,14 @@ export default function GithubSettings({ onClose, onSynced }) {
     } finally {
       setSaving(false)
     }
+  }
+
+  const toggleRepoTag = (i, tagId) => {
+    setRepoTags((prev) => prev.map((r, idx) => {
+      if (idx !== i) return r
+      const has = r.tagIds.includes(tagId)
+      return { ...r, tagIds: has ? r.tagIds.filter((id) => id !== tagId) : [...r.tagIds, tagId] }
+    }))
   }
 
   const handleSync = async () => {
@@ -154,6 +178,65 @@ export default function GithubSettings({ onClose, onSynced }) {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="gh-field">
+            <label className="gh-label">
+              Repo tags <span className="gh-optional">(optional)</span>
+            </label>
+            <p className="gh-hint gh-hint--small">
+              Automatically tag cards created from GitHub issues/PRs. Use <code>owner</code> to match
+              every repo under that user or org, or <code>owner/repo</code> for a single repo.
+            </p>
+            {allTags.length === 0 ? (
+              <p className="gh-hint gh-hint--small">Create a tag first to use this.</p>
+            ) : (
+              <div className="gh-repo-tags-list">
+                {repoTags.map((rule, i) => (
+                  <div className="gh-repo-tags-row" key={i}>
+                    <input
+                      className="gh-status-input gh-repo-tags-pattern"
+                      placeholder="owner or owner/repo"
+                      value={rule.pattern}
+                      onChange={(e) => setRepoTags((prev) => prev.map((r, idx) => idx === i ? { ...r, pattern: e.target.value } : r))}
+                      spellCheck={false}
+                    />
+                    <div className="gh-repo-tags-chips">
+                      {allTags.map((tag) => {
+                        const active = rule.tagIds.includes(tag.id)
+                        return (
+                          <button
+                            type="button"
+                            key={tag.id}
+                            className={`gh-repo-tag-chip${active ? ' gh-repo-tag-chip--active' : ''}`}
+                            style={active
+                              ? { background: tag.color, borderColor: tag.color }
+                              : { borderColor: tag.color, color: tag.color }}
+                            onClick={() => toggleRepoTag(i, tag.id)}
+                          >
+                            {tag.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      className="gh-repo-tags-remove"
+                      onClick={() => setRepoTags((prev) => prev.filter((_, idx) => idx !== i))}
+                      aria-label="Remove rule"
+                      title="Remove rule"
+                    >×</button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="gh-add-rule-btn"
+                  onClick={() => setRepoTags((prev) => [...prev, { pattern: '', tagIds: [] }])}
+                >
+                  + Add rule
+                </button>
+              </div>
+            )}
           </div>
 
           {configured && (

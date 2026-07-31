@@ -196,6 +196,53 @@ def _get_status_names(config: dict, repo: str) -> tuple[str, str]:
     )
 
 
+def get_repo_tags_config(db: Session) -> dict[str, list[int]]:
+    """Return the repo → tag-ids config dict. Falls back to {} if not set."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_REPO_TAGS).first()
+    if row and row.value:
+        try:
+            return json.loads(row.value)
+        except Exception:
+            pass
+    return {}
+
+
+def save_repo_tags_config(db: Session, config: dict[str, list[int]]) -> None:
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_REPO_TAGS).first()
+    if row:
+        row.value = json.dumps(config)
+    else:
+        db.add(models.AppSetting(key=setting_keys.GITHUB_REPO_TAGS, value=json.dumps(config)))
+    db.commit()
+
+
+def _tags_for_repo(config: dict[str, list[int]], repo: str) -> list[int]:
+    """Tag ids for a repo: union of the owner-level rule and the exact repo-level rule.
+
+    Matching is case-insensitive — GitHub owner/repo names are case-preserving
+    but case-insensitive, so a rule for "trainsit" must still match a repo
+    reported back as "Trainsit/trainsit".
+    """
+    owner = repo.split("/")[0] if "/" in repo else repo
+    owner_l, repo_l = owner.lower(), repo.lower()
+    ids: set[int] = set()
+    for pattern, tag_ids in config.items():
+        if pattern.lower() in (owner_l, repo_l):
+            ids.update(tag_ids or [])
+    return sorted(int(i) for i in ids)
+
+
+def tag_ids_for_external_id(db: Session, external_id: str | None) -> list[int]:
+    """Repo-rule tag ids for a card linked to a GitHub item, or [] if unlinked/no rules match."""
+    if not external_id:
+        return []
+    parsed = _parse_external_id(external_id)
+    if not parsed:
+        return []
+    owner, repo, _, _ = parsed
+    return _tags_for_repo(get_repo_tags_config(db), f"{owner}/{repo}")
+
+
 def _parse_external_id(external_id: str) -> tuple[str, str, str, int] | None:
     """
     Parse 'github:owner/repo/issues/123' or 'github:owner/repo/pull/123'
@@ -381,6 +428,7 @@ def sync(db: Session) -> dict:
     open_eng_items = db.query(models.EngineeringItem).filter_by(state="open").all()
     project_data = _fetch_project_statuses(token, open_eng_items)
     status_config = get_status_config(db)
+    repo_tags_config = get_repo_tags_config(db)
     cards_created = 0
     for eng_item in open_eng_items:
         if eng_item.id not in project_data:
@@ -398,7 +446,7 @@ def sync(db: Session) -> dict:
                 external_id=eng_item.external_id, archived=False
             ).first()
             if not exists:
-                db.add(models.Card(
+                new_card = models.Card(
                     title=eng_item.title,
                     description="",
                     section="today",
@@ -407,7 +455,11 @@ def sync(db: Session) -> dict:
                     today_since=now,
                     created_at=now,
                     updated_at=now,
-                ))
+                )
+                tag_ids = _tags_for_repo(repo_tags_config, eng_item.repo)
+                if tag_ids:
+                    new_card.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
+                db.add(new_card)
                 cards_created += 1
 
         elif new_status == done_name and old_status != done_name:

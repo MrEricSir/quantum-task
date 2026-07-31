@@ -113,6 +113,7 @@ async function mockAPIs(page) {
   await page.route('**/api/engineering/sync', r => r.fulfill({ json: { created: 0, closed: 0, skipped: 0, cards_created: 0, error: null } }))
   await page.route('**/api/engineering/config', r => r.fulfill({ json: { configured: false, repos: [] } }))
   await page.route('**/api/engineering/status-config', r => r.fulfill({ json: {} }))
+  await page.route('**/api/engineering/repo-tags', r => r.fulfill({ json: {} }))
 
   await page.route('**/api/cards/*/thread/context-from', r =>
     r.fulfill({ json: { context_text: '### Today\n- Buy milk\n- Call dentist', label: 'Today', count: 2 } }))
@@ -594,6 +595,198 @@ test.describe('engineering page', () => {
     await expect(page.getByText('Add dark mode')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Add to board' }).first()).toBeVisible()
   })
+
+  test('items show repo tag pills when the item has tags', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/pull/1', title: 'Fix login bug', item_type: 'pr',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        tags: [{ id: 1, name: 'MyApp', color: '#3b82f6', is_project: false }] },
+      { id: 2, external_id: 'github:org/other/issues/2', title: 'Add dark mode', item_type: 'issue',
+        repo: 'org/other', number: 2, url: 'https://github.com/org/other/issues/2', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        tags: [] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    const taggedItem = page.locator('.eng-item', { hasText: 'Fix login bug' })
+    await expect(taggedItem.locator('.eng-item-tag', { hasText: 'MyApp' })).toBeVisible()
+
+    const untaggedItem = page.locator('.eng-item', { hasText: 'Add dark mode' })
+    await expect(untaggedItem.locator('.eng-item-tag')).toHaveCount(0)
+  })
+
+  test('more than 2 tags shows a "+N" overflow chip instead of widening the row', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/pull/1', title: 'Fix login bug', item_type: 'pr',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        tags: [
+          { id: 1, name: 'MyApp', color: '#3b82f6', is_project: false },
+          { id: 2, name: 'Urgent', color: '#ef4444', is_project: false },
+          { id: 3, name: 'Backend', color: '#10b981', is_project: false },
+        ] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    const item = page.locator('.eng-item', { hasText: 'Fix login bug' })
+    await expect(item.locator('.eng-item-tag', { hasText: 'MyApp' })).toBeVisible()
+    await expect(item.locator('.eng-item-tag', { hasText: 'Urgent' })).toBeVisible()
+    await expect(item.locator('.eng-item-tag', { hasText: 'Backend' })).toHaveCount(0)
+    await expect(item.locator('.eng-item-tag--overflow', { hasText: '+1' })).toBeVisible()
+  })
+
+  test('status pill and action button are on the same line as the title', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: 'Board', project_status: 'Backlog', synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    const item = page.locator('.eng-item', { hasText: 'Fix login bug' })
+    const titleBox = await item.locator('.eng-item-title').boundingBox()
+    const statusBox = await item.locator('.eng-item-status-pill').boundingBox()
+    const actionBox = await item.locator('.eng-add-btn').boundingBox()
+    // "Same line" — vertical centers within a few px of each other
+    expect(Math.abs(titleBox.y + titleBox.height / 2 - (statusBox.y + statusBox.height / 2))).toBeLessThan(4)
+    expect(Math.abs(titleBox.y + titleBox.height / 2 - (actionBox.y + actionBox.height / 2))).toBeLessThan(4)
+  })
+
+  test('clicking the checkmark for an already-added item opens the board and that card', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.route('**/api/cards', r => r.fulfill({ json: [
+      ...ALL_TODOS,
+      {
+        id: 999, title: 'Fix login bug', section: 'today', completed: false,
+        description: '', position: 0, overdue_days: 0, tags: [],
+        external_id: 'github:org/repo/issues/1',
+      },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    await page.locator('.eng-item', { hasText: 'Fix login bug' })
+      .getByRole('button', { name: /open card on board/i })
+      .click()
+
+    await expect(page).toHaveURL(/\/board/)
+    const panel = page.locator('.card-detail-panel')
+    await expect(panel).toBeVisible()
+    // Default view mode, not edit — the panel shows an Edit button rather
+    // than jumping straight into the edit form.
+    await expect(panel.getByRole('button', { name: /^edit$/i })).toBeVisible()
+    await expect(panel.getByText('Fix login bug')).toBeVisible()
+  })
+
+  test('mobile: clicking the checkmark opens the card sheet in view mode', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.route('**/api/cards', r => r.fulfill({ json: [
+      ...ALL_TODOS,
+      {
+        id: 999, title: 'Fix login bug', section: 'today', completed: false,
+        description: '', position: 0, overdue_days: 0, tags: [],
+        external_id: 'github:org/repo/issues/1',
+      },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    await page.locator('.eng-item', { hasText: 'Fix login bug' })
+      .getByRole('button', { name: /open card on board/i })
+      .click()
+
+    await expect(page).toHaveURL(/\/board/)
+    const sheet = page.locator('.card-sheet')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.locator('.card-sheet-title', { hasText: 'Fix login bug' })).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /^edit$/i })).toBeVisible()
+  })
+
+  test('tags and repo/issue link sit on a line below the title', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        tags: [{ id: 1, name: 'MyApp', color: '#3b82f6', is_project: false }] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    const item = page.locator('.eng-item', { hasText: 'Fix login bug' })
+    const titleBox = await item.locator('.eng-item-title').boundingBox()
+    const subBox = await item.locator('.eng-item-sub').boundingBox()
+    expect(subBox.y).toBeGreaterThan(titleBox.y + titleBox.height / 2)
+  })
+
+  test('clicking "+ Board" for an issue creates a card in This Week and the button becomes a checkmark', async ({ page }) => {
+    let postedCard = null
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.route('**/api/cards', r => {
+      if (r.request().method() === 'POST') {
+        postedCard = r.request().postDataJSON()
+        return r.fulfill({ status: 201, json: {
+          id: 500, title: postedCard.title, section: postedCard.section, completed: false,
+          description: '', position: 0, overdue_days: 0, tags: [], external_id: postedCard.external_id,
+        }})
+      }
+      return r.fulfill({ json: ALL_TODOS })
+    })
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    const item = page.locator('.eng-item', { hasText: 'Fix login bug' })
+    await item.getByRole('button', { name: /add to board/i }).click()
+
+    await expect.poll(() => postedCard).not.toBeNull()
+    expect(postedCard.title).toBe('GitHub Issue: Fix login bug')
+    expect(postedCard.section).toBe('week')
+    expect(postedCard.external_id).toBe('github:org/repo/issues/1')
+
+    // Reactively switches to the checkmark without a page reload
+    await expect(item.getByRole('button', { name: /open card on board/i })).toBeVisible()
+  })
+
+  test('clicking "+ Board" for a PR creates a card in Today', async ({ page }) => {
+    let postedCard = null
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 2, external_id: 'github:org/repo/pull/2', title: 'Bump deps', item_type: 'pr',
+        repo: 'org/repo', number: 2, url: 'https://github.com/org/repo/pull/2', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.route('**/api/cards', r => {
+      if (r.request().method() === 'POST') {
+        postedCard = r.request().postDataJSON()
+        return r.fulfill({ status: 201, json: {
+          id: 501, title: postedCard.title, section: postedCard.section, completed: false,
+          description: '', position: 0, overdue_days: 0, tags: [], external_id: postedCard.external_id,
+        }})
+      }
+      return r.fulfill({ json: ALL_TODOS })
+    })
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    await page.locator('.eng-item', { hasText: 'Bump deps' })
+      .getByRole('button', { name: /add to board/i })
+      .click()
+
+    await expect.poll(() => postedCard).not.toBeNull()
+    expect(postedCard.title).toBe('GitHub PR: Bump deps')
+    expect(postedCard.section).toBe('today')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -867,6 +1060,41 @@ test.describe('mobile card sheet', () => {
     await expect(sheet.getByRole('button', { name: /add card/i })).toBeVisible()
     // The standard centered modal must NOT have opened
     await expect(page.locator('.modal')).toHaveCount(0)
+  })
+
+  test('creating a new tag inline while saving attaches it to the card', async ({ page }) => {
+    let postedTagIds = null
+    await page.route('**/api/tags', (r) => {
+      if (r.request().method() === 'POST') {
+        const body = r.request().postDataJSON()
+        return r.fulfill({ json: { id: 99, name: body.name, color: body.color, is_project: false } })
+      }
+      return r.fulfill({ json: TAGS })
+    })
+    await page.route('**/api/cards', (r) => {
+      if (r.request().method() === 'POST') {
+        postedTagIds = r.request().postDataJSON().tag_ids
+        return r.fulfill({ json: {
+          id: 500, title: 'New tagged card', section: 'today', completed: false,
+          position: 0, tags: [{ id: 99, name: 'brandnew', color: '#3b82f6' }],
+        }})
+      }
+      return r.fulfill({ json: ALL_TODOS })
+    })
+
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.column-add-btn').first().click()
+    const sheet = page.locator('.card-sheet')
+    await sheet.locator('#cs-title').fill('New tagged card')
+    await sheet.locator('.tag-input-text').fill('brandnew')
+    await sheet.locator('.tag-input-text').press('Enter')
+    await expect(sheet.locator('.tag-chip', { hasText: 'brandnew' })).toBeVisible()
+
+    await sheet.getByRole('button', { name: /add card/i }).click()
+
+    await expect.poll(() => postedTagIds).not.toBeNull()
+    expect(postedTagIds).toContain(99)
   })
 })
 
@@ -1661,5 +1889,93 @@ test.describe('github settings modal', () => {
     await expect(page.getByRole('heading', { name: /engineering/i }).or(page.getByRole('dialog'))).toBeVisible()
     // Token input and repo list textarea
     await expect(page.locator('[placeholder*="token" i], input[type="password"], input[type="text"]').first()).toBeVisible()
+  })
+
+  test('"Add rule" button is visible for repo tags when tags exist', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await expect(page.getByRole('button', { name: /add rule/i })).toBeVisible()
+  })
+
+  test('clicking "Add rule" shows a pattern input and tag chips', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await page.getByRole('button', { name: /add rule/i }).click()
+    await expect(page.getByPlaceholder(/owner or owner\/repo/i)).toBeVisible()
+    await expect(page.locator('.gh-repo-tag-chip', { hasText: 'work' })).toBeVisible()
+    await expect(page.locator('.gh-repo-tag-chip', { hasText: 'personal' })).toBeVisible()
+  })
+
+  test('clicking a tag chip marks it active and removing the rule hides it', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await page.getByRole('button', { name: /add rule/i }).click()
+    const chip = page.locator('.gh-repo-tag-chip', { hasText: 'work' })
+    await chip.click()
+    await expect(chip).toHaveClass(/gh-repo-tag-chip--active/)
+
+    await page.locator('.gh-repo-tags-remove').click()
+    await expect(page.getByPlaceholder(/owner or owner\/repo/i)).toHaveCount(0)
+  })
+
+  test('existing repo tag rules load from config', async ({ page }) => {
+    await page.route('**/api/engineering/repo-tags', r => {
+      if (r.request().method() === 'GET') return r.fulfill({ json: { 'owner/repo': [1] } })
+      return r.fulfill({ json: { ok: true } })
+    })
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await expect(page.locator('.gh-repo-tags-pattern')).toHaveValue('owner/repo')
+    await expect(page.locator('.gh-repo-tag-chip--active', { hasText: 'work' })).toBeVisible()
+  })
+
+  test('saving a repo tag rule PUTs the pattern-to-tag-id mapping', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/engineering/repo-tags', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ok: true } })
+      }
+      return r.fulfill({ json: {} })
+    })
+    await page.route('**/api/engineering/config', r => {
+      if (r.request().method() === 'GET') return r.fulfill({ json: { configured: true, repos: [] } })
+      return r.fulfill({ json: { ok: true } })
+    })
+
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await page.getByRole('button', { name: /add rule/i }).click()
+    await page.getByPlaceholder(/owner or owner\/repo/i).fill('trainsit')
+    await page.locator('.gh-repo-tag-chip', { hasText: 'work' }).click()
+    await page.getByRole('button', { name: /save & sync/i }).click()
+
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody).toEqual({ trainsit: [1] })
+  })
+
+  test('a rule left with an empty pattern is dropped from the saved payload', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/engineering/repo-tags', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ok: true } })
+      }
+      return r.fulfill({ json: {} })
+    })
+    await page.route('**/api/engineering/config', r => {
+      if (r.request().method() === 'GET') return r.fulfill({ json: { configured: true, repos: [] } })
+      return r.fulfill({ json: { ok: true } })
+    })
+
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+    await page.getByRole('button', { name: /add rule/i }).click()
+    // Leave the pattern input blank, only toggle a tag
+    await page.locator('.gh-repo-tag-chip', { hasText: 'work' }).click()
+    await page.getByRole('button', { name: /save & sync/i }).click()
+
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody).toEqual({})
   })
 })

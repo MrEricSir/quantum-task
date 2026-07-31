@@ -383,6 +383,22 @@ export async function saveStatusConfig(config) {
   return res.json()
 }
 
+export async function fetchRepoTagsConfig() {
+  const res = await apiFetch('/api/engineering/repo-tags')
+  if (!res.ok) throw new Error('Failed to fetch repo tags config')
+  return res.json()
+}
+
+export async function saveRepoTagsConfig(config) {
+  const res = await apiFetch('/api/engineering/repo-tags', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) throw new Error('Failed to save repo tags config')
+  return res.json()
+}
+
 export async function syncEngineering() {
   const res = await apiFetch('/api/engineering/sync', { method: 'POST' })
   if (!res.ok) throw new Error('Failed to sync engineering items')

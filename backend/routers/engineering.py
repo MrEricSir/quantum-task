@@ -45,14 +45,58 @@ def set_status_config(body: Dict[str, Any] = Body(...), db: Session = Depends(ge
     return {"ok": True}
 
 
+@router.get("/api/engineering/repo-tags")
+def get_repo_tags_config(db: Session = Depends(get_db)):
+    return github_sync.get_repo_tags_config(db)
+
+
+@router.put("/api/engineering/repo-tags")
+def set_repo_tags_config(body: Dict[str, List[int]] = Body(...), db: Session = Depends(get_db)):
+    github_sync.save_repo_tags_config(db, body)
+    return {"ok": True}
+
+
+def _item_sort_key(item: models.EngineeringItem):
+    """Group by repo, then by board status/lane (items with no status last
+    within their repo), then by title — keeps same-repo (same-tag) items
+    clustered together instead of interleaved in arbitrary DB order."""
+    return (
+        item.repo.lower(),
+        item.project_status is None,
+        (item.project_status or "").lower(),
+        item.title.lower(),
+    )
+
+
 @router.get("/api/engineering/items", response_model=List[schemas.EngineeringItem])
 def get_engineering_items(db: Session = Depends(get_db)):
-    return (
+    items = (
         db.query(models.EngineeringItem)
         .options(selectinload(models.EngineeringItem.comments))
         .filter_by(state="open")
         .all()
     )
+    items.sort(key=_item_sort_key)
+
+    # Repo tags aren't a DB relationship on EngineeringItem — they're computed
+    # from the repo-tag rules so the list reflects config changes immediately.
+    repo_tags_config = github_sync.get_repo_tags_config(db)
+    tag_ids_by_item = {item.id: github_sync._tags_for_repo(repo_tags_config, item.repo) for item in items}
+    all_tag_ids = {tid for ids in tag_ids_by_item.values() for tid in ids}
+    tags_by_id = (
+        {t.id: t for t in db.query(models.Tag).filter(models.Tag.id.in_(all_tag_ids)).all()}
+        if all_tag_ids else {}
+    )
+
+    results = []
+    for item in items:
+        validated = schemas.EngineeringItem.model_validate(item)
+        validated.tags = [
+            schemas.Tag.model_validate(tags_by_id[tid])
+            for tid in tag_ids_by_item[item.id] if tid in tags_by_id
+        ]
+        results.append(validated)
+    return results
 
 
 @router.post("/api/engineering/{item_id}/refresh")

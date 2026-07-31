@@ -2,6 +2,8 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
+from schemas.common import Tag
+
 
 class EngineeringItemComment(BaseModel):
     id: int
@@ -29,5 +31,7 @@ class EngineeringItem(BaseModel):
     body: Optional[str] = None
     body_updated_at: Optional[datetime] = None
     comments: list[EngineeringItemComment] = []
+    # Computed from repo-tag rules (not a DB relationship) — see routers.engineering.
+    tags: list[Tag] = []
 
     model_config = {"from_attributes": True}
