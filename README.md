@@ -186,8 +186,14 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 In **Settings → Engineering → GitHub**, copy the install command:
 
 ```bash
-curl http://localhost:8000/api/bridge/install.py | python3
+curl "http://localhost:8000/api/bridge/install.py?token=<install-token>" | python3
 ```
+
+The `Copy` button fills in the real token for you — it's a separate, rotatable secret
+(distinct from your app password) that only unlocks this one-time install script, shown so
+the command can be fetched by a bare `curl` on a machine with no prior login. If you paste it
+somewhere it might leak, click **Rotate token** in the same panel; that invalidates the old
+command without touching your app password or any machine you've already installed on.
 
 This installs `qtask-bridge` into your PATH and creates `~/.config/qtask-bridge/claude.toml`.
 

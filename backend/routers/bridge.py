@@ -394,7 +394,7 @@ def get_install_script(install_token: str = Query(..., alias="token"), db: Sessi
         qtask-bridge installer
         Installs the qtask-bridge CLI with your app URL and token pre-configured.
         \"\"\"
-        import os, sys, stat, textwrap, urllib.request, json
+        import os, sys, stat, ssl, textwrap, urllib.error, urllib.request, json
 
         APP_URL = "{app_url}"
         TOKEN   = "{token}"
@@ -446,8 +446,25 @@ def get_install_script(install_token: str = Query(..., alias="token"), db: Sessi
                 f"{{APP_URL}}/api/bridge/agent.py",
                 headers={{"Authorization": f"Bearer {{TOKEN}}"}},
             )
-            with urllib.request.urlopen(req) as r:
-                script_content = r.read()
+            try:
+                with urllib.request.urlopen(req) as r:
+                    script_content = r.read()
+            except urllib.error.URLError as e:
+                if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+                    cert_cmd = (
+                        "/Applications/Python " + str(sys.version_info.major) + "."
+                        + str(sys.version_info.minor) + "/Install Certificates.command"
+                    )
+                    print()
+                    print("SSL certificate verification failed while downloading qtask-bridge.")
+                    print("This is a known issue with the official python.org installer on macOS --")
+                    print("it doesn't come with a CA certificate bundle until you run its one-time")
+                    print("setup script. Fix it, then re-run this installer:")
+                    print()
+                    print("    open '" + cert_cmd + "'")
+                    print()
+                    sys.exit(1)
+                raise
 
             os.makedirs(INSTALL_DIR, exist_ok=True)
             os.makedirs(CONFIG_DIR,  exist_ok=True)

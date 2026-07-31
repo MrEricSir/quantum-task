@@ -616,6 +616,67 @@ class TestInstallScript:
         assert client.get(f"/api/bridge/install.py?token={old_token}").status_code == 401
         assert client.get(f"/api/bridge/install.py?token={new_token}").status_code == 200
 
+    def _load_install_module_without_running_main(self, client):
+        """Compile everything up to (but not including) the script's own
+        trailing top-level `main()` call, so importing it for inspection
+        doesn't actually run the installer for real. The full served script
+        always ends with an unguarded `main()` call at column 0 -- there's no
+        `if __name__ == "__main__":` guard -- so exec'ing res.text verbatim
+        would install the bridge for real against whatever ALLOWED_ORIGIN
+        happens to be reachable, which is exactly the bug this helper avoids."""
+        res = _get_install_script(client)
+        source = res.text.rsplit("\nmain()", 1)[0]
+        ns = {}
+        exec(compile(source, "install.py", "exec"), ns)
+        return ns
+
+    def test_ssl_cert_error_shows_actionable_message_instead_of_raw_traceback(self, client, monkeypatch):
+        """Regression test for a real failure seen in the wild: the official
+        python.org macOS installer doesn't ship a CA bundle, so urlopen raises
+        ssl.SSLCertVerificationError while downloading agent.py. main() should
+        catch that specific error and print a fix instead of a raw traceback."""
+        import ssl
+        import urllib.error
+
+        ns = self._load_install_module_without_running_main(client)
+
+        class _FailingOpener:
+            def __enter__(self):
+                raise urllib.error.URLError(ssl.SSLCertVerificationError("cert verify failed"))
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr(ns["urllib"].request, "urlopen", lambda req: _FailingOpener())
+
+        printed = []
+        ns["print"] = lambda *args, **kwargs: printed.append(" ".join(str(a) for a in args))
+
+        with pytest.raises(SystemExit) as exc_info:
+            ns["main"]()
+        assert exc_info.value.code == 1
+
+        output = "\n".join(printed)
+        assert "Install Certificates.command" in output
+        assert "Traceback" not in output
+
+    def test_other_url_errors_still_propagate(self, client, monkeypatch):
+        """Only the specific SSL-cert failure gets a friendly message — any
+        other download failure (network down, DNS, etc.) should still raise
+        normally rather than being silently swallowed."""
+        import urllib.error
+
+        ns = self._load_install_module_without_running_main(client)
+
+        def _raise_generic(req):
+            raise urllib.error.URLError("network is unreachable")
+
+        monkeypatch.setattr(ns["urllib"].request, "urlopen", _raise_generic)
+        ns["print"] = lambda *args, **kwargs: None
+
+        with pytest.raises(urllib.error.URLError):
+            ns["main"]()
+
 
 # ── Served scripts compile as valid Python ───────────────────────────────────
 
