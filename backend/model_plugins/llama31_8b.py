@@ -237,6 +237,18 @@ class Llama31_8bPlugin(BaseModelPlugin):
             '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}}'
             ']}}',
         ),
+        # Multiple distinct food/drink items in one sentence → one item EACH, never merged
+        (
+            "had a bagel, coffee, and a banana",
+            '{{"items":['
+            '{{"type":"food","title":"Bagel","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}},'
+            '{{"type":"food","title":"Coffee","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}},'
+            '{{"type":"food","title":"Banana","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],"recurrence_rule":null}}'
+            ']}}',
+        ),
     ]
 
     def post_process(self, parsed, *, text: str = ""):

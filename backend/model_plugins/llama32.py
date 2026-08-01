@@ -128,8 +128,8 @@ class Llama32Plugin(BaseModelPlugin):
             '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
         ),
         (
-            "ate a banana and drank some coffee",
-            '{{"type":"food","title":"Banana and coffee","description":null,'
+            "drank an oat milk latte",
+            '{{"type":"food","title":"Oat milk latte","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],"note_content":null}}',
         ),
         # task_complete — marking a one-time task as done
@@ -226,6 +226,18 @@ class Llama32Plugin(BaseModelPlugin):
             '{{"type":"workout","title":"Ran 3 miles","description":null,"section":"later",'
             '"scheduled_at":null,"suggested_tags":[]}},'
             '{{"type":"food","title":"Protein shake","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[]}}'
+            ']}}',
+        ),
+        # Multiple distinct food/drink items in one sentence → one item EACH, never merged
+        (
+            "had a bagel, coffee, and a banana",
+            '{{"items":['
+            '{{"type":"food","title":"Bagel","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[]}},'
+            '{{"type":"food","title":"Coffee","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[]}},'
+            '{{"type":"food","title":"Banana","description":null,"section":"today",'
             '"scheduled_at":null,"suggested_tags":[]}}'
             ']}}',
         ),

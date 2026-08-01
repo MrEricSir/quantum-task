@@ -113,6 +113,10 @@ BULK_SUFFIX = """\
 IMPORTANT — MULTIPLE ITEMS:
 - The input may contain multiple todos separated by commas, periods, "and", or newlines.
 - Parse EACH distinct action or event as its own item in the array.
+- This includes food/drink: "had a bagel, coffee, and a banana" is THREE separate \
+type="food" items ("Bagel", "Coffee", "Banana"), never one item with a combined title. \
+Only combine into one food item when it's genuinely a single dish someone would describe \
+as one thing (e.g. "chicken salad", "coffee with oat milk").
 - EXCEPTION: if the input is clearly a shopping/grocery list — e.g. "buy X, Y, and Z" \
 with 3+ items, or a store name followed by food items on separate lines — group ALL of \
 them into ONE item with type="task", section="later", and each item on its own line in description.

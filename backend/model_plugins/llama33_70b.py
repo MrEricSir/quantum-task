@@ -86,8 +86,8 @@ class Llama33_70bPlugin(BaseModelPlugin):
             '"recurrence_rule":null,"clarification_question":null}}',
         ),
         (
-            "ate a banana and drank some coffee",
-            '{{"type":"food","title":"Banana and coffee","description":null,'
+            "drank an oat milk latte",
+            '{{"type":"food","title":"Oat milk latte","description":null,'
             '"section":"today","scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":null,"clarification_question":null}}',
         ),
@@ -143,6 +143,21 @@ class Llama33_70bPlugin(BaseModelPlugin):
             '"scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":null,"clarification_question":null}},'
             '{{"type":"task","title":"Call dentist","description":null,"section":"week",'
+            '"scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"clarification_question":null}}'
+            ']}}',
+        ),
+        # Multiple distinct food/drink items in one sentence → one item EACH, never merged
+        (
+            "had a bagel, coffee, and a banana",
+            '{{"items":['
+            '{{"type":"food","title":"Bagel","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"clarification_question":null}},'
+            '{{"type":"food","title":"Coffee","description":null,"section":"today",'
+            '"scheduled_at":null,"suggested_tags":[],'
+            '"recurrence_rule":null,"clarification_question":null}},'
+            '{{"type":"food","title":"Banana","description":null,"section":"today",'
             '"scheduled_at":null,"suggested_tags":[],'
             '"recurrence_rule":null,"clarification_question":null}}'
             ']}}',
