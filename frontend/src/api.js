@@ -80,16 +80,6 @@ export async function deleteTag(id) {
   if (!res.ok) throw new Error('Failed to delete tag')
 }
 
-export async function addTagToCard(cardId, tagId) {
-  const res = await apiFetch(`${BASE}/${cardId}/tags/${tagId}`, { method: 'POST' })
-  if (!res.ok) throw new Error('Failed to add tag')
-}
-
-export async function removeTagFromCard(cardId, tagId) {
-  const res = await apiFetch(`${BASE}/${cardId}/tags/${tagId}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to remove tag')
-}
-
 export async function fetchCards() {
   const res = await apiFetch(BASE)
   if (!res.ok) throw new Error('Failed to fetch cards')

@@ -89,25 +89,26 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
     for card in db.query(models.Card).filter(
         models.Card.completed == True,           # noqa: E712
         models.Card.completed_at.isnot(None),
+        models.Card.completed_at >= start_str,
     ).all():
         d = (
             card.completed_at.strftime("%Y-%m-%d")
             if hasattr(card.completed_at, "strftime")
             else str(card.completed_at)[:10]
         )
-        if d >= start_str:
-            cards_done_by_date[d] = cards_done_by_date.get(d, 0) + 1
+        cards_done_by_date[d] = cards_done_by_date.get(d, 0) + 1
 
     # Food quality + calories: collect per-day scores to weekly-bin later
     food_quality_by_date: dict[str, list[float]] = {}
     food_calories_by_date: dict[str, list[float]] = {}
-    for entry in db.query(models.FoodEntry).all():
+    for entry in db.query(models.FoodEntry).filter(
+        models.FoodEntry.consumed_at >= start_str
+    ).all():
         d_str = str(entry.consumed_at)[:10]
-        if d_str >= start_str:
-            if entry.quality is not None:
-                food_quality_by_date.setdefault(d_str, []).append(float(entry.quality))
-            if entry.calories is not None:
-                food_calories_by_date.setdefault(d_str, []).append(float(entry.calories))
+        if entry.quality is not None:
+            food_quality_by_date.setdefault(d_str, []).append(float(entry.quality))
+        if entry.calories is not None:
+            food_calories_by_date.setdefault(d_str, []).append(float(entry.calories))
 
     # Weekly binning
     week_vals: dict[str, dict[str, list[float]]] = {}
@@ -143,10 +144,11 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
 
     # Workout days: keyed by date, value is set of workout types logged that day
     workout_days_by_date: dict[str, set[str]] = {}
-    for entry in db.query(models.WorkoutEntry).all():
+    for entry in db.query(models.WorkoutEntry).filter(
+        models.WorkoutEntry.logged_at >= start_str
+    ).all():
         d_str = str(entry.logged_at)[:10]
-        if d_str >= start_str:
-            workout_days_by_date.setdefault(d_str, set()).add(entry.type)
+        workout_days_by_date.setdefault(d_str, set()).add(entry.type)
 
     CARDIO_TYPES = {"run", "cycle", "row", "swim", "sport"}
 
@@ -695,11 +697,6 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
         .first()
     )
     if exp:
-        return _exp_to_dict(exp)
-
-    # One-time migration from legacy AppSetting storage
-    exp = _migrate_appsetting(db)
-    if exp and exp.week == current_week:
         return _exp_to_dict(exp)
 
     # Generate a new experiment

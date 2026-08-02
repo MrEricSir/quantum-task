@@ -55,8 +55,6 @@ LAST_KNOWN_LON = "last_known_lon"
 TELEGRAM_WEBHOOK_SECRET = "telegram_webhook_secret"
 # Local "HH:MM" time to send an evening habit reminder; empty string to disable.
 HABIT_REMINDER_TIME = "habit_reminder_time"
-# ISO date of last habit reminder sent — prevents double-send.
-HABIT_REMINDER_LAST_SENT = "habit_reminder_last_sent"
 # Local "HH:MM" time to send a midday overdue-task nudge; empty string to disable.
 OVERDUE_NUDGE_TIME = "overdue_nudge_time"
 # ISO date of last overdue nudge sent — prevents double-send.

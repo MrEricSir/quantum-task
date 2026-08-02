@@ -369,28 +369,6 @@ def update_card(request: Request, card_id: int, card: schemas.CardUpdate, backgr
     return db_card
 
 
-@router.post("/api/cards/{card_id}/tags/{tag_id}")
-def add_tag_to_card(card_id: int, tag_id: int, db: Session = Depends(get_db)):
-    db_card = db.query(models.Card).filter(models.Card.id == card_id).first()
-    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
-    if not db_card or not db_tag:
-        raise HTTPException(status_code=404, detail="Not found")
-    if db_tag not in db_card.tags:
-        db_card.tags.append(db_tag)
-        db.commit()
-    return {"ok": True}
-
-
-@router.delete("/api/cards/{card_id}/tags/{tag_id}")
-def remove_tag_from_card(card_id: int, tag_id: int, db: Session = Depends(get_db)):
-    db_card = db.query(models.Card).filter(models.Card.id == card_id).first()
-    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
-    if not db_card or not db_tag:
-        raise HTTPException(status_code=404, detail="Not found")
-    if db_tag in db_card.tags:
-        db_card.tags.remove(db_tag)
-        db.commit()
-    return {"ok": True}
 
 
 _PROJECT_TAG_COLORS = [

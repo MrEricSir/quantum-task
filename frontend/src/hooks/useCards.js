@@ -5,8 +5,6 @@ import {
   createCard,
   updateCard,
   deleteCard,
-  addTagToCard,
-  removeTagFromCard,
   updateTag,
   deleteTag,
   replaceTag,
@@ -60,26 +58,6 @@ export function useCards({ authed, tags, setTags, invalidateBriefing }) {
     invalidateBriefing?.()
   }
 
-  const handleAddTag = async (cardId, tagId) => {
-    await addTagToCard(cardId, tagId)
-    const tag = tags.find((t) => t.id === tagId)
-    if (!tag) return
-    queryClient.setQueryData(CARDS_QUERY_KEY, (prev) =>
-      (prev ?? []).map((t) =>
-        t.id === cardId ? { ...t, tags: [...(t.tags ?? []), tag] } : t,
-      ),
-    )
-  }
-
-  const handleRemoveTag = async (cardId, tagId) => {
-    await removeTagFromCard(cardId, tagId)
-    queryClient.setQueryData(CARDS_QUERY_KEY, (prev) =>
-      (prev ?? []).map((t) =>
-        t.id === cardId ? { ...t, tags: (t.tags ?? []).filter((tg) => tg.id !== tagId) } : t,
-      ),
-    )
-  }
-
   const handleArchiveCard = (id) => handleUpdateCard(id, { archived: true })
   const handleUnarchiveCard = (id) => handleUpdateCard(id, { archived: false })
 
@@ -131,8 +109,6 @@ export function useCards({ authed, tags, setTags, invalidateBriefing }) {
     handleUpdateCard,
     handleDeleteCard,
     handleToggle,
-    handleAddTag,
-    handleRemoveTag,
     handleArchiveCard,
     handleUnarchiveCard,
     handleUpdateTag,

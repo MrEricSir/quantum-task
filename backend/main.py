@@ -152,6 +152,20 @@ def _ensure_vapid_keys():
         print(f"[startup] ensure_vapid_keys failed: {e}")
 
 
+def _migrate_health_experiment():
+    """One-time migration of the old AppSetting-backed experiment to the
+    HealthExperiment table. Self-guarding: _migrate_appsetting is a no-op
+    once the legacy 'health_experiment' AppSetting row has been migrated
+    (it deletes the row on success). Previously this ran on every
+    GET /api/health/experiment request instead of once at startup."""
+    try:
+        with SessionLocal() as db:
+            from routers.correlations import _migrate_appsetting
+            _migrate_appsetting(db)
+    except Exception as e:
+        print(f"[startup] migrate_health_experiment failed: {e}")
+
+
 def _run_startup_migrations():
     # 1. Run Alembic migrations to head
     alembic_cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "alembic.ini"))
@@ -173,6 +187,7 @@ def _run_startup_migrations():
     # 5. One-time data migrations (each guarded by an AppSetting flag)
     _backfill_streak_days()
     _ensure_vapid_keys()
+    _migrate_health_experiment()
 
 
 # ── Push notification scheduler ───────────────────────────────────────────────

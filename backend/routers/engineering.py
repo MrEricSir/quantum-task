@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+import requests as _requests
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
@@ -114,14 +116,15 @@ def refresh_engineering_item(item_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Cannot parse external_id")
     owner, repo, _, number = parsed
 
-    import requests as _requests
-    from datetime import datetime, timezone
-    r = _requests.get(
-        f"{github_sync.GITHUB_API}/repos/{owner}/{repo}/issues/{number}",
-        headers=github_sync._headers(token),
-        timeout=10,
-    )
-    r.raise_for_status()
+    try:
+        r = _requests.get(
+            f"{github_sync.GITHUB_API}/repos/{owner}/{repo}/issues/{number}",
+            headers=github_sync._headers(token),
+            timeout=10,
+        )
+        r.raise_for_status()
+    except _requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"GitHub request failed: {e}")
     data = r.json()
 
     item.title = data["title"]

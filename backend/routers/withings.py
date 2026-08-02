@@ -377,9 +377,17 @@ def do_sync(db: Session) -> dict:
 @router.get("/api/withings/status", response_model=schemas.WithingsStatus)
 def withings_status(db: Session = Depends(get_db)):
     row = db.query(models.WithingsCredentials).first()
+    # last_synced is stored as a naive datetime that represents UTC by
+    # convention (see models.py's date/time storage docstring). Attach that
+    # tzinfo explicitly before serializing -- otherwise the frontend has no
+    # way to know the string is UTC and `new Date(...)` parses it as local
+    # time, showing the wrong clock time.
+    last_synced = None
+    if row and row.last_synced:
+        last_synced = row.last_synced.replace(tzinfo=timezone.utc).isoformat()
     return schemas.WithingsStatus(
         connected=row is not None,
-        last_synced=row.last_synced.isoformat() if row and row.last_synced else None,
+        last_synced=last_synced,
     )
 
 

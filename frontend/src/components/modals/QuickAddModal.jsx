@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { parseBulkCards, localDateTime, createCard } from '../../api'
+import { parseBulkCards, localDate, localDateTime, createCard } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
 import { scoreMatch, findBestMatch } from '../../lib/completion.js'
@@ -455,7 +455,11 @@ export default function QuickAddModal({
     try {
       const resp = await fetch('/api/assist/global', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Local-Date': localDate(),
+          'X-UTC-Offset': String(new Date().getTimezoneOffset()),
+        },
         body: JSON.stringify({ prompt: p, ...ctx }),
         signal: controller.signal,
       })

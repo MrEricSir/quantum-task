@@ -122,7 +122,6 @@ export default function App() {
   const {
     cards, setCards, loading: cardsLoading, cardsRef,
     handleAddCard, handleUpdateCard, handleDeleteCard, handleToggle,
-    handleAddTag, handleRemoveTag,
     handleArchiveCard, handleUnarchiveCard,
     handleUpdateTag, handleDeleteTag, handleReplaceTag,
   } = useCards({ authed, tags, setTags, invalidateBriefing })
@@ -582,7 +581,6 @@ export default function App() {
     if (page === 'today')       return navigate(tagId ? `/today/tag/${tagId}` : '/today')
     if (page === 'engineering') return navigate('/engineering')
     if (page === 'health')      return navigate('/health')
-    if (page === 'habits')      return navigate('/health')
     return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
   }
 

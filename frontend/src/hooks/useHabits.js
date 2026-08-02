@@ -1,4 +1,3 @@
-import { useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchHabits,
@@ -29,16 +28,6 @@ export function useHabits({ authed, invalidateBriefing }) {
     queryFn: fetchArchivedHabits,
     enabled: !!authed,
   })
-
-  const setHabits = useCallback(
-    (updater) => queryClient.setQueryData(HABITS_QUERY_KEY, updater),
-    [queryClient],
-  )
-
-  const setArchivedHabits = useCallback(
-    (updater) => queryClient.setQueryData(ARCHIVED_HABITS_QUERY_KEY, updater),
-    [queryClient],
-  )
 
   const handleAddHabit = async (data) => {
     const habit = await createHabit(data)
@@ -124,9 +113,7 @@ export function useHabits({ authed, invalidateBriefing }) {
   return {
     habits,
     loading,
-    setHabits,
     archivedHabits,
-    setArchivedHabits,
     handleAddHabit,
     handleUpdateHabit,
     handleDeleteHabit,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon } from '@radix-ui/react-icons'
+import { localDate } from '../../api'
 import './DailyBriefing.css'
 
 export default function DailyBriefing({ tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
@@ -48,12 +49,9 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
     const location = await getLocation()
 
     try {
-      const d = new Date()
-      const pad = n => String(n).padStart(2, '0')
-      const localDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
       const response = await fetch('/api/briefing/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate, 'X-UTC-Offset': String(new Date().getTimezoneOffset()) },
+        headers: { 'Content-Type': 'application/json', 'X-Local-Date': localDate(), 'X-UTC-Offset': String(new Date().getTimezoneOffset()) },
         body: JSON.stringify({
           force,
           today_only: todayOnly,

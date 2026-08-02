@@ -66,10 +66,6 @@ class Settings:
         return self.get(keys.HABIT_REMINDER_TIME)
 
     @property
-    def habit_reminder_last_sent(self) -> str:
-        return self.get(keys.HABIT_REMINDER_LAST_SENT)
-
-    @property
     def overdue_nudge_time(self) -> str:
         return self.get(keys.OVERDUE_NUDGE_TIME)
 

@@ -110,6 +110,19 @@ class TestWithingsStatus:
         assert data["last_synced"] is not None
         assert "2026-06-20" in data["last_synced"]
 
+    def test_last_synced_includes_explicit_utc_offset(self, client, db):
+        """Regression test: last_synced is stored as a naive datetime that
+        represents UTC by convention (SQLite strips tzinfo on save). If it's
+        serialized without an explicit offset, `new Date(...)` on the
+        frontend parses it as local time and displays the wrong clock time.
+        The response must be self-describing."""
+        ts = datetime(2026, 6, 20, 14, 30, 0, tzinfo=timezone.utc)
+        _add_credentials(db, last_synced=ts)
+        resp = client.get("/api/withings/status")
+        last_synced = resp.json()["last_synced"]
+        assert last_synced.endswith("+00:00") or last_synced.endswith("Z")
+        assert datetime.fromisoformat(last_synced) == ts
+
 
 # ── DELETE /api/withings/disconnect ──────────────────────────────────────────
 

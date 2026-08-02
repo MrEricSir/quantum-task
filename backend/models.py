@@ -3,12 +3,27 @@ SQLAlchemy models for the Quantum Task backend.
 
 Date/time storage convention
 ─────────────────────────────
-Two patterns are used, intentionally:
+Three patterns are used, intentionally:
 
-• ``DateTime`` columns (e.g. ``Card.created_at``, ``Card.scheduled_at``,
-  ``WithingsCredentials.last_synced``) — store Python ``datetime`` objects.
-  SQLite serialises these as ISO-8601 strings.  All values are UTC; naive
-  datetimes are treated as UTC by convention.
+• ``DateTime`` columns holding a UTC instant (e.g. ``Card.created_at``,
+  ``Card.completed_at``, ``Card.archived_at``, ``WithingsCredentials.last_synced``,
+  ``HealthExperiment.created_at``/``dismissed_at``) — store Python ``datetime``
+  objects from ``datetime.now(timezone.utc)``. SQLite strips tzinfo on save, so
+  these come back out of the DB as *naive* datetimes; UTC is a convention, not
+  something the column enforces. When serialising one of these for the API
+  (e.g. in a response schema), re-attach ``tzinfo=timezone.utc`` before calling
+  ``.isoformat()`` — a bare naive ISO string has no offset, so `new Date(...)`
+  on the frontend parses it as local time and displays the wrong clock time.
+  (This was a real bug for ``WithingsCredentials.last_synced`` — fixed by
+  attaching tzinfo in the router rather than just here in a comment.)
+
+• ``DateTime`` columns holding a naive *local* wall-clock time (e.g.
+  ``Card.scheduled_at``, ``FoodEntry.consumed_at``, ``WorkoutEntry.logged_at``)
+  — these represent something the user meant in their own timezone ("3pm
+  today"), resolved from the request's local date via ``deps.local_date()``/
+  the ``X-Local-Date`` header and stored as-is, with no UTC conversion. The
+  frontend's bare `new Date(...)` parsing is correct for these *because* they
+  hold local time already — do not "fix" them by attaching UTC tzinfo.
 
 • ``String`` columns holding YYYY-MM-DD dates (e.g. ``HabitCompletion.date``,
   ``HabitStreakDay.date``, ``WithingsMeasurement.date``) — store date-only
@@ -16,8 +31,11 @@ Two patterns are used, intentionally:
   timezone ambiguity for calendar dates that are inherently tz-agnostic (a
   habit "completed on 2026-06-20" is the same regardless of tz).
 
-New models should follow the same convention:
-  - Use ``DateTime`` for timestamps (created_at, updated_at, etc.)
+New models should follow the same convention — and be deliberate about which
+of the first two patterns a new timestamp column follows, since they require
+opposite handling at the API boundary:
+  - UTC instant: use ``datetime.now(timezone.utc)``; attach tzinfo when serialising.
+  - Local wall-clock time: resolve from the request's local date; serialise as-is.
   - Use ``String`` (YYYY-MM-DD) for calendar date keys with no time component.
 """
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, Table, ForeignKey, UniqueConstraint
