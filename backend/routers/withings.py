@@ -130,16 +130,36 @@ def _upsert_measurement(db: Session, date_str: str, metric: str, value: float) -
         db.flush()  # make visible to subsequent queries in same transaction
 
 
-def _auto_check_habits(db: Session, today: date) -> None:
-    """Auto-complete habits whose Withings goal was met today.
+_AUTO_CHECK_LOOKBACK_DAYS = 3  # re-check this many trailing days, not just today
+
+
+def _auto_check_habits(db: Session, today: date, lookback_days: int = _AUTO_CHECK_LOOKBACK_DAYS) -> None:
+    """Auto-complete habits whose Withings goal was met on any of the last
+    `lookback_days` days (today included).
+
+    A single sync fetches and upserts measurements for every day in its
+    fetch window, but a device's activity data can finalize or get revised
+    after the fact -- e.g. a watch that only uploads a day's full step count
+    after local midnight. If we only ever re-checked "today", a goal that
+    was actually met would be missed forever the moment the day rolls over
+    before the corrected measurement arrives. Re-checking a short trailing
+    window on every sync catches that without needing to know why a given
+    day's data arrived late.
+    """
+    for days_back in range(lookback_days):
+        _auto_check_habits_for_date(db, today - timedelta(days=days_back))
+
+
+def _auto_check_habits_for_date(db: Session, check_date: date) -> None:
+    """Auto-complete habits whose Withings goal was met on `check_date`.
 
     Steps: goal met when value >= goal.
     Fat ratio / weight: goal met when value <= goal (lower is better).
     """
-    today_str = today.isoformat()
+    date_str = check_date.isoformat()
     for metric in METRICS:
         row = db.query(models.WithingsMeasurement).filter_by(
-            date=today_str, metric=metric
+            date=date_str, metric=metric
         ).first()
         if not row:
             continue
@@ -155,11 +175,11 @@ def _auto_check_habits(db: Session, today: date) -> None:
         for habit in linked:
             met = (row.value >= habit.withings_goal) if metric == "steps" else (row.value <= habit.withings_goal)
             if met and not db.query(models.HabitCompletion).filter_by(
-                habit_id=habit.id, date=today_str
+                habit_id=habit.id, date=date_str
             ).first():
-                db.add(models.HabitCompletion(habit_id=habit.id, date=today_str))
+                db.add(models.HabitCompletion(habit_id=habit.id, date=date_str))
                 db.flush()
-                recompute_from(db, habit.id, today)
+                recompute_from(db, habit.id, check_date)
 
 
 class _TokenAuthError(Exception):

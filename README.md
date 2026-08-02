@@ -359,7 +359,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 2. Send any message to your new bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` — your numeric chat ID appears in the response
 3. Paste both into **Settings → Telegram**, pick a delivery hour, and click **Save**
 4. Click **Register webhook** in the Two-way chat section — this tells Telegram to send messages to your backend
-5. (Production) Run `./dev.sh gcp-setup-scheduler` once to create the Cloud Scheduler job that sends the daily briefing
+5. (Production) Run `./dev.sh gcp-setup-scheduler` once to create the Cloud Scheduler jobs that drive this (and also keep Withings syncing reliably — see [Deploying to GCP](#deploying-to-gcp))
 
 > **Note:** The webhook must be registered against a publicly reachable URL. It works automatically in production (Cloud Run). For local development, you would need a tunnel (e.g. ngrok) pointing to `localhost:8000` — otherwise only the daily briefing outbound direction works locally.
 
@@ -508,13 +508,17 @@ If you have existing workout or food entries that were logged before this conven
 
 See **`deploy-gcp.md`** for the full guide, including infrastructure setup, GitHub secrets, LLM provider options, and CI/CD details.
 
-After deploying, run this once to set up the Telegram cron job:
+After deploying, run this once to set up the Cloud Scheduler jobs:
 
 ```bash
 ./dev.sh gcp-setup-scheduler
 ```
 
-This creates a Cloud Scheduler job that hits the app hourly. The app checks whether the current local hour matches your configured send time and skips silently otherwise. The job is automatically updated on every subsequent `./dev.sh gcp-deploy`.
+This creates two hourly Cloud Scheduler jobs:
+- `telegram-daily-briefing` — hits `/api/telegram/daily-briefing`, which runs every scheduled Telegram check (briefing, habit reminder, overdue nudge, health check-in, streak milestones). The app checks whether the current local hour matches your configured send time for each and skips silently otherwise.
+- `withings-sync` — hits `/api/withings/sync` directly, so Withings data (and the habit auto-checks that depend on it) syncs reliably even when the app has no traffic. Cloud Run runs with min instances 0, so the in-process sync loop in `main.py` (still there, and still what drives sync locally in dev) can't be relied on to run on a fixed cadence in production — this job covers that gap. Both paths call the same sync function, which is idempotent, so there's no harm in both being active.
+
+Both jobs are automatically updated on every subsequent `./dev.sh gcp-deploy`.
 
 ## Project structure
 

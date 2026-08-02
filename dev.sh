@@ -400,6 +400,43 @@ gcp_deploy() {
   gcp_setup_scheduler
 }
 
+# Create or update a single Cloud Scheduler HTTP job, authenticated the same
+# way a logged-in API client would be (Bearer AUTH_PASSWORD).
+# Usage: _gcp_upsert_scheduler_job JOB_NAME ENDPOINT CRON_SCHEDULE
+_gcp_upsert_scheduler_job() {
+  local job_name="$1"
+  local endpoint="$2"
+  local schedule="$3"
+
+  echo "==> Setting up Cloud Scheduler job: $job_name"
+  echo "    Target  : POST $endpoint"
+  echo "    Schedule: $schedule (UTC)"
+
+  if gcloud scheduler jobs describe "$job_name" \
+      --location "$GCP_REGION" --project "$GCP_PROJECT_ID" &>/dev/null; then
+    gcloud scheduler jobs update http "$job_name" \
+      --location "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --schedule "$schedule" \
+      --uri "$endpoint" \
+      --http-method POST \
+      --update-headers "Authorization=Bearer ${AUTH_PASSWORD}" \
+      --quiet
+    echo "==> Updated existing scheduler job."
+  else
+    gcloud scheduler jobs create http "$job_name" \
+      --location "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --schedule "$schedule" \
+      --uri "$endpoint" \
+      --http-method POST \
+      --headers "Authorization=Bearer ${AUTH_PASSWORD}" \
+      --quiet
+    echo "==> Created scheduler job."
+  fi
+  echo ""
+}
+
 gcp_setup_scheduler() {
   _gcp_prereqs
   _load_gcp_config
@@ -415,44 +452,32 @@ gcp_setup_scheduler() {
     exit 1
   fi
 
-  local ENDPOINT="$SERVICE_URL/api/telegram/daily-briefing"
-  local JOB_NAME="telegram-daily-briefing"
-
   echo "==> Enabling Cloud Scheduler API..."
   gcloud services enable cloudscheduler.googleapis.com \
     --project "$GCP_PROJECT_ID" --quiet
-
-  echo "==> Setting up Cloud Scheduler job: $JOB_NAME"
-  echo "    Target  : POST $ENDPOINT"
-  echo "    Schedule: hourly (UTC)"
   echo ""
 
-  if gcloud scheduler jobs describe "$JOB_NAME" \
-      --location "$GCP_REGION" --project "$GCP_PROJECT_ID" &>/dev/null; then
-    gcloud scheduler jobs update http "$JOB_NAME" \
-      --location "$GCP_REGION" \
-      --project "$GCP_PROJECT_ID" \
-      --schedule "0 * * * *" \
-      --uri "$ENDPOINT" \
-      --http-method POST \
-      --update-headers "Authorization=Bearer ${AUTH_PASSWORD}" \
-      --quiet
-    echo "==> Updated existing scheduler job."
-  else
-    gcloud scheduler jobs create http "$JOB_NAME" \
-      --location "$GCP_REGION" \
-      --project "$GCP_PROJECT_ID" \
-      --schedule "0 * * * *" \
-      --uri "$ENDPOINT" \
-      --http-method POST \
-      --headers "Authorization=Bearer ${AUTH_PASSWORD}" \
-      --quiet
-    echo "==> Created scheduler job."
-  fi
+  # Telegram briefing/nudge/streak checks (also covers habit reminders, overdue
+  # nudges, health nudges, streak milestones — see telegram/scheduler.py check_all).
+  _gcp_upsert_scheduler_job \
+    "telegram-daily-briefing" \
+    "$SERVICE_URL/api/telegram/daily-briefing" \
+    "0 * * * *"
 
-  echo ""
+  # Withings sync. Cloud Run runs with min instances 0, so the in-process
+  # _withings_scheduler loop in main.py (still present, for local dev where
+  # there's no Cloud Scheduler) can go long stretches without running if the
+  # instance isn't warm. This job makes sync timing reliable in production;
+  # both paths call the same do_sync(), which is idempotent, so having both
+  # active is harmless.
+  _gcp_upsert_scheduler_job \
+    "withings-sync" \
+    "$SERVICE_URL/api/withings/sync" \
+    "0 * * * *"
+
   echo "The briefing will be sent at your configured time (±15 min)."
   echo "Configure time and credentials in Settings > Telegram."
+  echo "Withings will sync hourly in addition to the local-dev background loop."
 }
 
 gcp_logs() {
@@ -527,7 +552,7 @@ case "${1:-}" in
     echo "  gcp-deploy             Build and deploy manually"
     echo "  gcp-update-env         Push updated env vars from .gcp-config to Cloud Run"
     echo "  gcp-logs [N] [grep]    Fetch last N log lines (default 100), optionally grepped"
-    echo "  gcp-setup-scheduler    Create Cloud Scheduler job for Telegram daily briefing"
+    echo "  gcp-setup-scheduler    Create Cloud Scheduler jobs (Telegram checks + Withings sync)"
     exit 1
     ;;
 esac

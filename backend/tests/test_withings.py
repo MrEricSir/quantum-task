@@ -155,11 +155,35 @@ class TestAutoCheckHabits:
         assert not _completed_today(db, h_high.id, TODAY_STR)
         assert _completed_today(db, h_low.id, TODAY_STR)
 
-    def test_wrong_date_not_completed(self, db):
+    def test_recent_past_date_within_lookback_is_retroactively_completed(self, db):
+        """Regression test: a device (e.g. a Withings watch) can finalize a
+        day's step count late -- sometimes after local midnight -- so the
+        measurement for that day only lands in our DB once "today" has
+        already rolled over. The habit for that day must still get checked
+        off once the goal-meeting measurement arrives, not just for the
+        current day."""
         h = _add_habit(db, "Walk 10k steps", "steps", 10_000)
-        _add_measurement(db, "2026-06-19", "steps", 12_000)  # yesterday
+        _add_measurement(db, "2026-06-19", "steps", 12_000)  # yesterday, goal met
         _auto_check_habits(db, TODAY)
+        assert _completed_today(db, h.id, "2026-06-19")
+        # Today itself has no measurement, so it should not be completed
         assert not _completed_today(db, h.id, TODAY_STR)
+
+    def test_date_outside_lookback_window_not_completed(self, db):
+        h = _add_habit(db, "Walk 10k steps", "steps", 10_000)
+        _add_measurement(db, "2026-06-10", "steps", 12_000)  # 10 days ago, outside the window
+        _auto_check_habits(db, TODAY)
+        assert not _completed_today(db, h.id, "2026-06-10")
+
+    def test_lookback_does_not_duplicate_completions_across_syncs(self, db):
+        h = _add_habit(db, "Walk 10k steps", "steps", 10_000)
+        _add_measurement(db, "2026-06-19", "steps", 12_000)
+        _auto_check_habits(db, TODAY)
+        _auto_check_habits(db, TODAY)  # a later sync re-checks the same window
+        count = db.query(models.HabitCompletion).filter_by(
+            habit_id=h.id, date="2026-06-19"
+        ).count()
+        assert count == 1
 
 
 # ── Health metric detection in post_process ───────────────────────────────────
