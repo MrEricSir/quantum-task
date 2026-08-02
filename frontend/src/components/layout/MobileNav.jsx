@@ -16,7 +16,7 @@ export default function MobileNav({ page, onNavigate }) {
         <button
           key={p}
           className={`mobile-nav-item${page === p ? ' mobile-nav-item--active' : ''}`}
-          onClick={() => onNavigate(p, null)}
+          onClick={() => onNavigate(p)}
         >
           <span className="mobile-nav-icon"><Icon width={16} height={16} /></span>
           <span className="mobile-nav-label">{label}</span>

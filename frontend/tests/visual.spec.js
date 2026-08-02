@@ -650,6 +650,32 @@ test.describe('engineering page', () => {
     await expect(item.locator('.eng-item-tag--overflow', { hasText: '+1' })).toBeVisible()
   })
 
+  test('sidebar tag filter narrows the engineering item list', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/pull/1', title: 'Fix login bug', item_type: 'pr',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        tags: [{ id: 1, name: 'work', color: '#3b82f6' }] },
+      { id: 2, external_id: 'github:org/other/issues/2', title: 'Add dark mode', item_type: 'issue',
+        repo: 'org/other', number: 2, url: 'https://github.com/org/other/issues/2', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        tags: [] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    await page.locator('.sidebar-item', { hasText: 'work' }).click()
+    await expect(page).toHaveURL(/\/engineering\/tag\/1/)
+    await expect(page.getByText('Fix login bug')).toBeVisible()
+    await expect(page.getByText('Add dark mode')).toHaveCount(0)
+  })
+
+  test('switching to engineering from another page preserves the tag selection', async ({ page }) => {
+    await page.goto('/board/tag/1')
+    await waitForApp(page)
+    await page.locator('.sidebar-item', { hasText: 'Engineering' }).click()
+    await expect(page).toHaveURL(/\/engineering\/tag\/1/)
+  })
+
   test('status pill and action button are on the same line as the title', async ({ page }) => {
     await page.route('**/api/engineering/items', r => r.fulfill({ json: [
       { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
@@ -1462,6 +1488,25 @@ test.describe('health page', () => {
     await waitForApp(page)
   })
 
+  test('habit tag chip is shown for a habit that has a tag', async ({ page }) => {
+    const card = page.locator('.habit-card', { hasText: 'Evening walk' })
+    await expect(card.locator('.habit-card-tag-pill', { hasText: 'personal' })).toBeVisible()
+  })
+
+  test('sidebar tag filter narrows the habit list', async ({ page }) => {
+    await page.locator('.sidebar-item', { hasText: 'personal' }).click()
+    await expect(page).toHaveURL(/\/health\/tag\/2/)
+    await expect(page.getByText('Evening walk')).toBeVisible()
+    await expect(page.getByText('Morning meditation')).toHaveCount(0)
+  })
+
+  test('switching to health from another page preserves the tag selection', async ({ page }) => {
+    await page.goto('/board/tag/2')
+    await waitForApp(page)
+    await page.locator('.sidebar-item', { hasText: 'Habits' }).click()
+    await expect(page).toHaveURL(/\/health\/tag\/2/)
+  })
+
   test('"Connect Withings" prompt is shown when not connected', async ({ page }) => {
     await expect(page.locator('.health-not-connected')).toBeVisible()
     await expect(page.locator('.health-not-connected').getByRole('button', { name: /connect withings/i })).toBeVisible()
@@ -1594,6 +1639,66 @@ test.describe('tag filter bar', () => {
     const allPill = page.locator('.tag-filter-bar-pill', { hasText: 'All' })
     await expect(allPill).toBeVisible()
     await allPill.click()
+    await expect(page).toHaveURL(/\/board$/)
+  })
+
+  test('selecting a second tag pill adds to the selection instead of replacing it', async ({ page }) => {
+    await page.locator('.tag-filter-bar-pill', { hasText: 'work' }).click()
+    await page.locator('.tag-filter-bar-pill', { hasText: 'personal' }).click({ force: true })
+    await expect(page).toHaveURL(/\/board\/tag\/1,2/)
+  })
+
+  test('switching pages via mobile nav preserves the tag selection', async ({ page }) => {
+    await page.goto('/board/tag/1')
+    await waitForApp(page)
+    await page.locator('.mobile-nav-item', { hasText: 'Calendar' }).click()
+    await expect(page).toHaveURL(/\/calendar\/tag\/1/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sidebar tag filter (desktop)
+// ---------------------------------------------------------------------------
+test.describe('sidebar tag filter', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('selecting multiple tags shows the union of matching cards', async ({ page }) => {
+    await page.locator('.sidebar-item', { hasText: 'work' }).click()
+    await page.locator('.sidebar-item', { hasText: 'personal' }).click()
+    await expect(page).toHaveURL(/\/board\/tag\/1,2/)
+    await expect(page.getByText('Daily Engineering Standup')).toBeVisible()
+    await expect(page.getByText('Read that article')).toBeVisible()
+    await expect(page.getByText('Call dentist')).toHaveCount(0)
+  })
+
+  test('deselecting one tag narrows back to the remaining selection', async ({ page }) => {
+    await page.goto('/board/tag/1,2')
+    await waitForApp(page)
+    await page.locator('.sidebar-item', { hasText: 'work' }).click()
+    await expect(page).toHaveURL(/\/board\/tag\/2$/)
+  })
+
+  test('active tag shows a checkmark indicator', async ({ page }) => {
+    await page.locator('.sidebar-item', { hasText: 'work' }).click()
+    await expect(
+      page.locator('.sidebar-item', { hasText: 'work' }).locator('.sidebar-tag-check--on')
+    ).toBeVisible()
+  })
+
+  test('switching pages via sidebar preserves the tag selection', async ({ page }) => {
+    await page.goto('/board/tag/1')
+    await waitForApp(page)
+    await page.locator('.sidebar-item', { hasText: 'Calendar' }).click()
+    await expect(page).toHaveURL(/\/calendar\/tag\/1/)
+  })
+
+  test('"All" clears a multi-tag selection', async ({ page }) => {
+    await page.goto('/board/tag/1,2')
+    await waitForApp(page)
+    await page.locator('.sidebar-item', { hasText: 'All' }).click()
     await expect(page).toHaveURL(/\/board$/)
   })
 })
@@ -1779,6 +1884,66 @@ test.describe('insights panel — completion pattern', () => {
     await waitForApp(page)
     await page.locator('.insight-card--pattern .insight-dismiss').click()
     await expect(page.locator('.insight-card--pattern')).toHaveCount(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Insights panel — tag filtering
+// ---------------------------------------------------------------------------
+test.describe('insights panel — tag filtering', () => {
+  // Card id 1 ("Daily Engineering Standup") is tagged "work" (id 1) in TODOS.
+  const STUCK_INSIGHT = {
+    type: 'stuck_task',
+    text: 'This task has been sitting in Today for a while.',
+    days_stuck: 4,
+    card: {
+      id: 1, title: 'Daily Engineering Standup', section: 'today', completed: false,
+      scheduled_at: null, description: null, position: 0,
+      tags: [{ id: 1, name: 'work', color: '#3b82f6' }],
+    },
+  }
+  // Habit id 2 ("Evening walk") is tagged "personal" (id 2) in HABITS.
+  const HABIT_INSIGHT = {
+    type: 'habit_trend',
+    text: 'Evening walk completed only 2/7 days — try to build consistency.',
+    completions_last_7: 2,
+    habit_id: 2,
+    habit_name: 'Evening walk',
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/insights', r => r.fulfill({ json: [STUCK_INSIGHT, HABIT_INSIGHT] }))
+  })
+
+  test('both insights are shown when no tag filter is active', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--stuck')).toBeVisible()
+    await expect(page.locator('.insight-card--habit')).toBeVisible()
+  })
+
+  test('stuck task insight is hidden when the tag filter excludes its card', async ({ page }) => {
+    await page.goto('/today/tag/2') // personal — the stuck card is tagged work
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--stuck')).toHaveCount(0)
+  })
+
+  test('stuck task insight is shown when the tag filter includes its card', async ({ page }) => {
+    await page.goto('/today/tag/1') // work
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--stuck')).toBeVisible()
+  })
+
+  test('habit trend insight is hidden when the tag filter excludes its habit', async ({ page }) => {
+    await page.goto('/today/tag/1') // work — the habit is tagged personal
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--habit')).toHaveCount(0)
+  })
+
+  test('habit trend insight is shown when the tag filter includes its habit', async ({ page }) => {
+    await page.goto('/today/tag/2') // personal
+    await waitForApp(page)
+    await expect(page.locator('.insight-card--habit')).toBeVisible()
   })
 })
 

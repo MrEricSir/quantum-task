@@ -1015,7 +1015,7 @@ function FoodLog({ range = 30, revision = 0 }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function HealthPage({ habits = [], archivedHabits = [], onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0 }) {
+export default function HealthPage({ habits = [], archivedHabits = [], allTags = [], selectedTagIds, onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0 }) {
   const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
   const [moodToday, setMoodToday] = useState(null)
@@ -1092,6 +1092,8 @@ export default function HealthPage({ habits = [], archivedHabits = [], onToggleH
       <HabitsPage
         habits={habits}
         archivedHabits={archivedHabits}
+        allTags={allTags}
+        selectedTagIds={selectedTagIds}
         onToggle={onToggleHabit}
         onAdd={onAddHabit}
         onUpdate={onUpdateHabit}

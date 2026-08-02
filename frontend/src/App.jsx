@@ -66,6 +66,33 @@ const SECTION_COLORS = {
   later: 'var(--color-later)',
 }
 
+// Pure, closure-free helpers for reading tag/page state directly from a
+// pathname string. Used both at render time (via the reactive `location`
+// from useLocation) and read fresh from window.location.pathname at click
+// time in tag/page navigation handlers -- the latter avoids a real race:
+// window.location.pathname updates synchronously on navigate(), but a
+// value derived from useLocation() and passed down as a prop can still be
+// one render behind if a second click fires before React re-renders, which
+// silently drops the first click's selection during fast multi-tag clicking.
+function parseTagIdsFromPath(pathname) {
+  const match =
+    pathname.match(/^\/today\/tag\/([\d,]+)$/)       ||
+    pathname.match(/^\/board\/tag\/([\d,]+)$/)       ||
+    pathname.match(/^\/calendar\/tag\/([\d,]+)$/)    ||
+    pathname.match(/^\/engineering\/tag\/([\d,]+)$/) ||
+    pathname.match(/^\/health\/tag\/([\d,]+)$/)
+  return match ? match[1].split(',').map(Number) : []
+}
+
+function basePageFromPath(pathname) {
+  if (pathname.startsWith('/today'))       return 'today'
+  if (pathname.startsWith('/calendar'))    return 'calendar'
+  if (pathname.startsWith('/engineering')) return 'engineering'
+  // /habits is a legacy URL for the health page — see isHealthPage below.
+  if (pathname.startsWith('/health') || pathname.startsWith('/habits')) return 'health'
+  return 'board'
+}
+
 export default function App() {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [authed, setAuthed] = useState(null)   // null=checking, true/false
@@ -184,16 +211,16 @@ export default function App() {
   const isTodayPage       = location.pathname === '/today'       || location.pathname.startsWith('/today/tag/')
   const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
   const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
-  const isEngineeringPage = location.pathname === '/engineering'
+  const isEngineeringPage = location.pathname === '/engineering' || location.pathname.startsWith('/engineering/tag/')
   // /habits is a legacy URL — treat it as the health page
-  const isHealthPage      = location.pathname === '/health' || location.pathname === '/habits' || location.pathname.startsWith('/habits/')
+  const isHealthPage      = location.pathname === '/health' || location.pathname.startsWith('/health/tag/') ||
+                             location.pathname === '/habits' || location.pathname.startsWith('/habits/')
   const currentPage       = isTodayPage ? 'today' : isBoardPage ? 'board' : isCalendarPage ? 'calendar' : isEngineeringPage ? 'engineering' : isHealthPage ? 'health' : 'today'
 
-  const tagMatch =
-    location.pathname.match(/^\/today\/tag\/(\d+)$/)    ||
-    location.pathname.match(/^\/board\/tag\/(\d+)$/)    ||
-    location.pathname.match(/^\/calendar\/tag\/(\d+)$/)
-  const selectedTagId = tagMatch ? parseInt(tagMatch[1]) : null
+  const selectedTagIds = useMemo(
+    () => new Set(parseTagIdsFromPath(location.pathname)),
+    [location.pathname],
+  )
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 640px)').matches)
 
   useEffect(() => {
@@ -412,13 +439,13 @@ export default function App() {
       .slice(0, 5)
   }, [cards, tags])
 
-  const visibleCalendarEvents = selectedTagId === null
+  const visibleCalendarEvents = selectedTagIds.size === 0
     ? calendarEvents
-    : calendarEvents.filter((e) => e.tag_id === selectedTagId)
+    : calendarEvents.filter((e) => selectedTagIds.has(e.tag_id))
 
-  const visibleActiveCards = selectedTagId === null
+  const visibleActiveCards = selectedTagIds.size === 0
     ? activeCards
-    : activeCards.filter((t) => (t.tags ?? []).some((tag) => tag.id === selectedTagId))
+    : activeCards.filter((t) => (t.tags ?? []).some((tag) => selectedTagIds.has(tag.id)))
 
   const cardsBySection = SECTIONS.reduce((acc, s) => {
     acc[s] = visibleActiveCards
@@ -577,11 +604,28 @@ export default function App() {
     setActiveSection(newSection)
   }
 
-  const handlePageNavigate = (page, tagId) => {
-    if (page === 'today')       return navigate(tagId ? `/today/tag/${tagId}` : '/today')
-    if (page === 'engineering') return navigate('/engineering')
-    if (page === 'health')      return navigate('/health')
-    return navigate(tagId ? `/${page}/tag/${tagId}` : `/${page}`)
+  const navigateWithTags = (page, tagIds) => {
+    const tagSuffix = tagIds.length ? `/tag/${tagIds.join(',')}` : ''
+    return navigate(`/${page}${tagSuffix}`)
+  }
+
+  // Switch page, preserving the current tag selection. Reads the selection
+  // fresh from window.location rather than trusting the selectedTagIds prop,
+  // which can be one render behind if this fires right after a tag toggle.
+  const handlePageNavigate = (page) => {
+    navigateWithTags(page, parseTagIdsFromPath(window.location.pathname))
+  }
+
+  // Toggle a single tag in the current selection, staying on the current page.
+  const handleTagToggle = (tagId) => {
+    const current = new Set(parseTagIdsFromPath(window.location.pathname))
+    if (current.has(tagId)) current.delete(tagId)
+    else current.add(tagId)
+    navigateWithTags(basePageFromPath(window.location.pathname), [...current])
+  }
+
+  const handleClearTags = () => {
+    navigateWithTags(basePageFromPath(window.location.pathname), [])
   }
 
   const handleBreakdownCommit = ({ tag, cards, archived_card }) => {
@@ -730,17 +774,19 @@ export default function App() {
       <div className="app-body">
         <Sidebar
           tags={visibleTags}
-          selectedTagId={selectedTagId}
+          selectedTagIds={selectedTagIds}
           page={currentPage}
           onNavigate={handlePageNavigate}
+          onToggleTag={handleTagToggle}
+          onClearTags={handleClearTags}
         />
 
       <main className="board-wrapper">
         <TagFilterBar
           tags={visibleTags}
-          selectedTagId={selectedTagId}
-          page={currentPage}
-          onNavigate={handlePageNavigate}
+          selectedTagIds={selectedTagIds}
+          onToggleTag={handleTagToggle}
+          onClearTags={handleClearTags}
         />
         {loading ? (
           <div className="loading">Loading...</div>
@@ -748,9 +794,9 @@ export default function App() {
           <div className="loading">Loading...</div>
         ) : isTodayPage ? (
           <TodayPage
-            cards={selectedTagId ? cards.filter((t) => (t.tags ?? []).some((tg) => tg.id === selectedTagId)) : cards}
+            cards={selectedTagIds.size ? cards.filter((t) => (t.tags ?? []).some((tg) => selectedTagIds.has(tg.id))) : cards}
             calendarEvents={visibleCalendarEvents}
-            habits={selectedTagId ? habits.filter((h) => (h.tags ?? []).some((tg) => tg.id === selectedTagId)) : habits}
+            habits={selectedTagIds.size ? habits.filter((h) => (h.tags ?? []).some((tg) => selectedTagIds.has(tg.id))) : habits}
             onToggle={handleToggle}
             onToggleHabit={handleToggleHabit}
             onEdit={openEdit}
@@ -842,6 +888,8 @@ export default function App() {
           <HealthPage
             habits={habits}
             archivedHabits={archivedHabits}
+            allTags={visibleTags}
+            selectedTagIds={selectedTagIds}
             onToggleHabit={handleToggleHabit}
             onAddHabit={handleAddHabit}
             onUpdateHabit={handleUpdateHabit}
@@ -857,7 +905,7 @@ export default function App() {
           />
         ) : isEngineeringPage ? (
           <EngineeringPage
-            items={engineeringItems}
+            items={selectedTagIds.size ? engineeringItems.filter((i) => (i.tags ?? []).some((tg) => selectedTagIds.has(tg.id))) : engineeringItems}
             cards={cards}
             lastSynced={lastEngineeringSynced}
             syncing={engineeringSyncing}

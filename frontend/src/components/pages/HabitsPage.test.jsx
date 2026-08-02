@@ -195,3 +195,46 @@ describe('habit history heatmap', () => {
     })
   })
 })
+
+// ── Habit tags ───────────────────────────────────────────────────────────────
+
+describe('habit tags', () => {
+  const workTag = { id: 1, name: 'work', color: '#3b82f6' }
+  const personalTag = { id: 2, name: 'personal', color: '#10b981' }
+
+  it('shows a tag chip for each tag on the habit', () => {
+    const habit = { ...base, tags: [workTag] }
+    renderHabits([habit])
+    const pills = document.querySelectorAll('.habit-card-tag-pill')
+    expect(pills.length).toBe(1)
+    expect(pills[0].textContent).toBe('work')
+  })
+
+  it('shows no tag row when the habit has no tags', () => {
+    renderHabits([base])
+    expect(document.querySelectorAll('.habit-card-tag-pill').length).toBe(0)
+  })
+
+  it('filters habits by selectedTagIds', () => {
+    const workHabit = { ...base, id: 1, name: 'Standup', tags: [workTag] }
+    const personalHabit = { ...base, id: 2, name: 'Meditate', tags: [personalTag] }
+    renderHabits([workHabit, personalHabit], { selectedTagIds: new Set([1]) })
+    expect(document.body.textContent).toContain('Standup')
+    expect(document.body.textContent).not.toContain('Meditate')
+  })
+
+  it('shows the union of matching habits for multiple selected tags', () => {
+    const workHabit = { ...base, id: 1, name: 'Standup', tags: [workTag] }
+    const personalHabit = { ...base, id: 2, name: 'Meditate', tags: [personalTag] }
+    const untaggedHabit = { ...base, id: 3, name: 'Read', tags: [] }
+    renderHabits([workHabit, personalHabit, untaggedHabit], { selectedTagIds: new Set([1, 2]) })
+    expect(document.body.textContent).toContain('Standup')
+    expect(document.body.textContent).toContain('Meditate')
+    expect(document.body.textContent).not.toContain('Read')
+  })
+
+  it('shows the tag-specific empty state when no habit matches the filter', () => {
+    renderHabits([{ ...base, tags: [] }], { selectedTagIds: new Set([999]) })
+    expect(document.querySelector('.habits-empty').textContent).toMatch(/no habits with this tag/i)
+  })
+})

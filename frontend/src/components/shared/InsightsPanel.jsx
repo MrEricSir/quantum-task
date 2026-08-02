@@ -281,7 +281,7 @@ function HealthInsight({ insight, onDismiss }) {
   )
 }
 
-export default function InsightsPanel({ refreshKey, onArchive }) {
+export default function InsightsPanel({ refreshKey, onArchive, cards, habits }) {
   const [insights, setInsights] = useState([])
   const [loading, setLoading] = useState(true)
   const [dismissed, setDismissed] = useState(new Set())
@@ -310,13 +310,23 @@ export default function InsightsPanel({ refreshKey, onArchive }) {
     await onArchive(insight.card)
   }, [onArchive])
 
+  // cards/habits arrive already filtered by the active tag selection (App.jsx
+  // filters both before they reach TodayPage). Cross-referencing against them
+  // — rather than re-deriving a tag filter here — means this panel doesn't
+  // need to know about tags at all, and stays correct if the filtering logic
+  // upstream ever changes. Only insights tied to one specific card/habit can
+  // be attributed to a tag filter this way; completion_pattern and health_*
+  // insights are aggregate observations with no single card/habit to check
+  // against, so they're left visible regardless of the active tag filter.
   const visible = useMemo(() =>
     insights.filter((ins) => {
       if (dismissed.has(insightKey(ins))) return false
       if (ins.type === 'habit_trend' && isHabitSnoozed(insightKey(ins))) return false
+      if (ins.type === 'stuck_task' && cards && !cards.some((c) => c.id === ins.card.id)) return false
+      if (ins.type === 'habit_trend' && habits && !habits.some((h) => h.id === ins.habit_id)) return false
       return true
     }),
-    [insights, dismissed]
+    [insights, dismissed, cards, habits]
   )
 
   const shouldShow = !loading && visible.length > 0

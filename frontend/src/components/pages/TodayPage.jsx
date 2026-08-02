@@ -314,6 +314,8 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
         <InsightsPanel
           refreshKey={briefingKey}
           onArchive={onArchive}
+          cards={cards}
+          habits={habits}
         />
 
         {hasHealthOrHabits && (

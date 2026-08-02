@@ -19,6 +19,9 @@
   }
 
   .tag-filter-bar-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     flex-shrink: 0;
     padding: 5px 13px;
     border-radius: 14px;
@@ -37,5 +40,9 @@
     background: var(--text);
     border-color: var(--text);
     color: var(--surface);
+  }
+
+  .tag-filter-bar-check {
+    flex-shrink: 0;
   }
 }

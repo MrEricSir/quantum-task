@@ -141,7 +141,7 @@ function metricBadgeText(metric, goal, isImperial) {
   return metric
 }
 
-export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagId = null, onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, isImperial = false, moodToday = null, onLogMood = null }) {
+export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagIds = new Set(), onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, isImperial = false, moodToday = null, onLogMood = null }) {
   const navigate = useNavigate()
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
@@ -190,9 +190,9 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     setEditingId(null)
   }
 
-  const visibleHabits = (selectedTagId === null
+  const visibleHabits = (selectedTagIds.size === 0
     ? habits
-    : habits.filter((h) => h.tags.some((t) => t.id === selectedTagId))
+    : habits.filter((h) => (h.tags ?? []).some((t) => selectedTagIds.has(t.id)))
   ).slice().sort((a, b) => {
     const aAuto = !!a.withings_metric
     const bAuto = !!b.withings_metric
@@ -236,7 +236,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
 
       {visibleHabits.length === 0 && !addingNew ? (
         <div className="habits-empty">
-          {selectedTagId !== null
+          {selectedTagIds.size > 0
             ? 'No habits with this tag.'
             : 'No habits yet. Add your first one to start tracking daily streaks.'}
         </div>
@@ -323,6 +323,16 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                     </span>
                     <span className="habit-card-withings-auto">↻ synced</span>
                   </button>
+                )}
+
+                {editingId !== habit.id && (habit.tags ?? []).length > 0 && (
+                  <div className="habit-card-tags">
+                    {habit.tags.map((tag) => (
+                      <span key={tag.id} className="habit-card-tag-pill" style={{ background: tag.color }}>
+                        {tag.name}
+                      </span>
+                    ))}
+                  </div>
                 )}
 
                 {habit.recent_completions?.length > 0 && (() => {
