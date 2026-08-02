@@ -351,6 +351,13 @@ export async function uncheckHabit(id) {
   if (!res.ok) throw new Error('Failed to uncheck habit')
 }
 
+export async function fetchHabitStreakDays(id, from, to) {
+  const params = new URLSearchParams({ from, to })
+  const res = await apiFetch(`/api/habits/${id}/streak-days?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch habit streak history')
+  return res.json()
+}
+
 export async function fetchEngineeringConfig() {
   const res = await apiFetch('/api/engineering/config')
   if (!res.ok) throw new Error('Failed to fetch engineering config')

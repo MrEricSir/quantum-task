@@ -152,8 +152,8 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 
 ### Habits
 - Track recurring habits with a daily completion toggle
-- 7-day completion history shown as dots on each card
-- Streak counter
+- 7-day completion history shown as dots on each card; click it to expand a ~12-week completion heatmap and see your all-time best streak for that habit
+- Streak counter, plus a weekly tier badge (🥉/🥈/🥇 for 3+/5+/7 days completed in the trailing week)
 - Archive habits instead of deleting them; restore from the archive at any time
 - Link habits to a Withings health goal (step count auto-completes when goal is met)
 
@@ -350,6 +350,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 - **Evening habit reminder** — lists any habits still pending for the day
 - **Midday overdue nudge** — alerts you if tasks have slipped past their scheduled date
 - **Health check-in** (same time as the evening habit reminder) — a bundled, low-noise nudge for patterns worth knowing about: a multi-day streak not yet done today, a habit whose completion rate has dropped over the past week, a couple of days with nothing logged in the food log, or a Withings-tracked goal (steps, body fat) drifting off target over the past week. Deliberately ignores single missed days — each signal has its own cooldown so a persistent issue is flagged once, not nagged about daily.
+- **Streak celebrations** (automatic, runs alongside the checks above) — a message at 3/7/14/21/30/60/100/365 days for habit streaks, a daily food-quality streak (consecutive days averaging a good quality score), and a task-completion streak (consecutive days with at least one task done). A habit milestone also calls out when it's a new personal best for that habit.
 
 ---
 

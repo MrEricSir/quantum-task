@@ -2,9 +2,22 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Pencil1Icon, CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
 import Collapsible from '../layout/Collapsible'
+import HabitHeatmap from './HabitHeatmap'
 import './HabitsPage.css'
 
 const KG_TO_LBS = 2.20462
+
+const WEEK_TIERS = [
+  { key: 'gold',   min: 7, icon: '🥇' },
+  { key: 'silver', min: 5, icon: '🥈' },
+  { key: 'bronze', min: 3, icon: '🥉' },
+]
+
+function getWeekTier(recentCompletions) {
+  const count = recentCompletions?.filter(Boolean).length ?? 0
+  const tier = WEEK_TIERS.find((t) => count >= t.min)
+  return tier ? { ...tier, count } : null
+}
 
 const ENERGY_LEVELS = [
   { value: 1, emoji: '😴', label: 'Drained' },
@@ -137,6 +150,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
   const [poppingId, setPoppingId] = useState(null)
   const [addingNew, setAddingNew] = useState(false)
   const [newName, setNewName] = useState('')
+  const [expandedHeatmapId, setExpandedHeatmapId] = useState(null)
   const editInputRef = useRef(null)
   const newInputRef = useRef(null)
   const popTimer = useRef(null)
@@ -311,21 +325,49 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                   </button>
                 )}
 
-                {habit.recent_completions?.length > 0 && (
-                  <div className="habit-card-history">
-                    <div className="habit-dots">
-                      {habit.recent_completions.map((done, i) => (
-                        <span
-                          key={i}
-                          className={`habit-dot${done ? ' habit-dot--done' : ''}${i === 6 ? ' habit-dot--today' : ''}`}
-                        />
-                      ))}
-                    </div>
-                    {habit.streak > 0 && (
-                      <span className="habit-card-streak">🔥 {habit.streak}</span>
-                    )}
-                  </div>
-                )}
+                {habit.recent_completions?.length > 0 && (() => {
+                  const weekTier = getWeekTier(habit.recent_completions)
+                  const expanded = expandedHeatmapId === habit.id
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        className="habit-card-history habit-card-history--toggle"
+                        onClick={() => setExpandedHeatmapId(expanded ? null : habit.id)}
+                        aria-expanded={expanded}
+                        aria-label="Toggle completion history"
+                      >
+                        <span className="habit-dots">
+                          {habit.recent_completions.map((done, i) => (
+                            <span
+                              key={i}
+                              className={`habit-dot${done ? ' habit-dot--done' : ''}${i === 6 ? ' habit-dot--today' : ''}`}
+                            />
+                          ))}
+                        </span>
+                        {habit.streak > 0 && (
+                          <span className="habit-card-streak">🔥 {habit.streak}</span>
+                        )}
+                        {weekTier && (
+                          <span
+                            className={`habit-card-tier habit-card-tier--${weekTier.key}`}
+                            title={`${weekTier.count}/7 days this week`}
+                          >
+                            {weekTier.icon}
+                          </span>
+                        )}
+                      </button>
+                      {expanded && (
+                        <div className="habit-card-heatmap-wrap">
+                          <HabitHeatmap habitId={habit.id} />
+                          {habit.best_streak > 0 && (
+                            <div className="habit-card-best">Best streak: {habit.best_streak}d</div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
 
               <div className="habit-card-actions">

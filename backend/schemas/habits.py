@@ -29,6 +29,7 @@ class Habit(BaseModel):
     tags: List[Tag] = []
     completed_today: bool = False
     streak: int = 0
+    best_streak: int = 0
     recent_completions: List[bool] = []
     withings_metric: Optional[str] = None
     withings_goal: Optional[float] = None

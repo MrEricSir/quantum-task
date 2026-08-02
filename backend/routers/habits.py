@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
@@ -37,6 +38,12 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         .first()
     ) is not None
 
+    best_streak = (
+        db.query(func.max(models.HabitStreakDay.streak))
+        .filter_by(habit_id=habit.id)
+        .scalar()
+    ) or 0
+
     return schemas.Habit(
         id=habit.id,
         name=habit.name,
@@ -44,6 +51,7 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         tags=list(habit.tags),
         completed_today=today_str in week_entries,
         streak=get_current_streak(db, habit.id, today),
+        best_streak=best_streak,
         recent_completions=recent_completions,
         withings_metric=habit.withings_metric,
         withings_goal=habit.withings_goal,

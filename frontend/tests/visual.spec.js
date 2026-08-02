@@ -52,19 +52,19 @@ const TODOS = [
 
 const HABITS = [
   {
-    id: 1, name: 'Morning meditation', completed_today: true, streak: 7,
+    id: 1, name: 'Morning meditation', completed_today: true, streak: 7, best_streak: 14,
     tags: [], recurrence_rule: 'daily',
     recent_completions: [true, true, true, true, false, true, true],
     withings_metric: null, is_experiment: false,
   },
   {
-    id: 2, name: 'Evening walk', completed_today: false, streak: 3,
+    id: 2, name: 'Evening walk', completed_today: false, streak: 3, best_streak: 3,
     tags: [{ id: 2, name: 'personal', color: '#10b981' }], recurrence_rule: 'daily',
     recent_completions: [false, false, false, false, true, true, false],
     withings_metric: null, is_experiment: false,
   },
   {
-    id: 3, name: '🧪 1 hour screen-free time', completed_today: false, streak: 0,
+    id: 3, name: '🧪 1 hour screen-free time', completed_today: false, streak: 0, best_streak: 0,
     tags: [], recurrence_rule: 'daily',
     recent_completions: [false, false, false, false, false, false, false],
     withings_metric: null, is_experiment: true,
@@ -124,6 +124,7 @@ async function mockAPIs(page) {
     const url = r.request().url()
     return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
   })
+  await page.route(/\/api\/habits\/\d+\/streak-days/, r => r.fulfill({ json: [] }))
 
   await page.route('**/api/insights', r => r.fulfill({ json: [] }))
 
@@ -371,6 +372,18 @@ test.describe('habits page', () => {
 
   test('archive button is present on each habit card', async ({ page }) => {
     await expect(page.getByRole('button', { name: /archive habit/i }).first()).toBeVisible()
+  })
+
+  test('clicking the history toggle expands the completion heatmap', async ({ page }) => {
+    const card = page.locator('.habit-card', { hasText: 'Morning meditation' })
+    await card.getByRole('button', { name: /toggle completion history/i }).click()
+    await expect(card.locator('.habit-card-heatmap-wrap')).toBeVisible()
+    await expect(card.getByText(/best streak: 14d/i)).toBeVisible()
+  })
+
+  test('a weekly tier badge is shown for a habit with a strong completion week', async ({ page }) => {
+    const card = page.locator('.habit-card', { hasText: 'Morning meditation' })
+    await expect(card.locator('.habit-card-tier')).toBeVisible()
   })
 
   test('habit archive section is hidden when empty', async ({ page }) => {

@@ -312,6 +312,69 @@
   white-space: nowrap;
 }
 
+/* ── History toggle button (wraps dots + streak + tier) ── */
+.habit-card-history--toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.habit-card-history--toggle:hover .habit-dot {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.habit-card-history--toggle:focus-visible {
+  outline: 2px solid var(--color-accent, #7c3aed);
+  outline-offset: 2px;
+}
+
+/* ── Weekly tier badge ── */
+.habit-card-tier {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* ── Heatmap (expanded history) ── */
+.habit-card-heatmap-wrap {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+}
+
+.habit-heatmap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.habit-heatmap-cell {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.habit-heatmap-cell--done {
+  background: #7c3aed;
+}
+
+.habit-heatmap-loading,
+.habit-heatmap-error {
+  font-size: 12px;
+  color: var(--color-text-secondary, #888);
+}
+
+.habit-card-best {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #888);
+}
+
 /* ── Action buttons ── */
 .habit-card-actions {
   display: flex;

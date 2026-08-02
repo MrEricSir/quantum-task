@@ -313,6 +313,33 @@ class TestStreakComputation:
         res_1 = client.get("/api/habits", headers={"X-Local-Date": "2026-06-04"}).json()
         assert next(h for h in res_1 if h["id"] == hid)["streak"] == 1
 
+    def test_best_streak_zero_when_no_completions(self, client):
+        hid = self._create_habit(client)
+        habits = client.get("/api/habits", headers=LOCAL_DATE).json()
+        assert next(h for h in habits if h["id"] == hid)["best_streak"] == 0
+
+    def test_best_streak_matches_current_for_first_ever_streak(self, client):
+        hid = self._create_habit(client)
+        for d in ["2026-06-02", "2026-06-03", "2026-06-04"]:
+            self._add_completion(hid, d)
+        habits = client.get("/api/habits", headers=LOCAL_DATE).json()
+        habit = next(h for h in habits if h["id"] == hid)
+        assert habit["streak"] == 3
+        assert habit["best_streak"] == 3
+
+    def test_best_streak_persists_after_streak_resets(self, client):
+        hid = self._create_habit(client)
+        # A 3-day streak, then a gap, then a fresh 1-day streak
+        for d in ["2026-06-02", "2026-06-03", "2026-06-04"]:
+            self._add_completion(hid, d)
+        for d in ["2026-06-06"]:
+            self._add_completion(hid, d)
+
+        habits = client.get("/api/habits", headers={"X-Local-Date": "2026-06-06"}).json()
+        habit = next(h for h in habits if h["id"] == hid)
+        assert habit["streak"] == 1
+        assert habit["best_streak"] == 3
+
 
 # ── Todo section auto-advance ─────────────────────────────────────────────────
 

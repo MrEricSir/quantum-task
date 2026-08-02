@@ -229,10 +229,56 @@ def check_overdue_nudge(db: Session, token: str, chat_id: str,
 
 _STREAK_MILESTONES = [3, 7, 14, 21, 30, 60, 100, 365]
 
+_FOOD_QUALITY_STREAK_THRESHOLD = 7  # avg daily food quality >= this counts as a "good" day
+
+
+def _day_food_quality_ok(db: Session, day) -> bool:
+    day_str = day.isoformat()
+    next_day_str = (day + timedelta(days=1)).isoformat()
+    qualities = [
+        q for (q,) in db.query(models.FoodEntry.quality).filter(
+            models.FoodEntry.consumed_at >= day_str,
+            models.FoodEntry.consumed_at < next_day_str,
+            models.FoodEntry.quality.isnot(None),
+        ).all()
+    ]
+    if not qualities:
+        return False
+    return (sum(qualities) / len(qualities)) >= _FOOD_QUALITY_STREAK_THRESHOLD
+
+
+def _day_has_completed_task(db: Session, day) -> bool:
+    day_str = day.isoformat()
+    next_day_str = (day + timedelta(days=1)).isoformat()
+    return db.query(models.Card).filter(
+        models.Card.completed == True,  # noqa: E712
+        models.Card.completed_at >= day_str,
+        models.Card.completed_at < next_day_str,
+    ).first() is not None
+
+
+def _consecutive_streak_ending(today, day_ok_fn, max_days=1000) -> int:
+    """Count consecutive qualifying days ending at `today`, falling back to
+    ending at yesterday if today doesn't qualify yet — a streak is still
+    "alive" until the day is over, mirroring habit streak semantics."""
+    end = today if day_ok_fn(today) else today - timedelta(days=1)
+    count = 0
+    day = end
+    while day_ok_fn(day):
+        count += 1
+        day -= timedelta(days=1)
+        if count >= max_days:
+            break
+    return count
+
 
 def check_streak_milestones(db: Session, token: str, chat_id: str,
                               now_local: datetime, today) -> str:
-    """Send a celebration message when a habit streak crosses a milestone."""
+    """Send a celebration message when a streak crosses a milestone: habit
+    streaks, a food-quality streak, and a task-completion streak all share
+    the same milestone list and message format. A habit milestone also notes
+    when it's a new personal best (tracked via a per-habit watermark, so this
+    only ever fires at the same sparse milestone cadence, never daily)."""
     from streak import get_current_streak
 
     s = Settings(db)
@@ -242,7 +288,7 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
         sent_map = {}
 
     habits = db.query(models.Habit).filter_by(archived=False).all()
-    alerts = []
+    alerts = []  # (label, days, is_personal_best)
 
     for h in habits:
         streak = get_current_streak(db, h.id, today)
@@ -251,8 +297,32 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
         key = f"{h.id}:{streak}"
         if sent_map.get(key) == today.isoformat():
             continue  # already sent today
-        alerts.append((h.name, streak))
+
+        best_key = f"habit_best:{h.id}"
+        try:
+            prev_best = int(sent_map.get(best_key, "0") or "0")
+        except (TypeError, ValueError):
+            prev_best = 0
+        is_record = streak > prev_best
+        if is_record:
+            sent_map[best_key] = str(streak)
+
+        alerts.append((h.name, streak, is_record))
         sent_map[key] = today.isoformat()
+
+    food_streak = _consecutive_streak_ending(today, lambda d: _day_food_quality_ok(db, d))
+    if food_streak in _STREAK_MILESTONES:
+        key = f"food_quality:{food_streak}"
+        if sent_map.get(key) != today.isoformat():
+            alerts.append(("food quality", food_streak, False))
+            sent_map[key] = today.isoformat()
+
+    task_streak = _consecutive_streak_ending(today, lambda d: _day_has_completed_task(db, d))
+    if task_streak in _STREAK_MILESTONES:
+        key = f"task_completion:{task_streak}"
+        if sent_map.get(key) != today.isoformat():
+            alerts.append(("task completion", task_streak, False))
+            sent_map[key] = today.isoformat()
 
     if not alerts:
         return "skipped: no milestones"
@@ -261,7 +331,7 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
     db.commit()
 
     sent = 0
-    for name, days in alerts:
+    for name, days, is_record in alerts:
         if days >= 100:
             medal = "🏆"
         elif days >= 30:
@@ -271,6 +341,8 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
         else:
             medal = "🔥"
         text = f"{medal} <b>{days}-day {name} streak!</b> Keep it going."
+        if is_record:
+            text += "\n🎉 New personal best!"
         if send_message(token, chat_id, text):
             sent += 1
 

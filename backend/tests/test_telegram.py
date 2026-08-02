@@ -658,11 +658,11 @@ def _recompute_streak(habit_id):
         db.commit()
 
 
-def _make_food_entry(consumed_at):
+def _make_food_entry(consumed_at, quality=None):
     with BotTestSession() as db:
         db.add(models.FoodEntry(
             raw_input="test item", name="test item", category="food",
-            meal_type="snack", consumed_at=consumed_at,
+            meal_type="snack", consumed_at=consumed_at, quality=quality,
         ))
         db.commit()
 
@@ -903,3 +903,143 @@ class TestCheckHealthNudges:
         assert mock_send.call_count == 1
         text = mock_send.call_args[0][2]
         assert "No food logged" in text
+
+
+# ── Streak milestone celebrations (habit, food quality, task completion) ────────
+
+class TestCheckStreakMilestones:
+
+    def test_no_alert_when_no_habit_at_milestone(self):
+        habit_id = _make_habit("Meditate")
+        _complete_habit(habit_id, TODAY)  # streak of 1, not a milestone
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: no milestones"
+        mock_send.assert_not_called()
+
+    def test_sends_alert_when_habit_hits_milestone(self):
+        habit_id = _make_habit("Meditate")
+        for i in (0, 1, 2):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent: 1 milestone(s)"
+        text = mock_send.call_args[0][2]
+        assert "Meditate" in text
+        assert "3-day" in text
+
+    def test_does_not_resend_same_milestone_same_day(self):
+        habit_id = _make_habit("Meditate")
+        for i in (0, 1, 2):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: no milestones"
+        assert mock_send.call_count == 1
+
+    def test_first_ever_milestone_is_a_personal_best(self):
+        habit_id = _make_habit("Meditate")
+        for i in (0, 1, 2):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        text = mock_send.call_args[0][2]
+        assert "New personal best" in text
+
+    def test_repeated_milestone_after_streak_reset_is_not_a_new_best(self):
+        habit_id = _make_habit("Meditate", days_old=30)
+        # First run: 3-day streak ending 18 days ago, sets the watermark at 3
+        first_end = TODAY - timedelta(days=18)
+        for i in (0, 1, 2):
+            _complete_habit(habit_id, first_end - timedelta(days=i))
+        _recompute_streak(habit_id)
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                check_streak_milestones(db, "tok", "123", EVENING_LOCAL, first_end)
+
+        # Gap (day 17 not completed), then a second, separate 3-day run
+        # ending 13 days ago — same peak value, not a new record.
+        second_end = TODAY - timedelta(days=13)
+        for i in (0, 1, 2):
+            _complete_habit(habit_id, second_end - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, second_end)
+
+        assert result == "sent: 1 milestone(s)"
+        text = mock_send.call_args[0][2]
+        assert "New personal best" not in text
+
+    def test_food_quality_streak_triggers_at_milestone(self):
+        for i in (0, 1, 2):
+            _make_food_entry(
+                datetime.combine(TODAY - timedelta(days=i), datetime.min.time()).replace(hour=12),
+                quality=8,
+            )
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent: 1 milestone(s)"
+        text = mock_send.call_args[0][2]
+        assert "food quality" in text
+        assert "3-day" in text
+
+    def test_food_quality_streak_ignores_low_quality_days(self):
+        for i in (0, 1, 2):
+            _make_food_entry(
+                datetime.combine(TODAY - timedelta(days=i), datetime.min.time()).replace(hour=12),
+                quality=3,  # below the threshold
+            )
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: no milestones"
+        mock_send.assert_not_called()
+
+    def test_task_completion_streak_triggers_at_milestone(self):
+        for i in (0, 1, 2):
+            _make_card(
+                f"Task {i}", completed=True,
+                completed_at=datetime.combine(TODAY - timedelta(days=i), datetime.min.time()).replace(hour=12),
+            )
+
+        from telegram.scheduler import check_streak_milestones
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_streak_milestones(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent: 1 milestone(s)"
+        text = mock_send.call_args[0][2]
+        assert "task completion" in text
+        assert "3-day" in text
