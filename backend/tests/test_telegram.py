@@ -14,7 +14,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +23,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app_setting_keys as keys
 import models
 from main import app
 from deps import get_db
@@ -616,3 +617,289 @@ class TestCheckBridgeJobs:
         text = mock_send.call_args[0][2]
         assert "Running feature" in text
         assert "▶" in text
+
+
+# ── Proactive health/habit nudges ───────────────────────────────────────────────
+
+TODAY = date.today()
+EVENING_LOCAL = datetime.combine(TODAY, datetime.min.time()).replace(hour=20)
+
+
+def _set_habit_reminder_time(time_str="20:00"):
+    with BotTestSession() as db:
+        from settings import Settings
+        Settings(db).set(keys.HABIT_REMINDER_TIME, time_str)
+        db.commit()
+
+
+def _make_habit(name, days_old=30, withings_metric=None, withings_goal=None):
+    with BotTestSession() as db:
+        habit = models.Habit(
+            name=name,
+            created_at=datetime.now(timezone.utc) - timedelta(days=days_old),
+            withings_metric=withings_metric,
+            withings_goal=withings_goal,
+        )
+        db.add(habit)
+        db.commit()
+        return habit.id
+
+
+def _complete_habit(habit_id, day):
+    with BotTestSession() as db:
+        db.add(models.HabitCompletion(habit_id=habit_id, date=day.isoformat()))
+        db.commit()
+
+
+def _recompute_streak(habit_id):
+    from streak import recompute_all
+    with BotTestSession() as db:
+        recompute_all(db, habit_id)
+        db.commit()
+
+
+def _make_food_entry(consumed_at):
+    with BotTestSession() as db:
+        db.add(models.FoodEntry(
+            raw_input="test item", name="test item", category="food",
+            meal_type="snack", consumed_at=consumed_at,
+        ))
+        db.commit()
+
+
+def _make_withings_reading(metric, day, value):
+    with BotTestSession() as db:
+        db.add(models.WithingsMeasurement(date=day.isoformat(), metric=metric, value=value))
+        db.commit()
+
+
+def _neutralize_food_log():
+    """Log food today so the food-log-quiet signal doesn't fire in tests
+    that are targeting a different signal."""
+    _make_food_entry(datetime.combine(TODAY, datetime.min.time()).replace(hour=12))
+
+
+class TestCheckHealthNudges:
+
+    def test_skipped_when_hour_does_not_match(self):
+        _set_habit_reminder_time("07:00")
+        from telegram.scheduler import check_health_nudges
+        with BotTestSession() as db:
+            result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+        assert result == "skipped"
+
+    def test_skipped_when_nothing_to_flag(self):
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+        assert result == "skipped: nothing to flag"
+        mock_send.assert_not_called()
+
+    def test_streak_risk_flags_habit_with_active_streak_not_done_today(self):
+        _set_habit_reminder_time()
+        habit_id = _make_habit("Meditate")
+        for i in (1, 2, 3):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent"
+        text = mock_send.call_args[0][2]
+        assert "Streak at risk" in text
+        assert "Meditate" in text
+        assert "3-day streak" in text
+
+    def test_streak_risk_ignores_habit_below_min_streak(self):
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        habit_id = _make_habit("Stretch")
+        # 4/7 days completed (clears the going-cold threshold) but non-consecutive,
+        # so the streak ending yesterday is only 1 (clears the streak-risk threshold)
+        for i in (1, 3, 4, 6):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+
+    def test_streak_risk_ignores_habit_already_completed_today(self):
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        habit_id = _make_habit("Journal")
+        for i in (0, 1, 2, 3):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+
+    def test_going_cold_flags_low_completion_rate(self):
+        _set_habit_reminder_time()
+        habit_id = _make_habit("Drink water", days_old=30)
+        for i in (2, 5):  # 2 of the last 7 days
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent"
+        text = mock_send.call_args[0][2]
+        assert "Slipping" in text
+        assert "Drink water" in text
+        assert "2/7" in text
+
+    def test_going_cold_ignores_good_completion_rate(self):
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        habit_id = _make_habit("Read", days_old=30)
+        # 5/7 days completed, non-consecutive so the streak stays below the
+        # streak-risk threshold — isolates the going-cold behavior being tested
+        for i in (1, 2, 4, 5, 6):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+
+    def test_going_cold_ignores_habit_without_enough_history(self):
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        habit_id = _make_habit("New habit", days_old=2)  # under the 7-day minimum age
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+
+    def test_food_log_quiet_flags_when_nothing_logged(self):
+        _set_habit_reminder_time()
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent"
+        text = mock_send.call_args[0][2]
+        assert "No food logged" in text
+
+    def test_food_log_quiet_skipped_when_recently_logged(self):
+        _set_habit_reminder_time()
+        _make_food_entry(datetime.combine(TODAY, datetime.min.time()).replace(hour=12))
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+
+    def test_withings_drift_flags_low_steps_average(self):
+        _set_habit_reminder_time()
+        # days_old=2: under the going-cold minimum age, so a zero-completion
+        # habit here doesn't also trip going-cold and muddy the assertions
+        habit_id = _make_habit("Walk", days_old=2, withings_metric="steps", withings_goal=10000)
+        for i in (1, 2, 3, 4):
+            _make_withings_reading("steps", TODAY - timedelta(days=i), 4000)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent"
+        text = mock_send.call_args[0][2]
+        assert "Trending off goal" in text
+        assert "4,000" in text
+        assert "10,000" in text
+
+    def test_withings_drift_ignores_insufficient_readings(self):
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        habit_id = _make_habit("Walk", days_old=2, withings_metric="steps", withings_goal=10000)
+        _make_withings_reading("steps", TODAY - timedelta(days=1), 2000)  # only 1 reading
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+
+    def test_bundles_multiple_signals_into_one_message(self):
+        _set_habit_reminder_time()
+        habit_id = _make_habit("Meditate")
+        for i in (1, 2, 3):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+        # Food log is quiet by default (no entries created in this test)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent"
+        assert mock_send.call_count == 1
+        text = mock_send.call_args[0][2]
+        assert "Meditate" in text
+        assert "No food logged" in text
+
+    def test_cooldown_prevents_resend_within_window(self):
+        _set_habit_reminder_time()
+        habit_id = _make_habit("Meditate")
+        for i in (1, 2, 3):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "skipped: nothing to flag"
+        assert mock_send.call_count == 1
+
+    def test_cooldown_expires_and_resends_after_window(self):
+        _set_habit_reminder_time()
+        with BotTestSession() as db:
+            from settings import Settings
+            import json as _json
+            stale = (TODAY - timedelta(days=10)).isoformat()
+            Settings(db).set(keys.HEALTH_NUDGES_SENT, _json.dumps({"food_log_quiet": stale}))
+            db.commit()
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY)
+
+        assert result == "sent"
+        assert mock_send.call_count == 1
+        text = mock_send.call_args[0][2]
+        assert "No food logged" in text

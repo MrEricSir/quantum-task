@@ -349,6 +349,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 - **Morning briefing** — AI summary of your day: weather, schedule, tasks, and habit status
 - **Evening habit reminder** — lists any habits still pending for the day
 - **Midday overdue nudge** — alerts you if tasks have slipped past their scheduled date
+- **Health check-in** (same time as the evening habit reminder) — a bundled, low-noise nudge for patterns worth knowing about: a multi-day streak not yet done today, a habit whose completion rate has dropped over the past week, a couple of days with nothing logged in the food log, or a Withings-tracked goal (steps, body fat) drifting off target over the past week. Deliberately ignores single missed days — each signal has its own cooldown so a persistent issue is flagged once, not nagged about daily.
 
 ---
 

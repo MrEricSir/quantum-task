@@ -6,7 +6,7 @@ Each function is idempotent — it checks whether its condition is met and
 whether it has already fired today before sending anything.
 """
 import json as _json
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -277,6 +277,193 @@ def check_streak_milestones(db: Session, token: str, chat_id: str,
     return f"sent: {sent} milestone(s)"
 
 
+# ── Proactive health/habit nudges ───────────────────────────────────────────────
+# High-signal, pattern-based flags only — never a single missed day. Each signal
+# has its own cooldown (tracked in HEALTH_NUDGES_SENT) so a persistent issue is
+# flagged once and then left alone for a while, instead of nagging daily. All
+# signals that fire in a given run are bundled into one message.
+
+_STREAK_RISK_MIN_STREAK = 3        # only worth protecting once it's a real streak
+_STREAK_RISK_COOLDOWN_DAYS = 1     # inherently a same-day signal
+
+_GOING_COLD_WINDOW_DAYS = 7
+_GOING_COLD_THRESHOLD = 0.5        # completion rate below this over the window
+_GOING_COLD_MIN_HABIT_AGE_DAYS = 7  # don't flag a habit before it has a track record
+_GOING_COLD_COOLDOWN_DAYS = 7
+
+_FOOD_LOG_QUIET_DAYS = 2           # consecutive days (including today) with zero entries
+_FOOD_LOG_QUIET_COOLDOWN_DAYS = 3
+
+_WITHINGS_DRIFT_WINDOW_DAYS = 7
+_WITHINGS_DRIFT_MIN_READINGS = 3   # need enough recent syncs to trust the average
+_WITHINGS_STEPS_DRIFT_RATIO = 0.8  # average below 80% of goal counts as drift
+_WITHINGS_DRIFT_COOLDOWN_DAYS = 7
+
+
+def _load_nudge_state(s: Settings) -> dict:
+    try:
+        return _json.loads(s.health_nudges_sent) if s.health_nudges_sent else {}
+    except Exception:
+        return {}
+
+
+def _cooldown_ok(state: dict, key: str, today, cooldown_days: int) -> bool:
+    """True if `key` hasn't fired within its cooldown window (or has never fired)."""
+    last = state.get(key)
+    if not last:
+        return True
+    try:
+        last_date = date.fromisoformat(last)
+    except ValueError:
+        return True
+    return (today - last_date).days >= cooldown_days
+
+
+def _streak_risk_signals(db: Session, today) -> list[tuple[str, str]]:
+    """Habits with a meaningful streak not yet completed today."""
+    from streak import get_current_streak
+
+    completed_ids = {
+        r.habit_id for r in
+        db.query(models.HabitCompletion).filter_by(date=today.isoformat()).all()
+    }
+    signals = []
+    for h in db.query(models.Habit).filter_by(archived=False).all():
+        if h.id in completed_ids:
+            continue
+        # Not completed today, so this returns the streak that breaks at midnight.
+        streak = get_current_streak(db, h.id, today)
+        if streak >= _STREAK_RISK_MIN_STREAK:
+            signals.append((f"streak_risk:{h.id}", f"{h.name} ({streak}-day streak)"))
+    return signals
+
+
+def _going_cold_signals(db: Session, today) -> list[tuple[str, str]]:
+    """Habits with a low completion rate over the trailing window, regardless
+    of streak status — catches a slipping pattern with no streak left to lose."""
+    age_cutoff = today - timedelta(days=_GOING_COLD_MIN_HABIT_AGE_DAYS)
+    window_start = (today - timedelta(days=_GOING_COLD_WINDOW_DAYS - 1)).isoformat()
+    today_str = today.isoformat()
+
+    signals = []
+    for h in db.query(models.Habit).filter_by(archived=False).all():
+        if h.created_at.date() > age_cutoff:
+            continue
+        count = db.query(models.HabitCompletion).filter(
+            models.HabitCompletion.habit_id == h.id,
+            models.HabitCompletion.date >= window_start,
+            models.HabitCompletion.date <= today_str,
+        ).count()
+        if (count / _GOING_COLD_WINDOW_DAYS) < _GOING_COLD_THRESHOLD:
+            signals.append((
+                f"going_cold:{h.id}",
+                f"{h.name} ({count}/{_GOING_COLD_WINDOW_DAYS} days this week)",
+            ))
+    return signals
+
+
+def _food_log_quiet_message(db: Session, today) -> str | None:
+    """None if food was logged on any of the last _FOOD_LOG_QUIET_DAYS days,
+    otherwise a message describing the gap."""
+    for i in range(_FOOD_LOG_QUIET_DAYS):
+        day = today - timedelta(days=i)
+        day_str = day.isoformat()
+        next_day_str = (day + timedelta(days=1)).isoformat()
+        exists = db.query(models.FoodEntry).filter(
+            models.FoodEntry.consumed_at >= day_str,
+            models.FoodEntry.consumed_at < next_day_str,
+        ).first()
+        if exists:
+            return None
+    return f"No food logged in {_FOOD_LOG_QUIET_DAYS} days"
+
+
+def _withings_drift_signals(db: Session, today) -> list[tuple[str, str]]:
+    """Habits with a Withings goal whose trailing-window average has drifted
+    away from the goal (steps trending down, fat ratio trending up)."""
+    window_start = (today - timedelta(days=_WITHINGS_DRIFT_WINDOW_DAYS - 1)).isoformat()
+    today_str = today.isoformat()
+
+    signals = []
+    habits = db.query(models.Habit).filter(
+        models.Habit.archived == False,  # noqa: E712
+        models.Habit.withings_metric.isnot(None),
+        models.Habit.withings_goal.isnot(None),
+    ).all()
+    for h in habits:
+        readings = db.query(models.WithingsMeasurement).filter(
+            models.WithingsMeasurement.metric == h.withings_metric,
+            models.WithingsMeasurement.date >= window_start,
+            models.WithingsMeasurement.date <= today_str,
+        ).all()
+        if len(readings) < _WITHINGS_DRIFT_MIN_READINGS:
+            continue
+        avg = sum(r.value for r in readings) / len(readings)
+        key = f"withings_drift:{h.id}"
+        if h.withings_metric == "steps" and avg < h.withings_goal * _WITHINGS_STEPS_DRIFT_RATIO:
+            signals.append((key, f"Steps averaging {int(avg):,}/day vs {int(h.withings_goal):,} goal"))
+        elif h.withings_metric == "fat_ratio" and avg > h.withings_goal:
+            signals.append((key, f"Body fat averaging {avg:.1f}% vs {h.withings_goal:.1f}% goal"))
+    return signals
+
+
+def check_health_nudges(db: Session, token: str, chat_id: str,
+                         now_local: datetime, today) -> str:
+    """Bundle high-signal habit/health nudges into a single evening message:
+    streak-at-risk, habits going cold, a quiet food log, and Withings goal
+    drift. Runs at the same evening hour as the habit reminder. Deliberately
+    does not send anything for a single missed day — only sustained patterns,
+    to avoid becoming noise."""
+    s = Settings(db)
+    if not _hour_matches(s.habit_reminder_time, now_local):
+        return "skipped"
+
+    state = _load_nudge_state(s)
+    lines = []
+    fired_keys = []
+
+    streak_risk = [(k, m) for k, m in _streak_risk_signals(db, today)
+                   if _cooldown_ok(state, k, today, _STREAK_RISK_COOLDOWN_DAYS)]
+    if streak_risk:
+        lines.append("<b>🔥 Streak at risk today</b>")
+        for k, msg in streak_risk:
+            lines.append(f"  • {msg}")
+            fired_keys.append(k)
+
+    going_cold = [(k, m) for k, m in _going_cold_signals(db, today)
+                  if _cooldown_ok(state, k, today, _GOING_COLD_COOLDOWN_DAYS)]
+    if going_cold:
+        lines.append("<b>📉 Slipping</b>")
+        for k, msg in going_cold:
+            lines.append(f"  • {msg}")
+            fired_keys.append(k)
+
+    if _cooldown_ok(state, "food_log_quiet", today, _FOOD_LOG_QUIET_COOLDOWN_DAYS):
+        quiet_msg = _food_log_quiet_message(db, today)
+        if quiet_msg:
+            lines.append(f"<b>🍽 {quiet_msg}</b>")
+            fired_keys.append("food_log_quiet")
+
+    drift = [(k, m) for k, m in _withings_drift_signals(db, today)
+             if _cooldown_ok(state, k, today, _WITHINGS_DRIFT_COOLDOWN_DAYS)]
+    if drift:
+        lines.append("<b>📊 Trending off goal</b>")
+        for k, msg in drift:
+            lines.append(f"  • {msg}")
+            fired_keys.append(k)
+
+    if not lines:
+        return "skipped: nothing to flag"
+
+    for k in fired_keys:
+        state[k] = today.isoformat()
+    s.set(keys.HEALTH_NUDGES_SENT, _json.dumps(state))
+    db.commit()
+
+    text = "<b>⚡ Health check-in</b>\n\n" + "\n".join(lines)
+    return "sent" if send_message(token, chat_id, text) else "send_failed"
+
+
 _OUTPUT_TAIL_LINES = 10  # lines of Claude Code output included in completion notifications
 
 
@@ -382,5 +569,6 @@ def check_all(db: Session) -> dict:
         "overdue_nudge":      check_overdue_nudge(db, token, chat_id, now_local, today),
         "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
         "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),
+        "health_nudges":      check_health_nudges(db, token, chat_id, now_local, today),
         "bridge_jobs":        check_bridge_jobs(db, token, chat_id),
     }

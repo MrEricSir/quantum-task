@@ -89,6 +89,10 @@ class Settings:
     def streak_milestones_sent(self) -> str:
         return self.get(keys.STREAK_MILESTONES_SENT, "")
 
+    @property
+    def health_nudges_sent(self) -> str:
+        return self.get(keys.HEALTH_NUDGES_SENT, "")
+
     # ── GitHub ────────────────────────────────────────────────────────────────
 
     @property

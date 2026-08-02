@@ -68,6 +68,10 @@ EVENING_SUMMARY_LAST_SENT = "evening_summary_last_sent"
 MEETING_ALERTS_SENT = "meeting_alerts_sent"
 # JSON {"habit_id:milestone": "YYYY-MM-DD"} — tracks when each streak milestone was sent.
 STREAK_MILESTONES_SENT = "streak_milestones_sent"
+# JSON {signal_key: "YYYY-MM-DD"} — last-notified date per health nudge signal
+# (e.g. "streak_risk:3", "going_cold:5", "food_log_quiet", "withings_drift:7").
+# Each signal has its own cooldown so a persistent issue isn't re-flagged every day.
+HEALTH_NUDGES_SENT = "health_nudges_sent"
 
 # ── Bridge job notifications ───────────────────────────────────────────────────
 # Integer string: the highest BridgeJob.id whose completion has been Telegram-notified.
