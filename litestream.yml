@@ -1,0 +1,13 @@
+# Litestream config for the Cloud Run deployment. Baked into the image at
+# /etc/litestream.yml; see deploy-gcp.md for the full explanation.
+#
+# ${GCS_BUCKET} and ${PORT} are expanded from the container's environment
+# vars at startup. GCS auth is automatic on Cloud Run via the attached
+# service account's metadata-server credentials -- no key file needed.
+
+exec: "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
+
+dbs:
+  - path: /app/db/todos.db
+    replica:
+      url: gs://${GCS_BUCKET}/litestream/todos.db

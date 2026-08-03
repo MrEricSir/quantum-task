@@ -7,22 +7,64 @@ Browser
   │
   └─ All traffic ───────────────────────▶ Cloud Run  (~$0, scales to zero)
                                                │
-                                   ┌───────────┴────────────┐
-                                   │                        │
-                              Cloud Storage            LLM API
-                           SQLite on GCS (~$0)   (Gemini / Groq / Ollama)
+                          ┌────────────────────┼────────────────────┐
+                          │                     │                    │
+                   Local disk (WAL)      Cloud Storage           LLM API
+                  SQLite, litestream    replica + backups/  (Gemini / Groq / Ollama)
+                    replicates to →     (~$0)
+                       Cloud Storage
 ```
 
 Cloud Run serves both the frontend (static files) and the `/api/**` backend
 from a single Docker image — no separate hosting service needed.
 
-**Why `--max-instances 1`:** the database is a SQLite file on a Cloud
-Storage FUSE volume mount, and Cloud Storage FUSE provides no real file
-locking — concurrent writers to the same file last-write-wins, silently
-dropping the earlier write. `dev.sh` pins the Cloud Run service to a single
-instance so there is only ever one writer. `--min-instances 0` is still
-fine (and free) alongside this — it just means zero *or* one instance, never
-more than one.
+**Why `--max-instances 1`:** only one instance may hold the writable copy of
+the database at a time. `dev.sh` and CI both pin the Cloud Run service to a
+single instance. `--min-instances 0` is still fine (and free) alongside this
+— it just means zero *or* one instance, never more than one.
+
+---
+
+## Database storage: SQLite + litestream
+
+The live database is a plain SQLite file on the container's local disk
+(`/app/db/todos.db`), in WAL mode. [Litestream](https://litestream.io) wraps
+the app process (`litestream replicate -config /etc/litestream.yml`, which
+in turn execs `uvicorn`) and continuously streams WAL changes to
+`gs://<project>-todo-db/litestream/todos.db` — typically within about a
+second of a write, and restores from that replica automatically on
+container startup if the local file doesn't exist yet (every Cloud Run cold
+start, given `min-instances 0`).
+
+This used to be a SQLite file directly on a Cloud Storage FUSE volume mount.
+That was simpler but had a real correctness problem: **Cloud Storage FUSE
+provides no real file locking** — concurrent writes to the same file
+silently last-write-wins — and SQLite's WAL mode (which needs working POSIX
+advisory locks) can't be safely enabled over it either. Moving the live
+database to local disk gives SQLite a filesystem it can actually trust,
+while Cloud Storage is still where durability comes from, just asynchronously
+now instead of being the live storage medium itself.
+
+`--max-instances 1` remains required: litestream's replication model assumes
+a single writer. This was already true of the old FUSE setup for the same
+underlying reason (no real locking), so nothing has gotten more restrictive.
+
+Litestream failures degrade, they don't block: if the GCS replica is
+unreachable (bad credentials, network issue, wrong bucket), litestream logs
+errors and keeps retrying in the background, but the app still starts and
+serves traffic normally on the local copy. Verified locally by running the
+image with a nonexistent bucket and no GCS credentials — the app came up and
+responded to requests despite continuous replication errors in the logs.
+
+Litestream's own replica only retains a rolling ~24h window by default (see
+[Database backups](#database-backups) below for the separate, longer-lived
+dated-snapshot mechanism). Auth to GCS is automatic on Cloud Run via the
+attached service account's metadata-server credentials — no key file needed,
+same as the old FUSE mount.
+
+To pull a browsable copy of the database to your machine — either the live
+one (triggers a fresh snapshot first) or the most recent existing backup if
+the service is down — see [Grabbing the database for debugging](#grabbing-the-database-for-debugging).
 
 ---
 
@@ -166,17 +208,28 @@ Requires `gcloud auth login`. Reads from the Cloud Run service configured in `.g
 `./dev.sh gcp-setup-scheduler` also creates a daily Cloud Scheduler job,
 `db-backup`, that POSTs to `/api/backup/run` once a day (09:00 UTC by
 default). That endpoint copies the live SQLite database to a datestamped
-file — `todos_YYYY-MM-DD.db` — in a `backups/` subdirectory of the same
-Cloud Storage bucket the live database lives in (`gs://<project>-todo-db/backups/`).
-Re-running on the same day overwrites that day's file rather than
-accumulating multiple copies.
+file — `todos_YYYY-MM-DD.db` — into `BACKUP_DIR`, which is set to
+`/app/data/backups`. `/app/data` is still a Cloud Storage FUSE volume mount
+(the same one that used to hold the live database directly — see
+[Database storage](#database-storage-sqlite--litestream) above), now used
+only as a plain write target for these dated snapshots, landing at
+`gs://<project>-todo-db/backups/`. FUSE's lack of write locking is a
+non-issue here since this is a single, infrequent, non-concurrent write, not
+a live database. Re-running on the same day overwrites that day's file
+rather than accumulating multiple copies.
 
 The copy is made with SQLite's online backup API (`sqlite3.Connection.backup`),
 not a plain file copy, so it produces a consistent snapshot even while the
 app is writing to the live database.
 
+This is deliberately kept alongside litestream's own continuous replication
+rather than replaced by it: litestream's replica only retains ~24h by
+default, while these dated snapshots accumulate indefinitely, giving you
+day-granularity restore points reaching back arbitrarily far. Litestream
+gives you the last few seconds; this gives you last Tuesday.
+
 To restore, download the desired backup and point `DATABASE_URL` at it (or
-copy it over the live `todos.db` in the mounted volume) before redeploying:
+copy it over the live `/app/db/todos.db` before redeploying):
 
 ```bash
 gcloud storage cp gs://<project>-todo-db/backups/todos_2026-08-01.db ./todos.db
@@ -192,6 +245,36 @@ Backups are not currently pruned — old dated files accumulate in `backups/`
 indefinitely. Given the database is tiny (personal-use SQLite), this is a
 non-issue at current scale; add lifecycle rules on the bucket if that ever
 changes.
+
+---
+
+## Grabbing the database for debugging
+
+```bash
+./dev.sh gcp-db-pull                  # downloads to ./todos.debug.db
+./dev.sh gcp-db-pull ./somewhere.db   # or a path of your choosing
+```
+
+This triggers a fresh backup (via the mechanism above) and downloads it, so
+what you get is generally only a few seconds old. If the service itself is
+unreachable — which is exactly when you're most likely to want this — it
+falls back to downloading the most recent backup that already exists,
+instead of failing outright.
+
+Open the result with any SQLite tool:
+
+```bash
+sqlite3 ./todos.debug.db
+```
+
+This is the practical workaround for not being able to just browse the live
+file directly anymore (which the old FUSE-mounted setup allowed, at the cost
+of that "live" copy sometimes being read mid-write and inconsistent). If you
+have the `litestream` binary and GCP credentials locally, `litestream
+restore` against `gs://<project>-todo-db/litestream/todos.db` is the other
+option — pulls a consistent snapshot straight from the replica, typically
+within about a second of current, without needing the app to be running at
+all.
 
 ---
 

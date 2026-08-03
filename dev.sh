@@ -308,10 +308,12 @@ gcp_setup() {
     --min-instances 0 \
     --max-instances 1 \
     --service-account "$CLOUD_RUN_SA" \
-    --add-volume "name=db,type=cloud-storage,bucket=$GCS_BUCKET" \
-    --add-volume-mount "volume=db,mount-path=/app/data" \
+    --add-volume "name=backups,type=cloud-storage,bucket=$GCS_BUCKET" \
+    --add-volume-mount "volume=backups,mount-path=/app/data" \
     --set-env-vars "\
-DATABASE_URL=sqlite:////app/data/todos.db,\
+DATABASE_URL=sqlite:////app/db/todos.db,\
+GCS_BUCKET=$GCS_BUCKET,\
+BACKUP_DIR=/app/data/backups,\
 LLM_BASE_URL=$LLM_BASE_URL,\
 LLM_API_KEY=$LLM_API_KEY,\
 LLM_MODEL=$LLM_MODEL,\
@@ -380,6 +382,7 @@ gcp_deploy() {
   local TAG
   TAG="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo 'manual')"
   local IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_AR_REPO/backend"
+  local GCS_BUCKET="${GCP_PROJECT_ID}-todo-db"
 
   _build_and_push "$TAG" latest
 
@@ -390,6 +393,10 @@ gcp_deploy() {
     --platform managed \
     --min-instances 0 \
     --max-instances 1 \
+    --update-env-vars "\
+DATABASE_URL=sqlite:////app/db/todos.db,\
+GCS_BUCKET=$GCS_BUCKET,\
+BACKUP_DIR=/app/data/backups" \
     --project "$GCP_PROJECT_ID" \
     --quiet
 
@@ -512,6 +519,53 @@ gcp_logs() {
   fi
 }
 
+gcp_db_pull() {
+  _check_gcp_auth
+  _load_gcp_config
+
+  local OUT="${2:-./todos.debug.db}"
+  local GCS_BUCKET="${GCP_PROJECT_ID}-todo-db"
+
+  local SERVICE_URL
+  SERVICE_URL=$(gcloud run services describe "$GCP_SERVICE_NAME" \
+    --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+    --format 'value(status.url)' 2>/dev/null)
+
+  # Trigger a fresh snapshot when the service is reachable, so what we
+  # download is as current as possible. If it's not (e.g. the service itself
+  # is what's broken), fall back to whatever the most recent existing backup
+  # is -- that's still a consistent, queryable snapshot, just up to a day old.
+  local REMOTE=""
+  if [[ -n "$SERVICE_URL" ]]; then
+    echo "==> Triggering a fresh backup on $SERVICE_URL..."
+    if curl -sf -X POST -H "Authorization: Bearer ${AUTH_PASSWORD}" "$SERVICE_URL/api/backup/run" > /dev/null; then
+      REMOTE="gs://$GCS_BUCKET/backups/todos_$(date -u +%Y-%m-%d).db"
+    else
+      echo "    Trigger failed (service may be down) — falling back to the most recent existing backup."
+    fi
+  else
+    echo "==> Could not resolve service URL — falling back to the most recent existing backup."
+  fi
+
+  if [[ -z "$REMOTE" ]]; then
+    REMOTE=$(gcloud storage ls "gs://$GCS_BUCKET/backups/todos_*.db" --project "$GCP_PROJECT_ID" 2>/dev/null | sort | tail -1)
+    if [[ -z "$REMOTE" ]]; then
+      echo "ERROR: No backups found in gs://$GCS_BUCKET/backups/."
+      echo "  Run './dev.sh gcp-setup-scheduler' if you haven't yet, or trigger one manually:"
+      echo "    curl -X POST -H \"Authorization: Bearer \$AUTH_PASSWORD\" <service-url>/api/backup/run"
+      exit 1
+    fi
+    echo "==> Using most recent existing backup: $REMOTE"
+  fi
+
+  echo "==> Downloading $REMOTE to $OUT..."
+  gcloud storage cp "$REMOTE" "$OUT" --project "$GCP_PROJECT_ID"
+
+  echo ""
+  echo "Done. Open it with:"
+  echo "  sqlite3 $OUT"
+}
+
 gcp_update_env() {
   _check_gcp_auth
   _load_gcp_config
@@ -545,6 +599,7 @@ case "${1:-}" in
   gcp-update-env)       gcp_update_env ;;
   gcp-logs)             gcp_logs "$@" ;;
   gcp-setup-scheduler)  gcp_setup_scheduler ;;
+  gcp-db-pull)          gcp_db_pull "$@" ;;
   *)
     echo "Usage: ./dev.sh <command>"
     echo ""
@@ -563,7 +618,8 @@ case "${1:-}" in
     echo "  gcp-deploy             Build and deploy manually"
     echo "  gcp-update-env         Push updated env vars from .gcp-config to Cloud Run"
     echo "  gcp-logs [N] [grep]    Fetch last N log lines (default 100), optionally grepped"
-    echo "  gcp-setup-scheduler    Create Cloud Scheduler jobs (Telegram checks + Withings sync)"
+    echo "  gcp-setup-scheduler    Create Cloud Scheduler jobs (Telegram checks + Withings sync + backup)"
+    echo "  gcp-db-pull [out]      Trigger a fresh backup and download it (default: ./todos.debug.db)"
     exit 1
     ;;
 esac

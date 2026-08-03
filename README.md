@@ -430,6 +430,11 @@ export LLM_MODEL="llama-3.3-70b-versatile"
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./todos.db` | SQLAlchemy connection string |
+| `BACKUP_DIR` | same directory as the database | Where `POST /api/backup/run` writes dated snapshots (see [Database backups](deploy-gcp.md#database-backups)) |
+
+In production, `DATABASE_URL` points at local container disk
+(`sqlite:////app/db/todos.db`), not Cloud Storage — see
+[Database storage](deploy-gcp.md#database-storage-sqlite--litestream) for why.
 
 ### Auth
 
@@ -520,6 +525,11 @@ This creates three Cloud Scheduler jobs:
 - `db-backup` — daily, hits `/api/backup/run`, which copies the live SQLite database to a datestamped file in a `backups/` subdirectory of the same bucket. See [Database backups](deploy-gcp.md#database-backups) in the deployment guide.
 
 All three jobs are automatically updated on every subsequent `./dev.sh gcp-deploy`.
+
+The live database runs on local disk under [litestream](https://litestream.io),
+continuously replicated to Cloud Storage — see [Database storage](deploy-gcp.md#database-storage-sqlite--litestream)
+in the deployment guide for why, and [Grabbing the database for debugging](deploy-gcp.md#grabbing-the-database-for-debugging)
+(`./dev.sh gcp-db-pull`) for pulling a queryable local copy.
 
 ## Project structure
 
@@ -614,7 +624,8 @@ todo/
     tests/
       visual.spec.js   # Playwright functional tests (all APIs mocked, 130 tests)
     dist/              # Production build output (gitignored)
-  Dockerfile           # Multi-stage build (frontend + backend)
+  Dockerfile           # Multi-stage build (frontend + backend + litestream)
+  litestream.yml       # Litestream config, baked into the image at /etc/litestream.yml
   deploy-gcp.md        # Full GCP deployment guide
   IDEAS.md             # Feature ideas and brainstorm
   dev.sh               # Development helper script

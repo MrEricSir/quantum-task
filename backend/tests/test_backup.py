@@ -78,6 +78,23 @@ class TestRunBackup:
         with pytest.raises(ValueError):
             backup_run.run_backup()
 
+    def test_backup_dir_override_writes_outside_the_db_directory(self, tmp_path, monkeypatch):
+        db_dir = tmp_path / "db"
+        db_dir.mkdir()
+        db_path = db_dir / "todos.db"
+        _make_sqlite_file(db_path, rows=(1,))
+        monkeypatch.setattr(backup_run, "DATABASE_URL", f"sqlite:///{db_path}")
+
+        backups_dir = tmp_path / "mounted" / "backups"
+        monkeypatch.setenv("BACKUP_DIR", str(backups_dir))
+
+        result = backup_run.run_backup()
+
+        expected_path = backups_dir / f"todos_{date.today().isoformat()}.db"
+        assert result["path"] == str(expected_path)
+        assert os.path.exists(expected_path)
+        assert not os.path.exists(db_dir / "backups")
+
 
 class TestBackupEndpoint:
 
