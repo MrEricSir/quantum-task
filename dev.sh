@@ -178,7 +178,15 @@ YAML
 
   cleanup() {
     docker rm -f litestream-restore-test-a litestream-restore-test-b &>/dev/null || true
-    rm -rf "$WORKDIR"
+    # The containers write replica files as root, so on Linux (real Docker,
+    # not colima's VM) they're root-owned on the host and a non-root cleanup
+    # user (e.g. the GitHub Actions runner) can't remove them directly. Use
+    # a throwaway root container -- which can -- as the primary path, with a
+    # plain rm as a fallback/final sweep. Never let cleanup failure fail this
+    # function: it must not turn a passing test into a false failure under
+    # `set -e`.
+    docker run --rm -v "$WORKDIR:/cleanup" "$IMAGE_TAG" rm -rf /cleanup/replica &>/dev/null || true
+    rm -rf "$WORKDIR" 2>/dev/null || true
   }
   trap cleanup EXIT
 
