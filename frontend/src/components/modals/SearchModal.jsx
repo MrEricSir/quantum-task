@@ -3,8 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { searchCards } from '../../api'
 import './SearchModal.css'
-import { SECTION_LABELS } from '../../lib/sections'
-const SECTION_COLORS = { today: '#3b82f6', week: '#8b5cf6', month: '#f59e0b', later: '#6b7280' }
+import { SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 
 const EVENT_COLOR = '#0ea5e9'
 

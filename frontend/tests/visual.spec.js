@@ -1569,6 +1569,29 @@ test.describe('search modal', () => {
   })
 })
 
+test.describe('search modal — mobile card open', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('selecting a card result opens it in the CardSheet bottom sheet', async ({ page }) => {
+    await page.route('**/api/cards/search**', r =>
+      r.fulfill({ json: [
+        { id: 1, title: 'Daily Engineering Standup', section: 'today', completed: false,
+          archived: false, description: null, tags: [], position: 0, overdue_days: 0 },
+      ] })
+    )
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.keyboard.press('/')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.keyboard.type('standup')
+    await expect(page.locator('.search-result', { hasText: 'Daily Engineering Standup' })).toBeVisible()
+    await page.keyboard.press('ArrowDown') // selects the first result
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.card-sheet')).toBeVisible()
+    await expect(page.locator('.card-sheet').getByText('Daily Engineering Standup')).toBeVisible()
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Archive section on board
 // ---------------------------------------------------------------------------

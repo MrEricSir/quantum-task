@@ -4,20 +4,13 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import AssistModal from '../modals/AssistModal'
 import CardForm, { isoToLocal } from '../modals/CardForm'
-import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
+import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
   if (!text) return ''
   return DOMPurify.sanitize(marked.parse(text, { breaks: true }), { ADD_ATTR: ['target', 'rel'] })
-}
-
-const SECTION_COLORS = {
-  today: 'var(--color-today)',
-  week:  'var(--color-week)',
-  month: 'var(--color-month)',
-  later: 'var(--color-later)',
 }
 
 function parseGitHubUrl(str) {

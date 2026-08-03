@@ -1,6 +1,6 @@
 /**
  * Shared form fields for creating and editing cards.
- * Used by both CardModal and QuickAddModal's confirm/bulk-edit steps.
+ * Used by CardDetailPanel, CardSheet, and QuickAddModal's confirm/bulk-edit steps.
  */
 
 import TagInput from '../shared/TagInput'

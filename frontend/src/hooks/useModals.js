@@ -1,7 +1,11 @@
 import { useState } from 'react'
 
+// Card creation/editing on mobile always goes through CardSheet (a bottom
+// sheet); this hook only manages the "new card" case (openNewCard), since
+// App.jsx's own openEdit routes editing an existing card straight to
+// CardSheet (mobile) or CardDetailPanel (desktop) without needing state
+// from here.
 export function useModals() {
-  const [showModal, setShowModal] = useState(false)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [quickAddInitialText, setQuickAddInitialText] = useState('')
   const [showSearch, setShowSearch] = useState(false)
@@ -11,33 +15,17 @@ export function useModals() {
   const [showWithingsSettings, setShowWithingsSettings] = useState(false)
   const [showTelegramSettings, setShowTelegramSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [editingCard, setEditingCard] = useState(null)
   const [defaultSection, setDefaultSection] = useState('today')
   const [showNewSheet, setShowNewSheet] = useState(false)
 
-  const openEdit = (todo) => {
-    setDefaultSection(todo?.section ?? 'today')
-    setEditingCard(todo)
-    setShowModal(true)
-  }
-
+  // Only ever called from App.jsx's own openNewCard after it has already
+  // confirmed the viewport is mobile-sized.
   const openNewCard = (section = 'today') => {
     setDefaultSection(section)
-    if (window.matchMedia('(max-width: 640px)').matches) {
-      setShowNewSheet(true)
-    } else {
-      setEditingCard(null)
-      setShowModal(true)
-    }
-  }
-
-  const closeModal = () => {
-    setShowModal(false)
-    setEditingCard(null)
+    setShowNewSheet(true)
   }
 
   return {
-    showModal,
     showQuickAdd, setShowQuickAdd,
     quickAddInitialText, setQuickAddInitialText,
     showSearch, setShowSearch,
@@ -47,9 +35,8 @@ export function useModals() {
     showWithingsSettings, setShowWithingsSettings,
     showTelegramSettings, setShowTelegramSettings,
     showShortcuts, setShowShortcuts,
-    editingCard,
     defaultSection,
     showNewSheet, setShowNewSheet,
-    openEdit, openNewCard, closeModal,
+    openNewCard,
   }
 }

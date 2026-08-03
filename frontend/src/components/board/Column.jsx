@@ -1,14 +1,8 @@
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import Card from './Card'
+import { SECTION_COLORS } from '../../lib/sections'
 import './Column.css'
-
-const SECTION_COLORS = {
-  today: 'var(--color-today)',
-  week: 'var(--color-week)',
-  month: 'var(--color-month)',
-  later: 'var(--color-later)',
-}
 
 export default function Column({ section, label, cards, isActive, isMobile, onEdit, onSave, onDelete, onArchive, onToggle, onMove, onAdd, allTags, onBreakdown, onSelect, selectedCardId }) {
   const { setNodeRef, isOver } = useDroppable({ id: section })

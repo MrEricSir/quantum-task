@@ -16,7 +16,6 @@ import CardDetailPanel from './components/board/CardDetailPanel'
 import Sidebar from './components/layout/Sidebar'
 import MobileNav from './components/layout/MobileNav'
 import TagFilterBar from './components/layout/TagFilterBar'
-import CardModal from './components/modals/CardModal'
 import CardSheet from './components/modals/CardSheet'
 import QuickAddModal from './components/modals/QuickAddModal'
 import SearchModal from './components/modals/SearchModal'
@@ -56,15 +55,7 @@ import {
   refreshEngineeringItem,
 } from './api'
 import './App.css'
-import { SECTIONS, SECTION_LABELS } from './lib/sections'
-
-export { SECTIONS, SECTION_LABELS }
-const SECTION_COLORS = {
-  today: 'var(--color-today)',
-  week: 'var(--color-week)',
-  month: 'var(--color-month)',
-  later: 'var(--color-later)',
-}
+import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from './lib/sections'
 
 // Pure, closure-free helpers for reading tag/page state directly from a
 // pathname string. Used both at render time (via the reactive `location`
@@ -109,7 +100,6 @@ export default function App() {
     undoTimerRef.current = setTimeout(() => setUndoAction(null), 5000)
   }, [])
   const {
-    showModal,
     showQuickAdd, setShowQuickAdd,
     quickAddInitialText, setQuickAddInitialText,
     showSearch, setShowSearch,
@@ -119,9 +109,8 @@ export default function App() {
     showWithingsSettings, setShowWithingsSettings,
     showTelegramSettings, setShowTelegramSettings,
     showShortcuts, setShowShortcuts,
-    editingCard,
     defaultSection, showNewSheet, setShowNewSheet,
-    openEdit: openEditModal, openNewCard: openNewCardModal, closeModal,
+    openNewCard: openNewCardSheet,
   } = useModals()
   const [quickAddStep, setQuickAddStep] = useState('input')
   const [undoAction, setUndoAction] = useState(null) // {label, onUndo}
@@ -406,13 +395,13 @@ export default function App() {
   }
 
   const openEdit = (card) => {
-    if (window.matchMedia('(max-width: 640px)').matches) { openEditModal(card); return }
+    if (window.matchMedia('(max-width: 640px)').matches) { setSheetViewCard(card); return }
     setSelectedCardId(card.id)
     setPanelInitialMode('edit')
   }
 
   const openNewCard = (section = 'today') => {
-    if (window.matchMedia('(max-width: 640px)').matches) { openNewCardModal(section); return }
+    if (window.matchMedia('(max-width: 640px)').matches) { openNewCardSheet(section); return }
     setSelectedCardId(null)
     setPanelInitialMode('new')
     setPanelDefaultSection(section)
@@ -641,15 +630,6 @@ export default function App() {
         : prev
       return [...updated, ...cards]
     })
-  }
-
-  const handleModalSave = async (data) => {
-    if (editingCard) {
-      await handleUpdateCard(editingCard.id, data)
-    } else {
-      await handleAddCard(data)
-    }
-    closeModal()
   }
 
   if (authed === null) return null
@@ -978,20 +958,6 @@ export default function App() {
         page={currentPage}
         onNavigate={handlePageNavigate}
       />
-
-      {showModal && (
-        <CardModal
-          card={editingCard}
-          defaultSection={defaultSection}
-          allTags={tags}
-          topTags={topTags}
-          onCreateTag={handleCreateTag}
-          onClose={closeModal}
-          onSave={handleModalSave}
-          onDelete={editingCard ? async () => { await handleDeleteCard(editingCard.id); closeModal() } : undefined}
-          onArchive={editingCard ? async () => { await handleArchiveCard(editingCard.id); closeModal() } : undefined}
-        />
-      )}
 
       {showNewSheet && (
         <CardSheet

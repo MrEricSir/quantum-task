@@ -16,6 +16,14 @@ export const SECTION_LABELS = {
   later: 'Later',
 }
 
+/** CSS color var per section, used for accents (card border, dot, etc). */
+export const SECTION_COLORS = {
+  today: 'var(--color-today)',
+  week:  'var(--color-week)',
+  month: 'var(--color-month)',
+  later: 'var(--color-later)',
+}
+
 /**
  * Full section list for form selects.
  * Each entry has `value` and `label`.

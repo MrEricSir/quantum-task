@@ -4,9 +4,7 @@ import CardForm, { isoToLocal } from './CardForm'
 import AssistModal from './AssistModal'
 import './CardModal.css'
 import './CardSheet.css'
-import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
-
-const SECTION_COLORS = { today: 'var(--color-today)', week: 'var(--color-week)', month: 'var(--color-month)', later: 'var(--color-later)' }
+import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 
 function parseGitHubUrl(str) {
   if (!str) return null

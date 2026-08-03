@@ -7,9 +7,7 @@ import ConfirmDialog from '../modals/ConfirmDialog'
 import CardSheet from '../modals/CardSheet'
 import './EventCard.css'
 import './Card.css'
-import { SECTIONS, SECTION_LABELS } from '../../lib/sections'
-
-const SECTION_COLORS = { today: 'var(--color-today)', week: 'var(--color-week)', month: 'var(--color-month)', later: 'var(--color-later)' }
+import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 
 function formatScheduled(iso) {
   if (!iso) return null
