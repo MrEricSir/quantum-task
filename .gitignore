@@ -9,6 +9,7 @@ backend/*.db
 backend/*.db-shm
 backend/*.db-wal
 backend/backups/
+.local-safety-backups/
 
 # ── Test / dev artifacts ──────────────────────────────────────────────────────
 backend/.pytest_cache/

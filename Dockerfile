@@ -27,6 +27,8 @@ COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY backend/ .
 COPY --from=frontend /frontend/dist ./static
 COPY litestream.yml /etc/litestream.yml
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # The live database lives on local (ephemeral) disk under litestream, not on
 # the GCS-FUSE volume mount -- see deploy-gcp.md's "Database storage" section.
@@ -35,4 +37,4 @@ RUN mkdir -p /app/db
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
-CMD ["litestream", "replicate", "-config", "/etc/litestream.yml"]
+CMD ["/usr/local/bin/docker-entrypoint.sh"]
