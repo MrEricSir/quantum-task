@@ -30,6 +30,7 @@ from deps import AUTH_PASSWORD, SESSION_TOKEN
 from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, assist, mood, bridge, workouts
 import briefing as briefing_pkg
 import telegram as telegram_pkg
+import backup as backup_pkg
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -259,6 +260,22 @@ async def _withings_scheduler() -> None:
         await asyncio.sleep(7200)
 
 
+async def _backup_scheduler() -> None:
+    """Back up the database once a day.
+
+    Runs on startup (not just after a delay) so local dev sees a backup
+    immediately; Cloud Scheduler is what drives this reliably in prod, since
+    an instance can be recycled before 24 hours of in-process uptime pass.
+    """
+    while True:
+        try:
+            from backup import run_backup
+            await asyncio.get_event_loop().run_in_executor(None, run_backup)
+        except Exception as e:
+            print(f"[backup] scheduler error: {e}")
+        await asyncio.sleep(86400)
+
+
 def _expire_stale_experiments() -> None:
     """Archive habits and dismiss active experiments from previous weeks."""
     try:
@@ -294,11 +311,13 @@ async def lifespan(app):
     wtask = asyncio.create_task(_withings_scheduler())
     etask = asyncio.create_task(_experiment_cleanup_scheduler())
     btask = asyncio.create_task(_embedding_backfill())
+    baktask = asyncio.create_task(_backup_scheduler())
     yield
     task.cancel()
     wtask.cancel()
     etask.cancel()
     btask.cancel()
+    baktask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -332,6 +351,7 @@ app.include_router(assist.router)
 app.include_router(mood.router)
 app.include_router(bridge.router)
 app.include_router(workouts.router)
+app.include_router(backup_pkg.router)
 
 # Serve bundled frontend for all non-API routes (must be last).
 # Using an explicit catch-all route instead of StaticFiles mount to avoid

@@ -306,6 +306,7 @@ gcp_setup() {
     --platform managed \
     --allow-unauthenticated \
     --min-instances 0 \
+    --max-instances 1 \
     --service-account "$CLOUD_RUN_SA" \
     --add-volume "name=db,type=cloud-storage,bucket=$GCS_BUCKET" \
     --add-volume-mount "volume=db,mount-path=/app/data" \
@@ -388,6 +389,7 @@ gcp_deploy() {
     --region "$GCP_REGION" \
     --platform managed \
     --min-instances 0 \
+    --max-instances 1 \
     --project "$GCP_PROJECT_ID" \
     --quiet
 
@@ -475,9 +477,18 @@ gcp_setup_scheduler() {
     "$SERVICE_URL/api/withings/sync" \
     "0 * * * *"
 
+  # Daily database backup (see backend/backup/). The in-process loop in
+  # main.py covers local dev; this is what makes it reliable in prod, same
+  # reasoning as withings-sync above.
+  _gcp_upsert_scheduler_job \
+    "db-backup" \
+    "$SERVICE_URL/api/backup/run" \
+    "0 9 * * *"
+
   echo "The briefing will be sent at your configured time (±15 min)."
   echo "Configure time and credentials in Settings > Telegram."
   echo "Withings will sync hourly in addition to the local-dev background loop."
+  echo "The database will be backed up daily to a 'backups/' subdir in the same bucket."
 }
 
 gcp_logs() {

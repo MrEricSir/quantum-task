@@ -514,11 +514,12 @@ After deploying, run this once to set up the Cloud Scheduler jobs:
 ./dev.sh gcp-setup-scheduler
 ```
 
-This creates two hourly Cloud Scheduler jobs:
-- `telegram-daily-briefing` — hits `/api/telegram/daily-briefing`, which runs every scheduled Telegram check (briefing, habit reminder, overdue nudge, health check-in, streak milestones). The app checks whether the current local hour matches your configured send time for each and skips silently otherwise.
-- `withings-sync` — hits `/api/withings/sync` directly, so Withings data (and the habit auto-checks that depend on it) syncs reliably even when the app has no traffic. Cloud Run runs with min instances 0, so the in-process sync loop in `main.py` (still there, and still what drives sync locally in dev) can't be relied on to run on a fixed cadence in production — this job covers that gap. Both paths call the same sync function, which is idempotent, so there's no harm in both being active.
+This creates three Cloud Scheduler jobs:
+- `telegram-daily-briefing` — hourly, hits `/api/telegram/daily-briefing`, which runs every scheduled Telegram check (briefing, habit reminder, overdue nudge, health check-in, streak milestones). The app checks whether the current local hour matches your configured send time for each and skips silently otherwise.
+- `withings-sync` — hourly, hits `/api/withings/sync` directly, so Withings data (and the habit auto-checks that depend on it) syncs reliably even when the app has no traffic. Cloud Run runs with min instances 0, so the in-process sync loop in `main.py` (still there, and still what drives sync locally in dev) can't be relied on to run on a fixed cadence in production — this job covers that gap. Both paths call the same sync function, which is idempotent, so there's no harm in both being active.
+- `db-backup` — daily, hits `/api/backup/run`, which copies the live SQLite database to a datestamped file in a `backups/` subdirectory of the same bucket. See [Database backups](deploy-gcp.md#database-backups) in the deployment guide.
 
-Both jobs are automatically updated on every subsequent `./dev.sh gcp-deploy`.
+All three jobs are automatically updated on every subsequent `./dev.sh gcp-deploy`.
 
 ## Project structure
 
@@ -545,6 +546,9 @@ todo/
       bot.py             # handle_update, intent parsing, reply handlers
       scheduler.py       # check_all — briefing, reminders, bridge job notifications
       notify.py          # Raw Telegram HTTP calls
+    backup/              # Database backup feature package
+      router.py          # POST /api/backup/run
+      run.py             # SQLite online-backup-API copy to backups/todos_<date>.db
     routers/             # One file per feature area
       auth.py            # Login/logout, session management
       cards.py           # Tasks + reference cards CRUD, AI parse, iOS Shortcut
@@ -578,6 +582,7 @@ todo/
       test_workouts.py       # Workout log CRUD, timezone handling, chart endpoint
       test_telegram.py       # Telegram config, test, and daily-briefing endpoints
       test_bridge.py         # Claude Code bridge job queue and agent endpoints
+      test_backup.py         # Database backup: run_backup + POST /api/backup/run
       test_parse.py          # Quick Add parse integration tests (requires Ollama)
       benchmark.py           # Parse quality benchmark across Ollama models
     Dockerfile

@@ -16,6 +16,14 @@ Browser
 Cloud Run serves both the frontend (static files) and the `/api/**` backend
 from a single Docker image — no separate hosting service needed.
 
+**Why `--max-instances 1`:** the database is a SQLite file on a Cloud
+Storage FUSE volume mount, and Cloud Storage FUSE provides no real file
+locking — concurrent writers to the same file last-write-wins, silently
+dropping the earlier write. `dev.sh` pins the Cloud Run service to a single
+instance so there is only ever one writer. `--min-instances 0` is still
+fine (and free) alongside this — it just means zero *or* one instance, never
+more than one.
+
 ---
 
 ## Cost estimate (personal use)
@@ -150,6 +158,40 @@ This updates the env vars on the running Cloud Run service — no image rebuild 
 ```
 
 Requires `gcloud auth login`. Reads from the Cloud Run service configured in `.gcp-config`.
+
+---
+
+## Database backups
+
+`./dev.sh gcp-setup-scheduler` also creates a daily Cloud Scheduler job,
+`db-backup`, that POSTs to `/api/backup/run` once a day (09:00 UTC by
+default). That endpoint copies the live SQLite database to a datestamped
+file — `todos_YYYY-MM-DD.db` — in a `backups/` subdirectory of the same
+Cloud Storage bucket the live database lives in (`gs://<project>-todo-db/backups/`).
+Re-running on the same day overwrites that day's file rather than
+accumulating multiple copies.
+
+The copy is made with SQLite's online backup API (`sqlite3.Connection.backup`),
+not a plain file copy, so it produces a consistent snapshot even while the
+app is writing to the live database.
+
+To restore, download the desired backup and point `DATABASE_URL` at it (or
+copy it over the live `todos.db` in the mounted volume) before redeploying:
+
+```bash
+gcloud storage cp gs://<project>-todo-db/backups/todos_2026-08-01.db ./todos.db
+```
+
+There's also an in-process daily loop in `main.py` (`_backup_scheduler`) —
+it exists purely for local-dev convenience (so backups work without any GCP
+setup); in production the Cloud Scheduler job is what makes this reliable,
+since a Cloud Run instance with `min-instances 0` can be recycled before 24
+hours of in-process uptime pass.
+
+Backups are not currently pruned — old dated files accumulate in `backups/`
+indefinitely. Given the database is tiny (personal-use SQLite), this is a
+non-issue at current scale; add lifecycle rules on the bucket if that ever
+changes.
 
 ---
 
