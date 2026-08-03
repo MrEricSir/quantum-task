@@ -96,7 +96,16 @@ cd frontend && npm run dev
 
 # Run only frontend tests
 ./dev.sh test-frontend
+
+# Verify a fresh cold start correctly restores data from the litestream
+# replica (needs docker; no GCP access required — uses a local replica)
+./dev.sh test-litestream
 ```
+
+Runs in CI on every PR and again right before every production deploy — a
+regression here would have caught the 2026-08-03 data-loss incident before
+it shipped. See [Database storage](deploy-gcp.md#database-storage-sqlite--litestream)
+for the failure mode this guards against.
 
 `./dev.sh test` runs three suites in sequence:
 

@@ -141,6 +141,119 @@ test_frontend() {
   npx playwright test
 }
 
+test_litestream() {
+  # Regression check for the 2026-08-03 data-loss incident: a fresh cold
+  # start (empty local disk) against a litestream replica that already has
+  # data must restore that data before the app starts serving, not silently
+  # come up empty. Uses a throwaway local file:// replica -- no GCP needed.
+  if ! command -v docker &>/dev/null; then
+    echo "ERROR: docker not found. Required to test the litestream restore path."
+    exit 1
+  fi
+
+  local IMAGE_TAG="${2:-todo:litestream-restore-test}"
+
+  if ! docker image inspect "$IMAGE_TAG" &>/dev/null; then
+    echo "==> Building $IMAGE_TAG..."
+    docker build -t "$IMAGE_TAG" "$SCRIPT_DIR"
+  fi
+
+  local WORKDIR
+  # Under $HOME rather than the OS temp dir: Docker Desktop/colima VMs on
+  # macOS typically share $HOME by default but not /tmp, so a /tmp-based
+  # bind mount silently fails there. Doesn't matter on Linux (CI).
+  WORKDIR="$(mktemp -d "$HOME/.dev-litestream-test.XXXXXX")"
+  mkdir -p "$WORKDIR/replica"
+  cat > "$WORKDIR/litestream.yml" <<'YAML'
+exec: "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
+dbs:
+  - path: /app/db/todos.db
+    replica:
+      url: file:///replica
+YAML
+
+  local PORT_A=18099
+  local PORT_B=18100
+  local MARKER="litestream-restore-test-$$"
+
+  cleanup() {
+    docker rm -f litestream-restore-test-a litestream-restore-test-b &>/dev/null || true
+    rm -rf "$WORKDIR"
+  }
+  trap cleanup EXIT
+
+  _ls_wait_healthy() {
+    local port="$1"
+    for _ in $(seq 1 30); do
+      curl -sf "http://localhost:$port/api/tags" >/dev/null 2>&1 && return 0
+      sleep 1
+    done
+    return 1
+  }
+
+  echo "==> [1/4] Booting a fresh instance against an empty replica..."
+  docker run --rm -d --name litestream-restore-test-a \
+    -v "$WORKDIR/litestream.yml:/etc/litestream.yml" \
+    -v "$WORKDIR/replica:/replica" \
+    -e PORT=8080 -e DATABASE_URL="sqlite:////app/db/todos.db" -e AUTH_PASSWORD="" \
+    -p "$PORT_A:8080" \
+    "$IMAGE_TAG" >/dev/null
+
+  if ! _ls_wait_healthy "$PORT_A"; then
+    echo "FAILED: instance A never became healthy."
+    docker logs litestream-restore-test-a 2>&1 | tail -40
+    exit 1
+  fi
+
+  echo "==> [2/4] Creating a marker card and letting litestream replicate it..."
+  curl -sf -X POST "http://localhost:$PORT_A/api/cards" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\": \"$MARKER\", \"section\": \"today\"}" >/dev/null
+  sleep 5
+  docker stop litestream-restore-test-a >/dev/null
+
+  echo "==> [3/4] Booting a second, completely fresh instance against the same (now-seeded) replica..."
+  docker run --rm -d --name litestream-restore-test-b \
+    -v "$WORKDIR/litestream.yml:/etc/litestream.yml" \
+    -v "$WORKDIR/replica:/replica" \
+    -e PORT=8080 -e DATABASE_URL="sqlite:////app/db/todos.db" -e AUTH_PASSWORD="" \
+    -p "$PORT_B:8080" \
+    "$IMAGE_TAG" >/dev/null
+
+  if ! _ls_wait_healthy "$PORT_B"; then
+    echo "FAILED: instance B never became healthy."
+    docker logs litestream-restore-test-b 2>&1 | tail -40
+    exit 1
+  fi
+
+  echo "==> [4/4] Verifying the marker card survived the cold start..."
+  local FOUND
+  FOUND=$(curl -sf "http://localhost:$PORT_B/api/cards" | python3 -c "
+import json, sys
+cards = json.load(sys.stdin)
+print('yes' if any(c.get('title') == '$MARKER' for c in cards) else 'no')
+")
+
+  if [[ "$FOUND" != "yes" ]]; then
+    echo ""
+    echo "FAILED: a fresh cold start against a seeded litestream replica came up EMPTY."
+    echo "This is the exact failure mode behind the 2026-08-03 data-loss incident --"
+    echo "litestream is not restoring existing data before the app starts serving."
+    echo "See docker-entrypoint.sh and deploy-gcp.md's 'Database storage' section."
+    echo ""
+    echo "--- instance B logs ---"
+    docker logs litestream-restore-test-b 2>&1 | tail -60
+    exit 1
+  fi
+
+  echo ""
+  echo "PASSED: litestream correctly restores existing data on a fresh cold start."
+  # Explicit exit (not falling off the end) so this runs while WORKDIR/etc.
+  # are still in scope for the EXIT trap -- local vars don't survive a
+  # normal function return, and the trap only fires at whole-script exit.
+  exit 0
+}
+
 benchmark() {
   if [[ ! -d "$SCRIPT_DIR/backend/venv" ]]; then
     echo "Dependencies not installed. Run './dev.sh setup' first."
@@ -593,6 +706,7 @@ case "${1:-}" in
   logs)           logs ;;
   test)           test ;;
   test-frontend)  test_frontend ;;
+  test-litestream) test_litestream "$@" ;;
   benchmark)      benchmark "$@" ;;
   gcp-setup)            gcp_setup ;;
   gcp-deploy)           gcp_deploy ;;
@@ -611,6 +725,8 @@ case "${1:-}" in
     echo "  logs       Tail backend.log and frontend.log"
     echo "  test           Run all tests (backend unit + AI parse integration + frontend)"
   echo "  test-frontend  Run only the frontend Playwright tests"
+    echo "  test-litestream [image]  Verify a fresh cold start restores existing data"
+    echo "                           from the litestream replica (needs docker; no GCP)"
     echo "  benchmark  Run tests across all models and write benchmark_report.md"
     echo ""
     echo "GCP deployment:"

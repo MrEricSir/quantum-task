@@ -66,6 +66,32 @@ To pull a browsable copy of the database to your machine — either the live
 one (triggers a fresh snapshot first) or the most recent existing backup if
 the service is down — see [Grabbing the database for debugging](#grabbing-the-database-for-debugging).
 
+### Incident: 2026-08-03 data loss on first litestream deploy
+
+The first deploy of this architecture appeared to wipe all data. Root cause:
+litestream.yml's in-config `exec:` field (used to spawn uvicorn) does **not**
+include the auto-restore-if-missing behavior that the `litestream replicate
+-exec ...` CLI flag form has. On a fresh cold start, litestream just started
+replicating a brand-new empty local database instead of restoring the
+existing one. Nothing was actually deleted — the original data was untouched
+in the bucket the whole time — but the live app looked empty.
+
+Fixed by adding an explicit restore step before replication starts
+(`docker-entrypoint.sh`):
+```sh
+litestream restore -if-db-not-exists -if-replica-exists -config /etc/litestream.yml /app/db/todos.db
+exec litestream replicate -config /etc/litestream.yml
+```
+`-if-db-not-exists` and `-if-replica-exists` both make the command exit 0
+(rather than error) when there's nothing to do, so this is safe on every
+cold start including the very first deploy of a brand new app with no
+backups yet.
+
+This class of bug — a cold start silently coming up empty instead of
+restoring — is now caught automatically by `./dev.sh test-litestream` (see
+[Testing](README.md#testing)), which runs in CI on every PR and again
+immediately before every production deploy.
+
 ---
 
 ## Cost estimate (personal use)

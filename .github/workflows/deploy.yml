@@ -92,6 +92,9 @@ jobs:
       - name: Build Docker image
         run: docker build -t todo:ci --quiet .
 
+      - name: Verify litestream restores data on a fresh cold start
+        run: ./dev.sh test-litestream todo:ci
+
   # ── Deploy (push to main only) ───────────────────────────────────────────────
   deploy:
     name: Deploy
@@ -127,6 +130,9 @@ jobs:
             .
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
+
+      - name: Verify litestream restores data on a fresh cold start
+        run: ./dev.sh test-litestream "$IMAGE:latest"
 
       - name: Deploy to Cloud Run
         run: |
