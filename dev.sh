@@ -428,6 +428,7 @@ gcp_setup() {
     --allow-unauthenticated \
     --min-instances 0 \
     --max-instances 1 \
+    --no-cpu-throttling \
     --service-account "$CLOUD_RUN_SA" \
     --add-volume "name=backups,type=cloud-storage,bucket=$GCS_BUCKET" \
     --add-volume-mount "volume=backups,mount-path=/app/data" \
@@ -514,6 +515,7 @@ gcp_deploy() {
     --platform managed \
     --min-instances 0 \
     --max-instances 1 \
+    --no-cpu-throttling \
     --update-env-vars "\
 DATABASE_URL=sqlite:////app/db/todos.db,\
 GCS_BUCKET=$GCS_BUCKET,\
@@ -640,6 +642,60 @@ gcp_logs() {
   fi
 }
 
+gcp_emergency_seed() {
+  # Deploys a one-off revision that copies a specific file already sitting in
+  # the GCS bucket (visible via the /app/data FUSE mount -- so this works for
+  # anything under the bucket, e.g. a dated backup or a manually uploaded
+  # recovery file) into place as the live database, before litestream starts.
+  # For restoring service/data during an incident -- see deploy-gcp.md.
+  #
+  # ALWAYS resolves the image from the :latest tag and verifies it actually
+  # contains docker-entrypoint.sh before using it. Do not hand-edit this to
+  # take a hardcoded image SHA as a shortcut: reusing a stale, unverified
+  # image reference grabbed once and never rechecked is exactly what turned
+  # one data-loss incident into three repeated ones on 2026-08-04 -- the
+  # image looked right, the deploy succeeded, and it was still the old
+  # pre-fix build every time.
+  _check_gcp_auth
+  _load_gcp_config
+
+  local SEED_PATH="$2"
+  if [[ -z "$SEED_PATH" ]]; then
+    echo "Usage: ./dev.sh gcp-emergency-seed <path-under-gs://bucket, e.g. backups/todos_2026-08-01.db>"
+    exit 1
+  fi
+
+  local IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_AR_REPO/backend:latest"
+
+  echo "==> Pulling :latest and verifying it actually contains the entrypoint fix..."
+  docker pull --platform linux/amd64 "$IMAGE" >/dev/null
+  local CMD
+  CMD=$(docker inspect "$IMAGE" --format '{{.Config.Cmd}}')
+  if [[ "$CMD" != *"docker-entrypoint.sh"* ]]; then
+    echo "ERROR: :latest's CMD is '$CMD' -- does not invoke docker-entrypoint.sh."
+    echo "  Refusing to deploy a build that predates the litestream restore fix."
+    echo "  Check that the intended commit was actually pushed/built before retrying."
+    exit 1
+  fi
+  echo "    OK: $CMD"
+
+  echo "==> Deploying one-off seed from gs://\$BUCKET/${SEED_PATH}..."
+  gcloud run deploy "$GCP_SERVICE_NAME" \
+    --image "$IMAGE" \
+    --region "$GCP_REGION" \
+    --project "$GCP_PROJECT_ID" \
+    --command="/bin/sh" \
+    --args="-c,cp /app/data/${SEED_PATH} /app/db/todos.db; exec litestream replicate -config /etc/litestream.yml" \
+    --max-instances 1 \
+    --min-instances 0 \
+    --quiet
+
+  echo ""
+  echo "Seeded. Verify via the API, THEN run a clean redeploy to confirm the"
+  echo "data survives a normal restart before considering this done:"
+  echo "  ./dev.sh gcp-deploy"
+}
+
 gcp_db_pull() {
   _check_gcp_auth
   _load_gcp_config
@@ -722,6 +778,7 @@ case "${1:-}" in
   gcp-logs)             gcp_logs "$@" ;;
   gcp-setup-scheduler)  gcp_setup_scheduler ;;
   gcp-db-pull)          gcp_db_pull "$@" ;;
+  gcp-emergency-seed)   gcp_emergency_seed "$@" ;;
   *)
     echo "Usage: ./dev.sh <command>"
     echo ""
@@ -744,6 +801,9 @@ case "${1:-}" in
     echo "  gcp-logs [N] [grep]    Fetch last N log lines (default 100), optionally grepped"
     echo "  gcp-setup-scheduler    Create Cloud Scheduler jobs (Telegram checks + Withings sync + backup)"
     echo "  gcp-db-pull [out]      Trigger a fresh backup and download it (default: ./todos.debug.db)"
+    echo "  gcp-emergency-seed <bucket-path>  Deploy a one-off revision seeding the live db from"
+    echo "                                    a file already in the bucket (e.g. a backup). Verifies"
+    echo "                                    :latest actually has the entrypoint fix before deploying."
     exit 1
     ;;
 esac

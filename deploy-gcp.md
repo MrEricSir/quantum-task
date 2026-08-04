@@ -92,6 +92,56 @@ restoring — is now caught automatically by `./dev.sh test-litestream` (see
 [Testing](README.md#testing)), which runs in CI on every PR and again
 immediately before every production deploy.
 
+### Incident: 2026-08-04 data loss recurred three times during recovery
+
+A day of real usage (habit completions, a workout log, food logs) was lost
+on a routine deploy. Investigation initially found a real, separate issue —
+Cloud Run briefly ran two instances of the same revision during an
+idle-triggered autoscaling recycle (confirmed via two `Starting new
+instance` events ~53s apart within one revision) — and a fix was applied
+(`--no-cpu-throttling`, so litestream's background replication loop can't be
+CPU-starved between requests). But a subsequent clean, deliberate redeploy
+—no overlap, no idle recycle, a fully-synced graceful shutdown confirmed in
+the logs — **still** came up empty. Twice more.
+
+The actual root cause: **the image being redeployed at every recovery step
+was not the fixed image.** Early in the incident, the currently-deployed
+image reference was fetched once via `gcloud run services describe` and
+reused as a hardcoded string across every subsequent `gcloud run deploy`
+call for the rest of the incident. That tag (`...9ee2374...`) corresponded
+to the git commit that first introduced litestream — pushed *before*
+`docker-entrypoint.sh` existed. Every "fix" during this incident, including
+the `--no-cpu-throttling` change and multiple clean-CMD verification
+redeploys, was silently deploying pre-fix code that never had an explicit
+restore step at all. That's indistinguishable from the original 2026-08-03
+bug because it *was* the original 2026-08-03 bug, recurring because the fix
+was never actually running.
+
+This was only caught by reproducing the failure locally against a **real
+GCS bucket** (a throwaway test bucket, not production) rather than the
+local-file replica `test-litestream` uses, and explicitly checking
+`docker inspect <image> --format '{{.Config.Cmd}}'` before trusting an image
+reference — which showed the "fixed" image's CMD was still the bare
+`litestream replicate`, no entrypoint script involved. Once corrected to the
+actual current image (`:latest`, or the SHA matching current git HEAD), the
+fix worked correctly across three consecutive clean-shutdown-then-cold-start
+cycles, both locally and in production.
+
+**Lesson, now enforced by tooling**: never hardcode an image SHA grabbed
+earlier in an incident. `./dev.sh gcp-emergency-seed <bucket-path>` (see
+[Grabbing the database for debugging](#grabbing-the-database-for-debugging)-adjacent
+recovery workflows) always re-resolves `:latest` and refuses to deploy it if
+`docker inspect` shows it doesn't invoke `docker-entrypoint.sh`. `./dev.sh
+gcp-deploy` was never affected by this bug — it always builds and resolves
+its own image reference fresh — this was specific to manual, ad-hoc
+`gcloud run deploy` commands run directly during incident response, bypassing
+`dev.sh` entirely.
+
+`--no-cpu-throttling` was kept (harmless, keeps litestream's background sync
+promptly serviced regardless of request timing) even though it turned out
+not to be the actual fix for this specific incident — the instance-overlap
+finding that motivated it was real, just not what caused the data loss here.
+
 ---
 
 ## Cost estimate (personal use)
