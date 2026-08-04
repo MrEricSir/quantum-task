@@ -537,6 +537,26 @@ class TestCheckBridgeJobs:
         assert "My feature" in call_text
         assert "pull/5" in call_text
 
+    def test_notifies_with_worktree_path(self):
+        card_id = _make_card_with_spec("Path feature", spec="spec")
+        with BotTestSession() as db:
+            db.add(models.BridgeJob(
+                card_id=card_id, status="done",
+                branch_name="qtask/7-path-feature", agent_name="work-mac",
+                worktree_path="/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-path-feature",
+                created_at=NOW_UTC, updated_at=NOW_UTC,
+            ))
+            db.commit()
+
+        from telegram.scheduler import check_bridge_jobs
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                check_bridge_jobs(db, token="tok", chat_id="123")
+
+        call_text = mock_send.call_args[0][2]
+        assert "qtask/7-path-feature" in call_text
+        assert "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-path-feature" in call_text
+
     def test_notifies_on_error_job(self):
         card_id = _make_card_with_spec("Error feature", spec="spec")
         with BotTestSession() as db:

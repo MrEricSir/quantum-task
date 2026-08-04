@@ -660,6 +660,47 @@
   opacity: 0.65;
 }
 
+.cdp-bridge-worktree {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.cdp-bridge-worktree-path {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cdp-bridge-worktree-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: currentColor;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.cdp-bridge-worktree-copy:hover {
+  opacity: 1;
+}
+
+.cdp-bridge-worktree-copy svg {
+  width: 11px;
+  height: 11px;
+}
+
 .cdp-bridge-status--running .cdp-bridge-dot {
   animation: cdp-pulse 1.4s ease-in-out infinite;
 }

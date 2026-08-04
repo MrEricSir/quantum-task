@@ -62,6 +62,7 @@ export default function AssistModal({
   const [bridgeJob,      setBridgeJob]      = useState(null)
   const [bridgeQueuing,  setBridgeQueuing]  = useState(false)
   const [bridgeError,    setBridgeError]    = useState('')
+  const [copiedWorktree, setCopiedWorktree] = useState(false)
 
   const abortRef    = useRef(null)
   const scrollRef   = useRef(null)
@@ -354,6 +355,13 @@ export default function AssistModal({
     navigator.clipboard.writeText(specText).then(() => {
       setCopiedSpec(true)
       setTimeout(() => setCopiedSpec(false), 2000)
+    })
+  }
+
+  const handleCopyWorktreePath = () => {
+    navigator.clipboard.writeText(bridgeJob.worktree_path).then(() => {
+      setCopiedWorktree(true)
+      setTimeout(() => setCopiedWorktree(false), 2000)
     })
   }
 
@@ -678,6 +686,21 @@ export default function AssistModal({
                         {bridgeJob.branch_name}
                         {bridgeJob.agent_name && <span className="cdp-bridge-agent"> · {bridgeJob.agent_name}</span>}
                       </span>
+                    )}
+                    {bridgeJob.worktree_path && (
+                      <div className="cdp-bridge-worktree">
+                        <span className="cdp-bridge-worktree-path" title={bridgeJob.worktree_path}>
+                          {bridgeJob.worktree_path}
+                        </span>
+                        <button
+                          type="button"
+                          className="cdp-bridge-worktree-copy"
+                          onClick={handleCopyWorktreePath}
+                          title="Copy path"
+                        >
+                          {copiedWorktree ? <CheckIcon /> : <CopyIcon />}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>

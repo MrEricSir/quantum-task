@@ -374,6 +374,7 @@ class BridgeJob(Base):
     target_repo     = Column(String, nullable=True)   # "owner/repo" — null means any bridge can claim
     branch_name     = Column(String, nullable=True)   # local branch created by bridge, e.g. qtask/42-fix-login
     agent_name      = Column(String, nullable=True)   # hostname of the machine that ran the job
+    worktree_path   = Column(String, nullable=True)   # local filesystem path to the job's git worktree
     spec_snapshot   = Column(Text, nullable=True)
     prompt_snapshot = Column(Text, nullable=True)
     result          = Column(Text, nullable=True)

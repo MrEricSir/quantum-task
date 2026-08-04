@@ -188,7 +188,9 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
 5. The local bridge agent picks up the job, fetches the repo, and creates an isolated `git worktree` on a fresh `qtask/<id>-<slug>` branch off the latest primary branch — your own working directory is never touched, so this works even if you have uncommitted changes there
 6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them
-7. When the session ends, the branch name and machine are shown in the Code tab and sent via Telegram; the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
+7. When the session ends, the branch, machine, and full worktree path are shown in the Code tab and sent via Telegram (with a copy button in the UI); the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
+
+You never have to go hunting for where a job's code landed — see [Finding your worktree](#finding-your-worktree) below for every way it's surfaced.
 
 #### Install the bridge agent
 
@@ -225,6 +227,7 @@ Your current directory is used only as a fallback, for a card with *no* linked G
 qtask-bridge --watch          # poll for jobs; launch Claude Code interactively when one arrives
 qtask-bridge --card <id>      # queue and run a specific card's job once
 qtask-bridge --tag work       # queue + run every "work"-tagged card with a spec, unattended
+qtask-bridge --list           # list qtask worktrees across configured repos (read-only)
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
 ```
 
@@ -235,6 +238,22 @@ The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in an isolated git 
 **`--card` mode** is the same but prompts you for an optional note to attach to the job before moving on, useful for one-off runs where you want to record context.
 
 **`--tag` mode** is for batching: tag several cards (each with a spec already generated) the same way, then run `qtask-bridge --tag <name>` to work through all of them sequentially, unattended — no interactive prompts, each card gets its own worktree. Since it's unattended, it runs Claude Code with `--dangerously-skip-permissions`; only use it on cards you trust to run without a human approving each action.
+
+#### Finding your worktree
+
+Every job gets its own isolated worktree, which is what makes it safe to run
+without touching your own working directory — but that only works if you can
+actually find it afterward. It's surfaced five ways, so you're never stuck
+running `git worktree list` to figure out where a job's code went:
+
+- **In the app** — the Code tab shows the full path under the branch name, with a copy button
+- **In Telegram** — the completion message includes the path alongside the branch
+- **In Claude Code itself** — each worktree gets a local, gitignored `.claude/settings.local.json` configuring a status line that shows the branch and path for the entire session, so you never have to wonder mid-conversation where you are
+- **In your terminal tab** — interactive sessions (`--watch`/`--card`) set the tab/window title to the branch name, so multiple job tabs stay identifiable at a glance
+- **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). For a one-keystroke jump to the most recent one specifically, add this to your shell config:
+  ```bash
+  qcd() { cd "$(cat ~/.local/share/qtask-bridge/last-worktree)"; }
+  ```
 
 #### Code tab actions
 

@@ -416,6 +416,27 @@ class TestStartJob:
         assert res.json()["branch_name"] == "qtask/7-fix-login"
         assert res.json()["agent_name"] == "work-mac"
 
+    def test_records_worktree_path(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/7-fix-login", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-fix-login",
+        })
+        assert res.status_code == 200
+        assert res.json()["worktree_path"] == "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-fix-login"
+
+    def test_worktree_path_is_optional(self, client):
+        """Older bridge versions won't send it -- must not break."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/start",
+                          json={"branch": "qtask/7-fix-login", "agent": "work-mac"})
+        assert res.status_code == 200
+        assert res.json()["worktree_path"] is None
+
     def test_404_for_missing_job(self, client):
         res = client.post("/api/bridge/jobs/9999/start",
                           json={"branch": "qtask/1-foo", "agent": "x"})
@@ -854,6 +875,64 @@ class TestAgentScript:
         res = client.get("/api/bridge/agent.py")
         assert "def _is_branch_merged" in res.text
         assert "--is-ancestor" in res.text
+
+    def test_sends_worktree_path_on_start(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert '"worktree_path": worktree_path' in res.text
+
+    def test_writes_last_worktree_pointer_file(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "LAST_WORKTREE_FILE" in res.text
+        assert "last-worktree" in res.text
+
+    def test_writes_claude_statusline_settings(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _write_claude_settings" in res.text
+        assert "statusLine" in res.text
+        assert ".claude" in res.text
+        assert "settings.local.json" in res.text
+        # Called from run_job for every job, not just some code path that's dead
+        assert "_write_claude_settings(worktree_path)" in res.text
+
+    def test_claude_settings_and_spec_file_are_gitignored(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert ".claude/settings.local.json" in res.text
+        assert "BRIDGE_SPEC.md" in res.text
+
+    def test_sets_terminal_title_for_interactive_sessions_only(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _set_terminal_title" in res.text
+        # OSC escape sequence for setting the terminal tab/window title
+        assert "\\033]0;" in res.text
+        # Called from the interactive path...
+        assert "_set_terminal_title(branch)" in res.text
+        # ...but _run_streaming (unattended --tag/--watch) never calls it
+        streaming_start = res.text.index("def _run_streaming")
+        streaming_end = res.text.index("def run_job")
+        assert "_set_terminal_title" not in res.text[streaming_start:streaming_end]
+
+    def test_list_command_is_read_only(self, client):
+        """--list must never prompt for removal like --cleanup does -- it's
+        meant to be safe to run from a script or muscle memory."""
+        res = client.get("/api/bridge/agent.py")
+        assert "--list" in res.text
+        assert "def cmd_list" in res.text
+        list_start = res.text.index("def cmd_list")
+        list_end = res.text.index("def cmd_cleanup")
+        list_body = res.text[list_start:list_end]
+        assert "input(" not in list_body
+        assert "git worktree remove" not in list_body
+
+    def test_list_and_cleanup_share_the_same_scan(self, client):
+        """Both must find the exact same worktrees, or --list would show
+        something --cleanup can't act on (or vice versa)."""
+        res = client.get("/api/bridge/agent.py")
+        assert "def _scan_qtask_worktrees" in res.text
+        assert "_scan_qtask_worktrees(cfg)" in res.text
+        # cmd_cleanup should call the shared scanner, not have its own inline loop
+        cleanup_start = res.text.index("def cmd_cleanup")
+        cleanup_body = res.text[cleanup_start:cleanup_start + 600]
+        assert "_scan_qtask_worktrees(cfg)" in cleanup_body
 
 
 # ── GET /api/bridge/jobs/next/pending?repos= ─────────────────────────────────

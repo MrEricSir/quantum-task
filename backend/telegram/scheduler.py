@@ -607,6 +607,8 @@ def check_bridge_jobs(db: Session, token: str, chat_id: str) -> str:
         if job.branch_name:
             suffix = f' ({job.agent_name})' if job.agent_name else ''
             msg += f'\n<code>{job.branch_name}</code>{suffix}'
+        if job.worktree_path:
+            msg += f'\n<code>{job.worktree_path}</code>'
         if job.result:
             msg += f'\n{job.result}'
         tail = _tail(job.output, _OUTPUT_TAIL_LINES)

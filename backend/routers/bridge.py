@@ -62,8 +62,9 @@ class _JobOutput(BaseModel):
     output: str        # chunk of stdout to append
 
 class _JobStart(BaseModel):
-    branch: str        # local branch name created by the bridge
-    agent: str         # hostname of the machine running the job
+    branch: str                        # local branch name created by the bridge
+    agent: str                         # hostname of the machine running the job
+    worktree_path: str | None = None   # local filesystem path to the job's git worktree
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -121,6 +122,7 @@ def _job_response(job: models.BridgeJob) -> dict:
         "target_repo":   job.target_repo,
         "branch_name":   job.branch_name,
         "agent_name":    job.agent_name,
+        "worktree_path": job.worktree_path,
         "result":        job.result,
         "output":        job.output,
         "spec_snapshot": job.spec_snapshot,
@@ -333,9 +335,10 @@ def start_job(job_id: int, body: _JobStart, db: Session = Depends(get_db)):
     job = db.query(models.BridgeJob).filter_by(id=job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    job.branch_name = body.branch
-    job.agent_name  = body.agent
-    job.updated_at  = datetime.now(timezone.utc)
+    job.branch_name    = body.branch
+    job.agent_name     = body.agent
+    job.worktree_path  = body.worktree_path
+    job.updated_at     = datetime.now(timezone.utc)
     db.commit()
     db.refresh(job)
     return _job_response(job)
@@ -517,7 +520,12 @@ def get_install_script(install_token: str = Query(..., alias="token"), db: Sessi
             print("  qtask-bridge --card <card-id>   # run a specific card's job")
             print("  qtask-bridge --watch            # poll for jobs automatically")
             print("  qtask-bridge --tag <name>       # run every pending-spec card with this tag")
+            print("  qtask-bridge --list             # list qtask worktrees (read-only)")
             print("  qtask-bridge --cleanup          # list/remove finished qtask worktrees")
+            print()
+            print("Tip: add this to your shell config for a one-keystroke jump to the most")
+            print("recent job worktree from any shell:")
+            print('  qcd() {{ cd "$(cat ~/.local/share/qtask-bridge/last-worktree)"; }}')
 
         main()
     """)
@@ -537,6 +545,7 @@ def get_agent_script():
           qtask-bridge --watch       Poll for pending jobs and handle them automatically
           qtask-bridge --tag <name>  Queue + run every pending-spec card with this tag,
                                       sequentially and unattended, each in its own git worktree
+          qtask-bridge --list        List qtask worktrees across configured repos (read-only)
           qtask-bridge --cleanup     List and optionally remove finished qtask worktrees
 
         Config files in ~/.config/qtask-bridge/:
@@ -567,8 +576,9 @@ def get_agent_script():
         OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
         SPEC_FILENAME = "BRIDGE_SPEC.md"
-        GITIGNORE_ENTRY = "BRIDGE_SPEC.md\\n"
+        GITIGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json"]
         WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
+        LAST_WORKTREE_FILE = os.path.expanduser("~/.local/share/qtask-bridge/last-worktree")
 
 
         def load_config():
@@ -611,15 +621,19 @@ def get_agent_script():
                 return None
 
 
-        def ensure_gitignore(spec_path):
-            gitignore = os.path.join(os.path.dirname(spec_path), ".gitignore")
-            if os.path.exists(gitignore):
-                with open(gitignore) as f:
-                    if GITIGNORE_ENTRY.strip() in f.read():
-                        return
-                with open(gitignore, "a") as f:
-                    f.write("\\n" + GITIGNORE_ENTRY)
-            # If no .gitignore exists at the spec level, skip — don't create one unexpectedly
+        def ensure_gitignore(worktree_path):
+            gitignore = os.path.join(worktree_path, ".gitignore")
+            if not os.path.exists(gitignore):
+                # Don't create one unexpectedly — only append to an existing .gitignore
+                return
+            with open(gitignore) as f:
+                existing = f.read()
+            missing = [e for e in GITIGNORE_ENTRIES if e not in existing]
+            if not missing:
+                return
+            with open(gitignore, "a") as f:
+                for entry in missing:
+                    f.write("\\n" + entry + "\\n")
 
 
         def _repo_from_git_url(url):
@@ -801,11 +815,17 @@ def get_agent_script():
             subprocess.run(["git", "config", "remote.origin.pushurl", "no_push"], cwd=work_dir)
             print("[bridge] Remote push disabled for this session.")
 
-            # 5. Register branch + agent with the app
+            # 5. Register branch + agent + worktree path with the app
             agent = cfg.get("name") or socket.gethostname().split(".")[0]
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/start",
-                {"branch": branch, "agent": agent})
+                {"branch": branch, "agent": agent, "worktree_path": worktree_path})
             print(f"[bridge] Agent: {agent}")
+
+            # Point-in-time pointer to the most recent worktree, for a `cd
+            # "$(cat ~/.local/share/qtask-bridge/last-worktree)"` shell alias.
+            os.makedirs(os.path.dirname(LAST_WORKTREE_FILE), exist_ok=True)
+            with open(LAST_WORKTREE_FILE, "w") as f:
+                f.write(worktree_path + "\\n")
 
             return worktree_path, branch, (had_push_url, orig_push_url)
 
@@ -834,11 +854,42 @@ def get_agent_script():
                       file=sys.stderr)
 
 
+        def _write_claude_settings(worktree_path):
+            \"\"\"Write a local (gitignored) Claude Code settings file into the
+            worktree configuring a status line that shows the branch and path
+            for the whole session — the point being you should never have to
+            wonder which worktree you're in while Claude is running. Dynamic
+            (shells out to git/pwd at render time) rather than baking in the
+            known values, so it stays correct even if the worktree is later
+            moved or renamed.\"\"\"
+            claude_dir = os.path.join(worktree_path, ".claude")
+            os.makedirs(claude_dir, exist_ok=True)
+            settings_path = os.path.join(claude_dir, "settings.local.json")
+            settings = {
+                "statusLine": {
+                    "type": "command",
+                    "command": 'echo "[qtask] $(git branch --show-current) · $(pwd)"',
+                }
+            }
+            with open(settings_path, "w") as f:
+                json.dump(settings, f, indent=2)
+
+
+        def _set_terminal_title(title):
+            \"\"\"Set the terminal tab/window title via an OSC escape sequence, so a
+            job's tab is identifiable at a glance across multiple open jobs.
+            Interactive-mode only — there's no one watching a tab title during
+            an unattended --tag/--watch streaming run.\"\"\"
+            sys.stdout.write(f"\\033]0;{title}\\007")
+            sys.stdout.flush()
+
+
         def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True):
             \"\"\"Launch Claude Code as an interactive session the user can engage with.\"\"\"
             print(f"[bridge] Launching Claude Code interactively...")
             print("[bridge] You can interact with Claude in the session below.")
             print("[bridge] When done, type 'exit' or press Ctrl-D.\\n")
+            _set_terminal_title(branch)
             try:
                 subprocess.run(["claude", _make_prompt(branch)], cwd=cwd, check=False)
             except FileNotFoundError:
@@ -950,7 +1001,9 @@ def get_agent_script():
             spec_path = os.path.join(worktree_path, SPEC_FILENAME)
             with open(spec_path, "w") as f:
                 f.write(prompt)
-            ensure_gitignore(spec_path)
+
+            _write_claude_settings(worktree_path)
+            ensure_gitignore(worktree_path)
 
             try:
                 if streaming:
@@ -1077,17 +1130,13 @@ def get_agent_script():
             return r.returncode == 0
 
 
-        def cmd_cleanup(cfg):
-            \"\"\"List qtask-created worktrees across every repo in [repos], and
-            optionally remove some or all of them. Doesn't touch worktrees for
-            branches you created yourself (only ones under refs/heads/qtask/).\"\"\"
-            repos = cfg.get("repos") or {}
-            if not repos:
-                print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
-                return
-
-            found = []  # (repo_name, work_dir, worktree_path, branch)
-            for repo_name in repos:
+        def _scan_qtask_worktrees(cfg):
+            \"\"\"Return (repo_name, work_dir, worktree_path, branch) for every
+            worktree, across every repo in [repos], on a branch under
+            refs/heads/qtask/ — never a worktree/branch you created yourself.
+            Shared by --list and --cleanup so they can't drift out of sync.\"\"\"
+            found = []
+            for repo_name in (cfg.get("repos") or {}):
                 path, _setup_cmd = _repo_entry(cfg, repo_name)
                 work_dir = os.path.expanduser(path) if path else None
                 if not work_dir or not os.path.isdir(work_dir):
@@ -1101,7 +1150,38 @@ def get_agent_script():
                     if branch.startswith("refs/heads/qtask/"):
                         found.append((repo_name, work_dir, entry["worktree"],
                                      branch[len("refs/heads/"):]))
+            return found
 
+
+        def cmd_list(cfg):
+            \"\"\"Read-only: print every qtask worktree across configured repos,
+            with its merge status, and exit. For '--cleanup without the prompt'
+            -- e.g. to answer 'where did job N's code go' from any shell.\"\"\"
+            if not (cfg.get("repos") or {}):
+                print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
+                return
+
+            found = _scan_qtask_worktrees(cfg)
+            if not found:
+                print("[bridge] No qtask worktrees found.")
+                return
+
+            print(f"[bridge] {len(found)} qtask worktree(s):\\n")
+            for repo_name, work_dir, wt_path, branch in found:
+                status = "merged" if _is_branch_merged(work_dir, branch) else "not merged"
+                print(f"  [{repo_name}] {branch}  ({status})")
+                print(f"    {wt_path}")
+
+
+        def cmd_cleanup(cfg):
+            \"\"\"List qtask-created worktrees across every repo in [repos], and
+            optionally remove some or all of them. Doesn't touch worktrees for
+            branches you created yourself (only ones under refs/heads/qtask/).\"\"\"
+            if not (cfg.get("repos") or {}):
+                print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
+                return
+
+            found = _scan_qtask_worktrees(cfg)
             if not found:
                 print("[bridge] No qtask worktrees found.")
                 return
@@ -1151,6 +1231,8 @@ def get_agent_script():
                                     "sequentially and unattended, each in its own git worktree")
             group.add_argument("--cleanup", action="store_true",
                                help="List qtask worktrees across configured repos and optionally remove them")
+            group.add_argument("--list", action="store_true",
+                               help="List qtask worktrees across configured repos (read-only, no prompt)")
             args = parser.parse_args()
 
             cfg = load_config()
@@ -1160,6 +1242,8 @@ def get_agent_script():
                 cmd_tag(cfg, args.tag)
             elif args.cleanup:
                 cmd_cleanup(cfg)
+            elif args.list:
+                cmd_list(cfg)
             else:
                 cmd_card(cfg, args.card)
 
