@@ -576,7 +576,8 @@ def get_agent_script():
         OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
         SPEC_FILENAME = "BRIDGE_SPEC.md"
-        GITIGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json"]
+        ENV_FILENAME = ".env.qtask"
+        GITIGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"]
         WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
         LAST_WORKTREE_FILE = os.path.expanduser("~/.local/share/qtask-bridge/last-worktree")
 
@@ -714,7 +715,11 @@ def get_agent_script():
                 f"Please implement the feature described in {SPEC_FILENAME} "
                 f"(already written to your working directory). "
                 f"You are working on branch {branch} — commit your changes locally as you go. "
-                f"Do NOT push to the remote repository; the developer will review and push."
+                f"Do NOT push to the remote repository; the developer will review and push. "
+                f"A reserved port range and database name are provided in {ENV_FILENAME} "
+                f"(also in your working directory) — use them for any local dev servers or "
+                f"databases you start instead of framework defaults, so this session can't "
+                f"collide with anything else already running on this machine."
             )
 
 
@@ -875,6 +880,41 @@ def get_agent_script():
                 json.dump(settings, f, indent=2)
 
 
+        def _write_qtask_env(worktree_path, job_id):
+            \"\"\"Write a reserved, collision-free port range and database name
+            into the worktree, derived deterministically from the job id -- so
+            two jobs (or a job and your own dev instance of the same app) can
+            never end up on the same port or pointed at the same database.
+            Doesn't know or care what framework the target repo uses; it just
+            reserves a namespace and leaves the actual wiring (which service
+            gets which port) to whoever -- or whichever agent -- reads it.
+
+            Port range: 20000 + (job_id % 400) * 10, ten ports per job -- wide
+            enough for a typical frontend + backend + a spare or two, small
+            enough that wrapping after 400 concurrently-uncleaned jobs isn't a
+            real concern for how this tool is actually used (sequentially --
+            the same assumption the shared push-url toggle already relies on).
+            job_id (not card_id) so re-running the same card later still gets
+            a fresh range even if the old worktree was never cleaned up.\"\"\"
+            port_base = 20000 + (job_id % 400) * 10
+            port_end = port_base + 9
+            db_name = f"qtask_job_{job_id}"
+            content = (
+                "# Written by qtask-bridge -- reserved for this job only, so a dev\\n"
+                "# server or local database started here can't collide with your\\n"
+                "# main checkout or another job's worktree. Not enforced by\\n"
+                "# anything -- just a collision-free namespace. Use these instead\\n"
+                "# of framework defaults for anything you start locally.\\n"
+                f"QTASK_JOB_ID={job_id}\\n"
+                f"QTASK_PORT_BASE={port_base}\\n"
+                f"QTASK_PORT_RANGE={port_base}-{port_end}\\n"
+                f"QTASK_DB_NAME={db_name}\\n"
+            )
+            env_path = os.path.join(worktree_path, ENV_FILENAME)
+            with open(env_path, "w") as f:
+                f.write(content)
+
+
         def _set_terminal_title(title):
             \"\"\"Set the terminal tab/window title via an OSC escape sequence, so a
             job's tab is identifiable at a glance across multiple open jobs.
@@ -992,6 +1032,10 @@ def get_agent_script():
             if result is None:
                 return  # error already posted to the app
             worktree_path, branch, push_url_info = result
+
+            # Written before setup_cmd runs, in case it wants to reference the
+            # reserved port range / db name too (e.g. to pre-seed a database).
+            _write_qtask_env(worktree_path, job_id)
 
             _, setup_cmd = _repo_entry(cfg, target_repo) if target_repo else (None, None)
             setup_cmd = setup_cmd or cfg.get("setup_cmd")

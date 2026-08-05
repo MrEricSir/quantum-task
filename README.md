@@ -248,12 +248,27 @@ running `git worktree list` to figure out where a job's code went:
 
 - **In the app** — the Code tab shows the full path under the branch name, with a copy button
 - **In Telegram** — the completion message includes the path alongside the branch
-- **In Claude Code itself** — each worktree gets a local, gitignored `.claude/settings.local.json` configuring a status line that shows the branch and path for the entire session, so you never have to wonder mid-conversation where you are
+- **In Claude Code itself** — each worktree gets a local, gitignored `.claude/settings.local.json` configuring a status line that shows the branch and path for the entire session, so you never have to wonder mid-conversation where you are. Note: Claude Code's workspace trust prompt gates this — on the very first launch in a brand-new worktree (which is every worktree), you may need to accept that prompt before the status line appears.
 - **In your terminal tab** — interactive sessions (`--watch`/`--card`) set the tab/window title to the branch name, so multiple job tabs stay identifiable at a glance
 - **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). For a one-keystroke jump to the most recent one specifically, add this to your shell config:
   ```bash
   qcd() { cd "$(cat ~/.local/share/qtask-bridge/last-worktree)"; }
   ```
+
+`--list` and `--cleanup` only scan repos listed explicitly under `[repos]` in `claude.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in either.
+
+#### Avoiding port and database collisions
+
+Isolating the *code* doesn't isolate the *runtime* — two jobs (or a job and your own dev instance of the same app) can still fight over the same port or the same local database if nothing tells them apart. Every worktree gets a `.env.qtask` file with a port range and database name reserved just for that job, derived deterministically from the job ID so re-running the same card later still gets a fresh reservation:
+
+```bash
+QTASK_JOB_ID=77
+QTASK_PORT_BASE=20770
+QTASK_PORT_RANGE=20770-20779
+QTASK_DB_NAME=qtask_job_77
+```
+
+The prompt Claude receives explicitly points it at this file and asks it to use these values instead of framework defaults for anything it starts locally. The bridge doesn't know or care what the target app's architecture looks like (frontend port vs. backend port vs. database), so it reserves a namespace rather than trying to wire specific services — Claude (already reading the codebase to implement the feature) resolves the actual wiring per-repo. Nothing enforces the reservation; it's a convention, not a lock, and job IDs cycle through a 400-slot range, so collisions are possible if you have hundreds of uncleaned worktrees running dev servers simultaneously — not a realistic scenario for how this tool is meant to be used (sequentially, one job at a time).
 
 #### Code tab actions
 

@@ -18,6 +18,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import subprocess
 from datetime import datetime, timezone
 
 import pytest
@@ -65,6 +66,20 @@ def client():
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _load_agent_module(script_text):
+    """Exec the served agent.py text and return its module namespace, for
+    tests that call real functions instead of just asserting on strings.
+    The script unconditionally calls main() at the bottom (no __main__
+    guard) -- with no matching CLI args in this process, argparse exits via
+    SystemExit, which is expected and swallowed here."""
+    namespace = {"__name__": "agent_under_test"}
+    try:
+        exec(compile(script_text, "agent.py", "exec"), namespace)  # noqa: S102
+    except SystemExit:
+        pass
+    return namespace
+
 
 def _make_card(title="Test card", spec=None, external_id=None, description=None,
                 completed=False, archived=False, tags=()):
@@ -898,6 +913,80 @@ class TestAgentScript:
         res = client.get("/api/bridge/agent.py")
         assert ".claude/settings.local.json" in res.text
         assert "BRIDGE_SPEC.md" in res.text
+
+    def test_writes_reserved_port_range_and_db_name(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _write_qtask_env" in res.text
+        assert "QTASK_PORT_RANGE" in res.text
+        assert "QTASK_DB_NAME" in res.text
+        # Called from run_job for every job, not just some code path that's dead
+        assert "_write_qtask_env(worktree_path, job_id)" in res.text
+
+    def test_qtask_env_is_gitignored(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert ".env.qtask" in res.text
+        assert '"BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"' in res.text
+
+    def test_prompt_points_claude_at_the_reserved_env_file(self, client):
+        """Otherwise the file is just sitting there and Claude has to
+        stumble onto it -- the whole point is it doesn't have to."""
+        res = client.get("/api/bridge/agent.py")
+        assert "def _make_prompt" in res.text
+        prompt_start = res.text.index("def _make_prompt")
+        prompt_end = res.text.index("def _detect_primary_branch")
+        # {ENV_FILENAME}, not the literal ".env.qtask" -- this is the served
+        # SOURCE text, substitution only happens when the downloaded script runs.
+        assert "{ENV_FILENAME}" in res.text[prompt_start:prompt_end]
+
+    def test_env_content_actually_produces_valid_shell_syntax(self, client, tmp_path):
+        """Execute the real function against a real directory rather than
+        just asserting on strings -- confirms the file is genuinely
+        sourceable shell syntax, not just text that looks plausible."""
+        res = client.get("/api/bridge/agent.py")
+        namespace = _load_agent_module(res.text)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        namespace["_write_qtask_env"](str(worktree), 77)
+
+        env_path = worktree / ".env.qtask"
+        assert env_path.exists()
+        content = env_path.read_text()
+
+        assert "QTASK_JOB_ID=77" in content
+        assert "QTASK_PORT_BASE=20770" in content
+        assert "QTASK_PORT_RANGE=20770-20779" in content
+        assert "QTASK_DB_NAME=qtask_job_77" in content
+
+        # A real shell must be able to source it without error, and every
+        # assigned value must actually be usable afterward.
+        result = subprocess.run(
+            ["sh", "-c", f"set -a; . {env_path}; set +a; "
+             "echo \"$QTASK_JOB_ID|$QTASK_PORT_BASE|$QTASK_PORT_RANGE|$QTASK_DB_NAME\""],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "77|20770|20770-20779|qtask_job_77"
+
+    def test_port_range_derivation_is_deterministic_and_ten_wide(self, client, tmp_path):
+        res = client.get("/api/bridge/agent.py")
+        namespace = _load_agent_module(res.text)
+
+        for job_id in (1, 400, 401, 799, 800):
+            worktree = tmp_path / f"wt-{job_id}"
+            worktree.mkdir()
+            namespace["_write_qtask_env"](str(worktree), job_id)
+            content = (worktree / ".env.qtask").read_text()
+            expected_base = 20000 + (job_id % 400) * 10
+            assert f"QTASK_PORT_BASE={expected_base}" in content
+            assert f"QTASK_PORT_RANGE={expected_base}-{expected_base + 9}" in content
+        # job 1 and job 401 land in the same bucket (401 % 400 == 1) -- that's
+        # the documented wraparound, not a bug, as long as it only matters
+        # for hundreds of concurrently-uncleaned worktrees.
+        wt1 = (tmp_path / "wt-1" / ".env.qtask").read_text()
+        wt401 = (tmp_path / "wt-401" / ".env.qtask").read_text()
+        assert "QTASK_PORT_BASE=20010" in wt1
+        assert "QTASK_PORT_BASE=20010" in wt401
 
     def test_sets_terminal_title_for_interactive_sessions_only(self, client):
         res = client.get("/api/bridge/agent.py")
