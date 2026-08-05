@@ -632,6 +632,104 @@ class TestInstallScript:
             if line.strip():
                 assert not line.startswith(" "), f"indented toml line: {line!r}"
 
+    def test_configures_global_gitignore_for_bridge_files(self, client):
+        """Bridge files must be ignored via git's global core.excludesFile,
+        not by editing any target repo's own .gitignore -- see
+        test_does_not_touch_worktree_local_gitignore in TestAgentScript for
+        the other half of this guarantee."""
+        res = _get_install_script(client)
+        assert "def setup_global_gitignore" in res.text
+        assert "core.excludesFile" in res.text
+        assert "BRIDGE_SPEC.md" in res.text
+        assert ".claude/settings.local.json" in res.text
+        assert ".env.qtask" in res.text
+        # Called from main() for every install, not just some dead code path
+        assert "setup_global_gitignore()" in res.text
+
+    def test_global_gitignore_creates_excludes_file_when_unset(self, client, monkeypatch, tmp_path):
+        """Executes the real function rather than just asserting on
+        strings -- but with subprocess and the fallback path fully
+        redirected into tmp_path, so this can never touch the real
+        machine's actual git config or filesystem."""
+        ns = self._load_install_module_without_running_main(client)
+        fake_excludes_path = tmp_path / "ignore_qtask_bridge"
+
+        git_config_set_calls = []
+
+        def fake_run(cmd, **kwargs):
+            class Result:
+                stdout = ""
+                returncode = 0
+            if cmd[:4] == ["git", "config", "--global", "--get"]:
+                return Result()  # simulates core.excludesFile being unset
+            if cmd[:3] == ["git", "config", "--global"]:
+                git_config_set_calls.append(cmd)
+                return Result()
+            raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+        real_expanduser = os.path.expanduser
+        monkeypatch.setattr(
+            ns["os"].path, "expanduser",
+            lambda p: str(fake_excludes_path) if "ignore_qtask_bridge" in p else real_expanduser(p),
+        )
+        ns["print"] = lambda *a, **k: None
+
+        ns["setup_global_gitignore"]()
+
+        assert git_config_set_calls == [["git", "config", "--global", "core.excludesFile", str(fake_excludes_path)]]
+        assert fake_excludes_path.exists()
+        content = fake_excludes_path.read_text()
+        for entry in ns["BRIDGE_IGNORE_ENTRIES"]:
+            assert entry in content
+
+    def test_global_gitignore_appends_to_existing_excludes_file_when_already_set(self, client, monkeypatch, tmp_path):
+        """If the user already has a core.excludesFile configured, append
+        to it -- never silently redirect git to a different file."""
+        ns = self._load_install_module_without_running_main(client)
+        existing_excludes = tmp_path / "my-own-global-gitignore"
+        existing_excludes.write_text("*.swp\n")
+
+        def fake_run(cmd, **kwargs):
+            class Result:
+                stdout = str(existing_excludes) + "\n"
+                returncode = 0
+            if cmd[:4] == ["git", "config", "--global", "--get"]:
+                return Result()
+            raise AssertionError(f"should not reconfigure an already-set excludesFile: {cmd}")
+
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+        ns["print"] = lambda *a, **k: None
+
+        ns["setup_global_gitignore"]()
+
+        content = existing_excludes.read_text()
+        assert "*.swp" in content  # untouched
+        for entry in ns["BRIDGE_IGNORE_ENTRIES"]:
+            assert entry in content
+
+    def test_global_gitignore_is_idempotent(self, client, monkeypatch, tmp_path):
+        """Re-running the installer (e.g. to pick up a bridge update) must
+        not duplicate entries on every run."""
+        ns = self._load_install_module_without_running_main(client)
+        excludes_path = tmp_path / "ignore_qtask_bridge"
+        excludes_path.write_text("\n".join(ns["BRIDGE_IGNORE_ENTRIES"]) + "\n")
+
+        def fake_run(cmd, **kwargs):
+            class Result:
+                stdout = str(excludes_path) + "\n"
+                returncode = 0
+            return Result()
+
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+        ns["print"] = lambda *a, **k: None
+
+        ns["setup_global_gitignore"]()
+
+        content = excludes_path.read_text()
+        for entry in ns["BRIDGE_IGNORE_ENTRIES"]:
+            assert content.count(entry) == 1
+
     def test_missing_token_is_rejected(self, client):
         res = client.get("/api/bridge/install.py")
         assert res.status_code == 422
@@ -909,10 +1007,13 @@ class TestAgentScript:
         # Called from run_job for every job, not just some code path that's dead
         assert "_write_claude_settings(worktree_path)" in res.text
 
-    def test_claude_settings_and_spec_file_are_gitignored(self, client):
+    def test_does_not_touch_worktree_local_gitignore(self, client):
+        """Ignoring bridge files is handled globally at install time (see
+        TestInstallScript) -- agent.py must never write to a target repo's
+        own .gitignore."""
         res = client.get("/api/bridge/agent.py")
-        assert ".claude/settings.local.json" in res.text
-        assert "BRIDGE_SPEC.md" in res.text
+        assert "def ensure_gitignore" not in res.text
+        assert "GITIGNORE_ENTRIES" not in res.text
 
     def test_writes_reserved_port_range_and_db_name(self, client):
         res = client.get("/api/bridge/agent.py")
@@ -921,11 +1022,6 @@ class TestAgentScript:
         assert "QTASK_DB_NAME" in res.text
         # Called from run_job for every job, not just some code path that's dead
         assert "_write_qtask_env(worktree_path, job_id)" in res.text
-
-    def test_qtask_env_is_gitignored(self, client):
-        res = client.get("/api/bridge/agent.py")
-        assert ".env.qtask" in res.text
-        assert '"BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"' in res.text
 
     def test_prompt_points_claude_at_the_reserved_env_file(self, client):
         """Otherwise the file is just sitting there and Claude has to

@@ -206,7 +206,14 @@ the command can be fetched by a bare `curl` on a machine with no prior login. If
 somewhere it might leak, click **Rotate token** in the same panel; that invalidates the old
 command without touching your app password or any machine you've already installed on.
 
-This installs `qtask-bridge` into your PATH and creates `~/.config/qtask-bridge/claude.toml`.
+This installs `qtask-bridge` into your PATH, creates `~/.config/qtask-bridge/claude.toml`, and
+configures git to ignore the files the bridge writes into every worktree (`BRIDGE_SPEC.md`,
+`.claude/settings.local.json`, `.env.qtask`) **globally** — via git's own `core.excludesFile`
+mechanism, not by editing any target repo's own `.gitignore`. If you don't already have a
+`core.excludesFile` configured, the installer creates `~/.config/git/ignore_qtask_bridge` and
+points git at it; if you do, it appends to whatever you've already got. Either way, no repo's
+tracked files are ever touched — re-running the installer is safe and idempotent if you're
+already set up.
 
 **Where you run it from only matters if you skip configuration.** For any card linked to a GitHub issue, the bridge resolves the actual repo directory from `claude.toml` — not from your current directory — so once that's set up, `qtask-bridge` can be run from anywhere (your home directory, a cron job, doesn't matter). Configure it one of two ways:
 

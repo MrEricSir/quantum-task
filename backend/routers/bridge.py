@@ -397,7 +397,7 @@ def get_install_script(install_token: str = Query(..., alias="token"), db: Sessi
         qtask-bridge installer
         Installs the qtask-bridge CLI with your app URL and token pre-configured.
         \"\"\"
-        import os, sys, stat, ssl, textwrap, urllib.error, urllib.request, json
+        import os, sys, stat, ssl, subprocess, textwrap, urllib.error, urllib.request, json
 
         APP_URL = "{app_url}"
         TOKEN   = "{token}"
@@ -441,6 +441,46 @@ def get_install_script(install_token: str = Query(..., alias="token"), db: Sessi
             #
             # repo_roots = ["~/code", "~/work"]
         \"\"\")
+
+        # Files qtask-bridge writes into every worktree it creates -- BRIDGE_SPEC.md
+        # (agent.py's SPEC_FILENAME), .claude/settings.local.json (_write_claude_settings),
+        # .env.qtask (agent.py's ENV_FILENAME). Kept in sync by hand; there are only three.
+        BRIDGE_IGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"]
+
+        def setup_global_gitignore():
+            \"\"\"Ignore qtask-bridge's worktree-local files globally, via git's
+            own core.excludesFile mechanism, instead of ever touching a target
+            repo's own .gitignore. Runs at install time (not per-job) since
+            it's a one-time, machine-wide setting -- re-running the installer
+            is idempotent and safe if it's already set up.\"\"\"
+            result = subprocess.run(
+                ["git", "config", "--global", "--get", "core.excludesFile"],
+                capture_output=True, text=True,
+            )
+            excludes_path = result.stdout.strip()
+            if excludes_path:
+                excludes_path = os.path.expanduser(excludes_path)
+            else:
+                # Nothing configured yet -- use our own file rather than
+                # guessing at a platform default, and point git at it.
+                excludes_path = os.path.expanduser("~/.config/git/ignore_qtask_bridge")
+                os.makedirs(os.path.dirname(excludes_path), exist_ok=True)
+                subprocess.run(["git", "config", "--global", "core.excludesFile", excludes_path])
+                print(f"Set git core.excludesFile: {{excludes_path}}")
+
+            existing = ""
+            if os.path.exists(excludes_path):
+                with open(excludes_path) as f:
+                    existing = f.read()
+            missing = [e for e in BRIDGE_IGNORE_ENTRIES if e not in existing]
+            if not missing:
+                print(f"Global gitignore already covers qtask-bridge files: {{excludes_path}}")
+                return
+            os.makedirs(os.path.dirname(excludes_path), exist_ok=True)
+            with open(excludes_path, "a") as f:
+                for entry in missing:
+                    f.write("\\n" + entry + "\\n")
+            print(f"Updated global gitignore: {{excludes_path}}")
 
         def main():
             # Download the bridge script from the app
@@ -490,6 +530,8 @@ def get_install_script(install_token: str = Query(..., alias="token"), db: Sessi
 
             print(f"Installed: {{BRIDGE_PATH}}")
             print(f"Config:    {{CONFIG_FILE}}")
+
+            setup_global_gitignore()
 
             # Add ~/.local/bin to PATH if needed
             path_export = 'export PATH="$HOME/.local/bin:$PATH"'
@@ -577,7 +619,6 @@ def get_agent_script():
         OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
         SPEC_FILENAME = "BRIDGE_SPEC.md"
         ENV_FILENAME = ".env.qtask"
-        GITIGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"]
         WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
         LAST_WORKTREE_FILE = os.path.expanduser("~/.local/share/qtask-bridge/last-worktree")
 
@@ -621,20 +662,6 @@ def get_agent_script():
                 print(f"API error {e.code}: {body}", file=sys.stderr)
                 return None
 
-
-        def ensure_gitignore(worktree_path):
-            gitignore = os.path.join(worktree_path, ".gitignore")
-            if not os.path.exists(gitignore):
-                # Don't create one unexpectedly — only append to an existing .gitignore
-                return
-            with open(gitignore) as f:
-                existing = f.read()
-            missing = [e for e in GITIGNORE_ENTRIES if e not in existing]
-            if not missing:
-                return
-            with open(gitignore, "a") as f:
-                for entry in missing:
-                    f.write("\\n" + entry + "\\n")
 
 
         def _repo_from_git_url(url):
@@ -1047,7 +1074,6 @@ def get_agent_script():
                 f.write(prompt)
 
             _write_claude_settings(worktree_path)
-            ensure_gitignore(worktree_path)
 
             try:
                 if streaming:
