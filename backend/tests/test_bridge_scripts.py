@@ -310,6 +310,48 @@ class TestServedScriptsCompile:
         first_code_line = next(l for l in lines if l.strip() and not l.startswith("#!"))
         assert not first_code_line.startswith(" "), repr(first_code_line)
 
+    def test_agent_script_shebang_is_the_literal_first_line(self, client):
+        """Regression test: render_agent_script() concatenates agent_core.py
+        (which owns the #!/usr/bin/env python3 shebang) and agent_claude.py.
+        Getting that order backwards once put the shebang partway through
+        the file instead of on line 1 -- harmless when `python3 agent.py`
+        is run explicitly, but the installed ~/.local/bin/qtask-bridge is
+        chmod +x'd and invoked directly, which relies on line 1 being a
+        valid interpreter directive. Without it the shell tries to execute
+        the file as its own script and fails with garbage like "import:
+        command not found" -- this exact bug reached a real second machine
+        before being caught, since every other check here (compiles,
+        contains expected functions, top-level statements not indented)
+        stayed green regardless of concatenation order."""
+        res = client.get("/api/bridge/agent.py")
+        assert res.text.splitlines()[0] == "#!/usr/bin/env python3"
+
+    def test_agent_script_actually_executes_via_its_shebang(self, client, tmp_path, monkeypatch):
+        """Stronger version of the above: don't just check the string, run
+        the served file for real exactly the way the installed binary is
+        invoked (direct execution relying on the shebang, not `python3
+        <path>`) and confirm it behaves like a real Python script instead
+        of being swallowed by the shell. HOME is redirected into tmp_path
+        so this can't pick up a real ~/.config/qtask-bridge/config.json on
+        the machine running the test and behave unpredictably."""
+        res = client.get("/api/bridge/agent.py")
+        script_path = tmp_path / "qtask-bridge"
+        script_path.write_text(res.text)
+        script_path.chmod(0o755)
+
+        env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")}
+        result = subprocess.run(
+            [str(script_path), "--list"],
+            capture_output=True, text=True, timeout=10, env=env,
+        )
+        # A real Python run (even one that errors out because no config
+        # exists in this isolated HOME) fails cleanly with our own message
+        # -- a shell trying to execute the file as its own script instead
+        # produces "command not found" / "syntax error" noise.
+        assert "command not found" not in result.stderr
+        assert "syntax error" not in result.stderr
+        assert "Config not found" in result.stdout or "Config not found" in result.stderr
+
 
 class TestBridgeScriptsExemptFromAuth:
     """Only install.py is exempt from AuthMiddleware's session-cookie/bearer-token

@@ -25,6 +25,13 @@ def render_install_script(app_url: str, token: str) -> str:
 
 
 def render_agent_script() -> str:
-    adapter = (_SCRIPTS_DIR / "agent_claude.py").read_text()
+    # agent_core.py must come first: its #!/usr/bin/env python3 shebang has
+    # to be the served file's literal first line, or the installer's chmod
+    # +x'd copy at ~/.local/bin/qtask-bridge has no valid interpreter
+    # directive to execute with -- the shell falls back to interpreting the
+    # whole file as its own script instead, producing garbage like
+    # "import: command not found". Order otherwise doesn't matter (see
+    # agent_core.py's module docstring), so this is the only constraint.
     core = (_SCRIPTS_DIR / "agent_core.py").read_text()
-    return adapter + "\n\n" + core
+    adapter = (_SCRIPTS_DIR / "agent_claude.py").read_text()
+    return core + "\n\n" + adapter
