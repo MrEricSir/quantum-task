@@ -59,6 +59,7 @@ POLL_INTERVAL = 30        # seconds between polls in --watch mode
 OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
 OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
 HEARTBEAT_INTERVAL = 300  # seconds between heartbeat pings while the agent process runs
+VERIFICATION_OUTPUT_MAX_LINES = 60  # tail of test_cmd output kept in the verification summary
 SPEC_FILENAME = "BRIDGE_SPEC.md"
 ENV_FILENAME = ".env.qtask"
 WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
@@ -117,7 +118,8 @@ def _slugify(text, max_len=40):
 
 def _repo_entry(cfg, target_repo):
     """
-    Return (path, setup_cmd) for a configured [repos] entry, or (None, None).
+    Return (path, setup_cmd, test_cmd, verify_acceptance) for a configured [repos] entry,
+    or (None, None, None, None).
 
     Supports both the simple form:
         [repos]
@@ -126,15 +128,20 @@ def _repo_entry(cfg, target_repo):
         [repos."owner/repo"]
         path = "/path/to/repo"
         setup_cmd = "npm install"
+        test_cmd = "npm test"
+        verify_acceptance = true
     """
     entry = (cfg.get("repos") or {}).get(target_repo)
     if entry is None:
-        return None, None
+        return None, None, None, None
     if isinstance(entry, str):
-        return entry, None
+        return entry, None, None, None
     if isinstance(entry, dict):
-        return entry.get("path"), entry.get("setup_cmd")
-    return None, None
+        return (
+            entry.get("path"), entry.get("setup_cmd"),
+            entry.get("test_cmd"), entry.get("verify_acceptance"),
+        )
+    return None, None, None, None
 
 
 def _resolve_work_dir(cfg, target_repo):
@@ -149,7 +156,7 @@ def _resolve_work_dir(cfg, target_repo):
     if not target_repo:
         return os.getcwd()
 
-    path, _setup_cmd = _repo_entry(cfg, target_repo)
+    path, *_ = _repo_entry(cfg, target_repo)
     if path:
         return os.path.expanduser(path)
 
@@ -390,13 +397,109 @@ def _start_heartbeat(cfg, job_id):
     return stop_event
 
 
-def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True):
+def _extract_section(spec_text, heading):
+    """Return the body of a `## <heading>` markdown section (everything up
+    to the next `## ` heading or end of string), or None if not found (a
+    hand-written spec may not have one). Not hardcoded to acceptance
+    criteria specifically -- reusable for other spec sections a future
+    verification check might want."""
+    if not spec_text:
+        return None
+    marker = f"## {heading}"
+    start = spec_text.find(marker)
+    if start == -1:
+        return None
+    start += len(marker)
+    next_heading = spec_text.find("\n## ", start)
+    body = spec_text[start:next_heading] if next_heading != -1 else spec_text[start:]
+    return body.strip() or None
+
+
+def _run_test_cmd(worktree_path, test_cmd):
+    """Run the configured test command in the worktree and summarize the
+    result. Purely mechanical -- no LLM call, no judgment about whether a
+    failure matters, just pass/fail and a truncated tail of output."""
+    print(f"[bridge] Running test_cmd: {test_cmd}")
+    r = subprocess.run(test_cmd, cwd=worktree_path, shell=True,
+                       capture_output=True, text=True)
+    output = (r.stdout or "") + (r.stderr or "")
+    lines = output.splitlines()
+    if len(lines) > VERIFICATION_OUTPUT_MAX_LINES:
+        lines = lines[-VERIFICATION_OUTPUT_MAX_LINES:]
+    tail = "\n".join(lines)
+    status = "passed" if r.returncode == 0 else f"failed (exit {r.returncode})"
+    print(f"[bridge] test_cmd {status}")
+    summary = f"### Tests (`{test_cmd}`)\n\n**{status}**"
+    if tail:
+        summary += f"\n\n```\n{tail}\n```"
+    return summary
+
+
+def _make_acceptance_check_prompt(criteria_text, test_summary=None):
+    """Build a read-only prompt checking the diff against acceptance
+    criteria. Explicitly forbidden from modifying anything -- verification
+    reports, it doesn't fix; fixing is the still-deferred review pass's
+    job, and keeping the two separate is what makes this cheap and safe to
+    run unattended by default once enabled."""
+    parts = [
+        "Compare your changes in this worktree (git diff against the primary branch) "
+        "against the acceptance criteria below. For each item, report MET or NOT MET "
+        "with a one-line reason. Do not modify, create, or delete any files -- this is "
+        "a read-only check, not an implementation task.",
+        "",
+        "## Acceptance Criteria",
+        criteria_text,
+    ]
+    if test_summary:
+        parts += ["", "## Test Results", test_summary]
+    return "\n".join(parts)
+
+
+def _check_acceptance_criteria(worktree_path, criteria_text, test_summary=None):
+    """Run a focused, non-interactive check of the diff against the
+    acceptance criteria. Reuses streaming_command directly -- already
+    exactly the non-interactive launch this needs -- rather than adding a
+    new adapter contract name for it."""
+    prompt = _make_acceptance_check_prompt(criteria_text, test_summary)
+    print("[bridge] Checking acceptance criteria...")
+    r = subprocess.run(streaming_command(prompt), cwd=worktree_path,
+                       capture_output=True, text=True)
+    report = (r.stdout or "").strip() or "(no output)"
+    return f"### Acceptance Criteria\n\n{report}"
+
+
+def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text):
+    """Run configured verification checks after the coding session ends,
+    before the job is marked complete. Both checks are opt-in (test_cmd
+    unset = skip, verify_acceptance defaults False) so existing installs
+    behave exactly as before with no config changes. Returns a markdown
+    block to prepend to the job's result, or "" if nothing ran."""
+    sections = []
+    test_summary = None
+    if test_cmd:
+        test_summary = _run_test_cmd(worktree_path, test_cmd)
+        sections.append(test_summary)
+    if verify_acceptance:
+        criteria = _extract_section(spec_text, "Acceptance Criteria")
+        if criteria:
+            sections.append(_check_acceptance_criteria(worktree_path, criteria, test_summary))
+        else:
+            print("[bridge] verify_acceptance is on but no Acceptance Criteria "
+                  "section found in spec — skipping")
+    if not sections:
+        return ""
+    return "## Verification\n\n" + "\n\n".join(sections)
+
+
+def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
+                      test_cmd=None, verify_acceptance=False, spec_text=None):
     """Launch the coding agent as an interactive session the user can engage with."""
     print(f"[bridge] Launching {AGENT_LABEL} interactively...")
     print("[bridge] You can interact with the agent in the session below.")
     print("[bridge] When done, type 'exit' or press Ctrl-D.\n")
     _set_terminal_title(branch)
     stop_heartbeat = _start_heartbeat(cfg, job_id)
+    verification = ""
     try:
         try:
             subprocess.run(interactive_command(_make_prompt(branch)), cwd=cwd, check=False)
@@ -406,6 +509,9 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True):
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
                 {"result": f"{AGENT_LABEL} not found on PATH"})
             return False
+        # Heartbeat stays alive through verification too — a slow but
+        # legitimate check shouldn't get mistaken for a stalled job.
+        verification = _run_verification(cwd, test_cmd, verify_acceptance, spec_text)
     finally:
         stop_heartbeat.set()
 
@@ -416,11 +522,14 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True):
             result_text = input("[bridge] Enter a note to save with this job (or press Enter to skip): ").strip()
         except (EOFError, KeyboardInterrupt):
             pass
+    if verification:
+        result_text = f"{verification}\n\n{result_text}" if result_text else verification
     api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": result_text})
     return True
 
 
-def _run_streaming(cfg, job_id, branch, cwd):
+def _run_streaming(cfg, job_id, branch, cwd,
+                    test_cmd=None, verify_acceptance=False, spec_text=None):
     """Launch the coding agent non-interactively and stream stdout back to the app."""
     print(f"[bridge] Launching {AGENT_LABEL} (streaming mode)...")
     try:
@@ -453,6 +562,7 @@ def _run_streaming(cfg, job_id, branch, cwd):
         buffer.clear()
         last_flush = time.time()
 
+    verification = ""
     try:
         for line in proc.stdout:
             line = line.rstrip("\n")
@@ -463,12 +573,16 @@ def _run_streaming(cfg, job_id, branch, cwd):
 
         proc.wait()
         flush()  # final flush
+        # Only verify a session that actually succeeded — nothing useful to
+        # test against one that didn't. Heartbeat stays alive through it.
+        if proc.returncode == 0:
+            verification = _run_verification(cwd, test_cmd, verify_acceptance, spec_text)
     finally:
         stop_heartbeat.set()
 
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
     if proc.returncode == 0:
-        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": ""})
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": verification})
     else:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
             {"result": f"{AGENT_LABEL} exited with code {proc.returncode}"})
@@ -479,6 +593,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
     job_id      = job["id"]
     card_id     = job["card_id"]
     prompt      = job.get("prompt", "")
+    spec_text   = job.get("spec")
     target_repo = job.get("target_repo")
 
     print(f"\n[bridge] Job {job_id} — card #{card_id}")
@@ -512,8 +627,13 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
     # reserved port range / db name too (e.g. to pre-seed a database).
     _write_qtask_env(worktree_path, job_id)
 
-    _, setup_cmd = _repo_entry(cfg, target_repo) if target_repo else (None, None)
+    _, setup_cmd, test_cmd, verify_acceptance = (
+        _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None)
+    )
     setup_cmd = setup_cmd or cfg.get("setup_cmd")
+    test_cmd = test_cmd or cfg.get("test_cmd")
+    if verify_acceptance is None:
+        verify_acceptance = cfg.get("verify_acceptance", False)
     _run_setup_cmd(worktree_path, setup_cmd)
 
     print(f"[bridge] Writing {SPEC_FILENAME}...")
@@ -525,9 +645,11 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
 
     try:
         if streaming:
-            _run_streaming(cfg, job_id, branch, worktree_path)
+            _run_streaming(cfg, job_id, branch, worktree_path,
+                            test_cmd=test_cmd, verify_acceptance=verify_acceptance, spec_text=spec_text)
         else:
-            _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note)
+            _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
+                              test_cmd=test_cmd, verify_acceptance=verify_acceptance, spec_text=spec_text)
     finally:
         _git_teardown(work_dir, push_url_info)
         try:
@@ -655,7 +777,7 @@ def _scan_qtask_worktrees(cfg):
     Shared by --list and --cleanup so they can't drift out of sync."""
     found = []
     for repo_name in (cfg.get("repos") or {}):
-        path, _setup_cmd = _repo_entry(cfg, repo_name)
+        path, *_ = _repo_entry(cfg, repo_name)
         work_dir = os.path.expanduser(path) if path else None
         if not work_dir or not os.path.isdir(work_dir):
             continue

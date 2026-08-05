@@ -118,7 +118,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance`)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -278,6 +278,26 @@ QTASK_DB_NAME=qtask_job_77
 ```
 
 The prompt Claude receives explicitly points it at this file and asks it to use these values instead of framework defaults for anything it starts locally. The bridge doesn't know or care what the target app's architecture looks like (frontend port vs. backend port vs. database), so it reserves a namespace rather than trying to wire specific services — Claude (already reading the codebase to implement the feature) resolves the actual wiring per-repo. Nothing enforces the reservation; it's a convention, not a lock, and job IDs cycle through a 400-slot range, so collisions are possible if you have hundreds of uncleaned worktrees running dev servers simultaneously — not a realistic scenario for how this tool is meant to be used (sequentially, one job at a time).
+
+#### Verifying a fix before you review it
+
+Two opt-in checks run automatically after a session ends, before the job is marked complete — both off by default, so nothing changes unless you configure them:
+
+```toml
+[repos."owner/project_1"]
+path = "~/folder_a/project_1"
+test_cmd = "npm test"          # run your test suite; pass/fail + a truncated output tail
+                                 # is added to the job result. No LLM call, purely mechanical.
+verify_acceptance = true        # one extra, read-only Claude check of the diff against the
+                                 # spec's Acceptance Criteria checklist, reporting MET/NOT MET
+                                 # per item. Costs one extra LLM call per job.
+
+# top-level fallback for repos that don't set their own, same as setup_cmd
+test_cmd = "pytest"
+verify_acceptance = true
+```
+
+`verify_acceptance` is explicitly told not to modify any files — it only reports, it never fixes. Both results get prepended to the job's `result` text, so they show up in the Code tab and Telegram alongside whatever note you'd normally see. If the implementation session itself errors out, verification is skipped — nothing useful to test against a session that didn't complete.
 
 #### Code tab actions
 

@@ -31,9 +31,10 @@ TOML_TEMPLATE = textwrap.dedent("""\
     name = ""
 
     # Map repo slugs to local checkout paths. Either a plain path string,
-    # or a table with "path" and an optional "setup_cmd" — a one-time
-    # command run in a fresh worktree before Claude launches, for repos
-    # that need dependencies installed (npm install, pip install, etc).
+    # or a table with "path" and optional "setup_cmd" / "test_cmd" /
+    # "verify_acceptance" keys. setup_cmd is a one-time command run in a
+    # fresh worktree before Claude launches, for repos that need
+    # dependencies installed (npm install, pip install, etc).
     #
     # [repos]
     # "owner/myapp" = "/Users/you/code/myapp"
@@ -45,6 +46,22 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # Fallback setup_cmd used for any repo above that doesn't set its own.
     #
     # setup_cmd = "npm install"
+
+    # Verification, run automatically after a session ends (before the job
+    # is marked complete) -- both are opt-in and off by default.
+    #
+    # test_cmd runs your test suite and includes pass/fail in the job
+    # result -- no LLM call, purely mechanical. Set per-repo (see [repos]
+    # above) or as a fallback here:
+    #
+    # test_cmd = "npm test"
+    #
+    # verify_acceptance runs one extra, read-only Claude check of the diff
+    # against the spec's Acceptance Criteria checklist, reporting MET/NOT
+    # MET per item. Costs one extra LLM call per job, so it's off unless
+    # set (per-repo, or as a fallback here):
+    #
+    # verify_acceptance = true
 
     # Alternatively, list root directories and the bridge will discover repos by
     # scanning for matching .git remotes automatically. Auto-discovered repos

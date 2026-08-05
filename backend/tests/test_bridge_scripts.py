@@ -599,3 +599,163 @@ class TestAgentScript:
         assert "def _start_heartbeat" in res.text
         assert "/heartbeat" in res.text
         assert "_start_heartbeat(cfg, job_id)" in res.text
+
+    def test_verification_runs_before_completion(self, client):
+        """Verification (test_cmd + acceptance check) must run -- and the
+        heartbeat must still be alive -- before the job is marked complete,
+        not after; otherwise a slow check either gets lost or looks stalled."""
+        res = client.get("/api/bridge/agent.py")
+        assert "def _run_verification" in res.text
+        assert "_run_verification(cwd, test_cmd, verify_acceptance, spec_text)" in res.text
+        # Interactive: verification happens inside the heartbeat's try/finally,
+        # i.e. before stop_heartbeat.set()
+        interactive_start = res.text.index("def _run_interactive")
+        interactive_end = res.text.index("def _run_streaming")
+        interactive_body = res.text[interactive_start:interactive_end]
+        assert interactive_body.index("_run_verification(") < interactive_body.index("stop_heartbeat.set()")
+        # Streaming: only verifies on the success path
+        streaming_start = res.text.index("def _run_streaming")
+        streaming_end = res.text.index("def run_job")
+        streaming_body = res.text[streaming_start:streaming_end]
+        assert "if proc.returncode == 0:" in streaming_body
+        assert streaming_body.index("_run_verification(") < streaming_body.index("stop_heartbeat.set()")
+
+
+# ── Verification: test_cmd + acceptance-criteria check ────────────────────────
+
+class TestExtractSection:
+
+    def test_finds_section(self):
+        spec = "## Problem Statement\nfoo\n\n## Acceptance Criteria\n- [ ] does the thing\n\n## Open Questions\nnone"
+        assert agent_core._extract_section(spec, "Acceptance Criteria") == "- [ ] does the thing"
+
+    def test_returns_none_when_heading_absent(self):
+        spec = "## Problem Statement\nfoo"
+        assert agent_core._extract_section(spec, "Acceptance Criteria") is None
+
+    def test_returns_none_for_empty_spec(self):
+        assert agent_core._extract_section("", "Acceptance Criteria") is None
+        assert agent_core._extract_section(None, "Acceptance Criteria") is None
+
+    def test_handles_section_at_end_of_doc(self):
+        spec = "## Problem Statement\nfoo\n\n## Acceptance Criteria\n- [ ] last section, no trailing heading"
+        assert agent_core._extract_section(spec, "Acceptance Criteria") == \
+            "- [ ] last section, no trailing heading"
+
+    def test_stops_at_next_heading_not_later_content(self):
+        spec = "## Acceptance Criteria\n- [ ] a\n- [ ] b\n\n## Constraints & Notes\nunrelated stuff"
+        result = agent_core._extract_section(spec, "Acceptance Criteria")
+        assert "unrelated stuff" not in result
+        assert "- [ ] a" in result and "- [ ] b" in result
+
+
+class TestRunTestCmd:
+
+    def test_passing_command_reports_passed(self, tmp_path):
+        summary = agent_core._run_test_cmd(str(tmp_path), "python3 -c \"print('all good')\"")
+        assert "**passed**" in summary
+        assert "all good" in summary
+        assert "npm test" not in summary  # sanity: doesn't hardcode a command name
+
+    def test_failing_command_reports_failed_with_output(self, tmp_path):
+        summary = agent_core._run_test_cmd(str(tmp_path), "python3 -c \"import sys; print('boom'); sys.exit(1)\"")
+        assert "failed (exit 1)" in summary
+        assert "boom" in summary
+
+    def test_truncates_long_output(self, tmp_path):
+        cmd = "python3 -c \"[print(i) for i in range(500)]\""
+        summary = agent_core._run_test_cmd(str(tmp_path), cmd)
+        body_lines = summary.split("```")[1].strip().splitlines()
+        assert len(body_lines) <= agent_core.VERIFICATION_OUTPUT_MAX_LINES
+        assert body_lines[-1] == "499"  # keeps the tail, not the head
+
+    def test_includes_the_command_in_the_heading(self, tmp_path):
+        summary = agent_core._run_test_cmd(str(tmp_path), "true")
+        assert "`true`" in summary
+
+
+class TestMakeAcceptanceCheckPrompt:
+
+    def test_includes_criteria_text(self):
+        prompt = agent_core._make_acceptance_check_prompt("- [ ] users can log in")
+        assert "users can log in" in prompt
+
+    def test_instructs_read_only(self):
+        prompt = agent_core._make_acceptance_check_prompt("- [ ] x")
+        assert "do not modify" in prompt.lower()
+
+    def test_includes_test_summary_when_given(self):
+        prompt = agent_core._make_acceptance_check_prompt("- [ ] x", test_summary="**passed**")
+        assert "## Test Results" in prompt
+        assert "**passed**" in prompt
+
+    def test_omits_test_results_section_when_not_given(self):
+        prompt = agent_core._make_acceptance_check_prompt("- [ ] x")
+        assert "## Test Results" not in prompt
+
+
+class TestRunVerification:
+
+    SPEC_WITH_CRITERIA = (
+        "## Problem Statement\nfix the bug\n\n"
+        "## Acceptance Criteria\n- [ ] the bug is fixed\n\n"
+        "## Open Questions\nnone"
+    )
+
+    def test_neither_configured_returns_empty_string(self, tmp_path):
+        result = agent_core._run_verification(str(tmp_path), None, False, self.SPEC_WITH_CRITERIA)
+        assert result == ""
+
+    def test_test_cmd_only(self, tmp_path):
+        result = agent_core._run_verification(
+            str(tmp_path), "python3 -c \"print('ok')\"", False, self.SPEC_WITH_CRITERIA
+        )
+        assert result.startswith("## Verification")
+        assert "### Tests" in result
+        assert "### Acceptance Criteria" not in result
+
+    def test_both_configured_produces_both_sections(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["echo", "MET: yes"], raising=False)
+        result = agent_core._run_verification(
+            str(tmp_path), "python3 -c \"print('ok')\"", True, self.SPEC_WITH_CRITERIA
+        )
+        assert "### Tests" in result
+        assert "### Acceptance Criteria" in result
+        assert "MET: yes" in result
+
+    def test_verify_acceptance_with_no_criteria_section_skips_gracefully(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["echo", "should not run"], raising=False)
+        result = agent_core._run_verification(
+            str(tmp_path), None, True, "## Problem Statement\nno acceptance criteria here"
+        )
+        assert result == ""
+
+    def test_acceptance_check_only(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["echo", "NOT MET: needs work"], raising=False)
+        result = agent_core._run_verification(str(tmp_path), None, True, self.SPEC_WITH_CRITERIA)
+        assert "### Tests" not in result
+        assert "NOT MET: needs work" in result
+
+
+class TestRepoEntryVerificationFields:
+
+    def test_resolves_test_cmd_and_verify_acceptance_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {
+            "path": "/x", "setup_cmd": "npm install",
+            "test_cmd": "npm test", "verify_acceptance": True,
+        }}}
+        path, setup_cmd, test_cmd, verify_acceptance = agent_core._repo_entry(cfg, "owner/repo")
+        assert path == "/x"
+        assert setup_cmd == "npm install"
+        assert test_cmd == "npm test"
+        assert verify_acceptance is True
+
+    def test_plain_string_form_returns_none_for_new_fields(self):
+        cfg = {"repos": {"owner/repo": "/x"}}
+        path, setup_cmd, test_cmd, verify_acceptance = agent_core._repo_entry(cfg, "owner/repo")
+        assert path == "/x"
+        assert test_cmd is None
+        assert verify_acceptance is None
+
+    def test_unconfigured_repo_returns_all_none(self):
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None)
