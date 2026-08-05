@@ -231,8 +231,8 @@ class TestGlobalAssistSemanticInjection:
 
     def _stream_assist(self, client, prompt, **kwargs):
         payload = {"prompt": prompt, **kwargs}
-        with patch("routers.assist._maybe_web_search", return_value=""):
-            with patch("routers.assist.llm_client") as mock_llm:
+        with patch("assist.generate._maybe_web_search", return_value=""):
+            with patch("assist.generate.llm_client") as mock_llm:
                 stream_mock = MagicMock()
                 chunk = MagicMock()
                 chunk.choices[0].delta.content = "OK"
@@ -244,7 +244,7 @@ class TestGlobalAssistSemanticInjection:
     def test_injects_relevant_cards_when_no_filter(self, client):
         card_id = _make_card("Deploy authentication service", description="JWT refresh flow")
 
-        with patch("routers.assist.SessionLocal", TestSession):
+        with patch("assist.generate.SessionLocal", TestSession):
             with patch("embeddings.search", return_value=[card_id]):
                 with patch("embeddings.search_eng", return_value=[]):
                     mock_llm, resp = self._stream_assist(client, "tell me about auth")
@@ -259,7 +259,7 @@ class TestGlobalAssistSemanticInjection:
     def test_injects_relevant_engineering_items_when_no_filter(self, client):
         eng_id = _make_eng_item("Fix OAuth flow", repo="org/api", project_status="In Progress")
 
-        with patch("routers.assist.SessionLocal", TestSession):
+        with patch("assist.generate.SessionLocal", TestSession):
             with patch("embeddings.search", return_value=[]):
                 with patch("embeddings.search_eng", return_value=[eng_id]):
                     mock_llm, resp = self._stream_assist(client, "oauth issues")
@@ -393,8 +393,8 @@ class TestCalendarContextInjection:
         }]
 
     def _stream_thread(self, client, card_id, message):
-        with patch("routers.assist._maybe_web_search", return_value=""):
-            with patch("routers.assist.llm_client") as mock_llm:
+        with patch("assist.generate._maybe_web_search", return_value=""):
+            with patch("assist.generate.llm_client") as mock_llm:
                 stream_mock = MagicMock()
                 chunk = MagicMock()
                 chunk.choices[0].delta.content = "Team standup at 9 AM"
@@ -412,7 +412,7 @@ class TestCalendarContextInjection:
         card_id = _make_card("Prepare weekly report")
         self._make_mapping()
 
-        with patch("routers.assist.get_personal_events", return_value=self._fake_events()):
+        with patch("assist.context.get_personal_events", return_value=self._fake_events()):
             mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar tomorrow?")
 
         assert resp.status_code == 200
@@ -427,7 +427,7 @@ class TestCalendarContextInjection:
         """When no CalendarMapping exists, get_personal_events is never called."""
         card_id = _make_card("Some task")
 
-        with patch("routers.assist.get_personal_events") as mock_gpe:
+        with patch("assist.context.get_personal_events") as mock_gpe:
             mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar?")
 
         assert resp.status_code == 200
@@ -439,7 +439,7 @@ class TestCalendarContextInjection:
         card_id = _make_card("Weekend planning")
         self._make_mapping()
 
-        with patch("routers.assist.get_personal_events", return_value=[]):
+        with patch("assist.context.get_personal_events", return_value=[]):
             mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar?")
 
         assert resp.status_code == 200
@@ -454,7 +454,7 @@ class TestCalendarContextInjection:
         card_id = _make_card("Incident review")
         self._make_mapping()
 
-        with patch("routers.assist.get_personal_events", side_effect=Exception("Connection refused")):
+        with patch("assist.context.get_personal_events", side_effect=Exception("Connection refused")):
             mock_llm, resp = self._stream_thread(client, card_id, "what's on my calendar?")
 
         assert resp.status_code == 200
@@ -468,10 +468,10 @@ class TestCalendarContextInjection:
         """Calendar events appear in the user message context for global assist."""
         self._make_mapping()
 
-        with patch("routers.assist.SessionLocal", TestSession):
-            with patch("routers.assist.get_personal_events", return_value=self._fake_events()):
-                with patch("routers.assist._maybe_web_search", return_value=""):
-                    with patch("routers.assist.llm_client") as mock_llm:
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.context.get_personal_events", return_value=self._fake_events()):
+                with patch("assist.generate._maybe_web_search", return_value=""):
+                    with patch("assist.generate.llm_client") as mock_llm:
                         stream_mock = MagicMock()
                         chunk = MagicMock()
                         chunk.choices[0].delta.content = "Team standup"
@@ -535,7 +535,7 @@ class TestGithubContextInjection:
         app.dependency_overrides[get_db] = override_get_db
         mock_stream = MagicMock()
         mock_stream.__iter__ = MagicMock(return_value=iter([]))
-        with patch("routers.assist.llm_client") as mock_llm:
+        with patch("assist.generate.llm_client") as mock_llm:
             mock_llm.return_value.chat.completions.create.return_value = mock_stream
             with TestClient(app) as client:
                 client.post(
@@ -553,7 +553,7 @@ class TestGithubContextInjection:
         app.dependency_overrides[get_db] = override_get_db
         mock_stream = MagicMock()
         mock_stream.__iter__ = MagicMock(return_value=iter([]))
-        with patch("routers.assist.llm_client") as mock_llm:
+        with patch("assist.generate.llm_client") as mock_llm:
             mock_llm.return_value.chat.completions.create.return_value = mock_stream
             with TestClient(app) as client:
                 client.post(
@@ -581,7 +581,7 @@ class TestGithubContextInjection:
         app.dependency_overrides[get_db] = override_get_db
         mock_stream = MagicMock()
         mock_stream.__iter__ = MagicMock(return_value=iter([]))
-        with patch("routers.assist.llm_client") as mock_llm:
+        with patch("assist.generate.llm_client") as mock_llm:
             mock_llm.return_value.chat.completions.create.return_value = mock_stream
             with TestClient(app) as client:
                 client.post(

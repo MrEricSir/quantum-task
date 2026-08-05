@@ -4,7 +4,7 @@ Tests for GitHub comment sync and GitHub context injection.
 Covers:
   - github_sync._sync_comments  — create / update / delete / API failure
   - github_sync.sync            — conditional comment re-fetch on updated_at change
-  - routers.assist._github_context_lines — no external_id, body only, body+comments
+  - assist.context._github_context_lines — no external_id, body only, body+comments
 """
 import sys
 import os
@@ -275,7 +275,7 @@ class TestGithubContextLines:
             return card
 
     def test_returns_empty_when_no_external_id(self):
-        from routers.assist import _github_context_lines
+        from assist.context import _github_context_lines
         with TestSession() as db:
             card = self._make_card()
             card = db.query(models.Card).filter_by(id=card.id).first()
@@ -283,7 +283,7 @@ class TestGithubContextLines:
         assert result == []
 
     def test_returns_empty_when_no_matching_eng_item(self):
-        from routers.assist import _github_context_lines
+        from assist.context import _github_context_lines
         with TestSession() as db:
             card = self._make_card(external_id="github:owner/repo/issues/999")
             card = db.query(models.Card).filter_by(id=card.id).first()
@@ -291,7 +291,7 @@ class TestGithubContextLines:
         assert result == []
 
     def test_includes_issue_header(self):
-        from routers.assist import _github_context_lines
+        from assist.context import _github_context_lines
         _make_eng_item(body="The bug description")
         with TestSession() as db:
             card = models.Card(title="Fix bug", section="today", position=0,
@@ -306,7 +306,7 @@ class TestGithubContextLines:
         assert "owner/repo" in full_text
 
     def test_includes_body(self):
-        from routers.assist import _github_context_lines
+        from assist.context import _github_context_lines
         _make_eng_item(body="Steps to reproduce the bug")
         with TestSession() as db:
             card = models.Card(title="Fix bug", section="today", position=0,
@@ -319,7 +319,7 @@ class TestGithubContextLines:
         assert "Steps to reproduce the bug" in "\n".join(result)
 
     def test_includes_comments(self):
-        from routers.assist import _github_context_lines
+        from assist.context import _github_context_lines
         item_id = _make_eng_item(body="Issue description")
         with TestSession() as db:
             db.add(models.EngineeringItemComment(
@@ -342,7 +342,7 @@ class TestGithubContextLines:
         assert "unit tests" in full_text
 
     def test_skips_empty_body(self):
-        from routers.assist import _github_context_lines
+        from assist.context import _github_context_lines
         _make_eng_item(body=None)
         with TestSession() as db:
             card = models.Card(title="Fix", section="today", position=0,

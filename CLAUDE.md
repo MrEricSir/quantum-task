@@ -42,8 +42,10 @@ feature/
 **Current feature packages:**
 - `briefing/` — daily briefing generation and streaming; imports: `briefing.router`, `briefing.generate`, `briefing.context`
 - `telegram/` — bot, scheduler, webhook; imports: `telegram.router`, `telegram.bot`, `telegram.scheduler`, `telegram.notify`
+- `assist/` — AI assistant chat, spec generation, card-context threads; imports: `assist.router`, `assist.generate`, `assist.context`
+- `bridge/` — qtask-bridge job queue + served CLI; imports: `bridge.router`, `bridge.jobs`, `bridge.render`, `bridge.stale`. Novel shape: `bridge/scripts/` holds the served CLI (`install.py`, `agent_core.py`, `agent_claude.py`) as real, independently-syntax-checkable `.py` files — never as string literals in the router — rendered/concatenated into the servable text by `bridge/render.py` at request time. `agent_core.py` is agent-agnostic; `agent_claude.py` is the small Claude Code adapter (see its module docstring for the swap-in contract if trying an alternative coding agent later).
 
-**Flat routers** (still in `routers/`): auth, cards, habits, calendar, tags, jobs, engineering, push, withings, search, insights, correlations, food, discovery, assist
+**Flat routers** (still in `routers/`): auth, cards, habits, calendar, tags, jobs, engineering, push, withings, search, insights, correlations, food, discovery
 
 **Shared infrastructure:**
 - `schemas/` — Pydantic models organized by domain (`cards.py`, `habits.py`, `calendar.py`, `briefing.py`, `jobs.py`, `withings.py`, `engineering.py`, `common.py`); `__init__.py` re-exports all for zero breakage

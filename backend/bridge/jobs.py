@@ -1,0 +1,111 @@
+"""
+Bridge job business logic — building prompts, queueing jobs, serializing
+job rows. Kept separate from bridge.router so the router stays a thin HTTP
+adapter.
+"""
+import secrets
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session, selectinload
+
+import models
+import app_setting_keys as setting_keys
+
+
+def _get_bridge_install_token(db: Session) -> str:
+    """Return the current bridge install token, creating one if it doesn't exist.
+
+    This is deliberately separate from AUTH_PASSWORD: it only gates the one-time
+    curl-able install script, so it can be shared or rotated without touching the
+    real app password (mirrors calendar.py's _get_export_token)."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_INSTALL_TOKEN).first()
+    if row:
+        return row.value
+    token = secrets.token_hex(24)
+    db.add(models.AppSetting(key=setting_keys.BRIDGE_INSTALL_TOKEN, value=token))
+    db.commit()
+    return token
+
+
+def _repo_from_external_id(external_id: str | None) -> str | None:
+    """Parse 'github:owner/repo/issues/42' → 'owner/repo', or None if not a GitHub link."""
+    if not external_id or not external_id.startswith("github:"):
+        return None
+    path = external_id[len("github:"):]   # "owner/repo/issues/42"
+    parts = path.split("/")
+    return f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else None
+
+
+def _build_prompt(card: models.Card, eng_item: models.EngineeringItem | None) -> str:
+    """Compile the full task prompt from card spec + GitHub context."""
+    lines = [f"# Feature: {card.title}"]
+    if eng_item:
+        lines.append(f"Source: {eng_item.url}")
+    lines.append("")
+
+    if card.spec:
+        lines.append(card.spec)
+        lines.append("")
+
+    if eng_item:
+        lines.append("---")
+        kind = "PR" if eng_item.item_type == "pr" else "Issue"
+        lines.append(f"## GitHub {kind}: {eng_item.repo}#{eng_item.number}")
+        if eng_item.body:
+            lines.append("")
+            lines.append(eng_item.body)
+        if eng_item.comments:
+            lines.append("")
+            lines.append("### Comments")
+            for c in eng_item.comments:
+                lines.append(f"\n**{c.author}**: {c.body}")
+
+    if card.description and card.description.strip():
+        lines.append("")
+        lines.append("---")
+        lines.append("## Developer Notes")
+        lines.append(card.description.strip())
+
+    return "\n".join(lines)
+
+
+_OUTPUT_MAX_LINES = 200
+
+
+def _job_response(job: models.BridgeJob) -> dict:
+    return {
+        "id":            job.id,
+        "card_id":       job.card_id,
+        "status":        job.status,
+        "target_repo":   job.target_repo,
+        "branch_name":   job.branch_name,
+        "agent_name":    job.agent_name,
+        "worktree_path": job.worktree_path,
+        "result":        job.result,
+        "output":        job.output,
+        "spec_snapshot": job.spec_snapshot,
+        "created_at":    job.created_at.isoformat(),
+        "updated_at":    job.updated_at.isoformat() if job.updated_at else None,
+    }
+
+
+def _queue_job_for_card(db: Session, card: models.Card) -> models.BridgeJob:
+    """Build (but don't commit) a pending BridgeJob for a card. Caller must
+    have already verified card.spec is set."""
+    eng_item = None
+    if card.external_id:
+        eng_item = (
+            db.query(models.EngineeringItem)
+            .options(selectinload(models.EngineeringItem.comments))
+            .filter_by(external_id=card.external_id)
+            .first()
+        )
+    prompt = _build_prompt(card, eng_item)
+    return models.BridgeJob(
+        card_id=card.id,
+        status="pending",
+        target_repo=_repo_from_external_id(card.external_id),
+        spec_snapshot=card.spec,
+        prompt_snapshot=prompt,
+        created_at=datetime.now(timezone.utc),
+    )

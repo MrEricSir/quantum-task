@@ -631,6 +631,12 @@
   color: #f87171;
 }
 
+.cdp-bridge-status--stalled {
+  background: rgba(148, 163, 184, 0.07);
+  border-color: rgba(148, 163, 184, 0.25);
+  color: #94a3b8;
+}
+
 .cdp-bridge-dot {
   width: 7px;
   height: 7px;

@@ -615,6 +615,17 @@ gcp_setup_scheduler() {
     "$SERVICE_URL/api/backup/run" \
     "0 9 * * *"
 
+  # Stale bridge job detection (see backend/bridge/stale.py). Deliberately
+  # its own job rather than folded into telegram-daily-briefing above: that
+  # endpoint no-ops entirely when Telegram isn't configured, but a stuck
+  # job (crashed agent, sleeping laptop, dropped network) needs to flip to
+  # "stalled" in the DB either way, or the frontend status badge never
+  # updates. Same min-instances-0 reasoning as withings-sync above.
+  _gcp_upsert_scheduler_job \
+    "bridge-stale-check" \
+    "$SERVICE_URL/api/bridge/jobs/check-stale" \
+    "0 * * * *"
+
   echo "The briefing will be sent at your configured time (±15 min)."
   echo "Configure time and credentials in Settings > Telegram."
   echo "Withings will sync hourly in addition to the local-dev background loop."

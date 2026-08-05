@@ -1,7 +1,9 @@
 """
 Telegram scheduled notification checks.
 
-Called every minute by the background task in main.py via check_all().
+check_all() is called from POST /api/telegram/daily-briefing, hit hourly by
+a Cloud Scheduler job in prod (see dev.sh's gcp_setup_scheduler()) since
+Cloud Run runs with min instances 0 and has no reliable in-process loop.
 Each function is idempotent — it checks whether its condition is met and
 whether it has already fired today before sending anything.
 """
@@ -12,6 +14,7 @@ from sqlalchemy.orm import Session
 
 import app_setting_keys as keys
 import models
+from bridge.stale import STALE_THRESHOLD_MINUTES
 from settings import Settings
 from telegram.notify import send_message
 
@@ -622,6 +625,30 @@ def check_bridge_jobs(db: Session, token: str, chat_id: str) -> str:
 
     db.commit()
     return f"notified: {sent} event(s)" if sent else "none"
+
+
+def notify_stalled_jobs(db: Session, token: str, chat_id: str, jobs: list) -> int:
+    """Send one Telegram message per newly-stalled bridge job. Called from
+    bridge.router's check-stale endpoint (not check_all()) so the DB
+    transition in bridge.stale.check_stale_bridge_jobs happens regardless
+    of whether Telegram is configured — this only covers the notification,
+    not the state mutation. Takes the caller's own session (same pattern as
+    check_bridge_jobs above) rather than opening a new one. Returns the
+    number of messages actually sent."""
+    sent = 0
+    for job in jobs:
+        card = db.query(models.Card).filter_by(id=job.card_id).first()
+        card_title = card.title if card else f"card #{job.card_id}"
+        msg = f'⚠ Agent went quiet: <b>{card_title}</b>'
+        if job.branch_name:
+            suffix = f' ({job.agent_name})' if job.agent_name else ''
+            msg += f'\n<code>{job.branch_name}</code>{suffix}'
+        if job.worktree_path:
+            msg += f'\n<code>{job.worktree_path}</code>'
+        msg += f'\nNo heartbeat for over {STALE_THRESHOLD_MINUTES} minutes — it may have crashed, lost network, or the machine went to sleep.'
+        if send_message(token, chat_id, msg):
+            sent += 1
+    return sent
 
 
 def check_all(db: Session) -> dict:

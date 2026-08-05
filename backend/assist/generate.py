@@ -1,0 +1,542 @@
+"""
+LLM-calling business logic for the AI assistant.
+
+Endpoints with real generation logic (streaming, prompt construction) live
+here; simple DB CRUD stays in assist.router. Context-gathering helpers live
+in assist.context.
+"""
+import json
+from datetime import datetime, timezone
+
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session, selectinload
+from starlette.requests import Request
+
+import models
+import schemas
+from assist.context import (
+    _calendar_context_lines,
+    _github_context_lines,
+    _maybe_web_search,
+    _reverse_geocode,
+)
+from database import SessionLocal
+from deps import llm_client, LLM_MODEL, local_date, utc_offset_minutes
+from health_context import build_health_context
+
+_ASSIST_SYSTEM = """\
+You are a personal administrative assistant. You produce content the user can act on — \
+you do not perform actions yourself.
+
+What "producing content" means:
+- Request is a question about schedule, tasks, or data → answer it directly from the \
+context provided; do not invent information
+- Request is a reply to send → write the reply text, ready to copy and send
+- Request is meeting prep → produce the agenda, talking points, or briefing notes
+- Request is a summary → write the summary
+- Request is extracting action items → list them clearly and concisely
+- Request is drafting a document → write the document
+- Request is finding local options → list real options from the web search results provided
+
+Rules:
+- Do not use first person for things you cannot do ("I will call", "I will book", \
+"I have sent"). You produce drafts and information; the user takes the physical action.
+- Do not explain your reasoning or what you are about to do. Produce the output directly.
+- Match the tone and format implied by the request and context.
+- Only add salutation or sign-off when explicitly composing a letter or email reply. \
+Never add "Best regards" or "[Your Name]" for conversational questions, schedule \
+lookups, or task summaries.
+- If the context is a message the user received and they want a reply drafted, \
+the reply is addressed to the sender.
+- Keep output concise and professional unless the task implies otherwise.
+- CRITICAL: Never invent specific facts — business names, hotel names, addresses, phone \
+numbers, prices, people, or events — that are not explicitly present in the provided \
+context or web search results.
+- CRITICAL: Calendar data is always pre-loaded into this prompt when available. Never ask \
+the user to provide their calendar events — that is not information they can give you. \
+If the calendar section says "(none in the next 7 days)", report that. If it says \
+"(could not fetch)", say the calendar is temporarily unavailable. Never ask follow-up \
+questions about calendar data.
+- CRITICAL: GitHub issue context is pre-loaded into this prompt when the task is linked \
+to a GitHub issue. Never ask the user to paste or describe the issue — it is already \
+present in the "### GitHub Issue" section. Use it as primary source of truth for \
+requirements, acceptance criteria, and design decisions. Comments reflect the discussion \
+thread and may contain important decisions or clarifications.
+- CRITICAL: Cards and tasks are work items — they do NOT have scheduled times and are NOT \
+calendar events. Never infer or state a time for a task (e.g. "meeting at 2 PM") unless \
+that exact time appears in the "### Upcoming calendar events" section. A task titled \
+"Team meeting" means only that meeting prep is on the to-do list, not that any meeting \
+is scheduled at a specific time.
+- If location-specific information is needed but no location was given, say: \
+"I don't have your location — please tell me where you are and I'll help from there."
+- If web search results are provided, use them as the primary source of truth. \
+Cite sources inline when useful (e.g. "Source: https://example.com").
+- Do not use markdown formatting. No asterisks for bold, no # headers, no --- dividers. \
+Use plain text with line breaks and simple punctuation for structure.
+"""
+
+_SPEC_SYSTEM = """\
+You are a requirements writer. Synthesize the provided GitHub issue, discussion \
+comments, and developer notes into a structured requirements document in markdown.
+
+This document will be handed to a developer (or an AI coding agent with full codebase \
+access) to implement. Your job is to describe WHAT needs to be built and WHY — not HOW \
+to build it. Do not guess at file paths, function names, or implementation details; \
+the developer has the actual source code and can make better decisions than you can.
+
+Output ONLY the markdown. No preamble, no summary, no commentary about what \
+you are doing or ignoring. Start immediately with the first section heading.
+
+Be concrete — base everything strictly on the provided context. Do not invent \
+requirements or technical details not explicitly mentioned. If context is thin \
+on a section, keep it brief rather than speculating.
+
+Produce exactly these sections in order:
+## Problem Statement
+One or two sentences: what needs to change and why.
+
+## Context & Background
+Relevant context from the issue and comments. What exists today, what broke, \
+or what the feature is replacing. Focus on user-facing behaviour and intent.
+
+## Acceptance Criteria
+Specific, testable outcomes as a checklist. Use `- [ ]` format. Be as concrete as \
+the issue allows.
+
+## Constraints & Notes
+Any technical constraints, edge cases, or design decisions mentioned in the issue \
+or comments. Only include what is explicitly stated — do not speculate.
+
+## Open Questions
+Anything ambiguous or that needs clarification before work begins. Omit this section \
+if there are no open questions.
+"""
+
+
+def _get_or_none(db: Session, card_id: int) -> models.CardThread | None:
+    return db.query(models.CardThread).filter_by(card_id=card_id).first()
+
+
+def send_message(request: Request, card_id: int, req: schemas.ThreadMessageRequest, db: Session):
+    """Stream a new assistant turn, then persist both user and assistant messages."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    thread = _get_or_none(db, card_id)
+    history = json.loads(thread.messages or "[]") if thread else []
+    context = thread.context if thread else None
+
+    today = local_date(request)
+    tz_offset = utc_offset_minutes(request)
+
+    # Build system prompt — task identity + GitHub context + calendar + pasted document
+    system_parts = [_ASSIST_SYSTEM]
+    system_parts.append(f"\nTask the user is working on: {card.title}")
+    if card.description:
+        system_parts.append(f"Task notes: {card.description}")
+    gh_lines = _github_context_lines(db, card)
+    if gh_lines:
+        system_parts.append("\n" + "\n".join(gh_lines))
+    cal_lines = _calendar_context_lines(db, today, tz_offset)
+    if cal_lines:
+        system_parts.append("\n" + "\n".join(cal_lines))
+    if context:
+        system_parts.append(f"\nReference document provided by the user:\n{context}")
+    system_prompt = "\n".join(system_parts)
+
+    # Build LLM messages from history + new user turn
+    llm_messages = [{"role": "system", "content": system_prompt}]
+    for msg in history:
+        llm_messages.append({"role": msg["role"], "content": msg["content"]})
+    llm_messages.append({"role": "user", "content": req.content})
+
+    # Snapshot card_id for use inside the generator closure
+    _card_id = card_id
+
+    def generate():
+        # Optional web search on the new user message
+        search_ctx = ""
+        search_ctx = _maybe_web_search(req.content)
+        if search_ctx:
+            yield f"data: {json.dumps({'status': 'searching'})}\n\n"
+            # Inject search results into the last user message
+            llm_messages[-1]["content"] += f"\n\n--- Web Search Results ---\n{search_ctx}"
+
+        accumulated = ""
+        try:
+            stream = llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=llm_messages,
+                stream=True,
+                temperature=0.3,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    accumulated += delta
+                    yield f"data: {json.dumps({'text': delta})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
+
+        # Persist user + assistant messages after streaming completes
+        now = datetime.now(timezone.utc).isoformat()
+        with SessionLocal() as save_db:
+            t = save_db.query(models.CardThread).filter_by(card_id=_card_id).first()
+            if t is None:
+                t = models.CardThread(
+                    card_id=_card_id,
+                    messages="[]",
+                    created_at=datetime.now(timezone.utc),
+                )
+                save_db.add(t)
+            msgs = json.loads(t.messages or "[]")
+            msgs.append({"role": "user",      "content": req.content,  "ts": now})
+            msgs.append({"role": "assistant", "content": accumulated,  "ts": now})
+            t.messages   = json.dumps(msgs)
+            t.updated_at = datetime.now(timezone.utc)
+            save_db.commit()
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+def generate_spec(card_id: int, db: Session):
+    """Synthesize a structured implementation spec from the card's GitHub issue + thread."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    # Build user message — compile all available context
+    parts: list[str] = [f"## Task\n{card.title}"]
+
+    if card.description and card.description.strip():
+        parts.append(f"## Developer Notes\n{card.description.strip()}")
+
+    # GitHub issue body + comments
+    if card.external_id:
+        eng_item = (
+            db.query(models.EngineeringItem)
+            .options(selectinload(models.EngineeringItem.comments))
+            .filter_by(external_id=card.external_id)
+            .first()
+        )
+        if eng_item:
+            kind = "PR" if eng_item.item_type == "pr" else "Issue"
+            gh_header = (
+                f"## GitHub {kind}: {eng_item.repo}#{eng_item.number}\n"
+                f"Status: {eng_item.state}\n"
+                f"URL: {eng_item.url}"
+            )
+            if eng_item.body and eng_item.body.strip():
+                gh_header += f"\n\n### Description\n{eng_item.body.strip()}"
+            else:
+                gh_header += "\n\n### Description\n(no description)"
+            parts.append(gh_header)
+
+            if eng_item.comments:
+                comment_lines = ["### Comments"]
+                for c in eng_item.comments:
+                    date_str = c.created_at.strftime("%Y-%m-%d") if c.created_at else ""
+                    comment_lines.append(f"\n[{c.author or 'unknown'}] ({date_str}):\n{c.body.strip()}")
+                parts.append("\n".join(comment_lines))
+
+    # Prior AI assist thread (up to last 10 messages for context)
+    thread = db.query(models.CardThread).filter_by(card_id=card_id).first()
+    if thread and thread.messages:
+        msgs = json.loads(thread.messages or "[]")[-10:]
+        if msgs:
+            thread_lines = ["## Prior Assistant Conversation"]
+            for m in msgs:
+                role = "User" if m["role"] == "user" else "Assistant"
+                thread_lines.append(f"[{role}]: {m['content'].strip()}")
+            parts.append("\n".join(thread_lines))
+
+    user_msg = "\n\n---\n\n".join(parts)
+
+    try:
+        resp = llm_client().chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _SPEC_SYSTEM},
+                {"role": "user",   "content": user_msg},
+            ],
+            temperature=0.2,
+        )
+        spec_text = resp.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+
+    card.spec = spec_text
+    card.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {"spec": spec_text}
+
+
+def context_from(card_id: int, req: schemas.ContextFromRequest, db: Session):
+    """Generate context text from a structured source (section, tag, or similar cards)."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    cards = []
+    label = ""
+
+    if req.source == "section":
+        section = req.section or "today"
+        label_map = {"today": "Today", "week": "This Week", "month": "This Month", "later": "Stash"}
+        label = label_map.get(section, section)
+        cards = (
+            db.query(models.Card)
+            .filter(
+                models.Card.section == section,
+                models.Card.archived == False,   # noqa: E712
+                models.Card.completed == False,  # noqa: E712
+                models.Card.id != card_id,
+            )
+            .order_by(models.Card.position)
+            .limit(20)
+            .all()
+        )
+
+    elif req.source == "tag":
+        if not req.tag_id:
+            raise HTTPException(status_code=400, detail="tag_id required for tag source")
+        tag = db.query(models.Tag).filter(models.Tag.id == req.tag_id).first()
+        label = tag.name if tag else f"tag #{req.tag_id}"
+        cards = (
+            db.query(models.Card)
+            .join(models.card_tags, models.Card.id == models.card_tags.c.card_id)
+            .filter(
+                models.card_tags.c.tag_id == req.tag_id,
+                models.Card.archived == False,   # noqa: E712
+                models.Card.completed == False,  # noqa: E712
+                models.Card.id != card_id,
+            )
+            .limit(20)
+            .all()
+        )
+
+    elif req.source == "similar":
+        label = "Similar cards"
+        try:
+            import embeddings as _embeddings
+            query_text = f"{card.title} {card.description or ''}".strip()
+            card_ids = _embeddings.search(db, query_text, top_k=9)
+            card_ids = [cid for cid in card_ids if cid != card_id][:8]
+            if card_ids:
+                id_order = {cid: i for i, cid in enumerate(card_ids)}
+                cards = db.query(models.Card).filter(
+                    models.Card.archived == False,  # noqa: E712
+                    models.Card.id.in_(card_ids),
+                ).all()
+                cards.sort(key=lambda c: id_order.get(c.id, 999))
+        except Exception:
+            pass
+
+    if not cards:
+        return {"context_text": "", "label": label, "count": 0}
+
+    lines = [f"### {label}"]
+    for c in cards:
+        line = f"- {c.title}"
+        if c.description:
+            snippet = c.description[:120].replace("\n", " ")
+            line += f": {snippet}"
+        lines.append(line)
+
+    return {"context_text": "\n".join(lines), "label": label, "count": len(cards)}
+
+
+def stream_assist(req: schemas.AssistRequest):
+    location_str = None
+    if req.lat is not None and req.lon is not None:
+        location_str = _reverse_geocode(req.lat, req.lon)
+
+    task_line = f"Task: {req.card_title}"
+    if req.card_description:
+        task_line += f"\nTask description: {req.card_description}"
+    user_msg_parts = [task_line]
+    if location_str:
+        user_msg_parts.append(f"User's location: {location_str}")
+    user_msg_parts.append(f"\nContext provided by user:\n{req.context}")
+    user_msg = "\n".join(user_msg_parts)
+
+    def generate():
+        search_ctx = _maybe_web_search(user_msg)
+        final_user = user_msg
+        if search_ctx:
+            yield f"data: {json.dumps({'status': 'searching'})}\n\n"
+            final_user += f"\n\n--- Web Search Results ---\n{search_ctx}"
+
+        try:
+            stream = llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": _ASSIST_SYSTEM},
+                    {"role": "user",   "content": final_user},
+                ],
+                stream=True,
+                temperature=0.3,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({'text': delta})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+def global_assist(request: Request, req: schemas.GlobalAssistRequest):
+    """Header-level assistant: fetches card context by section or tag, then streams a response."""
+    location_str = None
+    if req.lat is not None and req.lon is not None:
+        location_str = _reverse_geocode(req.lat, req.lon)
+
+    today = local_date(request)
+    tz_offset = utc_offset_minutes(request)
+
+    card_context_parts: list[str] = []
+    with SessionLocal() as db:
+        if req.section:
+            cards = (
+                db.query(models.Card)
+                .filter(
+                    models.Card.section == req.section,
+                    models.Card.archived == False,  # noqa: E712
+                    models.Card.completed == False,  # noqa: E712
+                )
+                .order_by(models.Card.created_at)
+                .limit(20)
+                .all()
+            )
+            if cards:
+                label_map = {
+                    "today": "Today", "week": "This Week",
+                    "month": "This Month", "later": "Stash",
+                }
+                label = label_map.get(req.section, req.section)
+                card_context_parts.append(f"### Tasks (work items, not calendar events) — {label}")
+                for c in cards:
+                    card_context_parts.append(
+                        f"- **{c.title}**" + (f": {c.description}" if c.description else "")
+                    )
+        elif req.tag_id:
+            tag = db.query(models.Tag).filter(models.Tag.id == req.tag_id).first()
+            tag_cards = (
+                db.query(models.Card)
+                .join(models.card_tags, models.Card.id == models.card_tags.c.card_id)
+                .filter(
+                    models.card_tags.c.tag_id == req.tag_id,
+                    models.Card.archived == False,  # noqa: E712
+                    models.Card.completed == False,  # noqa: E712
+                )
+                .limit(20)
+                .all()
+            )
+            if tag_cards:
+                label = tag.name if tag else f"tag #{req.tag_id}"
+                card_context_parts.append(f"### Tasks tagged '{label}' (work items, not calendar events)")
+                for c in tag_cards:
+                    card_context_parts.append(
+                        f"- **{c.title}**" + (f": {c.description}" if c.description else "")
+                    )
+        else:
+            # No section/tag filter — use semantic search to find relevant cards and GitHub items
+            try:
+                import embeddings as _embeddings
+
+                card_ids = _embeddings.search(db, req.prompt, top_k=8)
+                if card_ids:
+                    id_order = {cid: i for i, cid in enumerate(card_ids)}
+                    sem_cards = db.query(models.Card).filter(
+                        models.Card.archived == False,  # noqa: E712
+                        models.Card.id.in_(card_ids),
+                    ).all()
+                    sem_cards.sort(key=lambda c: id_order.get(c.id, 999))
+                    if sem_cards:
+                        card_context_parts.append("### Potentially relevant tasks (work items, not calendar events)")
+                        for c in sem_cards:
+                            card_context_parts.append(
+                                f"- **{c.title}**" + (f": {c.description}" if c.description else "")
+                            )
+
+                eng_ids = _embeddings.search_eng(db, req.prompt, top_k=5)
+                if eng_ids:
+                    id_order = {iid: i for i, iid in enumerate(eng_ids)}
+                    sem_eng = db.query(models.EngineeringItem).filter(
+                        models.EngineeringItem.id.in_(eng_ids),
+                    ).all()
+                    sem_eng.sort(key=lambda e: id_order.get(e.id, 999))
+                    if sem_eng:
+                        card_context_parts.append("### Potentially relevant GitHub items")
+                        for e in sem_eng:
+                            status = f" ({e.project_status})" if e.project_status else ""
+                            card_context_parts.append(f"- **{e.title}**{status} — {e.repo} [{e.state}]")
+            except Exception:
+                pass
+
+        # Calendar events (next 7 days)
+        cal_lines = _calendar_context_lines(db, today, tz_offset)
+        if cal_lines:
+            card_context_parts.extend(cal_lines)
+
+        background_parts: list[str] = []
+        today_str = today.isoformat()
+        _, health_ctx = build_health_context(db, today)
+        if health_ctx:
+            background_parts.append(health_ctx)
+        all_habits = db.query(models.Habit).filter(models.Habit.archived == False).all()  # noqa: E712
+        completed_habit_ids = {
+            c.habit_id for c in db.query(models.HabitCompletion)
+            .filter(models.HabitCompletion.date == today_str).all()
+        }
+        pending_habits = [h.name for h in all_habits if h.id not in completed_habit_ids]
+        done_habits    = [h.name for h in all_habits if h.id in completed_habit_ids]
+        if pending_habits:
+            background_parts.append("Habits pending today: " + ", ".join(pending_habits))
+        if done_habits:
+            background_parts.append("Habits completed today: " + ", ".join(done_habits))
+
+    user_msg_parts = [f"Request: {req.prompt}"]
+    if location_str:
+        user_msg_parts.append(f"User's location: {location_str}")
+    if background_parts:
+        user_msg_parts.append("\n## User context (today)\n" + "\n".join(background_parts))
+    if card_context_parts:
+        user_msg_parts.append("\n" + "\n".join(card_context_parts))
+    user_msg = "\n".join(user_msg_parts)
+
+    def generate():
+        search_ctx = _maybe_web_search(user_msg)
+        final_user = user_msg
+        if search_ctx:
+            yield f"data: {json.dumps({'status': 'searching'})}\n\n"
+            final_user += f"\n\n--- Web Search Results ---\n{search_ctx}"
+
+        try:
+            stream = llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": _ASSIST_SYSTEM},
+                    {"role": "user",   "content": final_user},
+                ],
+                stream=True,
+                temperature=0.3,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({'text': delta})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

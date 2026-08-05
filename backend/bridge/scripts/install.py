@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""
+qtask-bridge installer
+Installs the qtask-bridge CLI with your app URL and token pre-configured.
+
+Served via GET /api/bridge/install.py (see backend/bridge/render.py), which
+substitutes the two sentinel placeholders below with the real app URL and a
+pre-authed token before sending the response — plain str.replace(), not an
+f-string, so nothing in this file ever needs brace-escaping.
+"""
+import os, sys, stat, ssl, subprocess, textwrap, urllib.error, urllib.request, json
+
+APP_URL = "__QTASK_APP_URL__"
+TOKEN   = "__QTASK_TOKEN__"
+INSTALL_DIR = os.path.expanduser("~/.local/bin")
+CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
+BRIDGE_PATH = os.path.join(INSTALL_DIR, "qtask-bridge")
+
+# Indented consistently with the rest of this script (unlike a
+# column-0 literal) so textwrap.dedent() actually has something
+# uniform to strip — both here at generation time and again below
+# at install time, when it's re-dedented back down to column 0
+# before being written to claude.toml.
+TOML_TEMPLATE = textwrap.dedent("""\
+    # qtask-bridge configuration
+
+    # Friendly name shown in notifications and the job status panel.
+    # Defaults to your hostname if left empty.
+    name = ""
+
+    # Map repo slugs to local checkout paths. Either a plain path string,
+    # or a table with "path" and an optional "setup_cmd" — a one-time
+    # command run in a fresh worktree before Claude launches, for repos
+    # that need dependencies installed (npm install, pip install, etc).
+    #
+    # [repos]
+    # "owner/myapp" = "/Users/you/code/myapp"
+    #
+    # [repos."owner/api"]
+    # path = "/Users/you/code/api"
+    # setup_cmd = "npm install"
+
+    # Fallback setup_cmd used for any repo above that doesn't set its own.
+    #
+    # setup_cmd = "npm install"
+
+    # Alternatively, list root directories and the bridge will discover repos by
+    # scanning for matching .git remotes automatically. Auto-discovered repos
+    # don't get a setup_cmd — configure those explicitly under [repos] instead.
+    #
+    # repo_roots = ["~/code", "~/work"]
+""")
+
+# Files qtask-bridge writes into every worktree it creates -- BRIDGE_SPEC.md
+# (agent_core.py's SPEC_FILENAME), .claude/settings.local.json (agent_claude.py's
+# write_ide_settings), .env.qtask (agent_core.py's ENV_FILENAME). Kept in sync
+# by hand; there are only three.
+BRIDGE_IGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"]
+
+
+def setup_global_gitignore():
+    """Ignore qtask-bridge's worktree-local files globally, via git's
+    own core.excludesFile mechanism, instead of ever touching a target
+    repo's own .gitignore. Runs at install time (not per-job) since
+    it's a one-time, machine-wide setting -- re-running the installer
+    is idempotent and safe if it's already set up."""
+    result = subprocess.run(
+        ["git", "config", "--global", "--get", "core.excludesFile"],
+        capture_output=True, text=True,
+    )
+    excludes_path = result.stdout.strip()
+    if excludes_path:
+        excludes_path = os.path.expanduser(excludes_path)
+    else:
+        # Nothing configured yet -- use our own file rather than
+        # guessing at a platform default, and point git at it.
+        excludes_path = os.path.expanduser("~/.config/git/ignore_qtask_bridge")
+        os.makedirs(os.path.dirname(excludes_path), exist_ok=True)
+        subprocess.run(["git", "config", "--global", "core.excludesFile", excludes_path])
+        print(f"Set git core.excludesFile: {excludes_path}")
+
+    existing = ""
+    if os.path.exists(excludes_path):
+        with open(excludes_path) as f:
+            existing = f.read()
+    missing = [e for e in BRIDGE_IGNORE_ENTRIES if e not in existing]
+    if not missing:
+        print(f"Global gitignore already covers qtask-bridge files: {excludes_path}")
+        return
+    os.makedirs(os.path.dirname(excludes_path), exist_ok=True)
+    with open(excludes_path, "a") as f:
+        for entry in missing:
+            f.write("\n" + entry + "\n")
+    print(f"Updated global gitignore: {excludes_path}")
+
+
+def main():
+    # Download the bridge script from the app
+    print("Downloading qtask-bridge...")
+    req = urllib.request.Request(
+        f"{APP_URL}/api/bridge/agent.py",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+    try:
+        with urllib.request.urlopen(req) as r:
+            script_content = r.read()
+    except urllib.error.URLError as e:
+        if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+            cert_cmd = (
+                "/Applications/Python " + str(sys.version_info.major) + "."
+                + str(sys.version_info.minor) + "/Install Certificates.command"
+            )
+            print()
+            print("SSL certificate verification failed while downloading qtask-bridge.")
+            print("This is a known issue with the official python.org installer on macOS --")
+            print("it doesn't come with a CA certificate bundle until you run its one-time")
+            print("setup script. Fix it, then re-run this installer:")
+            print()
+            print("    open '" + cert_cmd + "'")
+            print()
+            sys.exit(1)
+        raise
+
+    os.makedirs(INSTALL_DIR, exist_ok=True)
+    os.makedirs(CONFIG_DIR,  exist_ok=True)
+
+    with open(BRIDGE_PATH, "wb") as f:
+        f.write(script_content)
+    os.chmod(BRIDGE_PATH, os.stat(BRIDGE_PATH).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    config = {"app_url": APP_URL, "token": TOKEN}
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+    # Write config.toml only if it doesn't exist — preserve user edits on reinstall
+    if not os.path.exists(TOML_FILE):
+        with open(TOML_FILE, "w") as f:
+            f.write(TOML_TEMPLATE)
+        print(f"Created:   {TOML_FILE}")
+    else:
+        print(f"Kept:      {TOML_FILE}  (already exists)")
+
+    print(f"Installed: {BRIDGE_PATH}")
+    print(f"Config:    {CONFIG_FILE}")
+
+    setup_global_gitignore()
+
+    # Add ~/.local/bin to PATH if needed
+    path_export = 'export PATH="$HOME/.local/bin:$PATH"'
+    if INSTALL_DIR not in os.environ.get("PATH", "").split(os.pathsep):
+        shell = os.environ.get("SHELL", "")
+        if "zsh" in shell:
+            rc = os.path.expanduser("~/.zshrc")
+        elif "bash" in shell:
+            rc = os.path.expanduser("~/.bash_profile")
+        else:
+            rc = None
+        if rc:
+            try:
+                existing = open(rc).read() if os.path.exists(rc) else ""
+                if ".local/bin" not in existing:
+                    with open(rc, "a") as rf:
+                        rf.write("\n# Added by qtask-bridge installer\n" + path_export + "\n")
+                    print("Added ~/.local/bin to PATH in " + rc)
+                    print("Run: source " + rc + "  (or open a new terminal)")
+            except OSError as e:
+                print("Could not update " + rc + ": " + str(e))
+                print("Add manually: " + path_export)
+        else:
+            print("\nAdd to your shell config: " + path_export)
+
+    print()
+    print("Usage (run from your repo directory):")
+    print("  qtask-bridge --card <card-id>   # run a specific card's job")
+    print("  qtask-bridge --watch            # poll for jobs automatically")
+    print("  qtask-bridge --tag <name>       # run every pending-spec card with this tag")
+    print("  qtask-bridge --list             # list qtask worktrees (read-only)")
+    print("  qtask-bridge --cleanup          # list/remove finished qtask worktrees")
+    print()
+    print("Tip: add this to your shell config for a one-keystroke jump to the most")
+    print("recent job worktree from any shell:")
+    print('  qcd() { cd "$(cat ~/.local/share/qtask-bridge/last-worktree)"; }')
+
+
+if __name__ == "__main__":
+    main()

@@ -118,7 +118,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -191,6 +191,8 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 7. When the session ends, the branch, machine, and full worktree path are shown in the Code tab and sent via Telegram (with a copy button in the UI); the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
 
 You never have to go hunting for where a job's code landed — see [Finding your worktree](#finding-your-worktree) below for every way it's surfaced.
+
+**If the agent process dies mid-session** (crash, network drop, laptop sleeps), the job would otherwise sit at "running" forever with no way to tell it apart from one that's actually still working. The bridge pings a heartbeat every 5 minutes while a session is active; if a job goes 20+ minutes without one, it's automatically marked **stalled** (shown in the Code tab, distinct from an outright error) and — if Telegram is configured — you get a notification. Re-running the card queues a fresh job.
 
 #### Install the bridge agent
 
@@ -609,13 +611,25 @@ todo/
     backup/              # Database backup feature package
       router.py          # POST /api/backup/run
       run.py             # SQLite online-backup-API copy to backups/todos_<date>.db
+    assist/              # AI assistant feature package
+      router.py          # Card-thread CRUD + route registration
+      generate.py        # LLM system prompts, streaming chat/spec-generation logic
+      context.py         # Calendar/GitHub context builders, web search
+    bridge/              # Claude Code bridge feature package
+      router.py          # Job queue endpoints, install/agent script serving, heartbeat, check-stale
+      jobs.py            # Prompt building, job queueing/serialization
+      render.py          # Renders served CLI scripts from bridge/scripts/ (placeholder substitution + concatenation)
+      stale.py           # Detects bridge jobs with no heartbeat and marks them "stalled"
+      scripts/           # The served CLI as real .py files, not string literals
+        install.py        # curl-able installer (GET /api/bridge/install.py)
+        agent_core.py      # Agent-agnostic job polling, git worktree lifecycle, CLI commands
+        agent_claude.py    # Claude Code adapter (swap this to try a different coding agent)
     routers/             # One file per feature area
       auth.py            # Login/logout, session management
       cards.py           # Tasks + reference cards CRUD, AI parse, iOS Shortcut
       habits.py          # Habits CRUD, completion toggle
       calendar.py        # iCal feed sync, export
       withings.py        # Withings OAuth, sync, health data
-      bridge.py          # Claude Code bridge: job queue, agent script install endpoint
       discovery.py       # Public iCal discovery feeds + LLM ranking
       food.py            # Food/drink logging + nutritional assessment
       workouts.py        # Workout log CRUD + batch chart endpoint
@@ -624,9 +638,8 @@ todo/
       tags.py            # Tag CRUD
       engineering.py     # GitHub engineering feed
       push.py            # Push subscription management
-      assist.py          # AI assist endpoint
     model_plugins/       # Per-model prompt tuning (base + llama3.2, llama3.1-8b, phi4-mini, llama3.3-70b)
-    alembic/             # Database migrations (00001–00026)
+    alembic/             # Database migrations (00001–00029)
     tests/
       test_calendar.py       # Calendar feed CRUD, timezone, iCal export/import
       test_briefing.py       # Briefing SSE unit tests
@@ -641,7 +654,10 @@ todo/
       test_food.py           # Food entry CRUD, date filtering, quality trend
       test_workouts.py       # Workout log CRUD, timezone handling, chart endpoint
       test_telegram.py       # Telegram config, test, and daily-briefing endpoints
-      test_bridge.py         # Claude Code bridge job queue and agent endpoints
+      test_assist_thread.py  # AI assist chat/thread endpoints, one-shot + global assist
+      test_bridge_jobs.py    # Claude Code bridge job queue endpoints
+      test_bridge_scripts.py # Served install.py/agent.py content + rendering
+      test_bridge_stale.py   # Stale bridge job detection, heartbeat, notifications
       test_backup.py         # Database backup: run_backup + POST /api/backup/run
       test_parse.py          # Quick Add parse integration tests (requires Ollama)
       benchmark.py           # Parse quality benchmark across Ollama models

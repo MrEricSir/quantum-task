@@ -135,20 +135,20 @@ def _add_thread_messages(card_id, messages):
 class TestGenerateSpec:
 
     def test_404_when_card_not_found(self, client):
-        with patch("routers.assist.llm_client", return_value=_mock_llm()):
+        with patch("assist.generate.llm_client", return_value=_mock_llm()):
             res = client.post("/api/cards/9999/spec/generate")
         assert res.status_code == 404
 
     def test_returns_spec_text(self, client):
         card_id = _make_card("Auth feature")
-        with patch("routers.assist.llm_client", return_value=_mock_llm()):
+        with patch("assist.generate.llm_client", return_value=_mock_llm()):
             res = client.post(f"/api/cards/{card_id}/spec/generate")
         assert res.status_code == 200
         assert res.json()["spec"] == FAKE_SPEC
 
     def test_persists_spec_to_card(self, client):
         card_id = _make_card("My feature")
-        with patch("routers.assist.llm_client", return_value=_mock_llm()):
+        with patch("assist.generate.llm_client", return_value=_mock_llm()):
             client.post(f"/api/cards/{card_id}/spec/generate")
         with TestSession() as db:
             card = db.query(models.Card).filter_by(id=card_id).first()
@@ -157,7 +157,7 @@ class TestGenerateSpec:
     def test_user_message_includes_task_title(self, client):
         card_id = _make_card("Unique Feature Name XYZ")
         mock_client = _mock_llm()
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         call_kwargs = mock_client.chat.completions.create.call_args
@@ -168,7 +168,7 @@ class TestGenerateSpec:
     def test_system_prompt_uses_spec_system(self, client):
         card_id = _make_card("Feature")
         mock_client = _mock_llm()
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         messages = mock_client.chat.completions.create.call_args[1]["messages"]
@@ -179,7 +179,7 @@ class TestGenerateSpec:
     def test_user_message_includes_developer_notes(self, client):
         card_id = _make_card("Feature", description="Use JWT, not sessions")
         mock_client = _mock_llm()
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         messages = mock_client.chat.completions.create.call_args[1]["messages"]
@@ -192,7 +192,7 @@ class TestGenerateSpec:
         _make_eng_item(ext_id, body="When the user clicks login, nothing happens.")
 
         mock_client = _mock_llm()
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         messages = mock_client.chat.completions.create.call_args[1]["messages"]
@@ -207,7 +207,7 @@ class TestGenerateSpec:
         _add_comment(item_id, author="bob", body="We should also handle the edge case with null tokens.")
 
         mock_client = _mock_llm()
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         messages = mock_client.chat.completions.create.call_args[1]["messages"]
@@ -223,7 +223,7 @@ class TestGenerateSpec:
         ])
 
         mock_client = _mock_llm()
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         messages = mock_client.chat.completions.create.call_args[1]["messages"]
@@ -234,7 +234,7 @@ class TestGenerateSpec:
         card_id = _make_card("Feature")
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = RuntimeError("LLM unavailable")
-        with patch("routers.assist.llm_client", return_value=mock_client):
+        with patch("assist.generate.llm_client", return_value=mock_client):
             res = client.post(f"/api/cards/{card_id}/spec/generate")
         assert res.status_code == 502
         assert "LLM" in res.json()["detail"]
@@ -242,7 +242,7 @@ class TestGenerateSpec:
     def test_card_without_github_link_works(self, client):
         """Cards with no external_id should still generate a spec from title+notes alone."""
         card_id = _make_card("Standalone feature", description="Build a dark mode toggle")
-        with patch("routers.assist.llm_client", return_value=_mock_llm()):
+        with patch("assist.generate.llm_client", return_value=_mock_llm()):
             res = client.post(f"/api/cards/{card_id}/spec/generate")
         assert res.status_code == 200
         assert res.json()["spec"] == FAKE_SPEC
@@ -254,7 +254,7 @@ class TestGenerateSpec:
             card.spec = "old spec"
             db.commit()
 
-        with patch("routers.assist.llm_client", return_value=_mock_llm("new spec content")):
+        with patch("assist.generate.llm_client", return_value=_mock_llm("new spec content")):
             client.post(f"/api/cards/{card_id}/spec/generate")
 
         with TestSession() as db:

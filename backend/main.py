@@ -27,7 +27,9 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, assist, mood, bridge, workouts
+from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, mood, workouts
+import assist as assist_pkg
+import bridge as bridge_pkg
 import briefing as briefing_pkg
 import telegram as telegram_pkg
 import backup as backup_pkg
@@ -276,6 +278,32 @@ async def _backup_scheduler() -> None:
         await asyncio.sleep(86400)
 
 
+def _check_bridge_stale_jobs() -> None:
+    """Mirrors bridge.router's POST /api/bridge/jobs/check-stale -- same
+    idempotent check, called here too so local dev (no Cloud Scheduler)
+    still gets the transition without waiting for a manual request."""
+    try:
+        from bridge.stale import check_stale_bridge_jobs
+        from settings import Settings
+        with SessionLocal() as db:
+            stalled = check_stale_bridge_jobs(db)
+            if stalled:
+                s = Settings(db)
+                if s.telegram_token and s.telegram_chat_id:
+                    from telegram.scheduler import notify_stalled_jobs
+                    notify_stalled_jobs(db, s.telegram_token, s.telegram_chat_id, stalled)
+    except Exception as e:
+        print(f"[bridge] stale-check scheduler error: {e}")
+
+
+async def _bridge_stale_scheduler() -> None:
+    """Check for stuck bridge jobs once an hour, matching the Cloud
+    Scheduler cadence (see dev.sh's gcp_setup_scheduler())."""
+    while True:
+        await asyncio.get_event_loop().run_in_executor(None, _check_bridge_stale_jobs)
+        await asyncio.sleep(3600)
+
+
 def _expire_stale_experiments() -> None:
     """Archive habits and dismiss active experiments from previous weeks."""
     try:
@@ -312,12 +340,14 @@ async def lifespan(app):
     etask = asyncio.create_task(_experiment_cleanup_scheduler())
     btask = asyncio.create_task(_embedding_backfill())
     baktask = asyncio.create_task(_backup_scheduler())
+    bstask = asyncio.create_task(_bridge_stale_scheduler())
     yield
     task.cancel()
     wtask.cancel()
     etask.cancel()
     btask.cancel()
     baktask.cancel()
+    bstask.cancel()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -347,9 +377,9 @@ app.include_router(correlations.router)
 app.include_router(food.router)
 app.include_router(discovery.router)
 app.include_router(telegram_pkg.router)
-app.include_router(assist.router)
+app.include_router(assist_pkg.router)
 app.include_router(mood.router)
-app.include_router(bridge.router)
+app.include_router(bridge_pkg.router)
 app.include_router(workouts.router)
 app.include_router(backup_pkg.router)
 

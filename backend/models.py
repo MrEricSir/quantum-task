@@ -370,7 +370,7 @@ class BridgeJob(Base):
 
     id              = Column(Integer, primary_key=True, index=True)
     card_id         = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
-    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error
+    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error|stalled
     target_repo     = Column(String, nullable=True)   # "owner/repo" — null means any bridge can claim
     branch_name     = Column(String, nullable=True)   # local branch created by bridge, e.g. qtask/42-fix-login
     agent_name      = Column(String, nullable=True)   # hostname of the machine that ran the job

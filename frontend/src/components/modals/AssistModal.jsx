@@ -680,6 +680,7 @@ export default function AssistModal({
                       {bridgeJob.status === 'running'  && 'Claude Code running…'}
                       {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
                       {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
+                      {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
                     </span>
                     {bridgeJob.branch_name && (
                       <span className="cdp-bridge-branch">
