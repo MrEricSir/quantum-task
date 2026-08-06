@@ -1007,7 +1007,7 @@ class TestRunProcfile:
         assert marker.read_text() == "injected-value"
 
 
-class TestResolveRunTarget:
+class TestResolveWorktreeTarget:
     """Real scratch-repo worktrees, matching TestAgentScriptFullFlow's
     approach below, but with WORKTREES_ROOT/LAST_WORKTREE_FILE monkeypatched
     into tmp_path -- fully self-contained, no manual cleanup and no risk of
@@ -1035,7 +1035,7 @@ class TestResolveRunTarget:
         cwd_before = os.getcwd()
         os.chdir(wt)
         try:
-            resolved = agent_core._resolve_run_target(cfg, None)
+            resolved = agent_core._resolve_worktree_target(cfg, None)
         finally:
             os.chdir(cwd_before)
         assert resolved is not None and resolved[3] == branch
@@ -1048,7 +1048,7 @@ class TestResolveRunTarget:
         cwd_before = os.getcwd()
         os.chdir(sub)
         try:
-            resolved = agent_core._resolve_run_target(cfg, None)
+            resolved = agent_core._resolve_worktree_target(cfg, None)
         finally:
             os.chdir(cwd_before)
         assert resolved is not None and resolved[3] == branch
@@ -1061,7 +1061,7 @@ class TestResolveRunTarget:
         cwd_before = os.getcwd()
         os.chdir(str(outside))
         try:
-            resolved = agent_core._resolve_run_target(cfg, None)
+            resolved = agent_core._resolve_worktree_target(cfg, None)
         finally:
             os.chdir(cwd_before)
         assert resolved is not None and resolved[3] == branch
@@ -1069,7 +1069,7 @@ class TestResolveRunTarget:
     def test_unique_fragment_match(self, scratch_repo):
         cfg = self._cfg(scratch_repo)
         wt, branch = self._create(cfg, scratch_repo, 4, "Unique Fragment Feature")
-        resolved = agent_core._resolve_run_target(cfg, "unique-fragment")
+        resolved = agent_core._resolve_worktree_target(cfg, "unique-fragment")
         assert resolved is not None and resolved[3] == branch
 
     def test_ambiguous_fragment_prompts_a_single_select_picker(self, scratch_repo, monkeypatch):
@@ -1077,14 +1077,14 @@ class TestResolveRunTarget:
         wt1, branch1 = self._create(cfg, scratch_repo, 5, "Shared Prefix One")
         wt2, branch2 = self._create(cfg, scratch_repo, 6, "Shared Prefix Two")
         monkeypatch.setattr("builtins.input", lambda *_: "2")
-        resolved = agent_core._resolve_run_target(cfg, "shared-prefix")
+        resolved = agent_core._resolve_worktree_target(cfg, "shared-prefix")
         assert resolved is not None and resolved[3] == branch2
 
     def test_no_match_returns_none_and_lists_available_branches(self, scratch_repo, capsys):
         cfg = self._cfg(scratch_repo)
         wt, branch = self._create(cfg, scratch_repo, 7, "Something Else")
         capsys.readouterr()
-        resolved = agent_core._resolve_run_target(cfg, "totally-unrelated-xyz")
+        resolved = agent_core._resolve_worktree_target(cfg, "totally-unrelated-xyz")
         assert resolved is None
         out = capsys.readouterr().out
         assert "No qtask worktree matches" in out
@@ -1093,7 +1093,7 @@ class TestResolveRunTarget:
     def test_no_worktrees_at_all_returns_none(self, scratch_repo, capsys):
         cfg = self._cfg(scratch_repo)
         capsys.readouterr()
-        resolved = agent_core._resolve_run_target(cfg, None)
+        resolved = agent_core._resolve_worktree_target(cfg, None)
         assert resolved is None
         assert "No qtask worktrees found" in capsys.readouterr().out
 
@@ -1170,6 +1170,154 @@ class TestCmdRunDispatch:
 
         agent_core.cmd_run(cfg, branch)
         assert captured["extra_env"]["QTASK_JOB_ID"] == "4"
+
+
+# ── Manual self-review (`qtask-bridge --review`) ────────────────────────────────
+
+class TestExtractCardIdFromBranch:
+
+    def test_matches_branch_with_slug(self):
+        assert agent_core._extract_card_id_from_branch("qtask/84-fix-ranking") == 84
+
+    def test_matches_branch_without_slug(self):
+        assert agent_core._extract_card_id_from_branch("qtask/84") == 84
+
+    def test_returns_none_for_non_qtask_branch(self):
+        assert agent_core._extract_card_id_from_branch("main") is None
+        assert agent_core._extract_card_id_from_branch("feature/something") is None
+
+    def test_returns_none_for_malformed_qtask_branch(self):
+        assert agent_core._extract_card_id_from_branch("qtask/not-a-number") is None
+
+
+class TestFetchJobContextForBranch:
+
+    def _cfg(self):
+        return {"app_url": "http://fake", "token": "x"}
+
+    def test_returns_spec_and_result_on_branch_match(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": "qtask/84-fix", "spec_snapshot": "## Spec", "result": "tests passed"}
+        })
+        spec, result = agent_core._fetch_job_context_for_branch(self._cfg(), "qtask/84-fix")
+        assert spec == "## Spec"
+        assert result == "tests passed"
+
+    def test_returns_none_none_on_branch_mismatch(self, monkeypatch):
+        """The latest job for this card_id is for a DIFFERENT branch (e.g. a
+        retry after --cleanup) -- must not attach the wrong job's context."""
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": "qtask/84-old-attempt", "spec_snapshot": "## Old", "result": None}
+        })
+        spec, result = agent_core._fetch_job_context_for_branch(self._cfg(), "qtask/84-fix")
+        assert (spec, result) == (None, None)
+
+    def test_returns_none_none_when_no_job_for_card(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+        spec, result = agent_core._fetch_job_context_for_branch(self._cfg(), "qtask/84-fix")
+        assert (spec, result) == (None, None)
+
+    def test_returns_none_none_for_non_qtask_branch(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: calls.append(1) or {})
+        spec, result = agent_core._fetch_job_context_for_branch(self._cfg(), "main")
+        assert (spec, result) == (None, None)
+        assert calls == [], "should not call the API at all for a non-qtask branch"
+
+    def test_returns_none_none_when_api_raises(self, monkeypatch):
+        def boom(cfg, method, path, body=None):
+            raise TimeoutError("network down")
+        monkeypatch.setattr(agent_core, "api", boom)
+        spec, result = agent_core._fetch_job_context_for_branch(self._cfg(), "qtask/84-fix")
+        assert (spec, result) == (None, None)
+
+
+class TestMakeReviewPrompt:
+
+    def test_mentions_review_dimensions(self):
+        prompt = agent_core._make_review_prompt(None, None)
+        for phrase in ("assumptions", "duplicate", "anti-pattern", "test coverage"):
+            assert phrase in prompt.lower()
+
+    def test_instructs_read_only(self):
+        prompt = agent_core._make_review_prompt(None, None)
+        assert "do not modify" in prompt.lower()
+
+    def test_includes_spec_section_when_given(self):
+        prompt = agent_core._make_review_prompt("## Spec\nfix the bug", None)
+        assert "## Original Task Spec" in prompt
+        assert "fix the bug" in prompt
+
+    def test_includes_verification_section_when_given(self):
+        prompt = agent_core._make_review_prompt(None, "**passed**")
+        assert "## Automated Verification Results" in prompt
+        assert "**passed**" in prompt
+
+    def test_omits_sections_when_not_given(self):
+        prompt = agent_core._make_review_prompt(None, None)
+        assert "## Original Task Spec" not in prompt
+        assert "## Automated Verification Results" not in prompt
+
+
+class TestCmdReview:
+    """cmd_review resolution + streaming, with streaming_command monkeypatched
+    to a real (trivial) subprocess so output actually has to flow through the
+    Popen/line-read loop, not just be captured."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+
+    def _create(self, cfg, scratch_repo, card_id, title):
+        job = {"id": card_id, "card_id": card_id, "card_title": title}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        return wt, branch
+
+    def test_streams_review_output_and_reports_context(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 5, "Review Case")
+
+        captured_prompt = {}
+
+        def fake_streaming_command(prompt):
+            captured_prompt["value"] = prompt
+            return ["python3", "-c", "print('line one'); print('line two')"]
+        monkeypatch.setattr(agent_core, "streaming_command", fake_streaming_command, raising=False)
+
+        agent_core.cmd_review(cfg, branch)
+
+        out = capsys.readouterr().out
+        assert "line one" in out and "line two" in out
+        assert "Review finished (exit 0)" in out
+        assert "do not modify" in captured_prompt["value"].lower()
+
+    def test_agent_not_found_reports_hint_without_crashing(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+        wt, branch = self._create(cfg, scratch_repo, 6, "Missing Agent Case")
+
+        monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["nonexistent-binary-xyz"], raising=False)
+        monkeypatch.setattr(agent_core, "AGENT_LABEL", "Claude Code", raising=False)
+        monkeypatch.setattr(agent_core, "AGENT_NOT_FOUND_HINT", "install it", raising=False)
+
+        agent_core.cmd_review(cfg, branch)  # must not raise
+
+        err = capsys.readouterr().err
+        assert "not found" in err
+
+    def test_no_matching_worktree_prints_error_without_crashing(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        capsys.readouterr()
+        agent_core.cmd_review(cfg, "nonexistent-branch-xyz")
+        assert "No qtask worktrees found" in capsys.readouterr().out
 
 
 # ── Regression: run_job() through the actual rendered/concatenated text ───────
@@ -1707,6 +1855,72 @@ class TestRealInstalledBinary:
                 f"--run exited {run_result.returncode}\nstdout:\n{run_result.stdout}\nstderr:\n{run_result.stderr}"
             assert marker.exists(), "Procfile process never actually ran"
             assert "writer" in run_result.stdout
+
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
+                       cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch], cwd=scratch_repo, capture_output=True)
+
+    def test_review_flow_runs_as_a_genuine_installed_binary(self, scratch_repo, tmp_path):
+        """Same rigor applied to --review: a new argparse branch is exactly
+        the kind of entrypoint wiring that needs a real subprocess run to
+        catch a regression, not just a direct-import unit test."""
+        home_dir = tmp_path / "home"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (home_dir / ".config" / "qtask-bridge").mkdir(parents=True)
+
+        # Unlike the silent --card stub, this one echoes something
+        # recognizable so the test can confirm --review's streamed output
+        # actually reached the terminal, not just that the process exited 0.
+        claude_stub = bin_dir / "claude"
+        claude_stub.write_text('#!/bin/sh\necho "REVIEW: looks solid, no issues found"\nexit 0\n')
+        claude_stub.chmod(0o755)
+
+        script_path = bin_dir / "qtask-bridge"
+        script_path.write_text(bridge_render.render_agent_script())
+        script_path.chmod(0o755)
+
+        job = {
+            "id": 3, "card_id": 86, "status": "pending", "target_repo": None,
+            "branch_name": None, "agent_name": None, "worktree_path": None,
+            "result": None, "output": None, "spec_snapshot": "## Fix the thing",
+            "created_at": "2026-01-01T00:00:00", "updated_at": None,
+            "card_title": "Add a self-review feature",
+            "prompt": "Implement the fix described in BRIDGE_SPEC.md.",
+            "spec": "## Fix the thing",
+        }
+
+        env = {"HOME": str(home_dir), "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+
+        with _FakeBridgeBackend(job) as backend:
+            (home_dir / ".config" / "qtask-bridge" / "config.json").write_text(
+                json.dumps({"app_url": backend.url, "token": "test-token"})
+            )
+            (home_dir / ".config" / "qtask-bridge" / "claude.toml").write_text(
+                f'[repos]\n"scratch/repo" = "{scratch_repo}"\n'
+            )
+
+            result = subprocess.run(
+                [str(script_path), "--card", "86"],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"setup --card run failed: {result.stderr}"
+            worktree_path = backend.calls_to("/start")[0][2]["worktree_path"]
+            branch = backend.calls_to("/start")[0][2]["branch"]
+
+            review_result = subprocess.run(
+                [str(script_path), "--review", branch],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            assert "Traceback" not in review_result.stderr, review_result.stderr
+            assert review_result.returncode == 0, \
+                f"--review exited {review_result.returncode}\n" \
+                f"stdout:\n{review_result.stdout}\nstderr:\n{review_result.stderr}"
+            assert "REVIEW: looks solid, no issues found" in review_result.stdout
+            assert "Review finished (exit 0)" in review_result.stdout
 
         subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
                        cwd=scratch_repo, capture_output=True)

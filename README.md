@@ -120,7 +120,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance`), manual verification (`--run`, with built-in Procfile support)
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -241,6 +241,7 @@ qtask-bridge --tag work       # queue + run every "work"-tagged card with a spec
 qtask-bridge --list           # list qtask worktrees across configured repos (read-only)
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
+qtask-bridge --review [branch] # read-only lead-engineer-style review of a worktree's changes
 ```
 
 The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in an isolated git worktree on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The worktree is left in place locally for your review — the bridge never pushes.
@@ -325,6 +326,19 @@ run_cmd = "npm run dev"
 Multiple processes from a Procfile print with a colorized `[name]` prefix so their output stays distinguishable, and stop together — on Ctrl-C, or when any one of them exits on its own. The reserved port range and database name from `.env.qtask` (see above) are loaded automatically into whatever runs, so there's no manual `source .env.qtask` step.
 
 qtask-bridge is a single, dependency-free file, so `--run` doesn't shell out to an external process manager (Foreman, Overmind, Honcho) — the Procfile support above is built in.
+
+#### Reviewing a change
+
+For a code-quality pass — assumptions, duplication, anti-patterns, test coverage, the kind of thing a careful reviewer checks before approving a PR — run `--review` on the same resolved worktree:
+
+```bash
+qtask-bridge --review             # cwd if you're already in a qtask worktree, else the last one used
+qtask-bridge --review 84-ranking  # branch fragment, same resolution as --run
+```
+
+This is the deliberately scoped-down first step of the self-review pass: manual (you run it, it doesn't run itself), and read-only (it reports, it never fixes — the same posture `verify_acceptance` already has, for the same reason). It's a different question from the checks above: not "does it work" (`test_cmd`) or "does it meet the spec's acceptance criteria" (`verify_acceptance`), but "is this good code."
+
+`BRIDGE_SPEC.md` is deleted from the worktree once a job finishes, but the original spec text isn't lost — it's recovered from the server (matched back to this worktree by branch name) and given to the review as context, along with any `test_cmd`/`verify_acceptance` results from the original run, so the review can focus on real problems instead of re-deriving what's already known. If no matching job record is found, the review still runs — just without that context.
 
 #### Code tab actions
 

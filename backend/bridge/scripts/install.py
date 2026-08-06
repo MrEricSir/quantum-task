@@ -206,6 +206,7 @@ def main():
     print("  qtask-bridge --list             # list qtask worktrees (read-only)")
     print("  qtask-bridge --cleanup          # list/remove finished qtask worktrees")
     print("  qtask-bridge --run [branch]     # run the app in a qtask worktree (cwd, last one, or a branch fragment)")
+    print("  qtask-bridge --review [branch]  # read-only lead-engineer-style review of a worktree's changes")
     print()
     print("Tip: add this to your shell config for a one-keystroke jump to the most")
     print("recent job worktree from any shell:")

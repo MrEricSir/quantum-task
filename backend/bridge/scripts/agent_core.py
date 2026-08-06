@@ -12,6 +12,8 @@ Usage:
   qtask-bridge --run [NAME]  Run the app in a resolved qtask worktree (cwd, last one,
                               or a branch fragment) via its Procfile.dev/Procfile or
                               configured run_cmd
+  qtask-bridge --review [NAME]  Read-only lead-engineer-style review of a resolved
+                              qtask worktree's changes
 
 Config files in ~/.config/qtask-bridge/:
   config.json  — app URL and auth token (written by installer)
@@ -1066,7 +1068,7 @@ def _prompt_pick_one(found, prompt_text="Multiple matches — pick one (number):
     return found[index - 1]
 
 
-def _resolve_run_target(cfg, target):
+def _resolve_worktree_target(cfg, target):
     """Resolve which qtask worktree `--run` should act on. Reuses
     _scan_qtask_worktrees for every step (not just fragment matching) so
     --run can never disagree with --list/--cleanup about what counts as
@@ -1136,7 +1138,7 @@ def cmd_run(cfg, target):
     vars are auto-injected into whatever runs, same idea as
     foreman/honcho auto-loading .env -- no manual `source .env.qtask`
     step needed."""
-    resolved = _resolve_run_target(cfg, target)
+    resolved = _resolve_worktree_target(cfg, target)
     if resolved is None:
         return
     repo_name, work_dir, worktree_path, branch = resolved
@@ -1161,6 +1163,110 @@ def cmd_run(cfg, target):
           "or as a top-level fallback.")
 
 
+_BRANCH_CARD_ID_RE = re.compile(r"^qtask/(\d+)")
+
+
+def _extract_card_id_from_branch(branch):
+    """Return the card id encoded in a qtask branch name ('qtask/84-foo' ->
+    84), or None if the branch doesn't look like one _create_worktree made."""
+    m = _BRANCH_CARD_ID_RE.match(branch)
+    return int(m.group(1)) if m else None
+
+
+def _fetch_job_context_for_branch(cfg, branch):
+    """Best-effort recovery of the job that produced this worktree, for
+    --review: BRIDGE_SPEC.md is deleted from the worktree once the job ends
+    (see run_job's finally block), but the spec is still on the server
+    forever as BridgeJob.spec_snapshot, and the branch name itself encodes
+    the card id -- so it can be recovered via the *existing*
+    /api/bridge/jobs/card/{id}/latest endpoint, no new backend route needed.
+
+    Returns (spec_snapshot, result) or (None, None). This is enrichment, not
+    a requirement: a network failure, missing job, or a branch_name mismatch
+    (e.g. a stale retry for the same card) must never block the review from
+    running -- so every failure mode here degrades to (None, None) rather
+    than raising. api() itself only catches HTTPError, not connection
+    failures/timeouts, hence the broad except.
+    """
+    card_id = _extract_card_id_from_branch(branch)
+    if card_id is None:
+        return None, None
+    try:
+        resp = api(cfg, "GET", f"/api/bridge/jobs/card/{card_id}/latest")
+        job = resp.get("job") if resp else None
+        if not job or job.get("branch_name") != branch:
+            return None, None
+        return job.get("spec_snapshot"), job.get("result")
+    except Exception:
+        return None, None
+
+
+def _make_review_prompt(spec_text, verification_text):
+    """Build a read-only, lead-engineer-style review prompt: assumptions,
+    code quality, duplication, anti-patterns, test coverage -- a different
+    question from test_cmd ("does it work") or verify_acceptance ("does it
+    meet the spec's acceptance criteria"), both of which already exist.
+    Explicitly forbidden from modifying anything, same posture as
+    _make_acceptance_check_prompt and for the same reason: keeps "review"
+    cleanly separated from "fix" (fixing automatically is still deferred)."""
+    parts = [
+        "Review your changes in this worktree (git diff against the primary branch) "
+        "the way a careful lead engineer would before approving a pull request. Look for:",
+        "  - Incorrect or unstated assumptions the implementation makes",
+        "  - Code quality issues",
+        "  - Duplicate code or logic that should be consolidated",
+        "  - Anti-patterns",
+        "  - Missing or inadequate test coverage",
+        "  - Anything else worth flagging before this gets merged",
+        "",
+        "Do not modify, create, or delete any files -- this is a read-only review, not "
+        "an implementation task. For each issue, give a short description and the "
+        "file/location. If the code genuinely looks solid, say so plainly rather than "
+        "manufacturing nitpicks.",
+    ]
+    if spec_text:
+        parts += ["", "## Original Task Spec", spec_text]
+    if verification_text:
+        parts += ["", "## Automated Verification Results", verification_text]
+    return "\n".join(parts)
+
+
+def cmd_review(cfg, target):
+    """Read-only lead-engineer-style review of a resolved qtask worktree's
+    changes, run on demand from the command line -- the deliberately
+    scoped-down first step of the self-review pass: manual, not
+    server-triggered, and reports only, never fixes. Streams output live
+    (Popen + line-by-line print, like _run_streaming) rather than the
+    blocking capture_output=True pattern _check_acceptance_criteria uses --
+    that pattern is fine for a background job nobody's watching live, but a
+    human sitting at this terminal waiting on the result needs to see it
+    arrive, not stare at a silent pause for 30-60+ seconds."""
+    resolved = _resolve_worktree_target(cfg, target)
+    if resolved is None:
+        return
+    repo_name, work_dir, worktree_path, branch = resolved
+    print(f"[bridge] [{repo_name}] {branch}\n[bridge] {worktree_path}\n")
+
+    spec_text, verification_text = _fetch_job_context_for_branch(cfg, branch)
+    prompt = _make_review_prompt(spec_text, verification_text)
+
+    print("[bridge] Reviewing (read-only)...\n")
+    try:
+        proc = subprocess.Popen(
+            streaming_command(prompt), cwd=worktree_path,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+    except FileNotFoundError:
+        print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
+        print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
+        return
+
+    for line in proc.stdout:
+        print(line.rstrip("\n"))
+    proc.wait()
+    print(f"\n[bridge] Review finished (exit {proc.returncode}).")
+
+
 def main():
     parser = argparse.ArgumentParser(description="qtask-bridge: coding-agent bridge")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -1178,6 +1284,9 @@ def main():
     group.add_argument("--run", nargs="?", const="", default=None, metavar="[BRANCH]",
                        help="Run the app in a resolved qtask worktree (cwd, last one, or a "
                             "branch fragment) via its Procfile.dev/Procfile or configured run_cmd")
+    group.add_argument("--review", nargs="?", const="", default=None, metavar="[BRANCH]",
+                       help="Read-only lead-engineer-style review of a qtask worktree's "
+                            "changes (cwd, last one, or a branch fragment)")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -1191,6 +1300,8 @@ def main():
         cmd_list(cfg)
     elif args.run is not None:
         cmd_run(cfg, args.run or None)
+    elif args.review is not None:
+        cmd_review(cfg, args.review or None)
     else:
         cmd_card(cfg, args.card)
 
