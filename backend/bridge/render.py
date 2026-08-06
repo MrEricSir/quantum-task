@@ -30,8 +30,19 @@ def render_agent_script() -> str:
     # +x'd copy at ~/.local/bin/qtask-bridge has no valid interpreter
     # directive to execute with -- the shell falls back to interpreting the
     # whole file as its own script instead, producing garbage like
-    # "import: command not found". Order otherwise doesn't matter (see
-    # agent_core.py's module docstring), so this is the only constraint.
+    # "import: command not found".
+    #
+    # Neither source file carries its own `if __name__ == "__main__":
+    # main()` guard -- that entrypoint call is appended here, ONCE, after
+    # both are joined. It must come after BOTH files' content: it fires
+    # immediately at module-exec time (unlike ordinary function calls,
+    # which only resolve names when actually invoked), so if it lived
+    # inside agent_core.py's own source -- which is textually first, for
+    # the shebang reason above -- main() would run before agent_claude.py's
+    # definitions two lines below it had ever executed. That exact mistake
+    # shipped a real `NameError: name 'write_ide_settings' is not defined`
+    # to a live machine once already; don't reintroduce it by moving the
+    # guard back into either individual file.
     core = (_SCRIPTS_DIR / "agent_core.py").read_text()
     adapter = (_SCRIPTS_DIR / "agent_claude.py").read_text()
-    return core + "\n\n" + adapter
+    return core + "\n\n" + adapter + "\n\nif __name__ == \"__main__\":\n    main()\n"

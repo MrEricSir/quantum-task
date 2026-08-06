@@ -30,10 +30,20 @@ There's deliberately no `import` between this file and its adapter: the served
 artifact must stay a single flat file the installer copies verbatim to
 ~/.local/bin/qtask-bridge, with no companion files on the target machine. At
 serve time (see backend/bridge/render.py) the adapter and core sources are
-textually concatenated into one module — definition order doesn't matter
-since these names are only *referenced* inside function bodies below, never
-at definition time. To try a different coding agent, write a new adapter file
-implementing the same five names and point render.py at it instead.
+textually concatenated into one module — THIS file goes first (its shebang
+must be the served script's literal first line, or the installed, chmod +x'd
+binary has no interpreter directive to execute with). Definition order
+otherwise doesn't matter for these five names, since they're only
+*referenced* inside function bodies below, never at definition time --
+EXCEPT for the `if __name__ == "__main__": main()` entrypoint trigger, which
+executes immediately at module-exec time. That guard is deliberately NOT
+included in this file (see the comment at the bottom, after main()) --
+render.py appends it once, after both files are concatenated, so it can
+never fire before the adapter's definitions have actually run. Getting this
+wrong once already shipped a real `NameError: name 'write_ide_settings' is
+not defined` to a live machine. To try a different coding agent, write a new
+adapter file implementing the same five names and point render.py at it
+instead.
 """
 import argparse
 import json
@@ -64,6 +74,7 @@ SPEC_FILENAME = "BRIDGE_SPEC.md"
 ENV_FILENAME = ".env.qtask"
 WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
 LAST_WORKTREE_FILE = os.path.expanduser("~/.local/share/qtask-bridge/last-worktree")
+PUSH_DISABLED_SENTINEL = "no_push"  # remote.origin.pushurl value while a job holds the base repo
 
 
 def load_config():
@@ -292,7 +303,18 @@ def _create_worktree(cfg, job, work_dir):
                        cwd=work_dir, capture_output=True, text=True)
     had_push_url = r.returncode == 0
     orig_push_url = r.stdout.strip() if had_push_url else None
-    subprocess.run(["git", "config", "remote.origin.pushurl", "no_push"], cwd=work_dir)
+    if orig_push_url == PUSH_DISABLED_SENTINEL:
+        # A previous run left this stuck -- e.g. it crashed somewhere
+        # between here and _git_teardown running, before teardown ever had
+        # a chance to restore it (see run_job's try/finally). Without this
+        # check, every future run would keep "restoring" pushurl right back
+        # to the broken value forever, since it looks like the original.
+        # Treat it as if there was never a real pushurl, so teardown unsets
+        # it this time instead of perpetuating the bad value.
+        had_push_url = False
+        orig_push_url = None
+        print("[bridge] Found a stale push-disable from an interrupted previous run — clearing it.")
+    subprocess.run(["git", "config", "remote.origin.pushurl", PUSH_DISABLED_SENTINEL], cwd=work_dir)
     print("[bridge] Remote push disabled for this session.")
 
     # 5. Register branch + agent + worktree path with the app
@@ -623,39 +645,60 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
         return  # error already posted to the app
     worktree_path, branch, push_url_info = result
 
-    # Written before setup_cmd runs, in case it wants to reference the
-    # reserved port range / db name too (e.g. to pre-seed a database).
-    _write_qtask_env(worktree_path, job_id)
-
-    _, setup_cmd, test_cmd, verify_acceptance = (
-        _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None)
-    )
-    setup_cmd = setup_cmd or cfg.get("setup_cmd")
-    test_cmd = test_cmd or cfg.get("test_cmd")
-    if verify_acceptance is None:
-        verify_acceptance = cfg.get("verify_acceptance", False)
-    _run_setup_cmd(worktree_path, setup_cmd)
-
-    print(f"[bridge] Writing {SPEC_FILENAME}...")
-    spec_path = os.path.join(worktree_path, SPEC_FILENAME)
-    with open(spec_path, "w") as f:
-        f.write(prompt)
-
-    write_ide_settings(worktree_path)
-
+    # Everything from here on runs with the base repo's remote push disabled
+    # (push_url_info holds what to restore). ALL of it -- not just the
+    # coding session itself -- must be inside this try/finally: an exception
+    # anywhere in here (setup_cmd, writing BRIDGE_SPEC.md, write_ide_settings)
+    # used to be able to skip _git_teardown entirely, leaving
+    # remote.origin.pushurl stuck at PUSH_DISABLED_SENTINEL in the user's
+    # real repo -- exactly what a real write_ide_settings NameError did on a
+    # live machine. Never narrow this back down to just the run_streaming/
+    # run_interactive call.
+    spec_path = None
     try:
+        # Written before setup_cmd runs, in case it wants to reference the
+        # reserved port range / db name too (e.g. to pre-seed a database).
+        _write_qtask_env(worktree_path, job_id)
+
+        _, setup_cmd, test_cmd, verify_acceptance = (
+            _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None)
+        )
+        setup_cmd = setup_cmd or cfg.get("setup_cmd")
+        test_cmd = test_cmd or cfg.get("test_cmd")
+        if verify_acceptance is None:
+            verify_acceptance = cfg.get("verify_acceptance", False)
+        _run_setup_cmd(worktree_path, setup_cmd)
+
+        print(f"[bridge] Writing {SPEC_FILENAME}...")
+        spec_path = os.path.join(worktree_path, SPEC_FILENAME)
+        with open(spec_path, "w") as f:
+            f.write(prompt)
+
+        write_ide_settings(worktree_path)
+
         if streaming:
             _run_streaming(cfg, job_id, branch, worktree_path,
                             test_cmd=test_cmd, verify_acceptance=verify_acceptance, spec_text=spec_text)
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
                               test_cmd=test_cmd, verify_acceptance=verify_acceptance, spec_text=spec_text)
+    except Exception as e:
+        # Best-effort: run_streaming/run_interactive already report their
+        # own outcome (claude not found, non-zero exit, etc.) via /complete
+        # or /error internally. This catches everything BEFORE that point
+        # (setup_cmd, spec writing, write_ide_settings) so the job doesn't
+        # just sit at "running" forever with no explanation -- it'll still
+        # get caught by the 20-minute stale-job sweep either way, but this
+        # is immediate and gives a real reason.
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": f"Bridge setup failed: {e}"})
+        raise
     finally:
         _git_teardown(work_dir, push_url_info)
-        try:
-            os.remove(spec_path)
-        except OSError:
-            pass
+        if spec_path:
+            try:
+                os.remove(spec_path)
+            except OSError:
+                pass
 
     print(f"[bridge] Job {job_id} done. Worktree left at {worktree_path} for review.\n")
 
@@ -888,5 +931,11 @@ def main():
         cmd_card(cfg, args.card)
 
 
-if __name__ == "__main__":
-    main()
+# No `if __name__ == "__main__": main()` guard here, deliberately -- see
+# render.py's render_agent_script(). This file's main() must not fire until
+# AFTER the adapter file's definitions have executed, and since this file
+# is concatenated first (its shebang must be the served script's literal
+# first line), a guard here would call main() before the adapter's names
+# even exist, breaking anything that touches interactive_command/
+# streaming_command/write_ide_settings/AGENT_LABEL/AGENT_NOT_FOUND_HINT.
+# render.py appends the guard itself, once, after both files are joined.

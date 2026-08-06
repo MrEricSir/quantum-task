@@ -13,8 +13,16 @@ exercises render.py's placeholder substitution / concatenation — the exact
 thing that broke repeatedly before these scripts were split out of
 routers/bridge.py into real files. A few tests that only need to call a pure
 function in isolation import bridge.scripts.install / bridge.scripts.agent_core
-directly, which works cleanly now that both have real `if __name__ ==
-"__main__":` guards (no more exec+catch-SystemExit hack).
+directly, which works cleanly since install.py has a real `if __name__ ==
+"__main__":` guard (no exec+catch-SystemExit hack needed). agent_core.py
+does NOT have its own guard -- see bridge/render.py's render_agent_script()
+and agent_core.py's module docstring for why: that guard has to be appended
+once, after both concatenated files, or main() can fire before the adapter
+file's definitions (interactive_command, write_ide_settings, etc.) have
+executed. Got this wrong once already (shipped a real NameError to a live
+machine) -- TestAgentScriptFullFlow below exercises run_job() through the
+actual rendered/concatenated text specifically to catch a regression here,
+not just import bridge.scripts.agent_core in isolation.
 """
 import sys
 import os
@@ -29,6 +37,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import models
+import bridge.render as bridge_render
 import bridge.scripts.agent_core as agent_core
 import bridge.scripts.install as install_module
 from main import app
@@ -801,3 +810,210 @@ class TestRepoEntryVerificationFields:
 
     def test_unconfigured_repo_returns_all_none(self):
         assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None)
+
+
+# ── Regression: run_job() through the actual rendered/concatenated text ───────
+
+class TestAgentScriptFullFlow:
+    """Regression coverage for the "write_ide_settings not defined" bug: the
+    served agent.py's `if __name__ == "__main__": main()` guard fires
+    IMMEDIATELY, synchronously, the moment exec() reaches it -- unlike an
+    ordinary function call, which only resolves names when actually
+    invoked. If that guard sits inside agent_core.py's own source (which is
+    textually first, so its shebang lands on line 1), main() fires before
+    agent_claude.py's definitions -- sitting textually after the guard --
+    have ever executed, and the first adapter name main()'s call graph
+    touches (write_ide_settings, in run_job) raises NameError. Every other
+    check in this file (compiles, contains the right functions, isn't
+    mis-indented, shebang is line 1) stayed green through this exact bug,
+    because none of them actually run the script as __main__ far enough to
+    reach an adapter-supplied name -- this shipped to a real second machine
+    before being caught."""
+
+    def test_adapter_names_are_defined_before_the_main_guard(self, client):
+        """The direct, structural version of the regression check: whatever
+        the concatenation order, every name agent_core.py's own module
+        docstring lists as the adapter contract must appear in the source
+        BEFORE the (single, appended-by-render.py) __main__ guard -- or
+        whichever of them main()'s call graph reaches first raises
+        NameError the moment a real run reaches it, exactly as it did here."""
+        res = client.get("/api/bridge/agent.py")
+        lines = res.text.splitlines()
+        guard_line_nums = [i for i, l in enumerate(lines) if l.strip() == 'if __name__ == "__main__":']
+        assert len(guard_line_nums) == 1, \
+            f"expected exactly one top-level __main__ guard line, found {len(guard_line_nums)}"
+        guard_line = guard_line_nums[0]
+        for name, marker in [
+            ("AGENT_LABEL", "AGENT_LABEL ="),
+            ("AGENT_NOT_FOUND_HINT", "AGENT_NOT_FOUND_HINT ="),
+            ("interactive_command", "def interactive_command"),
+            ("streaming_command", "def streaming_command"),
+            ("write_ide_settings", "def write_ide_settings"),
+        ]:
+            defined_line = next(i for i, l in enumerate(lines) if l.startswith(marker))
+            assert defined_line < guard_line, \
+                f"{name} is defined AFTER the __main__ guard — main() would fire before it exists"
+
+    @pytest.fixture
+    def scratch_repo(self, tmp_path):
+        remote = tmp_path / "remote"
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "init", "-q", "--bare", "--initial-branch=main", str(remote)], check=True)
+        subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=clone, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=clone, check=True)
+        (clone / "README.md").write_text("hi\n")
+        subprocess.run(["git", "add", "README.md"], cwd=clone, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=clone, check=True)
+        subprocess.run(["git", "push", "-q", "origin", "main"], cwd=clone, check=True)
+        return clone
+
+    def _load_rendered_agent_module(self):
+        """exec the real request-time-rendered agent.py -- deliberately not
+        under __name__ == "__main__", so main() itself doesn't fire, but
+        every top-level statement in both concatenated files (including all
+        function/constant definitions) still executes, exactly as it would
+        for real. This is the one place in this test file that needs the
+        actual concatenation, not a plain import."""
+        script_text = bridge_render.render_agent_script()
+        ns = {"__name__": "test_full_flow"}
+        exec(compile(script_text, "agent.py", "exec"), ns)  # noqa: S102
+        return ns
+
+    def test_run_job_reaches_write_ide_settings_without_nameerror(self, scratch_repo, monkeypatch):
+        """Broader integration check: run_job()'s full flow (worktree
+        creation, .env.qtask, write_ide_settings, teardown) against a real
+        scratch repo. Doesn't run under __name__ == "__main__" (that would
+        need a real backend for cmd_card's network calls), so on its own it
+        would NOT have caught the ordering bug above -- the structural test
+        is what actually pins that invariant down. This one guards against
+        a different failure mode: something in the real worktree/settings
+        flow breaking for reasons unrelated to concatenation order."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        # No real `claude` binary in the test environment -- stub only that
+        # one subprocess call, so worktree creation / write_ide_settings /
+        # teardown all still run for real against the scratch repo.
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches",
+               "prompt": "do the thing", "target_repo": None}
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        settings_path = None
+        for call in api_calls:
+            if call[1] == "/api/bridge/jobs/1/start":
+                settings_path = os.path.join(call[2]["worktree_path"], ".claude", "settings.local.json")
+        assert settings_path is not None, "job never reached the /start call"
+        assert os.path.exists(settings_path), "write_ide_settings never ran — NameError would land here"
+
+        # Clean up the real worktree this test created outside tmp_path
+        # (worktrees always live under ~/.local/share/qtask-bridge).
+        worktree_dir = os.path.dirname(os.path.dirname(settings_path))
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                       cwd=scratch_repo, capture_output=True)
+
+    def _get_pushurl(self, repo):
+        r = subprocess.run(["git", "config", "--get", "remote.origin.pushurl"],
+                           cwd=repo, capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    def test_teardown_runs_even_if_a_pre_session_step_raises(self, scratch_repo, monkeypatch):
+        """Regression test for the actual incident: remote.origin.pushurl
+        stuck at PUSH_DISABLED_SENTINEL forever in a user's real repo,
+        because write_ide_settings (called AFTER push is disabled but
+        BEFORE the try/finally used to start) raised a real NameError on a
+        live machine. Simulates any exception in that same window and
+        confirms teardown still runs -- pushurl must end up unset, not
+        stuck -- and that the job gets reported as errored rather than
+        silently hanging at "running" forever."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        def _boom(worktree_path):
+            raise NameError("name 'write_ide_settings' is not defined")
+        ns["write_ide_settings"] = _boom
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches",
+               "prompt": "do the thing", "target_repo": None}
+
+        assert self._get_pushurl(scratch_repo) is None  # sanity: clean repo, no pushurl yet
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            with pytest.raises(NameError):
+                ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        # The whole point: teardown must have run despite the exception.
+        assert self._get_pushurl(scratch_repo) is None, \
+            "pushurl left stuck after an exception before the coding session — this is the real bug"
+        assert any(call[1] == "/api/bridge/jobs/1/error" for call in api_calls), \
+            "job was never reported as errored — would sit at 'running' until the 20-min stale sweep"
+
+        # Clean up the worktree _create_worktree made before the simulated failure.
+        started = next(c for c in api_calls if c[1] == "/api/bridge/jobs/1/start")
+        subprocess.run(["git", "worktree", "remove", "--force", started[2]["worktree_path"]],
+                       cwd=scratch_repo, capture_output=True)
+
+    def test_stale_push_disable_sentinel_self_heals(self, scratch_repo, monkeypatch):
+        """If a previous run left pushurl stuck at PUSH_DISABLED_SENTINEL
+        (e.g. from the exact incident above, before this fix existed), the
+        very next run must clear it rather than perpetuating it forever —
+        _create_worktree used to read the stuck value as the "original"
+        pushurl and faithfully restore back to it at teardown."""
+        ns = self._load_rendered_agent_module()
+
+        # Simulate a repo already left in the broken state by a past run.
+        subprocess.run(["git", "config", "remote.origin.pushurl", ns["PUSH_DISABLED_SENTINEL"]],
+                       cwd=scratch_repo, check=True)
+        assert self._get_pushurl(scratch_repo) == ns["PUSH_DISABLED_SENTINEL"]
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches",
+               "prompt": "do the thing", "target_repo": None}
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        assert self._get_pushurl(scratch_repo) is None, \
+            "stale sentinel from a previous run was restored instead of cleared — still stuck"
+
+        started = next(c for c in api_calls if c[1] == "/api/bridge/jobs/1/start")
+        subprocess.run(["git", "worktree", "remove", "--force", started[2]["worktree_path"]],
+                       cwd=scratch_repo, capture_output=True)
