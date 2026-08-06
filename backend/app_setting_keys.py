@@ -35,6 +35,11 @@ GITHUB_REPO_TAGS = "github_repo_tags"
 # JSON object {"steps": N|null, "fat_ratio": N|null, "weight": N|null}.
 WITHINGS_HEALTH_GOALS = "withings_health_goals"
 
+# "1" once a Telegram notification has been sent for the current run of
+# invalid_token failures; cleared on the next successful refresh, so a
+# fresh failure after reconnecting notifies again instead of staying silent.
+WITHINGS_AUTH_FAILURE_NOTIFIED = "withings_auth_failure_notified"
+
 # ── Telegram ──────────────────────────────────────────────────────────
 # Telegram Bot API token (from @BotFather).
 TELEGRAM_BOT_TOKEN = "telegram_bot_token"

@@ -651,6 +651,20 @@ def notify_stalled_jobs(db: Session, token: str, chat_id: str, jobs: list) -> in
     return sent
 
 
+def notify_withings_reauth_needed(token: str, chat_id: str) -> bool:
+    """Send a one-time Telegram notification when Withings sync hits a hard
+    auth failure (invalid/revoked refresh token — reconnecting is the only
+    fix). Called from routers.withings.do_sync, which owns the
+    once-per-failure dedup (app_setting_keys.WITHINGS_AUTH_FAILURE_NOTIFIED)
+    so this function itself doesn't need to know about that state — it just
+    sends. Returns whether the message was actually sent."""
+    msg = (
+        "⚠ Withings needs reconnecting — sync has been failing with an "
+        "invalid/expired token. Open Settings → Withings and reconnect."
+    )
+    return send_message(token, chat_id, msg)
+
+
 def check_all(db: Session) -> dict:
     """Run all scheduled checks. Called by the main.py background scheduler."""
     s = Settings(db)

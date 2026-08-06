@@ -600,8 +600,14 @@ gcp_setup_scheduler() {
   # _withings_scheduler loop in main.py (still present, for local dev where
   # there's no Cloud Scheduler) can go long stretches without running if the
   # instance isn't warm. This job makes sync timing reliable in production;
-  # both paths call the same do_sync(), which is idempotent, so having both
-  # active is harmless.
+  # both paths call the same do_sync(), which now serializes itself with an
+  # internal lock (a second concurrent call skips rather than racing) --
+  # NOT actually harmless before that fix: Withings rotates the refresh
+  # token on every use, so two overlapping refreshes against the same
+  # stored token corrupted it in production, causing sustained
+  # "invalid_refresh_token" failures until a manual reconnect. See
+  # routers/withings.py's do_sync()/_do_sync_impl() docstrings for the
+  # full incident writeup.
   _gcp_upsert_scheduler_job \
     "withings-sync" \
     "$SERVICE_URL/api/withings/sync" \

@@ -248,17 +248,27 @@ async def _push_scheduler() -> None:
             print(f"[push] scheduler error: {e}")
 
 
+def _check_withings_sync() -> None:
+    """Plain sync function so the scheduler loop can run it via
+    run_in_executor instead of calling it directly on the event loop --
+    do_sync() makes several blocking network calls to Withings, and
+    calling it inline here (as this used to) blocked the entire app's
+    event loop, including unrelated incoming HTTP requests, for the
+    duration of every sync."""
+    try:
+        from routers.withings import do_sync
+        with SessionLocal() as db:
+            if db.query(models.WithingsCredentials).first():
+                do_sync(db)
+    except Exception as e:
+        print(f"[withings] scheduler error: {e}")
+
+
 async def _withings_scheduler() -> None:
     """Sync Withings data every 2 hours if credentials are stored."""
     await asyncio.sleep(7200)  # don't run immediately on startup
     while True:
-        try:
-            from routers.withings import do_sync
-            with SessionLocal() as db:
-                if db.query(models.WithingsCredentials).first():
-                    do_sync(db)
-        except Exception as e:
-            print(f"[withings] scheduler error: {e}")
+        await asyncio.get_event_loop().run_in_executor(None, _check_withings_sync)
         await asyncio.sleep(7200)
 
 

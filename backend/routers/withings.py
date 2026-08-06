@@ -15,6 +15,7 @@ Last-sync timestamp is stored in the last_synced column on that same row.
 
 import json
 import os
+import threading
 import traceback
 from datetime import date, datetime, timedelta, timezone
 from typing import List
@@ -238,9 +239,66 @@ def _refresh_token(creds_data: dict, db: Session) -> dict:
     return new_creds
 
 
+def _notify_reauth_needed_once(db: Session) -> None:
+    """Send a Telegram notification the first time a hard auth failure
+    happens, not on every subsequent hourly/2h retry until the user
+    reconnects — that would be a message every 1-2 hours indefinitely.
+    Deliberately doesn't care whether Telegram is even configured; the
+    caller-agnostic dedup flag is still meaningful either way."""
+    import app_setting_keys as setting_keys
+    from settings import Settings
+    s = Settings(db)
+    if s.get(setting_keys.WITHINGS_AUTH_FAILURE_NOTIFIED) == "1":
+        return
+    s.set(setting_keys.WITHINGS_AUTH_FAILURE_NOTIFIED, "1")
+    if s.telegram_token and s.telegram_chat_id:
+        from telegram.scheduler import notify_withings_reauth_needed
+        notify_withings_reauth_needed(s.telegram_token, s.telegram_chat_id)
+
+
+def _clear_reauth_notified(db: Session) -> None:
+    """Called after any successful refresh -- resets the dedup flag so a
+    future failure (e.g. after the user reconnects and it breaks again
+    later) notifies again instead of staying permanently silent."""
+    import app_setting_keys as setting_keys
+    from settings import Settings
+    Settings(db).set(setting_keys.WITHINGS_AUTH_FAILURE_NOTIFIED, "0")
+
+
+_sync_lock = threading.Lock()
+
+
 def do_sync(db: Session) -> dict:
+    """Serializes calls to _do_sync_impl -- see its docstring for why. A
+    second concurrent call returns immediately (non-blocking acquire)
+    rather than waiting: syncs are frequent and cheap enough that skipping
+    one when another is already running is strictly better than queuing up
+    behind it."""
+    if not _sync_lock.acquire(blocking=False):
+        print("[withings] sync already in progress — skipping concurrent call", flush=True)
+        return {"ok": False, "error": "sync_in_progress"}
+    try:
+        return _do_sync_impl(db)
+    finally:
+        _sync_lock.release()
+
+
+def _do_sync_impl(db: Session) -> dict:
     """Fetch recent Withings data and upsert into withings_measurements.
-    Returns a summary dict."""
+    Returns a summary dict.
+
+    Must only ever run one at a time -- see do_sync()'s lock. Withings
+    rotates the refresh token on every use (the old one is invalidated the
+    moment a new one is issued), so two concurrent calls both reading the
+    same stored token and both trying to refresh it will corrupt it: one
+    redeems an already-spent token. Confirmed in production logs: a
+    "Same arguments in less than 10 seconds" rejection (Withings' own
+    anti-replay check) followed by a multi-day stretch of
+    "invalid_refresh_token" failures recurring every ~2 hours, matching
+    the in-process scheduler's cadence, until a manual reconnect recovered
+    it. The two real trigger sources that were racing: main.py's
+    in-process 2-hour loop and the hourly Cloud Scheduler job, both
+    calling do_sync() completely independently of each other."""
     creds_data = _load_credentials_dict(db)
     if not creds_data:
         return {"ok": False, "error": "not_connected"}
@@ -254,10 +312,14 @@ def do_sync(db: Session) -> dict:
             creds_data = _refresh_token(creds_data, db)
         except _TokenAuthError as exc:
             print(f"[withings] token rejected (reconnect required): {exc}", flush=True)
+            _notify_reauth_needed_once(db)
+            db.commit()  # persist the dedup flag -- this path returns immediately, no later commit to ride along with
             return {"ok": False, "error": "invalid_token"}
         except Exception as exc:
             print(f"[withings] token refresh transient error: {exc}", flush=True)
             return {"ok": False, "error": "sync_failed"}
+        else:
+            _clear_reauth_notified(db)
 
     # Use the user's local date (via stored tz offset) — the server runs UTC on Cloud Run.
     tz_offset = 0
