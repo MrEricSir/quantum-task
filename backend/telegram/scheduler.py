@@ -462,12 +462,12 @@ def _withings_drift_signals(db: Session, today) -> list[tuple[str, str]]:
     signals = []
     habits = db.query(models.Habit).filter(
         models.Habit.archived == False,  # noqa: E712
-        models.Habit.withings_metric.isnot(None),
-        models.Habit.withings_goal.isnot(None),
+        models.Habit.health_metric.isnot(None),
+        models.Habit.health_goal.isnot(None),
     ).all()
     for h in habits:
         readings = db.query(models.WithingsMeasurement).filter(
-            models.WithingsMeasurement.metric == h.withings_metric,
+            models.WithingsMeasurement.metric == h.health_metric,
             models.WithingsMeasurement.date >= window_start,
             models.WithingsMeasurement.date <= today_str,
         ).all()
@@ -475,10 +475,10 @@ def _withings_drift_signals(db: Session, today) -> list[tuple[str, str]]:
             continue
         avg = sum(r.value for r in readings) / len(readings)
         key = f"withings_drift:{h.id}"
-        if h.withings_metric == "steps" and avg < h.withings_goal * _WITHINGS_STEPS_DRIFT_RATIO:
-            signals.append((key, f"Steps averaging {int(avg):,}/day vs {int(h.withings_goal):,} goal"))
-        elif h.withings_metric == "fat_ratio" and avg > h.withings_goal:
-            signals.append((key, f"Body fat averaging {avg:.1f}% vs {h.withings_goal:.1f}% goal"))
+        if h.health_metric == "steps" and avg < h.health_goal * _WITHINGS_STEPS_DRIFT_RATIO:
+            signals.append((key, f"Steps averaging {int(avg):,}/day vs {int(h.health_goal):,} goal"))
+        elif h.health_metric == "fat_ratio" and avg > h.health_goal:
+            signals.append((key, f"Body fat averaging {avg:.1f}% vs {h.health_goal:.1f}% goal"))
     return signals
 
 

@@ -177,11 +177,11 @@ export default function App() {
   // When a quick-add "steps goal" is detected, update or create a steps habit
   // rather than saving a standalone health goal (steps = streak-tracked habit only).
   const handleSaveStepGoal = async (stepGoal) => {
-    const existing = habits.find(h => h.withings_metric === 'steps' && !h.archived)
+    const existing = habits.find(h => h.health_metric === 'steps' && !h.archived)
     if (existing) {
-      await handleUpdateHabit(existing.id, { withings_goal: stepGoal })
+      await handleUpdateHabit(existing.id, { health_goal: stepGoal })
     } else {
-      await handleAddHabit({ name: 'Daily Steps', withings_metric: 'steps', withings_goal: stepGoal, tag_ids: [] })
+      await handleAddHabit({ name: 'Daily Steps', health_metric: 'steps', health_goal: stepGoal, tag_ids: [] })
     }
   }
 

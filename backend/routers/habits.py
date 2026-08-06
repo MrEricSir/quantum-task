@@ -53,8 +53,8 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         streak=get_current_streak(db, habit.id, today),
         best_streak=best_streak,
         recent_completions=recent_completions,
-        withings_metric=habit.withings_metric,
-        withings_goal=habit.withings_goal,
+        health_metric=habit.health_metric,
+        health_goal=habit.health_goal,
         is_experiment=is_experiment,
     )
 
@@ -76,8 +76,8 @@ def create_habit(request: Request, habit: schemas.HabitCreate, db: Session = Dep
     today = local_date(request)
     db_habit = models.Habit(
         name=habit.name,
-        withings_metric=habit.withings_metric,
-        withings_goal=habit.withings_goal,
+        health_metric=habit.health_metric,
+        health_goal=habit.health_goal,
     )
     if habit.tag_ids:
         db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(habit.tag_ids)).all()
@@ -100,10 +100,10 @@ def update_habit(request: Request, habit_id: int, habit: schemas.HabitUpdate, db
     if habit.archived is not None:
         db_habit.archived = habit.archived
         db_habit.archived_at = datetime.now(timezone.utc) if habit.archived else None
-    if "withings_metric" in habit.model_fields_set:
-        db_habit.withings_metric = habit.withings_metric
-    if "withings_goal" in habit.model_fields_set:
-        db_habit.withings_goal = habit.withings_goal
+    if "health_metric" in habit.model_fields_set:
+        db_habit.health_metric = habit.health_metric
+    if "health_goal" in habit.model_fields_set:
+        db_habit.health_goal = habit.health_goal
     db.commit()
     db.refresh(db_habit)
     return _habit_out(db, db_habit, today)
@@ -142,7 +142,7 @@ def _require_manual(habit_id: int, db: Session) -> models.Habit:
     db_habit = db.query(models.Habit).filter(models.Habit.id == habit_id).first()
     if not db_habit:
         raise HTTPException(status_code=404, detail="Habit not found")
-    if db_habit.withings_metric:
+    if db_habit.health_metric:
         raise HTTPException(
             status_code=403,
             detail="This habit is tracked automatically and cannot be checked manually.",

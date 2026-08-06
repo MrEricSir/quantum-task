@@ -42,8 +42,8 @@ function SectionHeader({ title, badge, status, open, onToggle, toggleable = fals
 const KG_TO_LBS = 2.20462
 
 function MetricProgress({ habit, todayMetrics, isImperial }) {
-  const metric = habit.withings_metric
-  const goal = habit.withings_goal
+  const metric = habit.health_metric
+  const goal = habit.health_goal
   if (!metric || !todayMetrics) return null
   const value = todayMetrics[metric]
   if (value == null) return null
@@ -211,7 +211,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
 
   // Standalone health metrics: weight/fat_ratio with any historical data or a goal, but no linked habit
   const allMeasurements = healthData?.measurements ?? []
-  const linkedMetrics = new Set(habits.map(h => h.withings_metric).filter(Boolean))
+  const linkedMetrics = new Set(habits.map(h => h.health_metric).filter(Boolean))
   const standaloneMetrics = ['weight', 'fat_ratio'].filter(metric => {
     if (linkedMetrics.has(metric)) return false  // handled by a habit's MetricProgress
     return allMeasurements.some(m => m.metric === metric) || healthGoals?.[metric] != null
@@ -335,7 +335,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
                   >
                     {(() => {
-                      const isAuto = !!habit.withings_metric
+                      const isAuto = !!habit.health_metric
                       return (
                         <button
                           type="button"

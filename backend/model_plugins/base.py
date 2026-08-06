@@ -49,7 +49,7 @@ Fields:
                   goal  = setting or updating a health metric target, NOT a recurring habit
                           Use when the input explicitly says "set/change/update my X goal to Y"
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
-                          Always set withings_metric and withings_goal when type="goal"
+                          Always set health_metric and health_goal when type="goal"
                   {REGISTRY["food"].parse_description}
                   {REGISTRY["workout"].parse_description}
                   {REGISTRY["habit_check"].parse_description}
@@ -91,13 +91,13 @@ Fields:
                     "every year" / "yearly" / "annually"     → "yearly"  (section: "later")
                     null if no recurrence is mentioned
                     When set, section must reflect the cadence above, not "later"
-  withings_metric — ONLY for habits: "steps" | "fat_ratio" | "weight" | null
+  health_metric — ONLY for habits: "steps" | "fat_ratio" | "weight" | null
                     Set when the habit explicitly mentions one of these health metrics.
                     "steps" for step-count goals ("10,000 steps a day", "walk 5k steps")
                     "fat_ratio" for body fat percentage ("body fat under 20%")
                     "weight" for body weight ("weigh less than 75 kg")
                     null for all other habits and all tasks
-  withings_goal   — ONLY for habits with withings_metric: numeric goal (float) or null
+  health_goal   — ONLY for habits with health_metric: numeric goal (float) or null
                     steps: target steps per day (e.g. 10000)
                     fat_ratio: max body fat % to stay at or below (e.g. 20.0)
                     weight: max weight in kg to stay at or below (e.g. 75.0)\
@@ -511,41 +511,41 @@ class BaseModelPlugin:
         # Applies to habits and to goal-setting phrases (type may still be "task" from the LLM).
         _detect_metric = parsed.type == "habit" or bool(_GOAL_SET_RE.search(lowered))
 
-        if _detect_metric and not parsed.withings_metric:
+        if _detect_metric and not parsed.health_metric:
             # Steps — try "Nk steps", then "N steps", then "step goal to N" (goal context)
             km = _STEPS_K_RE.search(lowered)
             if km:
-                parsed.withings_metric = "steps"
-                parsed.withings_goal = float(km.group(1)) * 1000
+                parsed.health_metric = "steps"
+                parsed.health_goal = float(km.group(1)) * 1000
             else:
                 sm = _STEPS_NUM_RE.search(lowered) or _STEPS_GOAL_RE.search(lowered)
                 if sm:
-                    parsed.withings_metric = "steps"
-                    parsed.withings_goal = float(sm.group(1).replace(",", ""))
+                    parsed.health_metric = "steps"
+                    parsed.health_goal = float(sm.group(1).replace(",", ""))
 
-        if _detect_metric and not parsed.withings_metric:
+        if _detect_metric and not parsed.health_metric:
             # Body fat %
             fm = _FAT_RE.search(lowered)
             if fm:
                 goal_str = fm.group(1) or fm.group(2) or fm.group(3)
-                parsed.withings_metric = "fat_ratio"
-                parsed.withings_goal = float(goal_str)
+                parsed.health_metric = "fat_ratio"
+                parsed.health_goal = float(goal_str)
 
-        if _detect_metric and not parsed.withings_metric:
+        if _detect_metric and not parsed.health_metric:
             # Weight — kg first, then lbs (converted)
             wm = _WEIGHT_KG_RE.search(lowered)
             if wm:
-                parsed.withings_metric = "weight"
-                parsed.withings_goal = float(wm.group(1))
+                parsed.health_metric = "weight"
+                parsed.health_goal = float(wm.group(1))
             else:
                 lm = _WEIGHT_LB_RE.search(lowered)
                 if lm:
-                    parsed.withings_metric = "weight"
-                    parsed.withings_goal = round(float(lm.group(1)) * 0.453592, 1)
+                    parsed.health_metric = "weight"
+                    parsed.health_goal = round(float(lm.group(1)) * 0.453592, 1)
 
         # Override type to "goal" when the input is explicitly about setting a health target.
-        # This runs after metric detection so withings_metric is already populated.
-        if parsed.withings_metric and parsed.withings_goal is not None and _GOAL_SET_RE.search(lowered):
+        # This runs after metric detection so health_metric is already populated.
+        if parsed.health_metric and parsed.health_goal is not None and _GOAL_SET_RE.search(lowered):
             parsed.type = "goal"
 
         return parsed

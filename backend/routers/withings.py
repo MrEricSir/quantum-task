@@ -167,14 +167,14 @@ def _auto_check_habits_for_date(db: Session, check_date: date) -> None:
         linked = (
             db.query(models.Habit)
             .filter(
-                models.Habit.withings_metric == metric,
-                models.Habit.withings_goal.isnot(None),
+                models.Habit.health_metric == metric,
+                models.Habit.health_goal.isnot(None),
                 models.Habit.archived == False,  # noqa: E712
             )
             .all()
         )
         for habit in linked:
-            met = (row.value >= habit.withings_goal) if metric == "steps" else (row.value <= habit.withings_goal)
+            met = (row.value >= habit.health_goal) if metric == "steps" else (row.value <= habit.health_goal)
             if met and not db.query(models.HabitCompletion).filter_by(
                 habit_id=habit.id, date=date_str
             ).first():
@@ -573,11 +573,11 @@ def withings_health_data(days: int = 90, db: Session = Depends(get_db)):
         .all()
     )
 
-    # Only fetch completion history for habits that have a withings_metric
+    # Only fetch completion history for habits that have a health_metric
     linked_habits = (
         db.query(models.Habit)
         .filter(
-            models.Habit.withings_metric.isnot(None),
+            models.Habit.health_metric.isnot(None),
             models.Habit.archived == False,  # noqa: E712
         )
         .all()

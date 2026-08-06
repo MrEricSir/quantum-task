@@ -8,16 +8,16 @@ from schemas.common import Tag
 class HabitCreate(BaseModel):
     name: str
     tag_ids: List[int] = []
-    withings_metric: Optional[str] = None
-    withings_goal: Optional[float] = None
+    health_metric: Optional[str] = None
+    health_goal: Optional[float] = None
 
 
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
     tag_ids: Optional[List[int]] = None
     archived: Optional[bool] = None
-    withings_metric: Optional[str] = None
-    withings_goal: Optional[float] = None
+    health_metric: Optional[str] = None
+    health_goal: Optional[float] = None
 
 
 class Habit(BaseModel):
@@ -31,8 +31,8 @@ class Habit(BaseModel):
     streak: int = 0
     best_streak: int = 0
     recent_completions: List[bool] = []
-    withings_metric: Optional[str] = None
-    withings_goal: Optional[float] = None
+    health_metric: Optional[str] = None
+    health_goal: Optional[float] = None
     is_experiment: bool = False
 
     model_config = {"from_attributes": True}

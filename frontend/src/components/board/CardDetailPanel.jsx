@@ -6,18 +6,12 @@ import AssistModal from '../modals/AssistModal'
 import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
+import { parseGitHubUrl } from '../../lib/github'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
   if (!text) return ''
   return DOMPurify.sanitize(marked.parse(text, { breaks: true }), { ADD_ATTR: ['target', 'rel'] })
-}
-
-function parseGitHubUrl(str) {
-  if (!str) return null
-  const m = str.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/(pull|issues?)\/(\d+)/)
-  if (!m) return null
-  return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
 }
 
 export default function CardDetailPanel({

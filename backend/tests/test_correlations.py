@@ -117,6 +117,10 @@ class TestMigrateAppsetting:
         assert _migrate_appsetting(db) is None
 
     def test_migrates_legacy_row_into_table(self, db):
+        # Deliberately still the OLD key names -- this simulates a JSON blob
+        # written before the health_metric/health_goal rename, which
+        # _migrate_appsetting must keep reading correctly regardless of what
+        # the live model calls the field now.
         legacy = {
             "week": "2026-W25", "text": "Try more sleep", "hypothesis": "h",
             "action": "sleep by 10pm", "needs_habit": True, "habit_id": 3,
@@ -132,7 +136,7 @@ class TestMigrateAppsetting:
         assert exp.week == "2026-W25"
         assert exp.text == "Try more sleep"
         assert exp.habit_id == 3
-        assert exp.withings_metric == "steps"
+        assert exp.health_metric == "steps"
 
     def test_deletes_legacy_row_after_migrating(self, db):
         db.add(models.AppSetting(key="health_experiment", value=json.dumps({"week": "2026-W25"})))

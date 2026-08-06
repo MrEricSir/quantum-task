@@ -38,7 +38,7 @@ def db():
 
 
 def _add_habit(db, name: str, metric: str, goal: float) -> models.Habit:
-    h = models.Habit(name=name, withings_metric=metric, withings_goal=goal)
+    h = models.Habit(name=name, health_metric=metric, health_goal=goal)
     db.add(h)
     db.flush()
     return h
@@ -122,7 +122,7 @@ class TestAutoCheckHabits:
 
     def test_no_goal_no_completion(self, db):
         # Habit has metric but no goal — should not be auto-checked
-        h = models.Habit(name="Walk", withings_metric="steps", withings_goal=None)
+        h = models.Habit(name="Walk", health_metric="steps", health_goal=None)
         db.add(h)
         db.flush()
         _add_measurement(db, TODAY_STR, "steps", 12_000)
@@ -130,7 +130,7 @@ class TestAutoCheckHabits:
         assert not _completed_today(db, h.id, TODAY_STR)
 
     def test_archived_habit_not_completed(self, db):
-        h = models.Habit(name="Walk", withings_metric="steps", withings_goal=10_000, archived=True)
+        h = models.Habit(name="Walk", health_metric="steps", health_goal=10_000, archived=True)
         db.add(h)
         db.flush()
         _add_measurement(db, TODAY_STR, "steps", 12_000)
@@ -205,84 +205,84 @@ class TestHealthMetricDetection:
 
     def test_steps_plain_number(self):
         r = _habit("walk 10000 steps a day")
-        assert r.withings_metric == "steps"
-        assert r.withings_goal == 10_000
+        assert r.health_metric == "steps"
+        assert r.health_goal == 10_000
 
     def test_steps_comma_formatted(self):
         r = _habit("10,000 steps per day")
-        assert r.withings_metric == "steps"
-        assert r.withings_goal == 10_000
+        assert r.health_metric == "steps"
+        assert r.health_goal == 10_000
 
     def test_steps_k_shorthand(self):
         r = _habit("walk 10k steps daily")
-        assert r.withings_metric == "steps"
-        assert r.withings_goal == 10_000
+        assert r.health_metric == "steps"
+        assert r.health_goal == 10_000
 
     def test_steps_5k_shorthand(self):
         r = _habit("add a habit for 5k steps a day")
-        assert r.withings_metric == "steps"
-        assert r.withings_goal == 5_000
+        assert r.health_metric == "steps"
+        assert r.health_goal == 5_000
 
     def test_steps_add_habit_phrase(self):
         r = _habit("add a habit with 5,000 steps per day")
-        assert r.withings_metric == "steps"
-        assert r.withings_goal == 5_000
+        assert r.health_metric == "steps"
+        assert r.health_goal == 5_000
 
     def test_steps_singular(self):
         r = _habit("take 8000 step a day")
-        assert r.withings_metric == "steps"
-        assert r.withings_goal == 8_000
+        assert r.health_metric == "steps"
+        assert r.health_goal == 8_000
 
     # ── Body fat ──────────────────────────────────────────────────────────────
 
     def test_fat_ratio_basic(self):
         r = _habit("keep body fat under 20%")
-        assert r.withings_metric == "fat_ratio"
-        assert r.withings_goal == 20.0
+        assert r.health_metric == "fat_ratio"
+        assert r.health_goal == 20.0
 
     def test_fat_ratio_reversed(self):
         r = _habit("stay at 18.5% body fat")
-        assert r.withings_metric == "fat_ratio"
-        assert r.withings_goal == 18.5
+        assert r.health_metric == "fat_ratio"
+        assert r.health_goal == 18.5
 
     def test_fat_ratio_goal_phrase(self):
         r = _habit("body fat 20%")
-        assert r.withings_metric == "fat_ratio"
-        assert r.withings_goal == 20.0
+        assert r.health_metric == "fat_ratio"
+        assert r.health_goal == 20.0
 
     # ── Weight ────────────────────────────────────────────────────────────────
 
     def test_weight_kg(self):
         r = _habit("weigh less than 75 kg")
-        assert r.withings_metric == "weight"
-        assert r.withings_goal == 75.0
+        assert r.health_metric == "weight"
+        assert r.health_goal == 75.0
 
     def test_weight_lbs(self):
         r = _habit("stay under 165 lbs")
-        assert r.withings_metric == "weight"
-        assert abs(r.withings_goal - 74.8) < 0.2  # 165 * 0.453592 ≈ 74.8
+        assert r.health_metric == "weight"
+        assert abs(r.health_goal - 74.8) < 0.2  # 165 * 0.453592 ≈ 74.8
 
     def test_weight_pounds(self):
         r = _habit("weigh under 180 pounds")
-        assert r.withings_metric == "weight"
-        assert abs(r.withings_goal - 81.6) < 0.2  # 180 * 0.453592 ≈ 81.6
+        assert r.health_metric == "weight"
+        assert abs(r.health_goal - 81.6) < 0.2  # 180 * 0.453592 ≈ 81.6
 
     # ── Non-health habits — must NOT get a metric ─────────────────────────────
 
     def test_no_metric_for_meditation(self):
         r = _habit("meditate every morning")
-        assert r.withings_metric is None
-        assert r.withings_goal is None
+        assert r.health_metric is None
+        assert r.health_goal is None
 
     def test_no_metric_for_journal(self):
         r = _habit("journal every night")
-        assert r.withings_metric is None
+        assert r.health_metric is None
 
     def test_no_metric_for_task(self):
         # type=task should never get a metric even with steps in title
         parsed = ParsedCard(type="task", title="buy 10000 steps tracker", section="later")
         result = plugin.post_process(parsed, text="buy 10000 steps tracker")
-        assert result.withings_metric is None
+        assert result.health_metric is None
 
     # ── Goal-type detection ───────────────────────────────────────────────────
 
@@ -290,28 +290,28 @@ class TestHealthMetricDetection:
         parsed = ParsedCard(type="task", title="set weight goal", section="later")
         result = plugin.post_process(parsed, text="set my weight goal to 75 kg")
         assert result.type == "goal"
-        assert result.withings_metric == "weight"
-        assert result.withings_goal == 75.0
+        assert result.health_metric == "weight"
+        assert result.health_goal == 75.0
 
     def test_goal_change_steps(self):
         parsed = ParsedCard(type="task", title="change step goal", section="later")
         result = plugin.post_process(parsed, text="change my step goal to 10,000")
         assert result.type == "goal"
-        assert result.withings_metric == "steps"
-        assert result.withings_goal == 10_000
+        assert result.health_metric == "steps"
+        assert result.health_goal == 10_000
 
     def test_goal_update_fat(self):
         parsed = ParsedCard(type="task", title="update fat goal", section="later")
         result = plugin.post_process(parsed, text="update my body fat goal to 18%")
         assert result.type == "goal"
-        assert result.withings_metric == "fat_ratio"
-        assert result.withings_goal == 18.0
+        assert result.health_metric == "fat_ratio"
+        assert result.health_goal == 18.0
 
     def test_regular_habit_not_goal(self):
         """"Walk 10k steps daily" is a habit, not a goal-setter."""
         r = _habit("walk 10k steps daily")
         assert r.type == "habit"
-        assert r.withings_metric == "steps"
+        assert r.health_metric == "steps"
 
     # ── LLM-set values are preserved (not overridden by regex) ───────────────
 
@@ -319,11 +319,11 @@ class TestHealthMetricDetection:
         parsed = ParsedCard(
             type="habit", title="walk daily", section="today",
             recurrence_rule="daily",
-            withings_metric="steps", withings_goal=8_000,
+            health_metric="steps", health_goal=8_000,
         )
         result = plugin.post_process(parsed, text="walk daily")
-        assert result.withings_metric == "steps"
-        assert result.withings_goal == 8_000
+        assert result.health_metric == "steps"
+        assert result.health_goal == 8_000
 
 
 # ── Streak computation ────────────────────────────────────────────────────────

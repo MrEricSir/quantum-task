@@ -75,7 +75,7 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
         db.query(models.Habit)
         .filter(
             models.Habit.archived == False,        # noqa: E712
-            models.Habit.withings_metric == None,  # noqa: E711
+            models.Habit.health_metric == None,  # noqa: E711
         )
         .count()
     )
@@ -376,8 +376,8 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "hypothesis": "If I [specific action with concrete number], I expect to see Y by end of week",
   "action": "The specific daily action with a CONCRETE NUMBER, e.g. '8,000 steps every day'",
   "needs_habit": true or false,
-  "withings_metric": "steps" | "fat_ratio" | "weight" | null,
-  "withings_goal": numeric goal value or null
+  "health_metric": "steps" | "fat_ratio" | "weight" | null,
+  "health_goal": numeric goal value or null
 }
 
 CRITICAL: "action" must ALWAYS contain a specific measurable target — never vague \
@@ -388,16 +388,16 @@ If the experiment is passive observation with no daily action, set action to nul
 needs_habit should be true only when the experiment requires a specific daily \
 effort to track (e.g. hitting a step target). Set false for passive observation.
 
-withings_metric/withings_goal: ONLY set these when the experiment's primary \
+health_metric/health_goal: ONLY set these when the experiment's primary \
 measurable outcome is literally one of the three Withings-tracked metrics: step \
-count, body fat percentage, or body weight. The withings_goal MUST match the \
+count, body fat percentage, or body weight. The health_goal MUST match the \
 number in the action field exactly. Examples: \
-"Walk 8,000 steps every day" → withings_metric="steps", withings_goal=8000. \
-"Reduce body fat to 18%" → withings_metric="fat_ratio", withings_goal=18. \
+"Walk 8,000 steps every day" → health_metric="steps", health_goal=8000. \
+"Reduce body fat to 18%" → health_metric="fat_ratio", health_goal=18. \
 Examples where you must leave it null: "1 hour of screen-free time", "read \
 before bed", "meditate 10 minutes", "no alcohol", "sleep by 10pm" — these are \
 behavioral habits that cannot be verified by a Withings device, so \
-withings_metric MUST be null. When in doubt, set null.\
+health_metric MUST be null. When in doubt, set null.\
 """
 
 
@@ -444,16 +444,16 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         hypothesis     = llm_data.get("hypothesis")
         action         = llm_data.get("action")
         needs_habit    = bool(llm_data.get("needs_habit", False))
-        withings_metric = llm_data.get("withings_metric") or None
-        withings_goal   = llm_data.get("withings_goal")
-        if withings_goal is not None:
+        health_metric = llm_data.get("health_metric") or None
+        health_goal   = llm_data.get("health_goal")
+        if health_goal is not None:
             try:
-                withings_goal = float(withings_goal)
+                health_goal = float(health_goal)
             except (TypeError, ValueError):
-                withings_goal = None
-        if withings_metric not in ("steps", "fat_ratio", "weight", None):
-            withings_metric = None
-            withings_goal = None
+                health_goal = None
+        if health_metric not in ("steps", "fat_ratio", "weight", None):
+            health_metric = None
+            health_goal = None
 
         # Use prose text as authoritative source for step goals — the LLM's JSON
         # numbers are less reliable than the numbers it writes in action/hypothesis.
@@ -472,31 +472,31 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         if action and "steps" in action.lower():
             # Action is explicitly about steps — metric must be "steps" regardless of
             # what the LLM put in the JSON (catches fat_ratio/weight confusion).
-            withings_metric = "steps"
+            health_metric = "steps"
             # Prefer action text; fall back to hypothesis if action value is implausible
-            withings_goal = _extract_steps(action) or _extract_steps(hypothesis)
-        elif withings_metric == "steps":
+            health_goal = _extract_steps(action) or _extract_steps(hypothesis)
+        elif health_metric == "steps":
             # LLM said steps but no "steps" in action — correct goal from hypothesis
-            if withings_goal is None or withings_goal > 50_000:
-                withings_goal = _extract_steps(hypothesis)
-        elif withings_metric is None and action:
+            if health_goal is None or health_goal > 50_000:
+                health_goal = _extract_steps(hypothesis)
+        elif health_metric is None and action:
             # Fallback: action didn't mention "steps" explicitly but hypothesis might
             _hypo_steps = _extract_steps(hypothesis)
             if _hypo_steps:
-                withings_metric = "steps"
-                withings_goal = _hypo_steps
+                health_metric = "steps"
+                health_goal = _hypo_steps
 
         # Final guard: clear any remaining implausible step goal
-        if withings_metric == "steps" and not withings_goal:
-            withings_metric = None
-            withings_goal = None
+        if health_metric == "steps" and not health_goal:
+            health_metric = None
+            health_goal = None
 
         # If needs_habit is set but no concrete action was produced, the LLM was vague.
         # Manufacture a sensible default so the experiment still gets a tracking habit.
         if needs_habit and not action:
-            if withings_metric == "steps":
+            if health_metric == "steps":
                 action = "8,000 steps every day"
-                withings_goal = withings_goal or 8000.0
+                health_goal = health_goal or 8000.0
             else:
                 # Can't auto-infer a goal for other metrics — leave needs_habit False
                 needs_habit = False
@@ -505,8 +505,8 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         hypothesis = "More consistent movement should correlate with better weight outcomes."
         action = None
         needs_habit = False
-        withings_metric = None
-        withings_goal = None
+        health_metric = None
+        health_goal = None
 
     habit_id = None
     if action:
@@ -515,8 +515,8 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         habit_name = f"🧪 {action[:60]}"
         habit = models.Habit(
             name=habit_name,
-            withings_metric=withings_metric,
-            withings_goal=withings_goal,
+            health_metric=health_metric,
+            health_goal=health_goal,
         )
         db.add(habit)
         db.flush()
@@ -529,8 +529,8 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         action=action,
         needs_habit=needs_habit,
         habit_id=habit_id,
-        withings_metric=withings_metric,
-        withings_goal=withings_goal,
+        health_metric=health_metric,
+        health_goal=health_goal,
     )
     db.add(exp)
     db.flush()
@@ -547,8 +547,8 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
         "action":               exp.action,
         "needs_habit":          exp.needs_habit,
         "habit_id":             exp.habit_id,
-        "withings_metric":      exp.withings_metric,
-        "withings_goal":        exp.withings_goal,
+        "health_metric":      exp.health_metric,
+        "health_goal":        exp.health_goal,
         "status":               exp.status,
         "created_at":           exp.created_at.isoformat() if exp.created_at else None,
         "dismissed_at":         exp.dismissed_at.isoformat() if exp.dismissed_at else None,
@@ -604,6 +604,10 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
         return None
     try:
         data = json.loads(row.value)
+        # This JSON blob was written by code that predates the health_metric/
+        # health_goal rename -- it's a frozen historical format, so it must be
+        # read back with its original key names regardless of what the live
+        # model calls them now.
         exp = models.HealthExperiment(
             week=data.get("week", _current_isoweek()),
             text=data.get("text", ""),
@@ -611,8 +615,8 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
             action=data.get("action"),
             needs_habit=data.get("needs_habit", False),
             habit_id=data.get("habit_id"),
-            withings_metric=data.get("withings_metric"),
-            withings_goal=data.get("withings_goal"),
+            health_metric=data.get("withings_metric"),
+            health_goal=data.get("withings_goal"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
         )
         db.add(exp)

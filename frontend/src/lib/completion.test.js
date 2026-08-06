@@ -35,11 +35,11 @@ describe('scoreMatch', () => {
 
 describe('findBestMatch', () => {
   const habits = [
-    { id: 1, name: 'Meditation', archived: false, withings_metric: null },
-    { id: 2, name: 'Morning run', archived: false, withings_metric: null },
-    { id: 3, name: 'Duolingo Spanish', archived: false, withings_metric: null },
-    { id: 4, name: 'Steps', archived: false, withings_metric: 'steps' }, // automatic
-    { id: 5, name: 'Old habit', archived: true, withings_metric: null },  // archived
+    { id: 1, name: 'Meditation', archived: false, health_metric: null },
+    { id: 2, name: 'Morning run', archived: false, health_metric: null },
+    { id: 3, name: 'Duolingo Spanish', archived: false, health_metric: null },
+    { id: 4, name: 'Steps', archived: false, health_metric: 'steps' }, // automatic
+    { id: 5, name: 'Old habit', archived: true, health_metric: null },  // archived
   ]
   const cards = [
     { id: 10, title: 'Call dentist', completed: false, archived: false },
@@ -86,7 +86,7 @@ describe('findBestMatch', () => {
     expect(findBestMatch('old habit', habits, cards)).toBeNull()
   })
 
-  it('excludes automatic (withings) habits', () => {
+  it('excludes automatic (health-metric-linked) habits', () => {
     expect(findBestMatch('steps', habits, cards)).toBeNull()
   })
 
@@ -100,21 +100,21 @@ describe('findBestMatch', () => {
 
   it('prefers exact match over substring match', () => {
     const h = [
-      { id: 1, name: 'run', archived: false, withings_metric: null },
-      { id: 2, name: 'morning run', archived: false, withings_metric: null },
+      { id: 1, name: 'run', archived: false, health_metric: null },
+      { id: 2, name: 'morning run', archived: false, health_metric: null },
     ]
     expect(findBestMatch('run', h, [])).toEqual({ kind: 'habit', id: 1 })
   })
 
   it('habits and tasks both considered — best score wins', () => {
-    const h = [{ id: 1, name: 'morning run', archived: false, withings_metric: null }]
+    const h = [{ id: 1, name: 'morning run', archived: false, health_metric: null }]
     const c = [{ id: 10, title: 'run', completed: false, archived: false }]
     // 'run' exact-matches the task (score 3) vs substring-matches the habit (score 1)
     expect(findBestMatch('run', h, c)).toEqual({ kind: 'task', id: 10 })
   })
 
   it('habit wins tie-break when both have same score (first in iteration)', () => {
-    const h = [{ id: 1, name: 'run', archived: false, withings_metric: null }]
+    const h = [{ id: 1, name: 'run', archived: false, health_metric: null }]
     const c = [{ id: 10, title: 'run', completed: false, archived: false }]
     // Both exact match 'run'; habit is iterated first so wins (score must be strictly greater)
     expect(findBestMatch('run', h, c)).toEqual({ kind: 'habit', id: 1 })

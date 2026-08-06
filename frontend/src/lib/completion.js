@@ -15,13 +15,13 @@ export function scoreMatch(name, query) {
  *
  * Excludes:
  *   - archived habits
- *   - automatic habits (withings_metric set)
+ *   - automatic habits (health_metric set)
  *   - completed tasks
  *   - archived tasks
  */
 export function findBestMatch(title, habits, cards) {
   if (!title) return null
-  const manualHabits = (habits ?? []).filter((h) => !h.archived && !h.withings_metric)
+  const manualHabits = (habits ?? []).filter((h) => !h.archived && !h.health_metric)
   const activeTasks = (cards ?? []).filter((c) => !c.completed && !c.archived)
   let best = null, bestScore = 0
   for (const h of manualHabits) {

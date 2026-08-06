@@ -5,13 +5,7 @@ import AssistModal from './AssistModal'
 import './CardModal.css'
 import './CardSheet.css'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
-
-function parseGitHubUrl(str) {
-  if (!str) return null
-  const m = str.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/(pull|issues?)\/(\d+)/)
-  if (!m) return null
-  return { repo: m[1], type: m[2].startsWith('pull') ? 'PR' : 'Issue', number: m[3], url: str }
-}
+import { parseGitHubUrl } from '../../lib/github'
 
 // card=null means "new card" mode (starts directly in edit mode)
 export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], topTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove, onBreakdown, onCreateTag }) {

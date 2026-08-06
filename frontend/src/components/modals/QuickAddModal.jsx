@@ -115,8 +115,8 @@ export default function QuickAddModal({
   const [recurrenceRule, setRecurrenceRule] = useState('')
   const [selectedTags, setSelectedTags] = useState([])
   const [clarificationQuestion, setClarificationQuestion] = useState('')
-  const [withingsMetric, setWithingsMetric] = useState(null)
-  const [withingsGoal, setWithingsGoal] = useState(null)
+  const [healthMetric, setHealthMetric] = useState(null)
+  const [healthGoal, setHealthGoal] = useState(null)
   const [matchedItem, setMatchedItem] = useState(null) // { kind: 'habit'|'task', id }
   const [moodEnergy, setMoodEnergy] = useState(3)
   const [saving, setSaving] = useState(false)
@@ -220,8 +220,8 @@ export default function QuickAddModal({
         setRecurrenceRule(result.recurrence_rule ?? '')
         setSelectedTags(suggestedTags)
         setClarificationQuestion(result.clarification_question ?? '')
-        setWithingsMetric(result.withings_metric ?? null)
-        setWithingsGoal(result.withings_goal ?? null)
+        setHealthMetric(result.health_metric ?? null)
+        setHealthGoal(result.health_goal ?? null)
         if (result.type === 'habit_check' || result.type === 'task_complete') {
           setMatchedItem(findBestMatch(result.title ?? '', habits, cards))
         }
@@ -253,10 +253,10 @@ export default function QuickAddModal({
   const handleConfirm = async () => {
     setSaving(true)
     try {
-      if (detectedType === 'goal' && withingsMetric === 'steps') {
-        await onSaveStepGoal(withingsGoal)
-      } else if (detectedType === 'goal' && withingsMetric) {
-        await onSaveGoals({ [withingsMetric]: withingsGoal })
+      if (detectedType === 'goal' && healthMetric === 'steps') {
+        await onSaveStepGoal(healthGoal)
+      } else if (detectedType === 'goal' && healthMetric) {
+        await onSaveGoals({ [healthMetric]: healthGoal })
       } else if (detectedType === 'habit_check' || detectedType === 'task_complete') {
         if (matchedItem?.kind === 'habit') {
           const habit = habits.find((h) => h.id === matchedItem.id)
@@ -265,7 +265,7 @@ export default function QuickAddModal({
           await onCompleteTask(matchedItem.id)
         }
       } else if (detectedType === 'habit') {
-        await onSaveHabit({ name: title, tag_ids: [], withings_metric: withingsMetric || null, withings_goal: withingsGoal ?? null })
+        await onSaveHabit({ name: title, tag_ids: [], health_metric: healthMetric || null, health_goal: healthGoal ?? null })
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
       } else if (detectedType === 'workout') {
@@ -295,8 +295,8 @@ export default function QuickAddModal({
     setSelectedTags(item._tags ?? (item.suggested_tags ?? [])
       .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase()))
       .filter(Boolean))
-    setWithingsMetric(item.withings_metric ?? null)
-    setWithingsGoal(item.withings_goal ?? null)
+    setHealthMetric(item.health_metric ?? null)
+    setHealthGoal(item.health_goal ?? null)
     setClarificationQuestion('')
     setStep('bulk-edit')
   }
@@ -311,8 +311,8 @@ export default function QuickAddModal({
       scheduled_at: scheduledAt || null,
       recurrence_rule: recurrenceRule || null,
       _tags: selectedTags,
-      withings_metric: withingsMetric || null,
-      withings_goal: withingsGoal ?? null,
+      health_metric: healthMetric || null,
+      health_goal: healthGoal ?? null,
     } : it))
     setStep('bulk-confirm')
   }
@@ -368,10 +368,10 @@ export default function QuickAddModal({
         .map((name) => allTags.find((t) => t.name.toLowerCase() === name.toLowerCase()))
         .filter(Boolean)
       try {
-        if (item.type === 'goal' && item.withings_metric === 'steps') {
-          await onSaveStepGoal(item.withings_goal)
-        } else if (item.type === 'goal' && item.withings_metric) {
-          await onSaveGoals({ [item.withings_metric]: item.withings_goal ?? null })
+        if (item.type === 'goal' && item.health_metric === 'steps') {
+          await onSaveStepGoal(item.health_goal)
+        } else if (item.type === 'goal' && item.health_metric) {
+          await onSaveGoals({ [item.health_metric]: item.health_goal ?? null })
         } else if (item.type === 'habit_check' || item.type === 'task_complete') {
           const m = findBestMatch(item.title, habits, cards)
           if (m?.kind === 'habit') {
@@ -381,7 +381,7 @@ export default function QuickAddModal({
             await onCompleteTask(m.id)
           }
         } else if (item.type === 'habit') {
-          await onSaveHabit({ name: item.title, tag_ids: [], withings_metric: item.withings_metric || null, withings_goal: item.withings_goal ?? null })
+          await onSaveHabit({ name: item.title, tag_ids: [], health_metric: item.health_metric || null, health_goal: item.health_goal ?? null })
         } else if (item.type === 'food') {
           await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
         } else if (item.type === 'workout') {
@@ -410,7 +410,7 @@ export default function QuickAddModal({
     detectedType === 'mood'
       ? !moodEnergy
       : detectedType === 'goal'
-        ? (!withingsMetric || withingsGoal == null)
+        ? (!healthMetric || healthGoal == null)
         : (detectedType === 'food' || detectedType === 'workout')
           ? !text.trim()
           : (detectedType === 'habit_check' || detectedType === 'task_complete')
@@ -765,8 +765,8 @@ export default function QuickAddModal({
 
           {detectedType === 'goal' && (
             <div className="quick-goal-preview">
-              <div className="quick-goal-metric">{METRIC_LABELS[withingsMetric] ?? withingsMetric}</div>
-              <div className="quick-goal-value">{formatGoalDisplay(withingsMetric, withingsGoal, isImperial)}</div>
+              <div className="quick-goal-metric">{METRIC_LABELS[healthMetric] ?? healthMetric}</div>
+              <div className="quick-goal-value">{formatGoalDisplay(healthMetric, healthGoal, isImperial)}</div>
             </div>
           )}
 
@@ -785,7 +785,7 @@ export default function QuickAddModal({
           )}
 
           {(detectedType === 'habit_check' || detectedType === 'task_complete') && (() => {
-            const manualHabits = habits.filter((h) => !h.archived && !h.withings_metric)
+            const manualHabits = habits.filter((h) => !h.archived && !h.health_metric)
             const activeTasks = cards.filter((c) => !c.completed && !c.archived)
             const matchVal = matchedItem ? `${matchedItem.kind}:${matchedItem.id}` : ''
             return (

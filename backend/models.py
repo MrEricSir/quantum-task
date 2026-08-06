@@ -164,8 +164,8 @@ class Habit(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     archived = Column(Boolean, default=False)
     archived_at = Column(DateTime, nullable=True)
-    withings_metric = Column(String, nullable=True)   # 'steps' | 'fat_ratio' | None
-    withings_goal = Column(Float, nullable=True)       # target value (steps count or % body fat)
+    health_metric = Column(String, nullable=True)   # 'steps' | 'fat_ratio' | None
+    health_goal = Column(Float, nullable=True)       # target value (steps count or % body fat)
     tags = relationship("Tag", secondary="habit_tags", lazy="joined")
 
 
@@ -231,8 +231,8 @@ class HealthExperiment(Base):
     action     = Column(String, nullable=True)         # specific daily action
     needs_habit      = Column(Boolean, default=False)
     habit_id         = Column(Integer, nullable=True)  # linked 🧪 habit (no FK — habit may be archived)
-    withings_metric  = Column(String, nullable=True)
-    withings_goal    = Column(Float, nullable=True)
+    health_metric    = Column(String, nullable=True)
+    health_goal      = Column(Float, nullable=True)
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     dismissed_at = Column(DateTime, nullable=True)
     status      = Column(String, default="active")    # "active" | "dismissed"

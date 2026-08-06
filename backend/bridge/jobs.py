@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
+import github_sync
 import models
 import app_setting_keys as setting_keys
 
@@ -28,12 +29,15 @@ def _get_bridge_install_token(db: Session) -> str:
 
 
 def _repo_from_external_id(external_id: str | None) -> str | None:
-    """Parse 'github:owner/repo/issues/42' → 'owner/repo', or None if not a GitHub link."""
-    if not external_id or not external_id.startswith("github:"):
+    """Parse 'github:owner/repo/issues/42' → 'owner/repo', or None if not a GitHub link.
+
+    Delegates to github_sync's regex-validated parser rather than duplicating
+    a looser string-split version -- this repo previously had two independent
+    parsers for the same format that could silently drift apart."""
+    if not external_id:
         return None
-    path = external_id[len("github:"):]   # "owner/repo/issues/42"
-    parts = path.split("/")
-    return f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else None
+    parsed = github_sync._parse_external_id(external_id)
+    return f"{parsed[0]}/{parsed[1]}" if parsed else None
 
 
 def _build_prompt(card: models.Card, eng_item: models.EngineeringItem | None) -> str:

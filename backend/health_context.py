@@ -68,13 +68,13 @@ def build_health_context(db: "Session", today: date) -> tuple[dict, str | None]:
     for h in (
         db.query(models.Habit)
         .filter(
-            models.Habit.withings_metric.isnot(None),
-            models.Habit.withings_goal.isnot(None),
+            models.Habit.health_metric.isnot(None),
+            models.Habit.health_goal.isnot(None),
             models.Habit.archived == False,  # noqa: E712
         )
         .all()
     ):
-        habit_goals[h.withings_metric] = h.withings_goal
+        habit_goals[h.health_metric] = h.health_goal
 
     goals: dict[str, float | None] = {}
     for metric in ("steps", "fat_ratio", "weight"):

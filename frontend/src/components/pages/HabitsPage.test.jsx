@@ -39,15 +39,15 @@ const base = {
   best_streak: 3,
   tags: [],
   recent_completions: [false, false, false, false, false, false, false],
-  withings_metric: null,
-  withings_goal: null,
+  health_metric: null,
+  health_goal: null,
   is_experiment: false,
   archived: false,
 }
 
 // ── Regular habits ─────────────────────────────────────────────────────────────
 
-describe('regular habit (no withings_metric, no is_experiment)', () => {
+describe('regular habit (no health_metric, no is_experiment)', () => {
   it('renders an enabled check button', () => {
     renderHabits([base])
     const btn = screen.getByRole('button', { name: /mark complete/i })
@@ -77,7 +77,7 @@ describe('regular habit (no withings_metric, no is_experiment)', () => {
   })
 })
 
-// ── Experiment habits (is_experiment=true, no withings_metric) ─────────────────
+// ── Experiment habits (is_experiment=true, no health_metric) ─────────────────
 
 describe('experiment habit without Withings metric', () => {
   const exp = { ...base, id: 2, name: '1 hour screen-free time', is_experiment: true }
@@ -106,8 +106,8 @@ describe('experiment habit without Withings metric', () => {
 
 // ── Withings-synced habits ─────────────────────────────────────────────────────
 
-describe('Withings-synced habit (withings_metric set)', () => {
-  const synced = { ...base, id: 3, name: '10,000 steps', withings_metric: 'steps', withings_goal: 10000 }
+describe('Withings-synced habit (health_metric set)', () => {
+  const synced = { ...base, id: 3, name: '10,000 steps', health_metric: 'steps', health_goal: 10000 }
 
   it('check button is disabled', () => {
     renderHabits([synced])

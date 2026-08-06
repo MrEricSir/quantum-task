@@ -565,7 +565,7 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
           })}
         </div>
       )}
-      {exp.needs_habit && exp.habit_id && !exp.withings_metric && !showProgress && (
+      {exp.needs_habit && exp.habit_id && !exp.health_metric && !showProgress && (
         <p className="experiment-habit-note">
           A tracking habit has been created for you — check it off each day you complete the experiment.
         </p>
@@ -1059,9 +1059,9 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
   const sleepDeepMinData  = measurements.filter(m => m.metric === 'sleep_deep_minutes').slice(-range)
   const spo2Data          = measurements.filter(m => m.metric === 'spo2').slice(-range)
 
-  const stepsHabits  = habits.filter(h => h.withings_metric === 'steps'    && !h.archived)
-  const fatHabits    = habits.filter(h => h.withings_metric === 'fat_ratio' && !h.archived)
-  const weightHabits = habits.filter(h => h.withings_metric === 'weight'    && !h.archived)
+  const stepsHabits  = habits.filter(h => h.health_metric === 'steps'    && !h.archived)
+  const fatHabits    = habits.filter(h => h.health_metric === 'fat_ratio' && !h.archived)
+  const weightHabits = habits.filter(h => h.health_metric === 'weight'    && !h.archived)
 
   // Most recent BP / HR / sleep / SpO2 (may predate today)
   const _allSys   = measurements.filter(m => m.metric === 'bp_systolic')
@@ -1079,9 +1079,9 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
   const completions = (hs) => hs.flatMap(h => habitCompletions[String(h.id)] ?? [])
 
   // Habit goals take priority; standalone healthGoals are the fallback
-  const primaryStepsGoal  = stepsHabits[0]?.withings_goal  ?? healthGoals?.steps     ?? null
-  const primaryFatGoal    = fatHabits[0]?.withings_goal    ?? healthGoals?.fat_ratio  ?? null
-  const primaryWeightGoal = weightHabits[0]?.withings_goal ?? healthGoals?.weight     ?? null
+  const primaryStepsGoal  = stepsHabits[0]?.health_goal  ?? healthGoals?.steps     ?? null
+  const primaryFatGoal    = fatHabits[0]?.health_goal    ?? healthGoals?.fat_ratio  ?? null
+  const primaryWeightGoal = weightHabits[0]?.health_goal ?? healthGoals?.weight     ?? null
 
   const hasData   = measurements.length > 0
   const showCharts = withingsConnected || hasData

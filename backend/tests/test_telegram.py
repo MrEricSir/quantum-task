@@ -840,13 +840,13 @@ def _set_habit_reminder_time(time_str="20:00"):
         db.commit()
 
 
-def _make_habit(name, days_old=30, withings_metric=None, withings_goal=None):
+def _make_habit(name, days_old=30, health_metric=None, health_goal=None):
     with BotTestSession() as db:
         habit = models.Habit(
             name=name,
             created_at=datetime.now(timezone.utc) - timedelta(days=days_old),
-            withings_metric=withings_metric,
-            withings_goal=withings_goal,
+            health_metric=health_metric,
+            health_goal=health_goal,
         )
         db.add(habit)
         db.commit()
@@ -1029,7 +1029,7 @@ class TestCheckHealthNudges:
         _set_habit_reminder_time()
         # days_old=2: under the going-cold minimum age, so a zero-completion
         # habit here doesn't also trip going-cold and muddy the assertions
-        habit_id = _make_habit("Walk", days_old=2, withings_metric="steps", withings_goal=10000)
+        habit_id = _make_habit("Walk", days_old=2, health_metric="steps", health_goal=10000)
         for i in (1, 2, 3, 4):
             _make_withings_reading("steps", TODAY - timedelta(days=i), 4000)
 
@@ -1047,7 +1047,7 @@ class TestCheckHealthNudges:
     def test_withings_drift_ignores_insufficient_readings(self):
         _set_habit_reminder_time()
         _neutralize_food_log()
-        habit_id = _make_habit("Walk", days_old=2, withings_metric="steps", withings_goal=10000)
+        habit_id = _make_habit("Walk", days_old=2, health_metric="steps", health_goal=10000)
         _make_withings_reading("steps", TODAY - timedelta(days=1), 2000)  # only 1 reading
 
         from telegram.scheduler import check_health_nudges

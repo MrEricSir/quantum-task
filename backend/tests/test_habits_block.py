@@ -1,9 +1,9 @@
 """
 Tests for the manual-check guard on auto-tracked habits (routers/habits.py).
 
-Habits are blocked from manual check/uncheck ONLY if they have withings_metric
+Habits are blocked from manual check/uncheck ONLY if they have health_metric
 set (Withings auto-tracks them).  Experiment habits (is_experiment=True, but no
-withings_metric) are manually checkable — the user must mark them done.
+health_metric) are manually checkable — the user must mark them done.
 """
 import sys
 import os
@@ -52,8 +52,8 @@ LOCAL_DATE = "2026-06-20"
 HEADERS = {"X-Local-Date": LOCAL_DATE}
 
 
-def _habit(db, name: str, withings_metric=None, withings_goal=None) -> models.Habit:
-    h = models.Habit(name=name, withings_metric=withings_metric, withings_goal=withings_goal)
+def _habit(db, name: str, health_metric=None, health_goal=None) -> models.Habit:
+    h = models.Habit(name=name, health_metric=health_metric, health_goal=health_goal)
     db.add(h)
     db.flush()
     return h
@@ -82,15 +82,15 @@ class TestCheckHabit:
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 200
 
-    def test_withings_metric_habit_blocked(self, client, db_session):
-        h = _habit(db_session, "Walk 10k steps", withings_metric="steps", withings_goal=10_000)
+    def test_health_metric_habit_blocked(self, client, db_session):
+        h = _habit(db_session, "Walk 10k steps", health_metric="steps", health_goal=10_000)
         db_session.commit()
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 403
 
-    def test_experiment_habit_without_withings_can_be_checked(self, client, db_session):
-        """Experiment habits with no withings_metric are manually checkable."""
-        h = _habit(db_session, "🧪 1 hour screen-free time")  # no withings_metric
+    def test_experiment_habit_without_health_metric_can_be_checked(self, client, db_session):
+        """Experiment habits with no health_metric are manually checkable."""
+        h = _habit(db_session, "🧪 1 hour screen-free time")  # no health_metric
         _experiment(db_session, habit_id=h.id, status="active")
         db_session.commit()
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
@@ -120,16 +120,16 @@ class TestUncheckHabit:
         r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 200
 
-    def test_withings_metric_habit_blocked(self, client, db_session):
-        h = _habit(db_session, "Walk 10k steps", withings_metric="steps", withings_goal=10_000)
+    def test_health_metric_habit_blocked(self, client, db_session):
+        h = _habit(db_session, "Walk 10k steps", health_metric="steps", health_goal=10_000)
         db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
         db_session.commit()
         r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 403
 
-    def test_experiment_habit_without_withings_can_be_unchecked(self, client, db_session):
-        """Experiment habits with no withings_metric are manually uncheckable."""
-        h = _habit(db_session, "🧪 1 hour screen-free time")  # no withings_metric
+    def test_experiment_habit_without_health_metric_can_be_unchecked(self, client, db_session):
+        """Experiment habits with no health_metric are manually uncheckable."""
+        h = _habit(db_session, "🧪 1 hour screen-free time")  # no health_metric
         _experiment(db_session, habit_id=h.id, status="active")
         db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
         db_session.commit()

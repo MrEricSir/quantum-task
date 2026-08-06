@@ -90,11 +90,11 @@ def _load_health_goals(db: Session) -> dict[str, float]:
         except Exception:
             pass
     for h in db.query(models.Habit).filter(
-        models.Habit.withings_metric.isnot(None),
-        models.Habit.withings_goal.isnot(None),
+        models.Habit.health_metric.isnot(None),
+        models.Habit.health_goal.isnot(None),
         models.Habit.archived == False,   # noqa: E712
     ).all():
-        goals[h.withings_metric] = float(h.withings_goal)
+        goals[h.health_metric] = float(h.health_goal)
     return goals
 
 
@@ -368,7 +368,7 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
         db.query(models.Habit)
         .filter(
             models.Habit.archived == False,       # noqa: E712
-            models.Habit.withings_metric.is_(None),  # auto-checked habits excluded
+            models.Habit.health_metric.is_(None),  # auto-checked habits excluded
             models.Habit.created_at <= habit_cutoff,
         )
         .all()

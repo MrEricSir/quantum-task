@@ -46,8 +46,8 @@ class ParsedCard(BaseModel):
     recurrence_rule: Optional[Literal["daily", "weekly", "monthly", "yearly"]] = None
     clarification_question: Optional[str] = None
     source_text: Optional[str] = None
-    withings_metric: Optional[str] = None
-    withings_goal: Optional[float] = None
+    health_metric: Optional[str] = None
+    health_goal: Optional[float] = None
 
     @field_validator('scheduled_at', 'description', 'source_text', mode='before')
     @classmethod

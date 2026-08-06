@@ -174,8 +174,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
   const startEdit = (habit) => {
     setEditingId(habit.id)
     setEditName(habit.name)
-    setEditMetric(habit.withings_metric || '')
-    setEditGoal(habit.withings_goal != null ? String(habit.withings_goal) : '')
+    setEditMetric(habit.health_metric || '')
+    setEditGoal(habit.health_goal != null ? String(habit.health_goal) : '')
   }
 
   const confirmEdit = async () => {
@@ -183,8 +183,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     if (name) {
       await onUpdate(editingId, {
         name,
-        withings_metric: editMetric || null,
-        withings_goal: editMetric && editGoal !== '' ? parseFloat(editGoal) : null,
+        health_metric: editMetric || null,
+        health_goal: editMetric && editGoal !== '' ? parseFloat(editGoal) : null,
       })
     }
     setEditingId(null)
@@ -194,8 +194,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     ? habits
     : habits.filter((h) => (h.tags ?? []).some((t) => selectedTagIds.has(t.id)))
   ).slice().sort((a, b) => {
-    const aAuto = !!a.withings_metric
-    const bAuto = !!b.withings_metric
+    const aAuto = !!a.health_metric
+    const bAuto = !!b.health_metric
     if (aAuto !== bAuto) return aAuto ? 1 : -1
     return a.name.localeCompare(b.name)
   })
@@ -245,7 +245,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
           {visibleHabits.map((habit) => (
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
               {(() => {
-                const isAuto = !!habit.withings_metric
+                const isAuto = !!habit.health_metric
                 return (
                   <button
                     type="button"
@@ -309,7 +309,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                   <span className="habit-card-name">{habit.name}</span>
                 )}
 
-                {editingId !== habit.id && habit.withings_metric && (
+                {editingId !== habit.id && habit.health_metric && (
                   <button
                     type="button"
                     className="habit-card-withings"
@@ -317,9 +317,9 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                     title="View health charts"
                   >
                     <span className="habit-card-withings-badge">
-                      {METRIC_OPTIONS.find(o => o.value === habit.withings_metric)?.label.split(' ')[0] || '📊'}
+                      {METRIC_OPTIONS.find(o => o.value === habit.health_metric)?.label.split(' ')[0] || '📊'}
                       {' '}
-                      {metricBadgeText(habit.withings_metric, habit.withings_goal, isImperial)}
+                      {metricBadgeText(habit.health_metric, habit.health_goal, isImperial)}
                     </span>
                     <span className="habit-card-withings-auto">↻ synced</span>
                   </button>
