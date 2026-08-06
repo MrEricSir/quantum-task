@@ -858,8 +858,9 @@ def cmd_list(cfg):
 
 def cmd_cleanup(cfg):
     """List qtask-created worktrees across every repo in [repos], and
-    optionally remove some or all of them. Doesn't touch worktrees for
-    branches you created yourself (only ones under refs/heads/qtask/)."""
+    optionally remove some or all of them -- worktree AND branch. Doesn't
+    touch worktrees for branches you created yourself (only ones under
+    refs/heads/qtask/)."""
     if not (cfg.get("repos") or {}):
         print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
         return
@@ -898,7 +899,19 @@ def cmd_cleanup(cfg):
         r = subprocess.run(["git", "worktree", "remove", "--force", wt_path],
                            cwd=work_dir, capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"[bridge] WARNING: could not remove {wt_path}: {r.stderr.strip()}",
+            print(f"[bridge] WARNING: could not remove worktree {wt_path}: {r.stderr.strip()}",
+                  file=sys.stderr)
+
+        # Delete the branch too -- leaving it behind is exactly what causes
+        # "Branch '<branch>' already exists" on the next run for the same
+        # card, even after the worktree itself is gone (_create_worktree
+        # checks whether the branch exists before it ever touches
+        # worktrees, so a leftover branch alone is enough to block a retry).
+        print(f"[bridge] Deleting branch {branch}...")
+        r = subprocess.run(["git", "branch", "-D", branch],
+                           cwd=work_dir, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"[bridge] WARNING: could not delete branch {branch}: {r.stderr.strip()}",
                   file=sys.stderr)
 
 

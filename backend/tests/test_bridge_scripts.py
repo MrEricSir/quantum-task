@@ -1017,3 +1017,38 @@ class TestAgentScriptFullFlow:
         started = next(c for c in api_calls if c[1] == "/api/bridge/jobs/1/start")
         subprocess.run(["git", "worktree", "remove", "--force", started[2]["worktree_path"]],
                        cwd=scratch_repo, capture_output=True)
+
+    def test_cleanup_deletes_the_branch_not_just_the_worktree(self, scratch_repo, monkeypatch):
+        """Regression test: cmd_cleanup used to only run `git worktree
+        remove`, leaving the branch behind. Since _create_worktree checks
+        whether the branch exists BEFORE it ever touches worktrees, a
+        leftover branch alone is enough to block every future run for that
+        same card with "Branch already exists" -- even right after
+        --cleanup supposedly cleaned it up. Reported directly by the user."""
+        ns = self._load_rendered_agent_module()
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        cfg = {"app_url": "http://fake", "token": "x",
+               "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches"}
+
+        # Create a real qtask worktree + branch the same way run_job does.
+        worktree_path, branch, push_url_info = ns["_create_worktree"](cfg, job, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push_url_info)  # restore pushurl, unrelated to this test
+        assert os.path.isdir(worktree_path)
+        assert self._branch_exists(scratch_repo, branch)
+
+        # cmd_cleanup lists worktrees and prompts for a selection -- auto-pick "1".
+        monkeypatch.setattr("builtins.input", lambda *_: "1")
+        ns["cmd_cleanup"](cfg)
+
+        assert not os.path.isdir(worktree_path), "worktree directory still present after cleanup"
+        assert not self._branch_exists(scratch_repo, branch), \
+            "branch still exists after cleanup — the next run for this card would still fail " \
+            "with 'Branch already exists', which is the exact bug being fixed here"
+
+    def _branch_exists(self, repo, branch):
+        r = subprocess.run(["git", "rev-parse", "--verify", branch],
+                           cwd=repo, capture_output=True)
+        return r.returncode == 0
