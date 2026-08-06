@@ -509,6 +509,194 @@ class TestBotQueueBridge:
         assert _sessions[chat_id]["last_card"]["title"] == "Track feature"
 
 
+# ── Capability-registry-backed handlers (mark_complete, complete_habit, ────────
+# log_food, log_mood) -- previously had zero direct test coverage; added
+# alongside the Level 2/3 registry refactor since these are exactly the
+# functions whose signatures changed (query, chat_id) -> (intent, tz_offset, chat_id).
+
+class TestBotMarkComplete:
+
+    def test_returns_prompt_when_query_empty(self):
+        from telegram.bot import _reply_complete
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete({"match_query": ""}, 0)
+        assert "What task should I mark complete" in reply
+
+    def test_returns_error_when_task_not_found(self):
+        from telegram.bot import _reply_complete
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete({"match_query": "nonexistent xyz"}, 0)
+        assert "Couldn't find" in reply
+
+    def test_marks_single_match_complete(self):
+        card_id = _make_card("Dentist appointment")
+        from telegram.bot import _reply_complete
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete({"match_query": "dentist"}, 0)
+        assert "Marked complete" in reply
+        assert "Dentist appointment" in reply
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(id=card_id).first()
+            assert card.completed is True
+            assert card.completed_at is not None
+
+    def test_disambiguation_when_multiple_matches(self):
+        _make_card("Auth login feature")
+        _make_card("Auth oauth feature")
+        from telegram.bot import _reply_complete, _sessions
+        chat_id = "test_complete_disambig"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete({"match_query": "auth"}, 0, chat_id=chat_id)
+        assert "Which task" in reply
+        assert _sessions[chat_id]["pending"]["action"] == "complete"
+
+    def test_pushes_undo(self):
+        _make_card("Dentist appointment")
+        from telegram.bot import _reply_complete, _reply_undo, _sessions
+        chat_id = "test_complete_undo"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_complete({"match_query": "dentist"}, 0, chat_id=chat_id)
+            undo_reply = _reply_undo(chat_id)
+        assert "Dentist appointment" in undo_reply
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="Dentist appointment").first()
+            assert card.completed is False
+
+
+class TestBotCompleteHabit:
+
+    def test_returns_prompt_when_query_empty(self):
+        from telegram.bot import _reply_complete_habit
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete_habit({"match_query": ""}, 0)
+        assert "Which habit did you complete" in reply
+
+    def test_returns_error_when_habit_not_found(self):
+        _make_habit("Meditate")
+        from telegram.bot import _reply_complete_habit
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete_habit({"match_query": "nonexistent xyz"}, 0)
+        assert "No habit matching" in reply
+
+    def test_marks_habit_complete(self):
+        habit_id = _make_habit("Meditate")
+        from telegram.bot import _reply_complete_habit
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete_habit({"match_query": "meditate"}, 0)
+        assert "Meditate" in reply
+        assert "done for today" in reply
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 1
+
+    def test_already_done_today(self):
+        habit_id = _make_habit("Meditate")
+        # _reply_complete_habit computes "today" from Settings(db).tz_offset,
+        # which defaults to 0 (UTC) with no AppSetting row -- match that here
+        # rather than the local system date, which may differ in this sandbox.
+        _complete_habit(habit_id, datetime.now(timezone.utc).date())
+        from telegram.bot import _reply_complete_habit
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete_habit({"match_query": "meditate"}, 0)
+        assert "already marked done" in reply
+
+
+class TestBotLogFood:
+
+    def test_logs_food_entry(self):
+        from telegram.bot import _reply_log_food
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_log_food({"raw_input": "yogurt and coffee", "meal_type": "breakfast"}, 0)
+        assert "Food logged" in reply
+        assert "yogurt and coffee" in reply
+        assert "breakfast" in reply
+        with BotTestSession() as db:
+            entry = db.query(models.FoodEntry).filter_by(raw_input="yogurt and coffee").first()
+            assert entry is not None
+            assert entry.meal_type == "breakfast"
+
+    def test_pushes_undo(self):
+        from telegram.bot import _reply_log_food, _reply_undo, _sessions
+        chat_id = "test_food_undo"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_food({"raw_input": "coffee", "meal_type": None}, 0, chat_id=chat_id)
+            undo_reply = _reply_undo(chat_id)
+        assert "coffee" in undo_reply
+        with BotTestSession() as db:
+            assert db.query(models.FoodEntry).filter_by(raw_input="coffee").count() == 0
+
+
+class TestBotLogMood:
+
+    def test_logs_mood_entry(self):
+        from telegram.bot import _reply_log_mood
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_log_mood({"energy": 4, "note": "feeling focused"}, 0)
+        assert "Energy logged" in reply
+        assert "feeling focused" in reply
+        with BotTestSession() as db:
+            row = db.query(models.MoodLog).first()
+            assert row.energy == 4
+            assert row.note == "feeling focused"
+
+    def test_clamps_out_of_range_energy(self):
+        from telegram.bot import _reply_log_mood
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_mood({"energy": 99, "note": None}, 0)
+        with BotTestSession() as db:
+            assert db.query(models.MoodLog).first().energy == 5
+
+    def test_defaults_to_okay_on_invalid_energy(self):
+        from telegram.bot import _reply_log_mood
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_mood({"energy": "not a number", "note": None}, 0)
+        with BotTestSession() as db:
+            assert db.query(models.MoodLog).first().energy == 3
+
+    def test_updates_existing_entry_for_today(self):
+        from telegram.bot import _reply_log_mood
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_mood({"energy": 2, "note": "tired"}, 0)
+            _reply_log_mood({"energy": 5, "note": "energized now"}, 0)
+        with BotTestSession() as db:
+            rows = db.query(models.MoodLog).all()
+            assert len(rows) == 1
+            assert rows[0].energy == 5
+            assert rows[0].note == "energized now"
+
+
+class TestRouteMessageCapabilityDispatch:
+    """Confirms _route_message's generic by_telegram_action() lookup (Level 3)
+    actually reaches each capability handler -- what would have silently
+    broken if the dispatch replacement dropped or mis-wired a branch."""
+
+    @pytest.mark.parametrize("action,intent,expected_substring", [
+        ("mark_complete", {"match_query": "dentist"}, "Marked complete"),
+        ("complete_habit", {"match_query": "meditate"}, "done for today"),
+        ("log_food", {"raw_input": "toast", "meal_type": None}, "Food logged"),
+        ("log_mood", {"energy": 4, "note": None}, "Energy logged"),
+    ])
+    def test_dispatches_to_the_right_handler(self, action, intent, expected_substring):
+        _make_card("Dentist appointment")
+        _make_habit("Meditate")
+        from telegram.bot import _route_message
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._parse_telegram_intent", return_value={"action": action, **intent}), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[]):
+            reply = _route_message("some free-text message", 0)
+        assert expected_substring in reply
+
+    def test_unrecognised_action_falls_through_to_capture(self):
+        from telegram.bot import _route_message
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._parse_telegram_intent",
+                   return_value={"action": "capture", "title": "buy milk", "section": "later"}):
+            reply = _route_message("buy milk", 0)
+        assert "milk" in reply.lower() or "added" in reply.lower() or "captured" in reply.lower()
+
+
 class TestCheckBridgeJobs:
 
     def test_returns_none_when_no_finished_jobs(self):

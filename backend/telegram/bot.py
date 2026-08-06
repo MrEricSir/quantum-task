@@ -10,10 +10,7 @@ import json as _json
 import traceback
 from datetime import datetime, timezone, timedelta
 
-import capabilities.food as _food
-import capabilities.habit_check as _habit_check
-import capabilities.mood as _mood
-import capabilities.task_complete as _task_complete
+from capabilities.registry import REGISTRY, by_telegram_action, set_telegram_handler
 import models
 from database import SessionLocal
 from deps import llm_client, LLM_MODEL
@@ -24,7 +21,7 @@ from telegram.notify import send_message
 
 # ── Intent prompt ─────────────────────────────────────────────────────────────
 # Capability action blocks (mark_complete, complete_habit, log_food, log_mood)
-# are imported from capabilities/ so they stay in sync with the parse-flow prompt.
+# come from the capabilities registry so they stay in sync with the parse-flow prompt.
 
 _TELEGRAM_INTENT_PROMPT = (
 """\
@@ -99,7 +96,7 @@ The "action" field must be one of:
                 "what did I write about groceries?", "details on the dentist card"
 
 """
-+ _task_complete.TELEGRAM_DESCRIPTION
++ REGISTRY["task_complete"].telegram_description
 + """
 
   "undo"
@@ -127,7 +124,7 @@ The "action" field must be one of:
                 "help me focus", "what's most important right now?"
 
 """
-+ _habit_check.TELEGRAM_DESCRIPTION
++ REGISTRY["habit_check"].telegram_description
 + """
 
   "query_avoiding"
@@ -136,11 +133,11 @@ The "action" field must be one of:
                 "what keeps getting pushed?", "what am I procrastinating on?"
 
 """
-+ _food.TELEGRAM_DESCRIPTION
++ REGISTRY["food"].telegram_description
 + """
 
 """
-+ _mood.TELEGRAM_DESCRIPTION
++ REGISTRY["mood"].telegram_description
 + """
 
   "reschedule"
@@ -387,11 +384,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     if action == "reschedule":
         return _reply_reschedule(intent, tz_offset, chat_id)
 
-    if action == "complete_habit":
-        query = intent.get("match_query") or ""
-        if not query:
-            return "Which habit did you complete? Try: <b>done meditation</b>"
-        return _reply_complete_habit(query, chat_id)
+    op = by_telegram_action(action)
+    if op and op.telegram_handler:
+        return op.telegram_handler(intent, tz_offset, chat_id)
 
     if action == "query_avoiding":
         return _reply_avoiding(tz_offset)
@@ -414,12 +409,6 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     if action == "queue_bridge":
         return _reply_queue_bridge(intent, chat_id)
 
-    if action == "log_food":
-        return _reply_log_food(intent, tz_offset, chat_id)
-
-    if action == "log_mood":
-        return _reply_log_mood(intent, tz_offset, chat_id)
-
     if action == "query_schedule":
         now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
         today = now_local.date()
@@ -436,12 +425,6 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
 
     if action == "query_overdue":
         return _reply_overdue(tz_offset)
-
-    if action == "mark_complete":
-        query = intent.get("match_query") or ""
-        if not query:
-            return "What task should I mark complete? Try: <b>done [task name]</b>"
-        return _reply_complete(query, chat_id)
 
     # "capture" or anything unrecognised
     return _capture_from_intent(intent, text, tz_offset, chat_id)
@@ -1003,7 +986,11 @@ def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: s
     return None
 
 
-def _reply_complete(query: str, chat_id: str = "") -> str:
+def _reply_complete(intent: dict, tz_offset: int, chat_id: str = "") -> str:
+    query = intent.get("match_query") or ""
+    if not query:
+        return "What task should I mark complete? Try: <b>done [task name]</b>"
+
     session = _get_session(chat_id) if chat_id else {}
 
     # Resolve pronoun references to last mentioned card
@@ -1351,8 +1338,12 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     return f"✓ Food logged{meal_label}: {raw}\nSend <b>undo</b> to remove it."
 
 
-def _reply_complete_habit(query: str, chat_id: str = "") -> str:
+def _reply_complete_habit(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     """Mark a habit complete for today."""
+    query = intent.get("match_query") or ""
+    if not query:
+        return "Which habit did you complete? Try: <b>done meditation</b>"
+
     from streak import recompute_from
     now_local = datetime.now(timezone.utc).replace(tzinfo=None)  # rough — used only for date
     with SessionLocal() as db:
@@ -1406,6 +1397,15 @@ def _reply_complete_habit(query: str, chat_id: str = "") -> str:
 
     streak_note = f" ({streak}-day streak 🔥)" if streak >= 2 else ""
     return f"✓ <b>{match.name}</b> done for today{streak_note}"
+
+
+# Wire the capability handlers into the registry now that they're all defined --
+# _route_message looks these up via by_telegram_action() instead of a hand-maintained
+# if/elif chain, so a new capability only needs a set_telegram_handler call here.
+set_telegram_handler("food", _reply_log_food)
+set_telegram_handler("habit_check", _reply_complete_habit)
+set_telegram_handler("mood", _reply_log_mood)
+set_telegram_handler("task_complete", _reply_complete)
 
 
 def _reply_avoiding(tz_offset: int) -> str:

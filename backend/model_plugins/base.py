@@ -17,16 +17,12 @@ import re
 from datetime import date, datetime, time as dt_time, timedelta
 from typing import Any
 
-import capabilities.food as _food
-import capabilities.habit_check as _habit_check
-import capabilities.mood as _mood
-import capabilities.task_complete as _task_complete
-import capabilities.workout as _workout
+from capabilities.registry import REGISTRY
 
 # ── Shared prompt instructions ────────────────────────────────────────────────
 # Examples are intentionally excluded here — each plugin supplies its own.
-# Capability descriptions (food, mood, habit_check, task_complete) are imported
-# from capabilities/ so that parse-flow and Telegram stay in sync.
+# Capability descriptions (food, mood, habit_check, task_complete, workout) come
+# from the capabilities registry so parse-flow and Telegram stay in sync.
 
 BASE_INSTRUCTIONS = f"""\
 You parse natural language into structured todo items. Reply only with valid JSON. No explanation.
@@ -54,10 +50,10 @@ Fields:
                           Use when the input explicitly says "set/change/update my X goal to Y"
                           or "my X goal is Y" (e.g. "set my weight goal to 75 kg")
                           Always set withings_metric and withings_goal when type="goal"
-                  {_food.PARSE_DESCRIPTION}
-                  {_workout.PARSE_DESCRIPTION}
-                  {_habit_check.PARSE_DESCRIPTION}
-                  {_task_complete.PARSE_DESCRIPTION}
+                  {REGISTRY["food"].parse_description}
+                  {REGISTRY["workout"].parse_description}
+                  {REGISTRY["habit_check"].parse_description}
+                  {REGISTRY["task_complete"].parse_description}
                   assist = a conversational or planning request — NOT a specific item to capture
                           Use when the input is a question, request for help, or anything that
                           does not map cleanly to a task, habit, food log, or completion.
@@ -65,7 +61,7 @@ Fields:
                           "can you suggest tasks for my project", "how should I prioritize?"
                           Do NOT use for imperative statements like "call dentist" or
                           "meditate daily" — those are tasks/habits even if phrased as requests.
-                  {_mood.PARSE_DESCRIPTION}
+                  {REGISTRY["mood"].parse_description}
   title         — task or habit name; preserve names, people, and key context from
                   the input; only strip date/time phrases; do NOT paraphrase or summarize
   description   — verbatim extra context or content from the user's input; null if none;
@@ -352,7 +348,7 @@ class BaseModelPlugin:
         "annual": "yearly", "annually": "yearly",
     }
 
-    _VALID_TYPES = {"task", "habit", "goal", "assist", "food", "workout", "habit_check", "task_complete", "mood"}
+    _VALID_TYPES = {"task", "habit", "goal", "assist"} | set(REGISTRY.keys())
 
     def normalize_raw(self, raw: dict) -> dict:
         """
