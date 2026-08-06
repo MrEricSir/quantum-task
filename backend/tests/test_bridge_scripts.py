@@ -28,7 +28,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import http.server
+import json
 import subprocess
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,6 +87,90 @@ def _get_install_script(client):
     that just want the script content fetch a fresh token first."""
     token = client.get("/api/bridge/install-token").json()["token"]
     return client.get(f"/api/bridge/install.py?token={token}")
+
+
+class _FakeBridgeBackend:
+    """A real local HTTP server implementing just enough of /api/bridge/*
+    for a --card run to complete, so the rendered agent.py can be driven
+    as a genuine subprocess making real urllib.request calls -- not
+    monkeypatched -- the same way the actual installed binary talks to the
+    real app. Deliberately minimal: enough to exercise create -> claim ->
+    start -> (heartbeat, if it ever fires) -> complete/error/output."""
+
+    def __init__(self, job):
+        self.job = dict(job)
+        self.calls = []
+        backend = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass  # keep test output quiet
+
+            def _body(self):
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                return json.loads(self.rfile.read(length)) if length else None
+
+            def _respond(self, obj, status=200):
+                data = json.dumps(obj).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_POST(self):
+                body = self._body()
+                backend.calls.append(("POST", self.path, body))
+                if self.path == "/api/bridge/jobs":
+                    self._respond({"id": backend.job["id"]})
+                elif self.path.endswith("/start"):
+                    backend.job.update(body or {})
+                    self._respond({"ok": True})
+                else:
+                    self._respond({"ok": True})
+
+            def do_GET(self):
+                backend.calls.append(("GET", self.path, None))
+                if self.path.startswith("/api/bridge/jobs/next/pending"):
+                    self._respond({"job": backend.job})
+                else:
+                    self._respond({})
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    @property
+    def url(self):
+        return f"http://127.0.0.1:{self.server.server_port}"
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def calls_to(self, path_suffix):
+        return [c for c in self.calls if c[1].endswith(path_suffix)]
+
+
+@pytest.fixture
+def scratch_repo(tmp_path):
+    """A real, throwaway git repo (bare remote + clone) for tests that
+    need to exercise actual git commands rather than mock them. Shared
+    across test classes in this file."""
+    remote = tmp_path / "remote"
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", "--bare", "--initial-branch=main", str(remote)], check=True)
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=clone, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=clone, check=True)
+    (clone / "README.md").write_text("hi\n")
+    subprocess.run(["git", "add", "README.md"], cwd=clone, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=clone, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=clone, check=True)
+    return clone
 
 
 # ── GET /api/bridge/install.py ────────────────────────────────────────────────
@@ -854,20 +941,6 @@ class TestAgentScriptFullFlow:
             assert defined_line < guard_line, \
                 f"{name} is defined AFTER the __main__ guard — main() would fire before it exists"
 
-    @pytest.fixture
-    def scratch_repo(self, tmp_path):
-        remote = tmp_path / "remote"
-        clone = tmp_path / "clone"
-        subprocess.run(["git", "init", "-q", "--bare", "--initial-branch=main", str(remote)], check=True)
-        subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
-        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=clone, check=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=clone, check=True)
-        (clone / "README.md").write_text("hi\n")
-        subprocess.run(["git", "add", "README.md"], cwd=clone, check=True)
-        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=clone, check=True)
-        subprocess.run(["git", "push", "-q", "origin", "main"], cwd=clone, check=True)
-        return clone
-
     def _load_rendered_agent_module(self):
         """exec the real request-time-rendered agent.py -- deliberately not
         under __name__ == "__main__", so main() itself doesn't fire, but
@@ -1052,3 +1125,247 @@ class TestAgentScriptFullFlow:
         r = subprocess.run(["git", "rev-parse", "--verify", branch],
                            cwd=repo, capture_output=True)
         return r.returncode == 0
+
+    def test_cleanup_merged_bulk_select_only_removes_merged_branches(self, scratch_repo, monkeypatch):
+        """The 'merged' bulk-select path goes through the same removal loop
+        as numbered picks, but was never exercised by a real test before --
+        only the numbered-pick path was. A freshly created qtask branch
+        with zero extra commits is trivially an ancestor of origin/main
+        (same commit), so it's already "merged" with no extra setup; adding
+        one local, unpushed commit makes a second branch diverge and read
+        as "not merged"."""
+        ns = self._load_rendered_agent_module()
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        cfg = {"app_url": "http://fake", "token": "x",
+               "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+        job_merged = {"id": 1, "card_id": 1, "card_title": "Merged card"}
+        wt_merged, branch_merged, push_merged = ns["_create_worktree"](cfg, job_merged, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push_merged)
+
+        job_unmerged = {"id": 2, "card_id": 2, "card_title": "Unmerged card"}
+        wt_unmerged, branch_unmerged, push_unmerged = ns["_create_worktree"](cfg, job_unmerged, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push_unmerged)
+        with open(os.path.join(wt_unmerged, "new_file.txt"), "w") as f:
+            f.write("wip")
+        subprocess.run(["git", "add", "new_file.txt"], cwd=wt_unmerged, check=True)
+        subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=T",
+                        "commit", "-q", "-m", "wip"], cwd=wt_unmerged, check=True)
+
+        assert ns["_is_branch_merged"](str(scratch_repo), branch_merged) is True
+        assert ns["_is_branch_merged"](str(scratch_repo), branch_unmerged) is False
+
+        monkeypatch.setattr("builtins.input", lambda *_: "merged")
+        ns["cmd_cleanup"](cfg)
+
+        assert not os.path.isdir(wt_merged)
+        assert not self._branch_exists(scratch_repo, branch_merged)
+        assert os.path.isdir(wt_unmerged), "unmerged worktree removed by a 'merged'-only selection"
+        assert self._branch_exists(scratch_repo, branch_unmerged), "unmerged branch removed by a 'merged'-only selection"
+
+        subprocess.run(["git", "worktree", "remove", "--force", wt_unmerged], cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch_unmerged], cwd=scratch_repo, capture_output=True)
+
+    def test_cleanup_enter_to_skip_removes_nothing(self, scratch_repo, monkeypatch):
+        ns = self._load_rendered_agent_module()
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        cfg = {"app_url": "http://fake", "token": "x",
+               "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches"}
+        wt, branch, push_info = ns["_create_worktree"](cfg, job, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push_info)
+
+        monkeypatch.setattr("builtins.input", lambda *_: "")
+        ns["cmd_cleanup"](cfg)
+
+        assert os.path.isdir(wt), "worktree removed despite skipping with Enter"
+        assert self._branch_exists(scratch_repo, branch), "branch removed despite skipping with Enter"
+
+        subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch], cwd=scratch_repo, capture_output=True)
+
+    def test_cleanup_multi_target_comma_separated_removes_all_selected(self, scratch_repo, monkeypatch):
+        ns = self._load_rendered_agent_module()
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        cfg = {"app_url": "http://fake", "token": "x",
+               "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+        job1 = {"id": 1, "card_id": 1, "card_title": "Card one"}
+        job2 = {"id": 2, "card_id": 2, "card_title": "Card two"}
+        wt1, branch1, push1 = ns["_create_worktree"](cfg, job1, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push1)
+        wt2, branch2, push2 = ns["_create_worktree"](cfg, job2, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push2)
+
+        monkeypatch.setattr("builtins.input", lambda *_: "1,2")
+        ns["cmd_cleanup"](cfg)
+
+        assert not os.path.isdir(wt1) and not self._branch_exists(scratch_repo, branch1)
+        assert not os.path.isdir(wt2) and not self._branch_exists(scratch_repo, branch2)
+
+    def test_full_lifecycle_create_list_cleanup_leaves_clean_state(self, scratch_repo, monkeypatch, capsys):
+        """Happy-path smoke test across the whole create -> list -> cleanup
+        round trip: worktree creation (push disabled), write_ide_settings,
+        .env.qtask, appearing in --list, --cleanup removing both the
+        worktree and the branch, and the repo ending up in EXACTLY the
+        state it started in. Empirically confirmed (by reverting each fix
+        independently and re-running just this test) what it does and
+        doesn't catch: it DOES catch incident 4 (--cleanup not deleting
+        branches) concretely. It does NOT catch incidents 1-2 (shebang
+        position, __main__ guard ordering -- this runs under __name__ !=
+        "__main__", see _load_rendered_agent_module, so a misplaced guard
+        never fires here regardless of source position) or incident 3
+        (stuck-pushurl self-perpetuation -- only manifests when a prior run
+        left the repo already broken, or when something raises between
+        push-disable and teardown; this test's happy path does neither).
+        Those three have their own dedicated, failure-injecting tests.
+        This one's real value is as a general regression net for the round
+        trip as a whole, for whatever the NEXT bug turns out to be, not as
+        a re-run of today's specific incidents."""
+        ns = self._load_rendered_agent_module()
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        cfg = {"app_url": "http://fake", "token": "x",
+               "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches",
+               "prompt": "do the thing", "target_repo": None}
+
+        assert self._get_pushurl(scratch_repo) is None  # clean starting state
+
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        started = next(c for c in api_calls if c[1] == "/api/bridge/jobs/1/start")
+        worktree_path = started[2]["worktree_path"]
+        branch = started[2]["branch"]
+
+        assert os.path.isdir(worktree_path)
+        assert self._branch_exists(scratch_repo, branch)
+        assert os.path.exists(os.path.join(worktree_path, ".claude", "settings.local.json"))
+        assert os.path.exists(os.path.join(worktree_path, ".env.qtask"))
+        assert self._get_pushurl(scratch_repo) is None  # restored after the session
+
+        capsys.readouterr()
+        ns["cmd_list"](cfg)
+        list_output = capsys.readouterr().out
+        assert branch in list_output
+        assert worktree_path in list_output
+
+        monkeypatch.setattr("builtins.input", lambda *_: "1")
+        ns["cmd_cleanup"](cfg)
+
+        assert not os.path.isdir(worktree_path)
+        assert not self._branch_exists(scratch_repo, branch)
+        assert self._get_pushurl(scratch_repo) is None
+
+        capsys.readouterr()
+        ns["cmd_list"](cfg)
+        assert "No qtask worktrees found" in capsys.readouterr().out
+
+
+# ── The real thing: rendered agent.py run as a genuine installed binary ───────
+
+class TestRealInstalledBinary:
+    """The strongest regression guard in this file. Every other test here
+    either hits the served text over HTTP (checks content), execs the
+    concatenated script under a non-"__main__" namespace (sidesteps
+    entrypoint semantics entirely, see TestAgentScriptFullFlow), or
+    imports agent_core.py directly (never sees concatenation at all). This
+    class does none of that: it writes the rendered agent.py to disk,
+    chmod +x's it, and invokes it as a genuine subprocess relying on its
+    own shebang -- byte-for-byte how ~/.local/bin/qtask-bridge actually
+    gets run on a real machine, against a real local HTTP backend and a
+    real (stub) `claude` executable on PATH, not monkeypatched internals.
+    It's the only test in this file that would have caught incidents 1 and
+    2 (shebang position, __main__ guard ordering) directly, rather than
+    via the structural proxy check in TestAgentScriptFullFlow."""
+
+    def test_card_flow_runs_as_a_genuine_installed_binary(self, scratch_repo, tmp_path):
+        home_dir = tmp_path / "home"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (home_dir / ".config" / "qtask-bridge").mkdir(parents=True)
+
+        # A real executable named `claude` on PATH -- not a mock -- so the
+        # installed script's subprocess.run(["claude", ...]) call succeeds
+        # exactly like it would with the real CLI installed.
+        claude_stub = bin_dir / "claude"
+        claude_stub.write_text("#!/bin/sh\nexit 0\n")
+        claude_stub.chmod(0o755)
+
+        # The rendered script, installed and chmod +x'd exactly like the
+        # real installer does to ~/.local/bin/qtask-bridge.
+        script_path = bin_dir / "qtask-bridge"
+        script_path.write_text(bridge_render.render_agent_script())
+        script_path.chmod(0o755)
+
+        job = {
+            "id": 1, "card_id": 84, "status": "pending", "target_repo": None,
+            "branch_name": None, "agent_name": None, "worktree_path": None,
+            "result": None, "output": None,
+            "spec_snapshot": "## Acceptance Criteria\n- [ ] the fix works",
+            "created_at": "2026-01-01T00:00:00", "updated_at": None,
+            "card_title": "Fix ranking quote searches",
+            "prompt": "Implement the fix described in BRIDGE_SPEC.md.",
+            "spec": "## Acceptance Criteria\n- [ ] the fix works",
+        }
+
+        with _FakeBridgeBackend(job) as backend:
+            (home_dir / ".config" / "qtask-bridge" / "config.json").write_text(
+                json.dumps({"app_url": backend.url, "token": "test-token"})
+            )
+
+            env = {"HOME": str(home_dir), "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+            result = subprocess.run(
+                [str(script_path), "--card", "84"],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            # The exact failure signature of incidents 1 and 2, if either
+            # ever regressed: a shell trying to interpret the file itself
+            # (no valid shebang), or a NameError for an adapter-supplied
+            # name (main() fired before the adapter's definitions existed).
+            assert "command not found" not in result.stderr, result.stderr
+            assert "syntax error" not in result.stderr, result.stderr
+            assert "NameError" not in result.stderr, result.stderr
+            assert "Traceback" not in result.stderr, result.stderr
+            assert result.returncode == 0, \
+                f"qtask-bridge exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+            start_calls = backend.calls_to("/start")
+            assert start_calls, "job never reached POST .../start — worktree creation didn't happen"
+            worktree_path = start_calls[0][2]["worktree_path"]
+            branch = start_calls[0][2]["branch"]
+
+            assert os.path.isdir(worktree_path)
+            assert os.path.exists(os.path.join(worktree_path, ".claude", "settings.local.json")), \
+                "write_ide_settings never ran — this is exactly the NameError incident's failure mode"
+            assert os.path.exists(os.path.join(worktree_path, ".env.qtask"))
+
+            assert backend.calls_to("/complete"), "job never reached POST .../complete"
+            assert not backend.calls_to("/error"), f"job errored: {backend.calls_to('/error')}"
+
+        # Base repo left in a clean state -- pushurl restored, not stuck.
+        pushurl = subprocess.run(["git", "config", "--get", "remote.origin.pushurl"],
+                                 cwd=scratch_repo, capture_output=True, text=True)
+        assert pushurl.returncode != 0, "pushurl left stuck after a real end-to-end run"
+
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
+                       cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch], cwd=scratch_repo, capture_output=True)
