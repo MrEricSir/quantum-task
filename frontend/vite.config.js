@@ -42,7 +42,13 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api': 'http://localhost:8000',
+      // Backend port is normally 8000, but a qtask-bridge worktree running
+      // this app via Procfile.dev reserves its own port range and passes
+      // QTASK_PORT_BASE through as the backend's actual port (see
+      // Procfile.dev) -- proxy there instead so `--run` doesn't silently
+      // talk to whatever's on 8000 (likely a different worktree or your
+      // main dev instance).
+      '/api': `http://localhost:${process.env.QTASK_PORT_BASE || 8000}`,
     },
   },
 })

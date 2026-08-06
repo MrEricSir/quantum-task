@@ -3,8 +3,34 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$SCRIPT_DIR/.dev.pids"
-BACKEND_LOG="$SCRIPT_DIR/backend.log"
-FRONTEND_LOG="$SCRIPT_DIR/frontend.log"
+PROCFILE="$SCRIPT_DIR/Procfile.dev"
+
+# Read Procfile.dev's `name: command` lines, skipping blanks/#-comments.
+# Shared by start/stop/logs so all three stay in sync with whatever
+# processes the Procfile actually lists -- add a line there and every
+# command below picks it up with no further changes needed. Same file
+# `qtask-bridge --run` looks for when trying a change in a worktree.
+_procfile_processes() {
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    echo "${line%%:*}"
+  done < "$PROCFILE"
+}
+
+# Kill a PID and every descendant, not just direct children -- the tracked
+# PID is the subshell that evals a Procfile.dev line (e.g. "cd backend &&
+# env ... uvicorn --reload"), and uvicorn's reloader forks its own server
+# process, npm forks its own child for the actual tool -- a plain
+# `pkill -P` one level deep leaves those grandchildren running and holding
+# the port. Kills leaves first (descendants before the PID itself) so nothing
+# gets orphaned to init mid-walk.
+_kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    _kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
 
 # ── Local dev ─────────────────────────────────────────────────────────────────
 
@@ -63,26 +89,21 @@ start() {
     exit 1
   fi
 
-  echo "Starting backend..."
-  cd "$SCRIPT_DIR/backend"
-  # Unset AUTH_PASSWORD so local dev never prompts for a password,
-  # even if .gcp-config was sourced in the current shell session.
-  env -u AUTH_PASSWORD "$SCRIPT_DIR/backend/venv/bin/uvicorn" main:app --reload \
-    > "$BACKEND_LOG" 2>&1 &
-  BACKEND_PID=$!
-
-  echo "Starting frontend..."
-  cd "$SCRIPT_DIR/frontend"
-  npm run dev > "$FRONTEND_LOG" 2>&1 &
-  FRONTEND_PID=$!
-
-  echo "$BACKEND_PID $FRONTEND_PID" > "$PID_FILE"
+  : > "$PID_FILE"
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    name="${line%%:*}"
+    cmd="${line#*: }"
+    echo "Starting $name..."
+    ( cd "$SCRIPT_DIR" && eval "$cmd" ) > "$SCRIPT_DIR/$name.log" 2>&1 &
+    echo "$name $!" >> "$PID_FILE"
+  done < "$PROCFILE"
 
   echo ""
-  echo "  Backend  → http://localhost:8000  (PID $BACKEND_PID)"
-  echo "  Frontend → http://localhost:5173  (PID $FRONTEND_PID)"
+  echo "  Backend  → http://localhost:8000"
+  echo "  Frontend → http://localhost:5173"
   echo ""
-  echo "Logs: backend.log / frontend.log"
+  echo "Logs: ./dev.sh logs"
   echo "Stop: ./dev.sh stop"
 }
 
@@ -92,22 +113,21 @@ stop() {
     exit 0
   fi
 
-  read -r BACKEND_PID FRONTEND_PID < "$PID_FILE"
-
-  echo "Stopping backend (PID $BACKEND_PID)..."
-  kill "$BACKEND_PID" 2>/dev/null || true
-  pkill -P "$BACKEND_PID" 2>/dev/null || true
-
-  echo "Stopping frontend (PID $FRONTEND_PID)..."
-  kill "$FRONTEND_PID" 2>/dev/null || true
-  pkill -P "$FRONTEND_PID" 2>/dev/null || true
+  while read -r name pid; do
+    echo "Stopping $name (PID $pid)..."
+    _kill_tree "$pid"
+  done < "$PID_FILE"
 
   rm -f "$PID_FILE"
   echo "Done."
 }
 
 logs() {
-  tail -f "$BACKEND_LOG" "$FRONTEND_LOG"
+  local files=()
+  while IFS= read -r name; do
+    files+=("$SCRIPT_DIR/$name.log")
+  done < <(_procfile_processes)
+  tail -f "${files[@]}"
 }
 
 test() {
@@ -801,10 +821,10 @@ case "${1:-}" in
     echo ""
     echo "Local development:"
     echo "  setup      Install backend and frontend dependencies (run once)"
-    echo "  start      Start backend and frontend in the background"
+    echo "  start      Start every process listed in Procfile.dev, in the background"
     echo "  stop       Stop both processes"
     echo "  restart    Stop then start"
-    echo "  logs       Tail backend.log and frontend.log"
+    echo "  logs       Tail the log file for every process in Procfile.dev"
     echo "  test           Run all tests (backend unit + AI parse integration + frontend)"
   echo "  test-frontend  Run only the frontend Playwright tests"
     echo "  test-litestream [image]  Verify a fresh cold start restores existing data"

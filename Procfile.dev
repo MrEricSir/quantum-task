@@ -1,0 +1,2 @@
+backend: cd backend && env -u AUTH_PASSWORD DATABASE_URL="sqlite:///./${QTASK_DB_NAME:-todos}.db" venv/bin/uvicorn main:app --reload --port "${QTASK_PORT_BASE:-8000}"
+frontend: cd frontend && npm run dev -- --port "$(( ${QTASK_PORT_BASE:-5172} + 1 ))"

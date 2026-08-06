@@ -76,6 +76,8 @@ Once started:
 
 Logs are written to `backend.log` and `frontend.log` in the project root.
 
+`start`/`stop`/`logs` are driven by `Procfile.dev` in the project root, not hardcoded — the same file `qtask-bridge --run` looks for when trying a change in a worktree (see [Trying a change yourself](#trying-a-change-yourself)). Add a line there for a new process (e.g. a queue worker) and all three commands pick it up automatically.
+
 ## Manual start (alternative)
 
 After running `./dev.sh setup`, you can run each process in its own terminal:
@@ -740,6 +742,7 @@ todo/
   deploy-gcp.md        # Full GCP deployment guide
   IDEAS.md             # Feature ideas and brainstorm
   dev.sh               # Development helper script
+  Procfile.dev         # Local dev processes -- read by dev.sh start/stop/logs and qtask-bridge --run
 ```
 
 ## Credits
