@@ -9,6 +9,9 @@ Usage:
                               sequentially and unattended, each in its own git worktree
   qtask-bridge --list        List qtask worktrees across configured repos (read-only)
   qtask-bridge --cleanup     List and optionally remove finished qtask worktrees
+  qtask-bridge --run [NAME]  Run the app in a resolved qtask worktree (cwd, last one,
+                              or a branch fragment) via its Procfile.dev/Procfile or
+                              configured run_cmd
 
 Config files in ~/.config/qtask-bridge/:
   config.json  — app URL and auth token (written by installer)
@@ -75,6 +78,9 @@ ENV_FILENAME = ".env.qtask"
 WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
 LAST_WORKTREE_FILE = os.path.expanduser("~/.local/share/qtask-bridge/last-worktree")
 PUSH_DISABLED_SENTINEL = "no_push"  # remote.origin.pushurl value while a job holds the base repo
+PROCFILE_NAMES = ("Procfile.dev", "Procfile")  # checked in this order; dev-specific wins
+PROCESS_COLORS = ("\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m", "\033[31m")  # cycled by index
+COLOR_RESET = "\033[0m"
 
 
 def load_config():
@@ -129,8 +135,8 @@ def _slugify(text, max_len=40):
 
 def _repo_entry(cfg, target_repo):
     """
-    Return (path, setup_cmd, test_cmd, verify_acceptance) for a configured [repos] entry,
-    or (None, None, None, None).
+    Return (path, setup_cmd, test_cmd, verify_acceptance, run_cmd) for a configured
+    [repos] entry, or (None, None, None, None, None).
 
     Supports both the simple form:
         [repos]
@@ -141,18 +147,20 @@ def _repo_entry(cfg, target_repo):
         setup_cmd = "npm install"
         test_cmd = "npm test"
         verify_acceptance = true
+        run_cmd = "npm run dev"
     """
     entry = (cfg.get("repos") or {}).get(target_repo)
     if entry is None:
-        return None, None, None, None
+        return None, None, None, None, None
     if isinstance(entry, str):
-        return entry, None, None, None
+        return entry, None, None, None, None
     if isinstance(entry, dict):
         return (
             entry.get("path"), entry.get("setup_cmd"),
             entry.get("test_cmd"), entry.get("verify_acceptance"),
+            entry.get("run_cmd"),
         )
-    return None, None, None, None
+    return None, None, None, None, None
 
 
 def _resolve_work_dir(cfg, target_repo):
@@ -660,8 +668,8 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
         # reserved port range / db name too (e.g. to pre-seed a database).
         _write_qtask_env(worktree_path, job_id)
 
-        _, setup_cmd, test_cmd, verify_acceptance = (
-            _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None)
+        _, setup_cmd, test_cmd, verify_acceptance, _ = (
+            _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None, None)
         )
         setup_cmd = setup_cmd or cfg.get("setup_cmd")
         test_cmd = test_cmd or cfg.get("test_cmd")
@@ -915,6 +923,244 @@ def cmd_cleanup(cfg):
                   file=sys.stderr)
 
 
+def _find_procfile(worktree_path):
+    """Return the path to Procfile.dev if present, else Procfile, else None.
+    Procfile.dev wins deliberately -- a bare Procfile in a repo root is
+    often meant for production/Heroku (expects $PORT, a real database),
+    which isn't safe to run as-is against a scratch dev worktree. This
+    mirrors the same Procfile.dev-first convention Rails 7+ ships in
+    bin/dev, rather than inventing a new file format."""
+    for name in PROCFILE_NAMES:
+        candidate = os.path.join(worktree_path, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _parse_procfile(path):
+    """Parse `name: command` lines into an ordered dict, skipping blank
+    lines and #-comments."""
+    processes = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, sep, command = line.partition(":")
+            if not sep:
+                continue
+            processes[name.strip()] = command.strip()
+    return processes
+
+
+def _load_env_file(path):
+    """Parse the KEY=value format _write_qtask_env writes (skipping blank
+    lines and #-comments) into a dict. Returns {} if the file doesn't
+    exist -- not every worktree that gets --run has one (e.g. one created
+    before this file existed)."""
+    if not os.path.isfile(path):
+        return {}
+    env = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, value = line.partition("=")
+            if sep:
+                env[key.strip()] = value.strip()
+    return env
+
+
+def _run_procfile(worktree_path, procfile_path, extra_env, stop_event=None):
+    """Run every process in a Procfile concurrently, relay their output
+    with a colorized [name] prefix, and stop all of them together --
+    either on Ctrl-C, when any one of them exits on its own (matching
+    Foreman/Honcho's default: Procfile processes are normally
+    interdependent, so partial survival isn't useful), or when
+    stop_event is set (a testability hook so tests don't have to fake
+    OS-level Ctrl-C)."""
+    processes = _parse_procfile(procfile_path)
+    env = {**os.environ, **extra_env}
+    procs = {}
+    for name, command in processes.items():
+        procs[name] = subprocess.Popen(
+            command, shell=True, cwd=worktree_path, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+
+    def _relay(name, proc, color):
+        prefix = f"{color}[{name}]{COLOR_RESET}"
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            print(f"{prefix} {line}")
+
+    threads = []
+    for i, (name, proc) in enumerate(procs.items()):
+        color = PROCESS_COLORS[i % len(PROCESS_COLORS)]
+        t = threading.Thread(target=_relay, args=(name, proc, color), daemon=True)
+        t.start()
+        threads.append(t)
+
+    print(f"[bridge] Running {len(procs)} process(es): {', '.join(procs)} "
+          "(Ctrl-C to stop all)")
+    exited_name = None
+    try:
+        while exited_name is None:
+            if stop_event is not None and stop_event.is_set():
+                break
+            for name, proc in procs.items():
+                if proc.poll() is not None:
+                    exited_name = name
+                    break
+            else:
+                time.sleep(0.3)
+                continue
+    except KeyboardInterrupt:
+        print("\n[bridge] Stopping...")
+
+    if exited_name is not None:
+        print(f"[bridge] '{exited_name}' exited (code {procs[exited_name].returncode}) — "
+              "stopping the rest.")
+
+    for name, proc in procs.items():
+        if proc.poll() is None:
+            proc.terminate()
+    for name, proc in procs.items():
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    print("[bridge] All processes stopped.")
+
+
+def _run_single_command(worktree_path, run_cmd, extra_env):
+    """Run a single run_cmd in the foreground. No special signal handling
+    needed -- one process in the same terminal foreground group as this
+    script, so Ctrl-C reaches it naturally."""
+    env = {**os.environ, **extra_env}
+    print(f"[bridge] Running: {run_cmd}")
+    subprocess.run(run_cmd, shell=True, cwd=worktree_path, env=env)
+
+
+def _prompt_pick_one(found, prompt_text="Multiple matches — pick one (number): "):
+    """Print a numbered list and prompt for a single selection. Returns
+    the chosen (repo_name, work_dir, worktree_path, branch) tuple, or
+    None if the prompt was skipped/invalid. Same numbered-list style as
+    --cleanup's picker, but single-select only -- --cleanup's own picker
+    also supports comma-separated multi-select and a 'merged' bulk
+    keyword, which don't apply to picking one worktree to run."""
+    for i, (repo_name, _, _, branch) in enumerate(found, 1):
+        print(f"  {i}. [{repo_name}] {branch}")
+    try:
+        choice = input(prompt_text).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not choice.isdigit():
+        return None
+    index = int(choice)
+    if not (1 <= index <= len(found)):
+        return None
+    return found[index - 1]
+
+
+def _resolve_run_target(cfg, target):
+    """Resolve which qtask worktree `--run` should act on. Reuses
+    _scan_qtask_worktrees for every step (not just fragment matching) so
+    --run can never disagree with --list/--cleanup about what counts as
+    a qtask worktree:
+
+    1. No target given: is an ancestor of cwd one of the known worktree
+       paths? (covers the common flow -- qcd or any other discoverability
+       mechanism got you there, now you want to try it)
+    2. No target, not in a worktree: fall back to the last-worktree file,
+       matched back against the scan so repo_name/branch travel with it.
+    3. Target given: case-insensitive substring match against branch
+       names. Exactly one match wins; multiple prompts a single-select
+       picker; zero prints available branches and returns None.
+
+    Returns (repo_name, work_dir, worktree_path, branch) or None (caller
+    already has enough context to print why).
+    """
+    found = _scan_qtask_worktrees(cfg)
+    if not found:
+        print("[bridge] No qtask worktrees found. Run a job first, or check "
+              "claude.toml [repos].")
+        return None
+
+    if not target:
+        cwd = os.path.abspath(os.getcwd())
+        wt_paths = {os.path.abspath(f[2]): f for f in found}
+        ancestor = cwd
+        while True:
+            if ancestor in wt_paths:
+                return wt_paths[ancestor]
+            parent = os.path.dirname(ancestor)
+            if parent == ancestor:
+                break
+            ancestor = parent
+
+        if os.path.isfile(LAST_WORKTREE_FILE):
+            with open(LAST_WORKTREE_FILE) as f:
+                last_path = f.read().strip()
+            match = wt_paths.get(os.path.abspath(last_path))
+            if match:
+                return match
+
+        print("[bridge] Not inside a qtask worktree and no last-worktree on record. "
+              "Pass a branch fragment: qtask-bridge --run <branch>")
+        return None
+
+    matches = [f for f in found if target.lower() in f[3].lower()]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        picked = _prompt_pick_one(matches)
+        if picked is None:
+            print("[bridge] No selection made.")
+        return picked
+
+    print(f"[bridge] No qtask worktree matches '{target}'. Available branches:")
+    for repo_name, _, _, branch in found:
+        print(f"  [{repo_name}] {branch}")
+    return None
+
+
+def cmd_run(cfg, target):
+    """Run the app in a resolved qtask worktree: a Procfile.dev/Procfile
+    if the worktree has one (multi-process, e.g. separate frontend/backend
+    dev servers), else a configured run_cmd (single process), else a
+    helpful message naming both options. .env.qtask's reserved port/DB
+    vars are auto-injected into whatever runs, same idea as
+    foreman/honcho auto-loading .env -- no manual `source .env.qtask`
+    step needed."""
+    resolved = _resolve_run_target(cfg, target)
+    if resolved is None:
+        return
+    repo_name, work_dir, worktree_path, branch = resolved
+    print(f"[bridge] [{repo_name}] {branch}\n[bridge] {worktree_path}\n")
+
+    extra_env = _load_env_file(os.path.join(worktree_path, ENV_FILENAME))
+
+    procfile_path = _find_procfile(worktree_path)
+    if procfile_path:
+        _run_procfile(worktree_path, procfile_path, extra_env)
+        return
+
+    _, _, _, _, run_cmd = _repo_entry(cfg, repo_name)
+    run_cmd = run_cmd or cfg.get("run_cmd")
+    if run_cmd:
+        _run_single_command(worktree_path, run_cmd, extra_env)
+        return
+
+    print(f"[bridge] Nothing to run: no Procfile.dev/Procfile in {worktree_path}, "
+          f"and no run_cmd configured for '{repo_name}' in {TOML_FILE}.")
+    print("[bridge] Add a Procfile.dev to the repo, or set run_cmd under [repos] "
+          "or as a top-level fallback.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="qtask-bridge: coding-agent bridge")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -929,6 +1175,9 @@ def main():
                        help="List qtask worktrees across configured repos and optionally remove them")
     group.add_argument("--list", action="store_true",
                        help="List qtask worktrees across configured repos (read-only, no prompt)")
+    group.add_argument("--run", nargs="?", const="", default=None, metavar="[BRANCH]",
+                       help="Run the app in a resolved qtask worktree (cwd, last one, or a "
+                            "branch fragment) via its Procfile.dev/Procfile or configured run_cmd")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -940,6 +1189,8 @@ def main():
         cmd_cleanup(cfg)
     elif args.list:
         cmd_list(cfg)
+    elif args.run is not None:
+        cmd_run(cfg, args.run or None)
     else:
         cmd_card(cfg, args.card)
 

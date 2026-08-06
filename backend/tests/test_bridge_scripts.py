@@ -32,6 +32,7 @@ import http.server
 import json
 import subprocess
 import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -882,21 +883,293 @@ class TestRepoEntryVerificationFields:
             "path": "/x", "setup_cmd": "npm install",
             "test_cmd": "npm test", "verify_acceptance": True,
         }}}
-        path, setup_cmd, test_cmd, verify_acceptance = agent_core._repo_entry(cfg, "owner/repo")
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd = agent_core._repo_entry(cfg, "owner/repo")
         assert path == "/x"
         assert setup_cmd == "npm install"
         assert test_cmd == "npm test"
         assert verify_acceptance is True
+        assert run_cmd is None
 
     def test_plain_string_form_returns_none_for_new_fields(self):
         cfg = {"repos": {"owner/repo": "/x"}}
-        path, setup_cmd, test_cmd, verify_acceptance = agent_core._repo_entry(cfg, "owner/repo")
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd = agent_core._repo_entry(cfg, "owner/repo")
         assert path == "/x"
         assert test_cmd is None
         assert verify_acceptance is None
+        assert run_cmd is None
 
     def test_unconfigured_repo_returns_all_none(self):
-        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None)
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None)
+
+    def test_resolves_run_cmd_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd = agent_core._repo_entry(cfg, "owner/repo")
+        assert path == "/x"
+        assert run_cmd == "npm run dev"
+
+
+# ── Manual verification (`qtask-bridge --run`) ─────────────────────────────────
+
+class TestProcfileHelpers:
+
+    def test_find_procfile_prefers_dev_variant(self, tmp_path):
+        (tmp_path / "Procfile").write_text("web: run-prod\n")
+        (tmp_path / "Procfile.dev").write_text("web: run-dev\n")
+        assert agent_core._find_procfile(str(tmp_path)) == str(tmp_path / "Procfile.dev")
+
+    def test_find_procfile_falls_back_to_plain(self, tmp_path):
+        (tmp_path / "Procfile").write_text("web: run-prod\n")
+        assert agent_core._find_procfile(str(tmp_path)) == str(tmp_path / "Procfile")
+
+    def test_find_procfile_none_when_neither_exists(self, tmp_path):
+        assert agent_core._find_procfile(str(tmp_path)) is None
+
+    def test_parse_procfile_skips_blanks_and_comments(self, tmp_path):
+        p = tmp_path / "Procfile.dev"
+        p.write_text("# a comment\n\nweb: npm run dev\napi: uvicorn main:app\n")
+        assert agent_core._parse_procfile(str(p)) == {"web": "npm run dev", "api": "uvicorn main:app"}
+
+    def test_parse_procfile_preserves_order(self, tmp_path):
+        p = tmp_path / "Procfile.dev"
+        p.write_text("z: cmd1\na: cmd2\n")
+        assert list(agent_core._parse_procfile(str(p)).keys()) == ["z", "a"]
+
+    def test_load_env_file_parses_written_qtask_env(self, tmp_path):
+        agent_core._write_qtask_env(str(tmp_path), 42)
+        result = agent_core._load_env_file(str(tmp_path / agent_core.ENV_FILENAME))
+        assert result["QTASK_JOB_ID"] == "42"
+        assert result["QTASK_DB_NAME"] == "qtask_job_42"
+        assert "QTASK_PORT_BASE" in result
+
+    def test_load_env_file_missing_file_returns_empty_dict(self, tmp_path):
+        assert agent_core._load_env_file(str(tmp_path / "nope")) == {}
+
+
+class TestRunProcfile:
+    """Real subprocess tests -- matching the rest of this file's "only real
+    execution catches real bugs" discipline. Both processes below sleep far
+    longer than the test's own timeout so a passing test proves they were
+    actually terminated, not that they happened to finish naturally."""
+
+    def _write_procfile(self, tmp_path, lines):
+        p = tmp_path / "Procfile.dev"
+        p.write_text("\n".join(lines) + "\n")
+        return str(p)
+
+    def test_relays_prefixed_output_and_stops_on_signal(self, tmp_path, capsys):
+        procfile = self._write_procfile(tmp_path, [
+            'a: python3 -c "import time; print(\'a-hello\', flush=True); time.sleep(30)"',
+            'b: python3 -c "import time; print(\'b-hello\', flush=True); time.sleep(30)"',
+        ])
+        stop_event = threading.Event()
+        t = threading.Thread(
+            target=agent_core._run_procfile,
+            args=(str(tmp_path), procfile, {}),
+            kwargs={"stop_event": stop_event},
+        )
+        t.start()
+        try:
+            deadline = time.time() + 10
+            out = ""
+            while time.time() < deadline and not ("a-hello" in out and "b-hello" in out):
+                time.sleep(0.2)
+                out += capsys.readouterr().out
+            assert "a-hello" in out and "b-hello" in out, f"never saw both processes' output: {out!r}"
+            assert "[a]" in out and "[b]" in out
+        finally:
+            stop_event.set()
+            t.join(timeout=10)
+        assert not t.is_alive(), "_run_procfile did not stop after stop_event was set"
+
+    def test_one_process_exiting_stops_the_others(self, tmp_path):
+        procfile = self._write_procfile(tmp_path, [
+            'quick: python3 -c "print(\'quick-done\', flush=True)"',
+            'slow: python3 -c "import time; time.sleep(30)"',
+        ])
+        t = threading.Thread(
+            target=agent_core._run_procfile, args=(str(tmp_path), procfile, {}),
+        )
+        t.start()
+        t.join(timeout=10)
+        assert not t.is_alive(), "_run_procfile did not stop the slow process after 'quick' exited"
+
+    def test_injects_extra_env_into_processes(self, tmp_path, capsys):
+        marker = tmp_path / "marker.txt"
+        procfile = self._write_procfile(tmp_path, [
+            f'writer: python3 -c "import os; open(\'{marker}\', \'w\').write(os.environ[\'QTASK_TEST_VAR\'])"',
+        ])
+        t = threading.Thread(
+            target=agent_core._run_procfile,
+            args=(str(tmp_path), procfile, {"QTASK_TEST_VAR": "injected-value"}),
+        )
+        t.start()
+        t.join(timeout=10)
+        assert marker.read_text() == "injected-value"
+
+
+class TestResolveRunTarget:
+    """Real scratch-repo worktrees, matching TestAgentScriptFullFlow's
+    approach below, but with WORKTREES_ROOT/LAST_WORKTREE_FILE monkeypatched
+    into tmp_path -- fully self-contained, no manual cleanup and no risk of
+    touching the real machine's ~/.local/share/qtask-bridge state."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def _create(self, cfg, scratch_repo, card_id, title):
+        job = {"id": card_id, "card_id": card_id, "card_title": title}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        return wt, branch
+
+    def test_cwd_inside_worktree_resolves_without_argument(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 1, "Feature A")
+        cwd_before = os.getcwd()
+        os.chdir(wt)
+        try:
+            resolved = agent_core._resolve_run_target(cfg, None)
+        finally:
+            os.chdir(cwd_before)
+        assert resolved is not None and resolved[3] == branch
+
+    def test_cwd_in_subdirectory_of_worktree_still_resolves(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 2, "Feature B")
+        sub = os.path.join(wt, "sub", "dir")
+        os.makedirs(sub)
+        cwd_before = os.getcwd()
+        os.chdir(sub)
+        try:
+            resolved = agent_core._resolve_run_target(cfg, None)
+        finally:
+            os.chdir(cwd_before)
+        assert resolved is not None and resolved[3] == branch
+
+    def test_last_worktree_fallback_when_not_in_a_worktree(self, scratch_repo, tmp_path):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 3, "Feature C")
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        cwd_before = os.getcwd()
+        os.chdir(str(outside))
+        try:
+            resolved = agent_core._resolve_run_target(cfg, None)
+        finally:
+            os.chdir(cwd_before)
+        assert resolved is not None and resolved[3] == branch
+
+    def test_unique_fragment_match(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 4, "Unique Fragment Feature")
+        resolved = agent_core._resolve_run_target(cfg, "unique-fragment")
+        assert resolved is not None and resolved[3] == branch
+
+    def test_ambiguous_fragment_prompts_a_single_select_picker(self, scratch_repo, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        wt1, branch1 = self._create(cfg, scratch_repo, 5, "Shared Prefix One")
+        wt2, branch2 = self._create(cfg, scratch_repo, 6, "Shared Prefix Two")
+        monkeypatch.setattr("builtins.input", lambda *_: "2")
+        resolved = agent_core._resolve_run_target(cfg, "shared-prefix")
+        assert resolved is not None and resolved[3] == branch2
+
+    def test_no_match_returns_none_and_lists_available_branches(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 7, "Something Else")
+        capsys.readouterr()
+        resolved = agent_core._resolve_run_target(cfg, "totally-unrelated-xyz")
+        assert resolved is None
+        out = capsys.readouterr().out
+        assert "No qtask worktree matches" in out
+        assert branch in out
+
+    def test_no_worktrees_at_all_returns_none(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        capsys.readouterr()
+        resolved = agent_core._resolve_run_target(cfg, None)
+        assert resolved is None
+        assert "No qtask worktrees found" in capsys.readouterr().out
+
+
+class TestCmdRunDispatch:
+    """Unit-level dispatch tests -- Procfile vs run_cmd vs neither -- with
+    _run_procfile/_run_single_command monkeypatched out so these don't
+    actually spawn processes. TestRunProcfile above covers the runner
+    itself; TestRealInstalledBinary below covers the full --run subprocess
+    wired end-to-end."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _create(self, cfg, scratch_repo, card_id, title):
+        job = {"id": card_id, "card_id": card_id, "card_title": title}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        return wt, branch
+
+    def test_prefers_procfile_over_run_cmd(self, scratch_repo, monkeypatch):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": {"path": str(scratch_repo), "run_cmd": "echo should-not-run"}}}
+        wt, branch = self._create(cfg, scratch_repo, 1, "Procfile Case")
+        with open(os.path.join(wt, "Procfile.dev"), "w") as f:
+            f.write("web: echo hi\n")
+
+        calls = []
+        monkeypatch.setattr(agent_core, "_run_procfile", lambda *a, **k: calls.append("procfile"))
+        monkeypatch.setattr(agent_core, "_run_single_command", lambda *a, **k: calls.append("run_cmd"))
+
+        agent_core.cmd_run(cfg, branch)
+        assert calls == ["procfile"]
+
+    def test_falls_back_to_run_cmd_when_no_procfile(self, scratch_repo, monkeypatch):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": {"path": str(scratch_repo), "run_cmd": "npm run dev"}}}
+        wt, branch = self._create(cfg, scratch_repo, 2, "Run Cmd Case")
+
+        captured = {}
+        monkeypatch.setattr(agent_core, "_run_procfile", lambda *a, **k: captured.setdefault("wrong", True))
+        monkeypatch.setattr(agent_core, "_run_single_command",
+                             lambda worktree_path, run_cmd, extra_env: captured.update(
+                                 worktree_path=worktree_path, run_cmd=run_cmd))
+
+        agent_core.cmd_run(cfg, branch)
+        assert "wrong" not in captured
+        assert captured["run_cmd"] == "npm run dev"
+        assert captured["worktree_path"] == wt
+
+    def test_neither_configured_prints_helpful_message(self, scratch_repo, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        wt, branch = self._create(cfg, scratch_repo, 3, "Nothing Configured")
+
+        capsys.readouterr()
+        agent_core.cmd_run(cfg, branch)
+        out = capsys.readouterr().out
+        assert "Nothing to run" in out
+        assert "run_cmd" in out
+
+    def test_injects_env_qtask_vars_into_run_cmd(self, scratch_repo, monkeypatch):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": {"path": str(scratch_repo), "run_cmd": "echo hi"}}}
+        wt, branch = self._create(cfg, scratch_repo, 4, "Env Injection Case")
+        agent_core._write_qtask_env(wt, 4)
+
+        captured = {}
+        monkeypatch.setattr(agent_core, "_run_single_command",
+                             lambda worktree_path, run_cmd, extra_env: captured.update(extra_env=extra_env))
+
+        agent_core.cmd_run(cfg, branch)
+        assert captured["extra_env"]["QTASK_JOB_ID"] == "4"
 
 
 # ── Regression: run_job() through the actual rendered/concatenated text ───────
@@ -1365,6 +1638,75 @@ class TestRealInstalledBinary:
         pushurl = subprocess.run(["git", "config", "--get", "remote.origin.pushurl"],
                                  cwd=scratch_repo, capture_output=True, text=True)
         assert pushurl.returncode != 0, "pushurl left stuck after a real end-to-end run"
+
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
+                       cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch], cwd=scratch_repo, capture_output=True)
+
+    def test_run_flow_starts_a_procfile_as_a_genuine_installed_binary(self, scratch_repo, tmp_path):
+        """Same genuine-subprocess rigor as the --card test above, applied
+        to --run: a new argparse branch is exactly the kind of entrypoint
+        wiring the shebang/__main__-guard incidents showed isn't caught by
+        anything short of actually running the installed binary."""
+        home_dir = tmp_path / "home"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (home_dir / ".config" / "qtask-bridge").mkdir(parents=True)
+
+        claude_stub = bin_dir / "claude"
+        claude_stub.write_text("#!/bin/sh\nexit 0\n")
+        claude_stub.chmod(0o755)
+
+        script_path = bin_dir / "qtask-bridge"
+        script_path.write_text(bridge_render.render_agent_script())
+        script_path.chmod(0o755)
+
+        job = {
+            "id": 2, "card_id": 85, "status": "pending", "target_repo": None,
+            "branch_name": None, "agent_name": None, "worktree_path": None,
+            "result": None, "output": None, "spec_snapshot": None,
+            "created_at": "2026-01-01T00:00:00", "updated_at": None,
+            "card_title": "Add a Procfile-run feature",
+            "prompt": "Implement the fix described in BRIDGE_SPEC.md.",
+            "spec": None,
+        }
+
+        env = {"HOME": str(home_dir), "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+
+        with _FakeBridgeBackend(job) as backend:
+            (home_dir / ".config" / "qtask-bridge" / "config.json").write_text(
+                json.dumps({"app_url": backend.url, "token": "test-token"})
+            )
+            # --run needs the repo listed under [repos] to find it via
+            # _scan_qtask_worktrees -- unlike --card, which can fall back to cwd.
+            (home_dir / ".config" / "qtask-bridge" / "claude.toml").write_text(
+                f'[repos]\n"scratch/repo" = "{scratch_repo}"\n'
+            )
+
+            result = subprocess.run(
+                [str(script_path), "--card", "85"],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"setup --card run failed: {result.stderr}"
+            worktree_path = backend.calls_to("/start")[0][2]["worktree_path"]
+            branch = backend.calls_to("/start")[0][2]["branch"]
+
+            marker = tmp_path / "marker.txt"
+            with open(os.path.join(worktree_path, "Procfile.dev"), "w") as f:
+                f.write(f"writer: python3 -c \"open('{marker}', 'w').write('done')\"\n")
+
+            run_result = subprocess.run(
+                [str(script_path), "--run", branch],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            assert "Traceback" not in run_result.stderr, run_result.stderr
+            assert run_result.returncode == 0, \
+                f"--run exited {run_result.returncode}\nstdout:\n{run_result.stdout}\nstderr:\n{run_result.stderr}"
+            assert marker.exists(), "Procfile process never actually ran"
+            assert "writer" in run_result.stdout
 
         subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
                        cwd=scratch_repo, capture_output=True)

@@ -118,7 +118,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance`)
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance`), manual verification (`--run`, with built-in Procfile support)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -238,6 +238,7 @@ qtask-bridge --card <id>      # queue and run a specific card's job once
 qtask-bridge --tag work       # queue + run every "work"-tagged card with a spec, unattended
 qtask-bridge --list           # list qtask worktrees across configured repos (read-only)
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
+qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
 ```
 
 The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in an isolated git worktree on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The worktree is left in place locally for your review — the bridge never pushes.
@@ -298,6 +299,30 @@ verify_acceptance = true
 ```
 
 `verify_acceptance` is explicitly told not to modify any files — it only reports, it never fixes. Both results get prepended to the job's `result` text, so they show up in the Code tab and Telegram alongside whatever note you'd normally see. If the implementation session itself errors out, verification is skipped — nothing useful to test against a session that didn't complete.
+
+#### Trying a change yourself
+
+For anything the automated checks above don't cover — visual/UX judgment, exploratory testing — `qtask-bridge --run` runs the app for you, right in the resolved worktree:
+
+```bash
+qtask-bridge --run             # cwd if you're already in a qtask worktree, else the last one used
+qtask-bridge --run 84-ranking  # branch fragment; prompts a numbered pick if it matches more than one
+```
+
+What actually runs, in order: a `Procfile.dev` in the worktree, if present (starts every process it lists concurrently — the case a separate frontend and backend that need to run together calls for); else a plain `Procfile`; else a configured `run_cmd`; else a message telling you to set one up. `Procfile.dev` wins over a bare `Procfile` on purpose — a repo's root `Procfile` is often meant for production/Heroku, not a scratch dev worktree, so an explicit dev-specific file (the same convention Rails 7+ ships in `bin/dev`) takes precedence.
+
+```toml
+[repos."owner/api"]
+path = "~/folder_a/api"
+run_cmd = "npm run dev"        # used only when the worktree has no Procfile.dev/Procfile
+
+# top-level fallback, same as setup_cmd/test_cmd
+run_cmd = "npm run dev"
+```
+
+Multiple processes from a Procfile print with a colorized `[name]` prefix so their output stays distinguishable, and stop together — on Ctrl-C, or when any one of them exits on its own. The reserved port range and database name from `.env.qtask` (see above) are loaded automatically into whatever runs, so there's no manual `source .env.qtask` step.
+
+qtask-bridge is a single, dependency-free file, so `--run` doesn't shell out to an external process manager (Foreman, Overmind, Honcho) — the Procfile support above is built in.
 
 #### Code tab actions
 

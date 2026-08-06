@@ -32,8 +32,8 @@ TOML_TEMPLATE = textwrap.dedent("""\
 
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
-    # "verify_acceptance" keys. setup_cmd is a one-time command run in a
-    # fresh worktree before Claude launches, for repos that need
+    # "verify_acceptance" / "run_cmd" keys. setup_cmd is a one-time command
+    # run in a fresh worktree before Claude launches, for repos that need
     # dependencies installed (npm install, pip install, etc).
     #
     # [repos]
@@ -46,6 +46,16 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # Fallback setup_cmd used for any repo above that doesn't set its own.
     #
     # setup_cmd = "npm install"
+
+    # run_cmd is what `qtask-bridge --run` uses to start the app in a
+    # worktree for manual testing -- set per-repo (see [repos] above) or as
+    # a fallback here. Only used when the worktree has no Procfile.dev or
+    # Procfile: if either is present, --run uses it instead (starting every
+    # process it lists concurrently, e.g. a separate frontend and backend),
+    # since that's a stronger signal for repos with more than one process
+    # that needs to run together.
+    #
+    # run_cmd = "npm run dev"
 
     # Verification, run automatically after a session ends (before the job
     # is marked complete) -- both are opt-in and off by default.
@@ -195,6 +205,7 @@ def main():
     print("  qtask-bridge --tag <name>       # run every pending-spec card with this tag")
     print("  qtask-bridge --list             # list qtask worktrees (read-only)")
     print("  qtask-bridge --cleanup          # list/remove finished qtask worktrees")
+    print("  qtask-bridge --run [branch]     # run the app in a qtask worktree (cwd, last one, or a branch fragment)")
     print()
     print("Tip: add this to your shell config for a one-keystroke jump to the most")
     print("recent job worktree from any shell:")
