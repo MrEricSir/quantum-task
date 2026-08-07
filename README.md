@@ -283,6 +283,8 @@ QTASK_DB_NAME=qtask_job_77
 
 The prompt Claude receives explicitly points it at this file and asks it to use these values instead of framework defaults for anything it starts locally. The bridge doesn't know or care what the target app's architecture looks like (frontend port vs. backend port vs. database), so it reserves a namespace rather than trying to wire specific services — Claude (already reading the codebase to implement the feature) resolves the actual wiring per-repo. Nothing enforces the reservation; it's a convention, not a lock, and job IDs cycle through a 400-slot range, so collisions are possible if you have hundreds of uncleaned worktrees running dev servers simultaneously — not a realistic scenario for how this tool is meant to be used (sequentially, one job at a time).
 
+If the repo has a `Procfile.dev` or `Procfile` (see [Trying a change yourself](#trying-a-change-yourself)), Claude is told about it too — the process names and commands are listed directly in the prompt, not just a pointer to the file — so it can start the app itself mid-session to test its own changes without first having to rediscover how the repo is structured.
+
 #### Verifying a fix before you review it
 
 Two opt-in checks run automatically after a session ends, before the job is marked complete — both off by default, so nothing changes unless you configure them:

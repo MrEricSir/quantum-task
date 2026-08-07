@@ -945,6 +945,45 @@ class TestProcfileHelpers:
         assert agent_core._load_env_file(str(tmp_path / "nope")) == {}
 
 
+class TestMakePromptProcfileAwareness:
+    """_make_prompt tells Claude about a Procfile.dev/Procfile directly during
+    the actual coding session -- not just qtask-bridge --run -- so it doesn't
+    have to rediscover 'this app has a separate frontend/backend' on its own."""
+
+    def test_no_procfile_omits_the_section(self, tmp_path):
+        prompt = agent_core._make_prompt("qtask/1-foo", str(tmp_path))
+        assert "Procfile" not in prompt
+
+    def test_procfile_dev_present_lists_its_processes(self, tmp_path):
+        (tmp_path / "Procfile.dev").write_text(
+            "backend: cd backend && uvicorn main:app --reload\n"
+            "frontend: cd frontend && npm run dev\n"
+        )
+        prompt = agent_core._make_prompt("qtask/1-foo", str(tmp_path))
+        assert "Procfile.dev" in prompt
+        assert "backend: cd backend && uvicorn main:app --reload" in prompt
+        assert "frontend: cd frontend && npm run dev" in prompt
+
+    def test_plain_procfile_present_lists_its_processes(self, tmp_path):
+        (tmp_path / "Procfile").write_text("web: gunicorn app:app\n")
+        prompt = agent_core._make_prompt("qtask/1-foo", str(tmp_path))
+        assert "Procfile" in prompt
+        assert "web: gunicorn app:app" in prompt
+
+    def test_still_mentions_reserved_env_file_alongside_procfile(self, tmp_path):
+        (tmp_path / "Procfile.dev").write_text("web: npm run dev\n")
+        prompt = agent_core._make_prompt("qtask/1-foo", str(tmp_path))
+        assert agent_core.ENV_FILENAME in prompt
+
+    def test_base_prompt_content_unchanged_without_a_procfile(self, tmp_path):
+        """Byte-check against the pre-Procfile-awareness prompt shape --
+        proves this was additive, not a rewrite of the existing instructions."""
+        prompt = agent_core._make_prompt("qtask/1-foo", str(tmp_path))
+        assert "Please implement the feature described in" in prompt
+        assert "Do NOT push to the remote repository" in prompt
+        assert "collide with anything else already running on this machine." in prompt
+
+
 class TestRunProcfile:
     """Real subprocess tests -- matching the rest of this file's "only real
     execution catches real bugs" discipline. Both processes below sleep far

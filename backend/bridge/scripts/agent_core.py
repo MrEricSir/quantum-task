@@ -206,8 +206,8 @@ def _resolve_work_dir(cfg, target_repo):
     return None
 
 
-def _make_prompt(branch):
-    return (
+def _make_prompt(branch, worktree_path):
+    prompt = (
         f"Please implement the feature described in {SPEC_FILENAME} "
         f"(already written to your working directory). "
         f"You are working on branch {branch} — commit your changes locally as you go. "
@@ -217,6 +217,21 @@ def _make_prompt(branch):
         f"databases you start instead of framework defaults, so this session can't "
         f"collide with anything else already running on this machine."
     )
+    # If the repo has a Procfile.dev/Procfile, tell Claude about it directly --
+    # otherwise it has to rediscover "this app has a separate frontend/backend,
+    # here's how to start each" on its own mid-session. Same file _run_procfile
+    # already knows how to read for `qtask-bridge --run`.
+    procfile_path = _find_procfile(worktree_path)
+    if procfile_path:
+        processes = _parse_procfile(procfile_path)
+        proc_lines = "\n".join(f"  {name}: {cmd}" for name, cmd in processes.items())
+        prompt += (
+            f"\n\nThis repo has a {os.path.basename(procfile_path)} defining how to run its "
+            f"processes -- use it (with the port range and database name from "
+            f"{ENV_FILENAME} above) if you need to start the app to test your changes:\n"
+            f"{proc_lines}"
+        )
+    return prompt
 
 
 def _detect_primary_branch(work_dir):
@@ -534,7 +549,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
     verification = ""
     try:
         try:
-            subprocess.run(interactive_command(_make_prompt(branch)), cwd=cwd, check=False)
+            subprocess.run(interactive_command(_make_prompt(branch, cwd)), cwd=cwd, check=False)
         except FileNotFoundError:
             print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
             print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
@@ -566,7 +581,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
     print(f"[bridge] Launching {AGENT_LABEL} (streaming mode)...")
     try:
         proc = subprocess.Popen(
-            streaming_command(_make_prompt(branch)),
+            streaming_command(_make_prompt(branch, cwd)),
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
