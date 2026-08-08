@@ -591,11 +591,25 @@ function experimentVerdict(exp) {
   const fDiff = exp.fat_delta != null && exp.fat_baseline != null
     ? exp.fat_delta - exp.fat_baseline : null
   const diffs = [wDiff, fDiff].filter(v => v != null)
-  if (!diffs.length) return null
-  const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length
-  if (avg < -0.002) return { label: 'Better than usual', cls: 'verdict--good' }
-  if (avg > 0.002)  return { label: 'Worse than usual',  cls: 'verdict--bad'  }
-  return { label: 'No clear effect', cls: 'verdict--neutral' }
+  if (diffs.length) {
+    const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length
+    if (avg < -0.002) return { label: 'Better than usual', cls: 'verdict--good' }
+    if (avg > 0.002)  return { label: 'Worse than usual',  cls: 'verdict--bad'  }
+    return { label: 'No clear effect', cls: 'verdict--neutral' }
+  }
+  // Workout-routine experiments have no weight/fat delta to fall back on --
+  // "better/worse" isn't a supportable judgment for e.g. "rowed further,"
+  // so this reports significance/target-met instead of a value judgment.
+  if (exp.workout_baseline_avg != null && exp.workout_experiment_avg != null) {
+    if (exp.workout_p != null && exp.workout_p < 0.05) {
+      return { label: 'Significant change', cls: 'verdict--good' }
+    }
+    if (exp.workout_target_value != null && exp.workout_experiment_avg >= exp.workout_target_value) {
+      return { label: 'Target met', cls: 'verdict--neutral' }
+    }
+    return { label: 'No clear effect', cls: 'verdict--neutral' }
+  }
+  return null
 }
 
 function ExperimentsHistory({ isImperial }) {
@@ -639,6 +653,74 @@ function ExperimentsHistory({ isImperial }) {
   )
 }
 
+// ── Workout-routine experiment outcome ────────────────────────────────────────
+
+function capitalize(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+}
+
+function fmtWorkoutValue(v, unit) {
+  if (v == null) return '—'
+  const display = Number.isInteger(v) ? String(v) : v.toFixed(2)
+  return unit ? `${display} ${unit}` : display
+}
+
+function ExperimentOutcomeCard({ exp }) {
+  const signal = segmentSignal(exp.workout_p, {
+    high: { n: exp.workout_experiment_n ?? 0 },
+    low: { n: exp.workout_baseline_n ?? 0 },
+  })
+  return (
+    <div className="seg-card">
+      <div className="seg-header">
+        <span className="seg-factor">{capitalize(exp.workout_type)}</span>
+        {exp.workout_target_value != null && (
+          <span className="seg-outcome">→ target {fmtWorkoutValue(exp.workout_target_value, exp.workout_unit)}</span>
+        )}
+        <span className={`seg-signal ${signal.cls}`}>{signal.label}</span>
+      </div>
+      <div className="seg-rows">
+        <div className="seg-row">
+          <span className="seg-label">Baseline</span>
+          <span className="seg-value">{fmtWorkoutValue(exp.workout_baseline_avg, exp.workout_unit)}</span>
+          <span className="seg-n">n={exp.workout_baseline_n ?? 0}</span>
+        </div>
+        <div className="seg-row">
+          <span className="seg-label">During experiment</span>
+          <span className="seg-value">{fmtWorkoutValue(exp.workout_experiment_avg, exp.workout_unit)}</span>
+          <span className="seg-n">n={exp.workout_experiment_n ?? 0}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function WorkoutOutcomeCards({ expKey }) {
+  const [history, setHistory] = useState(null)
+
+  useEffect(() => {
+    fetchHealthExperiments().then(setHistory).catch(() => setHistory([]))
+  }, [expKey])
+
+  const outcomes = (history ?? [])
+    .filter(e => e.status === 'dismissed' && e.workout_type != null && e.workout_baseline_avg != null)
+    .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    .slice(0, 3)
+
+  if (!outcomes.length) return null
+
+  return (
+    <div className="analysis-subsection">
+      <div className="analysis-subsection-header">
+        <span className="analysis-subsection-title">Routine Experiments</span>
+      </div>
+      <div className="seg-grid">
+        {outcomes.map(exp => <ExperimentOutcomeCard key={exp.id} exp={exp} />)}
+      </div>
+    </div>
+  )
+}
+
 // ── Analysis section (correlations + experiment) ──────────────────────────────
 
 function AnalysisSection({ isImperial, habitCompletions }) {
@@ -666,6 +748,8 @@ function AnalysisSection({ isImperial, habitCompletions }) {
         <ExperimentCard key={expKey} onDismiss={() => setExpKey(k => k + 1)} habitCompletions={habitCompletions} />
         <ExperimentsHistory key={expKey} isImperial={isImperial} />
       </div>
+
+      <WorkoutOutcomeCards expKey={expKey} />
 
       {hasCorr && (() => {
         const { correlations = [], segments = [], summary, weight_n, fat_n } = corrData

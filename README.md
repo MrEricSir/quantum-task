@@ -175,7 +175,7 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Habit completion overlay on each chart to see how habits track with progress
 - **Workout log**: log any workout in plain English ("rowed 5000m", "bench pressed 185 lbs"); entries appear on the day's log and on a 30/60/90-day type-presence chart
 - **Food quality trend**: daily average food quality score plotted over the selected range, averaged from individual food log ratings
-- **Health experiments**: set a hypothesis, start/end date, and metric; the app tracks experiment progress and evaluates outcomes
+- **Health experiments**: a weekly experiment is generated automatically, targeting either a Withings metric (steps, body fat, weight) or an incremental change to an established habit or workout routine (e.g. "row 2 mi/day instead of 1 mi/day"); the app avoids repeating a recent experiment's target and evaluates outcomes when the experiment is dismissed -- workout-routine experiments get a real before/after comparison (with a significance badge) shown alongside the correlation cards
 - **Correlation scatter plots**: explore relationships between tracked metrics (e.g. steps vs. sleep, food quality vs. energy)
 
 ### Claude Code Bridge

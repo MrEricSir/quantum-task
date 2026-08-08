@@ -244,6 +244,18 @@ class HealthExperiment(Base):
     weight_baseline = Column(Float, nullable=True)   # avg kg/day across prior weeks (control)
     fat_baseline    = Column(Float, nullable=True)
 
+    # Workout-routine experiments (e.g. "row 2mi/day instead of 1mi") -- set at
+    # generation time when the experiment targets an established WorkoutEntry
+    # type rather than a Withings metric; outcome fields filled on dismiss.
+    workout_type           = Column(String, nullable=True)   # WorkoutEntry.type, e.g. "row"
+    workout_target_value   = Column(Float, nullable=True)
+    workout_unit           = Column(String, nullable=True)
+    workout_baseline_avg   = Column(Float, nullable=True)
+    workout_experiment_avg = Column(Float, nullable=True)
+    workout_baseline_n     = Column(Integer, nullable=True)
+    workout_experiment_n   = Column(Integer, nullable=True)
+    workout_p              = Column(Float, nullable=True)
+
 
 class WithingsMeasurement(Base):
     """One row per (date, metric) — upserted on each sync."""

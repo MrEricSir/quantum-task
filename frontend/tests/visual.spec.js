@@ -1520,6 +1520,57 @@ test.describe('health page', () => {
     await waitForApp(page)
     await expect(page.locator('.food-input')).toBeVisible()
   })
+
+  test('workout-routine experiment outcome shows a card with baseline vs experiment values', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 42, week: '2026-W22', text: 'Row 2 mi/day instead of 1 mi/day',
+        hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
+        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: null, fat_delta: null, weight_baseline: null, fat_baseline: null,
+        habit_completion_rate: null,
+        workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
+        workout_baseline_avg: 1.1, workout_experiment_avg: 1.9,
+        workout_baseline_n: 10, workout_experiment_n: 5, workout_p: 0.01,
+        created_at: '2026-06-01T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Row' })
+    await expect(card).toBeVisible()
+    await expect(card.getByText('→ target 2 mi')).toBeVisible()
+    await expect(card.locator('.seg-signal')).toHaveText('strong signal')
+    await expect(card.getByText('Baseline')).toBeVisible()
+    await expect(card.getByText('1.10 mi')).toBeVisible()
+    await expect(card.getByText('During experiment')).toBeVisible()
+    await expect(card.getByText('1.90 mi')).toBeVisible()
+  })
+
+  test('past experiment history shows a workout-based verdict', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 42, week: '2026-W22', text: 'Row 2 mi/day instead of 1 mi/day',
+        hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
+        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: null, fat_delta: null, weight_baseline: null, fat_baseline: null,
+        habit_completion_rate: null,
+        workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
+        workout_baseline_avg: 1.1, workout_experiment_avg: 1.9,
+        workout_baseline_n: 10, workout_experiment_n: 5, workout_p: 0.01,
+        created_at: '2026-06-01T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.getByRole('button', { name: /show past experiments/i }).click()
+    const row = page.locator('.exp-history-row', { hasText: '2026-W22' })
+    await expect(row.locator('.exp-verdict')).toHaveText('Significant change')
+  })
 })
 
 // ---------------------------------------------------------------------------

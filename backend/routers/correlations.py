@@ -20,6 +20,7 @@ Factors
 
 import json
 import time
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -203,6 +204,126 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
     return build_obs("weight"), build_obs("fat_ratio")
 
 
+# ── Existing-routine detection (for incremental experiment proposals) ─────────
+
+def _established_habits(
+    db: Session, today: date,
+    min_age_days: int = 14, window_days: int = 21, min_rate: float = 0.6,
+) -> list[dict]:
+    """Non-archived, non-health_metric-linked habits old enough and being
+    kept up consistently enough to be candidates for an incremental routine
+    experiment ("meditate 15 min instead of 10"). Names are free text, so the
+    LLM infers the current numeric target from the name itself (e.g.
+    "Meditate 10 min") the same way this file already infers step goals from
+    prose elsewhere in _generate_experiment."""
+    window_start = (today - timedelta(days=window_days)).isoformat()
+    habits = (
+        db.query(models.Habit)
+        .filter(
+            models.Habit.archived == False,    # noqa: E712
+            models.Habit.health_metric == None,  # noqa: E711
+        )
+        .all()
+    )
+    results = []
+    for h in habits:
+        created = h.created_at.date() if h.created_at else today
+        if (today - created).days < min_age_days:
+            continue
+        completed = (
+            db.query(models.HabitCompletion)
+            .filter(
+                models.HabitCompletion.habit_id == h.id,
+                models.HabitCompletion.date >= window_start,
+            )
+            .count()
+        )
+        rate = completed / window_days
+        if rate >= min_rate:
+            results.append({"name": h.name, "completion_rate": round(rate, 2)})
+    return results
+
+
+def _established_workouts(
+    db: Session, today: date,
+    window_days: int = 42, min_sessions: int = 3,
+) -> list[dict]:
+    """WorkoutEntry types logged consistently enough to be candidates for an
+    incremental routine experiment ("row 2mi/day instead of 1mi"). `unit` is
+    the most common one logged for that type -- WorkoutEntry.unit is free
+    text/uninterpreted (per its own model comment), so this is best-effort,
+    not a normalized unit system."""
+    window_start = (today - timedelta(days=window_days)).isoformat()
+    entries = (
+        db.query(models.WorkoutEntry)
+        .filter(
+            models.WorkoutEntry.logged_at >= window_start,
+            models.WorkoutEntry.value.isnot(None),
+        )
+        .all()
+    )
+    by_type: dict[str, list] = {}
+    for e in entries:
+        by_type.setdefault(e.type, []).append(e)
+
+    results = []
+    for wtype, rows in by_type.items():
+        if len(rows) < min_sessions:
+            continue
+        values = [r.value for r in rows]
+        units = [r.unit for r in rows if r.unit]
+        unit = Counter(units).most_common(1)[0][0] if units else None
+        results.append({
+            "type": wtype,
+            "sessions_per_week": round(len(rows) / (window_days / 7), 1),
+            "avg_value": round(sum(values) / len(values), 2),
+            "unit": unit,
+        })
+    return results
+
+
+def _recent_experiments(db: Session, limit: int = 4) -> list[models.HealthExperiment]:
+    """Most recent experiments (any status), for duplicate-avoidance context."""
+    return (
+        db.query(models.HealthExperiment)
+        .order_by(models.HealthExperiment.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _format_recent_experiment(exp: models.HealthExperiment) -> str:
+    if exp.workout_type and exp.workout_target_value is not None:
+        unit = f" {exp.workout_unit}" if exp.workout_unit else ""
+        return f"{exp.workout_type}: {exp.workout_target_value}{unit}"
+    if exp.health_metric and exp.health_goal is not None:
+        return f"{exp.health_metric}: {exp.health_goal}"
+    return exp.action or exp.text or "(no specific target)"
+
+
+def _nudge_if_near_duplicate(
+    health_metric: str | None, health_goal: float | None,
+    workout_type: str | None, workout_target_value: float | None,
+    prev: models.HealthExperiment | None,
+) -> tuple[float | None, float | None]:
+    """Deterministic backstop: if the newly generated experiment matches the
+    single most recent one on metric/routine with a near-identical target
+    (within 5%), bump the target rather than silently repeating it. This is
+    insurance regardless of whether the LLM actually followed the "avoid
+    repeating" prompt instruction -- the exact bug this feature is fixing."""
+    if prev is None:
+        return health_goal, workout_target_value
+    if (health_metric and prev.health_metric == health_metric
+            and health_goal is not None and prev.health_goal is not None):
+        if abs(health_goal - prev.health_goal) / max(abs(prev.health_goal), 1e-9) < 0.05:
+            health_goal = round(prev.health_goal * 1.2)
+    if (workout_type and prev.workout_type == workout_type
+            and workout_target_value is not None and prev.workout_target_value is not None):
+        if abs(workout_target_value - prev.workout_target_value) / max(abs(prev.workout_target_value), 1e-9) < 0.05:
+            workout_target_value = round(prev.workout_target_value * 1.2, 2)
+    return health_goal, workout_target_value
+
+
 # ── Correlation + segment computation ────────────────────────────────────────
 
 FACTORS = [
@@ -370,6 +491,9 @@ experiment to try for the next 7 days. Prioritise factors with lower p-values \
 (stronger evidence). The experiment should be actionable, measurable, and \
 directly connected to the data.
 
+The user message may also include a "Recently tried experiments" section and an \
+"Established routines" section — see the rules below for how to use each.
+
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
   "text": "2-3 sentence description of the experiment and why it's worth trying",
@@ -377,7 +501,11 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "action": "The specific daily action with a CONCRETE NUMBER, e.g. '8,000 steps every day'",
   "needs_habit": true or false,
   "health_metric": "steps" | "fat_ratio" | "weight" | null,
-  "health_goal": numeric goal value or null
+  "health_goal": numeric goal value or null,
+  "routine_type": "workout" | "habit" | null,
+  "workout_type": one of the established workout types given, or null,
+  "workout_target_value": numeric target or null,
+  "workout_unit": the established unit for that workout type, or null
 }
 
 CRITICAL: "action" must ALWAYS contain a specific measurable target — never vague \
@@ -397,13 +525,35 @@ number in the action field exactly. Examples: \
 Examples where you must leave it null: "1 hour of screen-free time", "read \
 before bed", "meditate 10 minutes", "no alcohol", "sleep by 10pm" — these are \
 behavioral habits that cannot be verified by a Withings device, so \
-health_metric MUST be null. When in doubt, set null.\
+health_metric MUST be null. When in doubt, set null.
+
+routine_type/workout_*: an ALTERNATIVE to health_metric/health_goal, never both \
+at once — set at most one of the two pairs. If "Established routines" lists a \
+workout type the user already does regularly (e.g. "row: 3x/week, avg 1.6 mi"), \
+you may propose a specific incremental increase to it instead of a fresh \
+Withings-metric goal — this is usually MORE interesting than a generic goal \
+when a real established routine is available. Set routine_type="workout", \
+workout_type to the EXACT type string given, workout_target_value to a \
+meaningfully higher number than the established avg (not a trivial +1%), and \
+workout_unit to the unit given for that type. The action field must still state \
+the concrete target ("Row 2 miles every day instead of your usual ~1.6"). If \
+instead you want to propose increasing an established HABIT's target (e.g. \
+"meditate 15 min instead of 10"), set routine_type="habit" and leave the \
+workout_* fields null — habits are tracked by completion only, so just state \
+the new target clearly in the action field; there's no structured field for it.
+
+Recently tried experiments: avoid proposing the same metric/routine with the \
+same or a near-identical target as one just tried — either pick a different \
+factor/routine, or a meaningfully different target (a genuinely bigger step, \
+not a token +1%). Repeating the exact same experiment back-to-back provides \
+no new information.\
 """
 
 
 def _generate_experiment(correlations: list[dict], db: Session) -> models.HealthExperiment:
     """Generate a new experiment via LLM, persist to health_experiments table."""
     week = _current_isoweek()
+    today = date.today()
 
     # Guard against concurrent generation: re-check inside the session before inserting.
     existing = db.query(models.HealthExperiment).filter_by(week=week, status="active").first()
@@ -428,15 +578,40 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         f"{c['factor']} vs {c['outcome']}: r={c['r']:+.2f}, p={c['p']:.3f} (n={c['n']})"
         for c in correlations[:6]
     ]
+
+    recent = _recent_experiments(db)
+    established_habits = _established_habits(db, today)
+    established_workouts = _established_workouts(db, today)
+    established_workouts_by_type = {w["type"]: w for w in established_workouts}
+
+    user_parts = ["Correlation data:"] + lines
+    if recent:
+        user_parts.append(
+            "\nRecently tried experiments (avoid repeating; propose something meaningfully different):"
+        )
+        user_parts.extend(f"- {_format_recent_experiment(r)}" for r in recent)
+    if established_habits or established_workouts:
+        user_parts.append(
+            "\nEstablished routines you could propose an incremental change to instead of a fresh goal:"
+        )
+        for h in established_habits:
+            user_parts.append(f'- Habit "{h["name"]}" — done {round(h["completion_rate"] * 100)}% of days recently')
+        for w in established_workouts:
+            unit_part = f" {w['unit']}" if w["unit"] else ""
+            user_parts.append(
+                f'- Workout type "{w["type"]}" — {w["sessions_per_week"]}x/week, avg {w["avg_value"]}{unit_part}'
+            )
+    user_content = "\n".join(user_parts)
+
     try:
         client = llm_client()
         resp = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": _EXPERIMENT_SYSTEM},
-                {"role": "user",   "content": "\n".join(lines)},
+                {"role": "user",   "content": user_content},
             ],
-            max_tokens=300,
+            max_tokens=350,
         )
         raw = resp.choices[0].message.content.strip()
         llm_data = json.loads(raw)
@@ -455,41 +630,75 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
             health_metric = None
             health_goal = None
 
-        # Use prose text as authoritative source for step goals — the LLM's JSON
-        # numbers are less reliable than the numbers it writes in action/hypothesis.
-        import re as _re
+        # Routine-based experiment fields -- an alternative to health_metric/
+        # health_goal, never both at once. routine_type explicitly signals
+        # intent, so it wins the tie-break if the LLM (against instructions)
+        # set both. workout_type must exactly match an established routine --
+        # anything else is discarded rather than trusted, same defensive
+        # validation style already used for health_metric above.
+        routine_type = llm_data.get("routine_type")
+        workout_type = llm_data.get("workout_type") or None
+        workout_target_value = llm_data.get("workout_target_value")
+        if workout_target_value is not None:
+            try:
+                workout_target_value = float(workout_target_value)
+            except (TypeError, ValueError):
+                workout_target_value = None
 
-        def _extract_steps(text: str | None) -> float | None:
-            """Extract a plausible daily step count from text (100–50,000)."""
-            if not text:
-                return None
-            m = _re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps', text, _re.I)
-            if m:
-                val = float(m.group(1).replace(",", ""))
-                return val if 100 <= val <= 50_000 else None
-            return None
-
-        if action and "steps" in action.lower():
-            # Action is explicitly about steps — metric must be "steps" regardless of
-            # what the LLM put in the JSON (catches fat_ratio/weight confusion).
-            health_metric = "steps"
-            # Prefer action text; fall back to hypothesis if action value is implausible
-            health_goal = _extract_steps(action) or _extract_steps(hypothesis)
-        elif health_metric == "steps":
-            # LLM said steps but no "steps" in action — correct goal from hypothesis
-            if health_goal is None or health_goal > 50_000:
-                health_goal = _extract_steps(hypothesis)
-        elif health_metric is None and action:
-            # Fallback: action didn't mention "steps" explicitly but hypothesis might
-            _hypo_steps = _extract_steps(hypothesis)
-            if _hypo_steps:
-                health_metric = "steps"
-                health_goal = _hypo_steps
-
-        # Final guard: clear any remaining implausible step goal
-        if health_metric == "steps" and not health_goal:
+        if (routine_type == "workout" and workout_type in established_workouts_by_type
+                and workout_target_value is not None):
             health_metric = None
             health_goal = None
+            workout_unit = established_workouts_by_type[workout_type]["unit"]
+        else:
+            workout_type = None
+            workout_target_value = None
+            workout_unit = None
+            if routine_type == "habit":
+                # No structured field for habit-routine experiments -- the
+                # established habit was just prompt context, not a hard link.
+                health_metric = None
+                health_goal = None
+
+        # Use prose text as authoritative source for step goals — the LLM's JSON
+        # numbers are less reliable than the numbers it writes in action/hypothesis.
+        # Skipped entirely for routine-based experiments: this fallback exists
+        # only to recover a Withings step goal, and firing it here risks
+        # misreading an unrelated number in a workout/habit action string.
+        if routine_type not in ("workout", "habit"):
+            import re as _re
+
+            def _extract_steps(text: str | None) -> float | None:
+                """Extract a plausible daily step count from text (100–50,000)."""
+                if not text:
+                    return None
+                m = _re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps', text, _re.I)
+                if m:
+                    val = float(m.group(1).replace(",", ""))
+                    return val if 100 <= val <= 50_000 else None
+                return None
+
+            if action and "steps" in action.lower():
+                # Action is explicitly about steps — metric must be "steps" regardless of
+                # what the LLM put in the JSON (catches fat_ratio/weight confusion).
+                health_metric = "steps"
+                # Prefer action text; fall back to hypothesis if action value is implausible
+                health_goal = _extract_steps(action) or _extract_steps(hypothesis)
+            elif health_metric == "steps":
+                # LLM said steps but no "steps" in action — correct goal from hypothesis
+                if health_goal is None or health_goal > 50_000:
+                    health_goal = _extract_steps(hypothesis)
+            elif health_metric is None and action:
+                # Fallback: action didn't mention "steps" explicitly but hypothesis might
+                _hypo_steps = _extract_steps(hypothesis)
+                if _hypo_steps:
+                    health_metric = "steps"
+                    health_goal = _hypo_steps
+
+            # Final guard: clear any remaining implausible step goal
+            if health_metric == "steps" and not health_goal:
+                health_metric = None
+                health_goal = None
 
         # If needs_habit is set but no concrete action was produced, the LLM was vague.
         # Manufacture a sensible default so the experiment still gets a tracking habit.
@@ -498,8 +707,15 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
                 action = "8,000 steps every day"
                 health_goal = health_goal or 8000.0
             else:
-                # Can't auto-infer a goal for other metrics — leave needs_habit False
+                # Can't auto-infer a goal for other metrics/routines — leave needs_habit False
                 needs_habit = False
+
+        # Deterministic duplicate-avoidance backstop, regardless of whether the
+        # LLM actually followed the "avoid repeating" prompt instruction above.
+        health_goal, workout_target_value = _nudge_if_near_duplicate(
+            health_metric, health_goal, workout_type, workout_target_value,
+            recent[0] if recent else None,
+        )
     except Exception:
         text = "Try increasing your daily step count by 10% compared to your recent average."
         hypothesis = "More consistent movement should correlate with better weight outcomes."
@@ -507,11 +723,16 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         needs_habit = False
         health_metric = None
         health_goal = None
+        workout_type = None
+        workout_target_value = None
+        workout_unit = None
 
     habit_id = None
     if action:
         # Always create a tracking habit — even for non-Withings experiments it
         # serves as a daily reminder and shows up in the Health & Habits section.
+        # Workout-routine experiments get one too (checked off manually, same as
+        # every other non-Withings habit -- no auto-completion from WorkoutEntry).
         habit_name = f"🧪 {action[:60]}"
         habit = models.Habit(
             name=habit_name,
@@ -531,6 +752,9 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         habit_id=habit_id,
         health_metric=health_metric,
         health_goal=health_goal,
+        workout_type=workout_type,
+        workout_target_value=workout_target_value,
+        workout_unit=workout_unit,
     )
     db.add(exp)
     db.flush()
@@ -557,6 +781,14 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
         "fat_delta":            exp.fat_delta,
         "weight_baseline":      exp.weight_baseline,
         "fat_baseline":         exp.fat_baseline,
+        "workout_type":            exp.workout_type,
+        "workout_target_value":    exp.workout_target_value,
+        "workout_unit":            exp.workout_unit,
+        "workout_baseline_avg":    exp.workout_baseline_avg,
+        "workout_experiment_avg":  exp.workout_experiment_avg,
+        "workout_baseline_n":      exp.workout_baseline_n,
+        "workout_experiment_n":    exp.workout_experiment_n,
+        "workout_p":               exp.workout_p,
     }
 
 
@@ -593,6 +825,46 @@ def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> N
             .count()
         )
         exp.habit_completion_rate = round(completed_days / 7, 3)
+
+    # Workout-routine outcome: a genuine before/after comparison with a real
+    # p-value, using the exact same ttest_ind/unequal-variance pattern
+    # _compute_segments already uses for the weight/fat correlation segments
+    # -- not a new statistical concept, just applied to a new data source.
+    if exp.workout_type:
+        ws = _week_start(exp.week)
+        exp_start = ws.isoformat()
+        exp_end = (ws + timedelta(days=7)).isoformat()          # exclusive
+        baseline_start = (ws - timedelta(days=56)).isoformat()  # 8 prior weeks
+
+        exp_samples = [
+            e.value for e in db.query(models.WorkoutEntry).filter(
+                models.WorkoutEntry.type == exp.workout_type,
+                models.WorkoutEntry.value.isnot(None),
+                models.WorkoutEntry.logged_at >= exp_start,
+                models.WorkoutEntry.logged_at < exp_end,
+            ).all()
+        ]
+        baseline_samples = [
+            e.value for e in db.query(models.WorkoutEntry).filter(
+                models.WorkoutEntry.type == exp.workout_type,
+                models.WorkoutEntry.value.isnot(None),
+                models.WorkoutEntry.logged_at >= baseline_start,
+                models.WorkoutEntry.logged_at < exp_start,
+            ).all()
+        ]
+
+        exp.workout_experiment_n = len(exp_samples)
+        exp.workout_baseline_n = len(baseline_samples)
+        exp.workout_experiment_avg = round(sum(exp_samples) / len(exp_samples), 3) if exp_samples else None
+        exp.workout_baseline_avg = round(sum(baseline_samples) / len(baseline_samples), 3) if baseline_samples else None
+
+        exp.workout_p = None
+        if len(exp_samples) >= 2 and len(baseline_samples) >= 2:
+            try:
+                result = ttest_ind(exp_samples, baseline_samples, equal_var=False)
+                exp.workout_p = round(float(result.pvalue), 4)
+            except Exception:
+                pass
 
 
 # ── Migration: AppSetting → table ────────────────────────────────────────────
