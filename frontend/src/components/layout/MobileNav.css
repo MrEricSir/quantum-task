@@ -15,6 +15,15 @@
     -webkit-backdrop-filter: blur(20px);
     border-top: 1px solid rgba(139, 92, 246, 0.2);
     padding-bottom: env(safe-area-inset-bottom);
+    /* Forces its own compositing layer from first paint -- iOS Safari
+       (standalone PWAs especially) can otherwise render a viewport-relative
+       position: fixed element against a stale/unsettled visual viewport on
+       launch, leaving it floating above where it belongs until a touch
+       event forces a repaint. See the mount-time reflow nudge in App.jsx
+       for the other half of this fix. */
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
   }
 
   .mobile-nav-item {

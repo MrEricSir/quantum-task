@@ -25,6 +25,17 @@
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.7);
 }
 
+html, body {
+  /* Without this, iOS Safari (and standalone home-screen PWAs especially)
+     lets the whole document rubber-band/bounce past its own top and bottom
+     edges -- on an app shell where only inner panes are meant to scroll,
+     that reads as page content sliding off the top. The actual scroll
+     panes (.board-wrapper, .sidebar) get their own overscroll-behavior:
+     contain so scrolling to their end doesn't chain up into this bounce
+     either. */
+  overscroll-behavior: none;
+}
+
 body {
   font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg);

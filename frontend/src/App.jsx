@@ -220,6 +220,25 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // iOS home-screen PWAs (navigator.standalone) sometimes paint the fixed
+    // bottom nav against a visual viewport WebKit hasn't finished settling
+    // on launch, leaving it floating above where it belongs until the first
+    // touch forces a repaint. Force that repaint once, right after mount,
+    // by toggling display off/on with a synchronous reflow read in between
+    // -- invisible to the user since nothing yields to the browser's paint
+    // step between the two writes.
+    if (!window.navigator.standalone) return
+    const id = requestAnimationFrame(() => {
+      const nav = document.querySelector('.mobile-nav')
+      if (!nav) return
+      nav.style.display = 'none'
+      void nav.offsetHeight
+      nav.style.display = ''
+    })
+    return () => cancelAnimationFrame(id)
+  }, [])
+
+  useEffect(() => {
     if (!navigator.geolocation) return
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       const w = await fetchWeather(coords.latitude, coords.longitude)
