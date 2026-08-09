@@ -42,8 +42,14 @@ meal_type rules:
 - Text context overrides time (e.g. "late lunch" at 3pm → lunch)
 - "about to" / "going to" still counts as the current time
 
+assumption rule:
+- Unless milk, cream, sugar, syrup, honey, or another addition is explicitly
+  mentioned, assume the plain/black/unsweetened form (e.g. "tea" and "coffee"
+  mean plain tea and black coffee, not a version with added milk or sugar)
+
 quality examples:
 - leafy salad, grilled salmon → 9
+- black coffee, plain tea (no milk/sugar) → 8
 - oatmeal with fruit → 8
 - banana → 7
 - coffee with milk → 6
@@ -55,6 +61,7 @@ quality examples:
 
 calories examples:
 - black coffee → 5
+- plain tea → 2
 - coffee with oat milk → 60
 - banana → 90
 - donut → 300
