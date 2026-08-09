@@ -239,6 +239,7 @@ qtask-bridge --watch          # poll for jobs; launch Claude Code interactively 
 qtask-bridge --card <id>      # queue and run a specific card's job once
 qtask-bridge --tag work       # queue + run every "work"-tagged card with a spec, unattended
 qtask-bridge --list           # list qtask worktrees across configured repos (read-only)
+qtask-bridge --switch         # menu of worktrees for the current repo, most recent first
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
 qtask-bridge --review [branch] # read-only lead-engineer-style review of a worktree's changes
@@ -263,12 +264,15 @@ running `git worktree list` to figure out where a job's code went:
 - **In Telegram** — the completion message includes the path alongside the branch
 - **In Claude Code itself** — each worktree gets a local, gitignored `.claude/settings.local.json` configuring a status line that shows the branch and path for the entire session, so you never have to wonder mid-conversation where you are. Note: Claude Code's workspace trust prompt gates this — on the very first launch in a brand-new worktree (which is every worktree), you may need to accept that prompt before the status line appears.
 - **In your terminal tab** — interactive sessions (`--watch`/`--card`) set the tab/window title to the branch name, so multiple job tabs stay identifiable at a glance
-- **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). For a one-keystroke jump to the most recent one specifically, add this to your shell config:
+- **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). `qtask-bridge --switch` narrows that to worktrees for whichever repo you're currently in (main checkout or another worktree, either works), shows them most-recently-active first, and prints only the chosen path on stdout — everything else (the menu, the prompt) goes to stderr, so it's safe to wrap in a shell function that `cd`s for you:
   ```bash
-  qcd() { cd "$(cat ~/.local/share/qtask-bridge/last-worktree)"; }
+  qcd() {
+    local wt; wt="$(qtask-bridge --switch)"
+    [ -n "$wt" ] && cd "$wt"
+  }
   ```
 
-`--list` and `--cleanup` only scan repos listed explicitly under `[repos]` in `claude.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in either.
+`--list`, `--switch`, and `--cleanup` only scan repos listed explicitly under `[repos]` in `claude.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in any of them.
 
 #### Avoiding port and database collisions
 

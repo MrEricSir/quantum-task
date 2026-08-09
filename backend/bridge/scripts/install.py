@@ -204,13 +204,17 @@ def main():
     print("  qtask-bridge --watch            # poll for jobs automatically")
     print("  qtask-bridge --tag <name>       # run every pending-spec card with this tag")
     print("  qtask-bridge --list             # list qtask worktrees (read-only)")
+    print("  qtask-bridge --switch           # menu of worktrees for the current repo, most recent first")
     print("  qtask-bridge --cleanup          # list/remove finished qtask worktrees")
     print("  qtask-bridge --run [branch]     # run the app in a qtask worktree (cwd, last one, or a branch fragment)")
     print("  qtask-bridge --review [branch]  # read-only lead-engineer-style review of a worktree's changes")
     print()
-    print("Tip: add this to your shell config for a one-keystroke jump to the most")
-    print("recent job worktree from any shell:")
-    print('  qcd() { cd "$(cat ~/.local/share/qtask-bridge/last-worktree)"; }')
+    print("Tip: add this to your shell config for a one-keystroke menu to switch")
+    print("between qtask worktrees for whatever repo you're currently in:")
+    print("  qcd() {")
+    print('    local wt; wt="$(qtask-bridge --switch)"')
+    print('    [ -n "$wt" ] && cd "$wt"')
+    print("  }")
 
 
 if __name__ == "__main__":

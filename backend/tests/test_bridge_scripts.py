@@ -718,6 +718,45 @@ class TestAgentScript:
         assert "input(" not in list_body
         assert "git worktree remove" not in list_body
 
+    def test_switch_command_exists_and_is_wired_into_argparse(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "--switch" in res.text
+        assert "def cmd_switch" in res.text
+        assert "cmd_switch(cfg)" in res.text
+
+    def test_switch_only_prints_the_chosen_path_on_stdout(self, client):
+        """The menu, the prompt, and every error message must go to stderr --
+        only the final chosen path may reach stdout, or `cd "$(qtask-bridge
+        --switch)"` would try to cd into the whole menu text. file=sys.stderr
+        is sometimes wrapped onto a continuation line (existing style in this
+        file), so this counts occurrences across the whole body rather than
+        checking line-by-line."""
+        res = client.get("/api/bridge/agent.py")
+        switch_start = res.text.index("def cmd_switch")
+        switch_end = res.text.index("def cmd_list")
+        switch_body = res.text[switch_start:switch_end]
+        print_calls = switch_body.count("print(")
+        stderr_routed = switch_body.count("file=sys.stderr")
+        # Exactly one print() call is the stdout result line -- every other
+        # print() in the function must be routed to stderr.
+        assert print_calls - stderr_routed == 1
+        assert "print(found[int(choice) - 1][2])" in switch_body
+        # The interactive prompt itself never leaks to stdout either, since
+        # input(prompt) would write the prompt to stdout before reading --
+        # the prompt text must go through sys.stderr.write() instead.
+        assert "input(\"" not in switch_body
+        assert "input('" not in switch_body
+        assert "sys.stderr.write(" in switch_body
+
+    def test_switch_uses_the_shared_scan_and_current_repo_helper(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "def _current_repo_name" in res.text
+        switch_start = res.text.index("def cmd_switch")
+        switch_end = res.text.index("def cmd_list")
+        switch_body = res.text[switch_start:switch_end]
+        assert "_scan_qtask_worktrees(cfg)" in switch_body
+        assert "_current_repo_name(cfg)" in switch_body
+
     def test_list_and_cleanup_share_the_same_scan(self, client):
         """Both must find the exact same worktrees, or --list would show
         something --cleanup can't act on (or vice versa)."""
@@ -1135,6 +1174,215 @@ class TestResolveWorktreeTarget:
         resolved = agent_core._resolve_worktree_target(cfg, None)
         assert resolved is None
         assert "No qtask worktrees found" in capsys.readouterr().out
+
+
+class TestCurrentRepoName:
+    """_current_repo_name resolves the [repos] entry cwd belongs to, whether
+    cwd is the main checkout or one of its worktrees -- both share the same
+    underlying .git via --git-common-dir."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def test_resolves_from_main_checkout(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            assert agent_core._current_repo_name(cfg) == "scratch/repo"
+        finally:
+            os.chdir(cwd_before)
+
+    def test_resolves_from_inside_a_worktree(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 1, "card_id": 1, "card_title": "Feature A"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        cwd_before = os.getcwd()
+        os.chdir(wt)
+        try:
+            assert agent_core._current_repo_name(cfg) == "scratch/repo"
+        finally:
+            os.chdir(cwd_before)
+
+    def test_returns_none_outside_any_configured_repo(self, scratch_repo, tmp_path):
+        cfg = self._cfg(scratch_repo)
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        cwd_before = os.getcwd()
+        os.chdir(str(outside))
+        try:
+            assert agent_core._current_repo_name(cfg) is None
+        finally:
+            os.chdir(cwd_before)
+
+    def test_returns_none_for_a_repo_not_listed_in_config(self, scratch_repo):
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            assert agent_core._current_repo_name(cfg) is None
+        finally:
+            os.chdir(cwd_before)
+
+
+class TestCmdSwitch:
+    """--switch: menu of qtask worktrees for the CURRENT repo only, most
+    recently active first, chosen path printed on stdout with everything
+    else (menu/prompt/errors) on stderr -- see TestAgentScript's
+    test_switch_only_prints_the_chosen_path_on_stdout for the served-source
+    version of the same stdout/stderr contract."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def _create(self, cfg, scratch_repo, card_id, title):
+        job = {"id": card_id, "card_id": card_id, "card_title": title}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        return wt, branch
+
+    def test_no_worktrees_prints_nothing_on_stdout(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "No qtask worktrees found" in captured.err
+
+    def test_outside_configured_repo_prints_nothing_on_stdout(self, scratch_repo, tmp_path, capsys):
+        cfg = self._cfg(scratch_repo)
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        cwd_before = os.getcwd()
+        os.chdir(str(outside))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Not inside a configured repo" in captured.err
+
+    def test_selecting_a_worktree_prints_only_its_path_on_stdout(self, scratch_repo, capsys, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 1, "Feature A")
+        monkeypatch.setattr("builtins.input", lambda *_: "1")
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == wt
+        assert branch in captured.err
+
+    def test_cancelling_with_empty_input_prints_nothing_on_stdout(self, scratch_repo, capsys, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        self._create(cfg, scratch_repo, 1, "Feature A")
+        monkeypatch.setattr("builtins.input", lambda *_: "")
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        assert capsys.readouterr().out == ""
+
+    def test_invalid_selection_prints_nothing_on_stdout(self, scratch_repo, capsys, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        self._create(cfg, scratch_repo, 1, "Feature A")
+        monkeypatch.setattr("builtins.input", lambda *_: "99")
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Invalid selection" in captured.err
+
+    def test_only_shows_worktrees_for_the_current_repo(self, scratch_repo, tmp_path, capsys, monkeypatch):
+        """A second configured repo's worktrees must never show up in the
+        menu for the repo you're actually standing in."""
+        other_remote = tmp_path / "other_remote"
+        other_clone = tmp_path / "other_clone"
+        subprocess.run(["git", "init", "-q", "--bare", "--initial-branch=main", str(other_remote)], check=True)
+        subprocess.run(["git", "clone", "-q", str(other_remote), str(other_clone)], check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=other_clone, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=other_clone, check=True)
+        (other_clone / "README.md").write_text("hi\n")
+        subprocess.run(["git", "add", "README.md"], cwd=other_clone, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=other_clone, check=True)
+        subprocess.run(["git", "push", "-q", "origin", "main"], cwd=other_clone, check=True)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo), "other/repo": str(other_clone)}}
+        wt, branch = self._create(cfg, scratch_repo, 1, "Feature A")
+        other_wt, other_branch = self._create(cfg, other_clone, 2, "Feature B")
+
+        monkeypatch.setattr("builtins.input", lambda *_: "1")
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == wt
+        assert branch in captured.err
+        assert other_branch not in captured.err
+
+    def test_most_recently_committed_branch_listed_first(self, scratch_repo, capsys, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        older_wt, older_branch = self._create(cfg, scratch_repo, 1, "Older Feature")
+        subprocess.run(["git", "commit", "--allow-empty", "-q", "-m", "older work"],
+                       cwd=older_wt, check=True,
+                       env={**os.environ, "GIT_COMMITTER_DATE": "2020-01-01T00:00:00",
+                            "GIT_AUTHOR_DATE": "2020-01-01T00:00:00"})
+
+        newer_wt, newer_branch = self._create(cfg, scratch_repo, 2, "Newer Feature")
+        subprocess.run(["git", "commit", "--allow-empty", "-q", "-m", "newer work"],
+                       cwd=str(newer_wt), check=True,
+                       env={**os.environ, "GIT_COMMITTER_DATE": "2030-01-01T00:00:00",
+                            "GIT_AUTHOR_DATE": "2030-01-01T00:00:00"})
+
+        monkeypatch.setattr("builtins.input", lambda *_: "")  # cancel -- only checking the menu order
+        cwd_before = os.getcwd()
+        os.chdir(str(scratch_repo))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_switch(cfg)
+        finally:
+            os.chdir(cwd_before)
+        err = capsys.readouterr().err
+        assert err.index(newer_branch) < err.index(older_branch)
 
 
 class TestCmdRunDispatch:

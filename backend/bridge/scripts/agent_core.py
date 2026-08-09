@@ -8,6 +8,8 @@ Usage:
   qtask-bridge --tag <name>  Queue + run every pending-spec card with this tag,
                               sequentially and unattended, each in its own git worktree
   qtask-bridge --list        List qtask worktrees across configured repos (read-only)
+  qtask-bridge --switch      Menu of qtask worktrees for the current repo; prints the
+                              chosen path on stdout for a shell function to cd into
   qtask-bridge --cleanup     List and optionally remove finished qtask worktrees
   qtask-bridge --run [NAME]  Run the app in a resolved qtask worktree (cwd, last one,
                               or a branch fragment) via its Procfile.dev/Procfile or
@@ -861,6 +863,107 @@ def _scan_qtask_worktrees(cfg):
     return found
 
 
+def _current_repo_name(cfg):
+    """Return the [repos] entry name that the CURRENT directory belongs to,
+    whether cwd is the repo's main checkout or one of its qtask worktrees --
+    both share the same underlying .git, found via --git-common-dir, so this
+    works no matter which one you're standing in. Returns None if cwd isn't
+    inside any configured repo."""
+    def common_dir(path):
+        r = subprocess.run(["git", "-C", path, "rev-parse", "--git-common-dir"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            return None
+        return os.path.abspath(os.path.join(path, r.stdout.strip()))
+
+    cwd_common = common_dir(os.getcwd())
+    if not cwd_common:
+        return None
+
+    for repo_name in (cfg.get("repos") or {}):
+        path, *_ = _repo_entry(cfg, repo_name)
+        work_dir = os.path.expanduser(path) if path else None
+        if not work_dir or not os.path.isdir(work_dir):
+            continue
+        if common_dir(work_dir) == cwd_common:
+            return repo_name
+    return None
+
+
+def _branch_last_active(work_dir, branch):
+    """Unix timestamp of branch's most recent commit -- used to sort --switch's
+    menu by actual work recency rather than worktree directory creation time,
+    so a worktree that's still being actively committed to stays near the top
+    even if it's one of the older ones on disk. Returns 0 (sorts last) if git
+    fails for any reason."""
+    r = subprocess.run(["git", "log", "-1", "--format=%ct", branch],
+                       cwd=work_dir, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return 0
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def _format_age(timestamp):
+    if not timestamp:
+        return "unknown"
+    delta = max(0, time.time() - timestamp)
+    if delta < 3600:
+        return f"{max(1, int(delta // 60))}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)}d ago"
+
+
+def cmd_switch(cfg):
+    """Print a numbered menu of qtask worktrees for the CURRENT repo, most
+    recently active first, and prompt for a selection -- then print ONLY the
+    chosen worktree path on stdout. Everything else (the menu, the prompt,
+    every error message) goes to stderr, so a shell function can safely do
+    `cd "$(qtask-bridge --switch)"` without the menu text leaking into the
+    captured path. Replaces the old single-target `qcd` tip (which could only
+    jump to the single last worktree) with an actual picker across every
+    worktree for the repo you're currently in."""
+    repo_name = _current_repo_name(cfg)
+    if repo_name is None:
+        print("[bridge] Not inside a configured repo (check claude.toml [repos]).",
+              file=sys.stderr)
+        return
+
+    found = [f for f in _scan_qtask_worktrees(cfg) if f[0] == repo_name]
+    if not found:
+        print(f"[bridge] No qtask worktrees found for '{repo_name}'.", file=sys.stderr)
+        return
+
+    found.sort(key=lambda f: _branch_last_active(f[1], f[3]), reverse=True)
+    cwd = os.path.abspath(os.getcwd())
+
+    print(f"[bridge] qtask worktrees for '{repo_name}' (most recent first):\n",
+          file=sys.stderr)
+    for i, (_, work_dir, wt_path, branch) in enumerate(found, 1):
+        status = "merged" if _is_branch_merged(work_dir, branch) else "not merged"
+        age = _format_age(_branch_last_active(work_dir, branch))
+        marker = " (current)" if os.path.abspath(wt_path) == cwd else ""
+        print(f"  {i}. {branch}  --  {age}, {status}{marker}", file=sys.stderr)
+
+    sys.stderr.write("\nSwitch to which? (number, Enter to cancel): ")
+    sys.stderr.flush()
+    try:
+        choice = input().strip()
+    except (EOFError, KeyboardInterrupt):
+        print(file=sys.stderr)
+        return
+    if not choice:
+        return
+    if not choice.isdigit() or not (1 <= int(choice) <= len(found)):
+        print("[bridge] Invalid selection.", file=sys.stderr)
+        return
+
+    print(found[int(choice) - 1][2])  # stdout: the chosen path, and nothing else
+
+
 def cmd_list(cfg):
     """Read-only: print every qtask worktree across configured repos,
     with its merge status, and exit. For '--cleanup without the prompt'
@@ -1296,6 +1399,10 @@ def main():
                        help="List qtask worktrees across configured repos and optionally remove them")
     group.add_argument("--list", action="store_true",
                        help="List qtask worktrees across configured repos (read-only, no prompt)")
+    group.add_argument("--switch", action="store_true",
+                       help="Interactive menu of qtask worktrees for the current repo "
+                            "(most recent first); prints the chosen path on stdout only, "
+                            "for `cd \"$(qtask-bridge --switch)\"`")
     group.add_argument("--run", nargs="?", const="", default=None, metavar="[BRANCH]",
                        help="Run the app in a resolved qtask worktree (cwd, last one, or a "
                             "branch fragment) via its Procfile.dev/Procfile or configured run_cmd")
@@ -1313,6 +1420,8 @@ def main():
         cmd_cleanup(cfg)
     elif args.list:
         cmd_list(cfg)
+    elif args.switch:
+        cmd_switch(cfg)
     elif args.run is not None:
         cmd_run(cfg, args.run or None)
     elif args.review is not None:
