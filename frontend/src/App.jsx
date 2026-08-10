@@ -811,7 +811,6 @@ export default function App() {
             briefingKey={briefingKey}
             calendarReady={!calendarLoading}
             healthData={healthData}
-            healthGoals={healthGoals}
             isImperial={isImperial}
           />
         ) : isBoardPage ? (

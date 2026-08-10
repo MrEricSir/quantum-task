@@ -391,6 +391,9 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | `what did I finish yesterday?` | Completed tasks for any specific day |
 | `priority` | AI recommendation on what to focus on next |
 | `avoiding` | Tasks that keep getting pushed — named with brief analysis |
+| `what's the last thing I have scheduled today?` | Answers questions that need reasoning over your schedule, not just a listing |
+| `do I have time for a quick nap?` | Computes the actual gap until your next commitment and gives a yes/no |
+| `weather` / `what's the weather like today?` | Current conditions and forecast — uses a location shared in the chat if you send one, otherwise falls back to the last location the web app reported |
 
 #### Habits and health
 
@@ -470,6 +473,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 - **Midday overdue nudge** — alerts you if tasks have slipped past their scheduled date
 - **Health check-in** (same time as the evening habit reminder) — a bundled, low-noise nudge for patterns worth knowing about: a multi-day streak not yet done today, a habit whose completion rate has dropped over the past week, a couple of days with nothing logged in the food log, or a Withings-tracked goal (steps, body fat) drifting off target over the past week. Deliberately ignores single missed days — each signal has its own cooldown so a persistent issue is flagged once, not nagged about daily.
 - **Streak celebrations** (automatic, runs alongside the checks above) — a message at 3/7/14/21/30/60/100/365 days for habit streaks, a daily food-quality streak (consecutive days averaging a good quality score), and a task-completion streak (consecutive days with at least one task done). A habit milestone also calls out when it's a new personal best for that habit.
+- **Weekly review** — a reflective digest of the trailing 7 days: tasks completed, per-habit completion rate and current streak, the outcome of any health experiment dismissed that week, and the correlation analysis from the Health page if there's enough data. Defaults to Sunday 18:00 local; change the day/time via the `weekly_review_schedule_time` app setting (as `"DOW:HH:MM"`, e.g. `"SUN:18:00"` — no settings-modal field yet).
 
 ---
 

@@ -16,7 +16,7 @@ function formatScheduled(iso) {
   })
 }
 
-export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onSelect, isSelected, inOverdueGroup = false }) {
+export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onSelect, isSelected, inOverdueGroup = false, isFocus = false }) {
   const [showSheet,   setShowSheet]   = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [popping,     setPopping]     = useState(false)
@@ -64,6 +64,7 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
   })()
 
   const metaParts = []
+  if (isFocus) metaParts.push({ key: 'focus', cls: 'card-meta-focus', text: 'Up next' })
   if (card.scheduled_at) metaParts.push({ key: 'time', cls: null, text: formatScheduled(card.scheduled_at) })
   if (card.recurrence_rule) metaParts.push({ key: 'rec', cls: 'card-recurrence', text: card.recurrence_rule })
   if (overdueDays > 0 && !inOverdueGroup) metaParts.push({ key: 'overdue', cls: 'card-meta-overdue', text: `${overdueDays}d overdue` })
@@ -81,6 +82,7 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         isDragging      ? 'event-card--dragging' : '',
         isOverlay       ? 'event-card--overlay'  : '',
         isSelected      ? 'event-card--selected' : '',
+        isFocus         ? 'event-card--focus'    : '',
       ].filter(Boolean).join(' ')}
       onClick={handleCardClick}
       {...(isOverlay ? {} : { ...attributes, ...listeners })}

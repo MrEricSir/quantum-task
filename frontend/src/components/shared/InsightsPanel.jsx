@@ -345,8 +345,7 @@ export default function InsightsPanel({ refreshKey, onArchive, cards, habits }) 
 
   return (
     <CollapseBody open={open}>
-      <section className="insights-panel">
-        <h3 className="insights-title">Insights</h3>
+      <div className="insights-panel">
         <div className="insights-list">
           {visible.map((ins) => {
             const key = insightKey(ins)
@@ -364,7 +363,7 @@ export default function InsightsPanel({ refreshKey, onArchive, cards, habits }) 
             )
           })}
         </div>
-      </section>
+      </div>
     </CollapseBody>
   )
 }

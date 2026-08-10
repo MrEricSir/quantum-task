@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 import app_setting_keys as keys
 import models
 from bridge.stale import STALE_THRESHOLD_MINUTES
+from database import SessionLocal
 from settings import Settings
 from telegram.notify import send_message
 
@@ -134,6 +135,158 @@ def check_evening_summary(db: Session, token: str, chat_id: str,
             lines.append(f"  • {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
 
     return "sent" if send_message(token, chat_id, "\n".join(lines)) else "send_failed"
+
+
+_WEEKDAY_ABBR = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]  # datetime.weekday(): Monday=0
+
+
+def _day_and_hour_match(spec: str, now_local: datetime) -> bool:
+    """spec is 'DOW:HH:MM', e.g. 'SUN:18:00' -- day must match exactly, hour
+    reuses _hour_matches (minute granularity isn't checked anywhere in this
+    file since check_all() only runs hourly)."""
+    if not spec or spec.count(":") != 2:
+        return False
+    dow, hh, mm = spec.split(":")
+    if _WEEKDAY_ABBR[now_local.weekday()] != dow.strip().upper():
+        return False
+    return _hour_matches(f"{hh}:{mm}", now_local)
+
+
+def _isoweek_str(d: date) -> str:
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def generate_weekly_review(today: date, tz_offset: int) -> str | None:
+    """Build the weekly review message text: tasks completed, per-habit
+    completion rate + current streak, this week's dismissed health experiment
+    outcome (if any), and the correlation summary already computed for the
+    Health page -- reused from routers/correlations.py rather than
+    recomputed. Trailing 7 days ending today, not aligned to any particular
+    weekday, so the content window stays correct regardless of what day the
+    review itself is configured to send on.
+
+    Factored out standalone (mirrors briefing/generate.py's
+    generate_today_briefing) so both check_weekly_review below AND the
+    ungated POST /api/telegram/test-weekly-review debug endpoint call the
+    exact same content logic. Returns None on failure so callers can tell
+    "nothing to report" apart from "generation broke"."""
+    from streak import get_current_streak
+    from deps import llm_client, LLM_MODEL
+    from routers.correlations import _load_weekly_obs, _compute_correlations, _llm_summary
+
+    week_start = today - timedelta(days=6)
+
+    try:
+        with SessionLocal() as db:
+            recent_completed = db.query(models.Card).filter(
+                models.Card.completed == True,  # noqa: E712
+                models.Card.completed_at.isnot(None),
+            ).all()
+            completed_count = sum(
+                1 for c in recent_completed
+                if week_start <= (c.completed_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)).date() <= today
+            )
+
+            habits = db.query(models.Habit).filter_by(archived=False).order_by(models.Habit.id).all()
+            habit_lines = []
+            for h in habits:
+                n = db.query(models.HabitCompletion).filter(
+                    models.HabitCompletion.habit_id == h.id,
+                    models.HabitCompletion.date >= week_start.isoformat(),
+                    models.HabitCompletion.date <= today.isoformat(),
+                ).count()
+                streak = get_current_streak(db, h.id, today)
+                streak_note = f", {streak}-day streak" if streak >= 2 else ""
+                habit_lines.append(f"{h.name}: {n}/7 days ({round(n / 7 * 100)}%){streak_note}")
+
+            recent_experiments = (
+                db.query(models.HealthExperiment)
+                .filter(
+                    models.HealthExperiment.status == "dismissed",
+                    models.HealthExperiment.dismissed_at.isnot(None),
+                )
+                .order_by(models.HealthExperiment.dismissed_at.desc())
+                .limit(5)
+                .all()
+            )
+            experiment = next(
+                (e for e in recent_experiments if week_start <= (
+                    e.dismissed_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)
+                ).date() <= today),
+                None,
+            )
+
+            weight_obs, fat_obs = _load_weekly_obs(db, today)
+            corr_summary = None
+            if weight_obs or fat_obs:
+                correlations = _compute_correlations(weight_obs, fat_obs)
+                if correlations:
+                    corr_summary = _llm_summary(correlations)
+
+        ctx_lines = [f"Week of {week_start.strftime('%b %-d')} - {today.strftime('%b %-d, %Y')}"]
+        ctx_lines.append(f"Tasks completed: {completed_count}")
+        if habit_lines:
+            ctx_lines.append("Habits:")
+            ctx_lines.extend(f"  - {line}" for line in habit_lines)
+        if experiment:
+            exp_line = f"This week's health experiment: {experiment.text}"
+            if experiment.workout_p is not None:
+                sig = "a statistically significant change" if experiment.workout_p < 0.05 else "no statistically significant change"
+                exp_line += f" -- result: {sig} (p={experiment.workout_p:.3f})"
+            elif experiment.weight_delta is not None and experiment.weight_baseline is not None:
+                diff = experiment.weight_delta - experiment.weight_baseline
+                trend = "improved" if diff < 0 else "worsened" if diff > 0 else "held steady"
+                exp_line += f" -- weight trend {trend} vs baseline"
+            ctx_lines.append(exp_line)
+        if corr_summary:
+            ctx_lines.append(f"Correlation analysis: {corr_summary}")
+
+        system = (
+            "You write a short, warm weekly review message for a personal productivity "
+            "and health app, sent over Telegram. Summarize the week's data given below in "
+            "3-5 short sentences -- highlight genuine wins, note anything that slipped, and "
+            "end with one specific, encouraging suggestion for next week if the data "
+            "supports one. Do not invent any numbers not given below. No lists, no "
+            "headers, just warm, direct prose."
+        )
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": "\n".join(ctx_lines)},
+            ],
+            timeout=20,
+            temperature=0.4,
+        )
+        body = resp.choices[0].message.content.strip()
+        header = f"<b>📆 Weekly review — {week_start.strftime('%b %-d')} to {today.strftime('%b %-d')}</b>\n\n"
+        return header + body
+    except Exception as e:
+        print(f"[telegram] weekly review generation error: {e}")
+        return None
+
+
+def check_weekly_review(db: Session, token: str, chat_id: str,
+                         tz_offset: int, now_local: datetime, today: date) -> str:
+    """Send the weekly review if it's the configured day+hour and hasn't
+    already gone out this ISO week."""
+    s = Settings(db)
+    if not _day_and_hour_match(s.weekly_review_schedule_time, now_local):
+        return "skipped"
+    current_week = _isoweek_str(today)
+    if s.weekly_review_last_sent == current_week:
+        return "already_sent"
+
+    s.set(keys.WEEKLY_REVIEW_LAST_SENT, current_week)
+    db.commit()
+
+    text = generate_weekly_review(today, tz_offset)
+    if not text:
+        return "error: generation failed"
+
+    return "sent" if send_message(token, chat_id, text) else "send_failed"
 
 
 def check_meeting_alerts(db: Session, token: str, chat_id: str,
@@ -681,6 +834,7 @@ def check_all(db: Session) -> dict:
     return {
         "briefing":           check_briefing(db, token, chat_id, tz_offset, now_local, today),
         "evening_summary":    check_evening_summary(db, token, chat_id, tz_offset, now_local, today),
+        "weekly_review":      check_weekly_review(db, token, chat_id, tz_offset, now_local, today),
         "overdue_nudge":      check_overdue_nudge(db, token, chat_id, now_local, today),
         "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
         "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),

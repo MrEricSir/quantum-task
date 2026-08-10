@@ -6,6 +6,12 @@
   border-left-width: 3px;
 }
 
+/* ── Focus state (Today page's "up next" pick within the unified list) ── */
+.event-card--focus {
+  background: rgba(139, 92, 246, 0.06);
+  border-left-width: 3px;
+}
+
 /* ── AI output indicator badge ── */
 .card-output-dot {
   font-size: 10px;
@@ -37,6 +43,11 @@
 
 .card-meta-overdue {
   color: #f59e0b;
+}
+
+.card-meta-focus {
+  color: #a78bfa;
+  font-weight: 600;
 }
 
 .card-meta-waiting {

@@ -78,6 +78,14 @@ class Settings:
         return self.get(keys.EVENING_SUMMARY_LAST_SENT)
 
     @property
+    def weekly_review_schedule_time(self) -> str:
+        return self.get(keys.WEEKLY_REVIEW_SCHEDULE_TIME, "SUN:18:00")
+
+    @property
+    def weekly_review_last_sent(self) -> str:
+        return self.get(keys.WEEKLY_REVIEW_LAST_SENT)
+
+    @property
     def meeting_alerts_sent(self) -> str:
         return self.get(keys.MEETING_ALERTS_SENT, "")
 

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from contextlib import contextmanager
 from datetime import date, datetime, timezone, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -667,6 +667,206 @@ class TestBotLogMood:
             assert rows[0].note == "energized now"
 
 
+class TestBotLogWorkout:
+
+    def test_logs_workout_entry(self):
+        from telegram.bot import _reply_log_workout
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_log_workout(
+                {"raw_input": "rowed 5000m", "type": "row", "value": 5000, "unit": "m"}, 0)
+        assert "Workout logged" in reply
+        assert "rowed 5000m" in reply
+        with BotTestSession() as db:
+            entry = db.query(models.WorkoutEntry).filter_by(raw_input="rowed 5000m").first()
+            assert entry is not None
+            assert entry.type == "row"
+            assert entry.value == 5000
+            assert entry.unit == "m"
+
+    def test_unknown_type_falls_back_to_other(self):
+        from telegram.bot import _reply_log_workout
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_workout({"raw_input": "did something", "type": "not_a_real_type"}, 0)
+        with BotTestSession() as db:
+            entry = db.query(models.WorkoutEntry).filter_by(raw_input="did something").first()
+            assert entry.type == "other"
+
+    def test_invalid_value_stored_as_null(self):
+        from telegram.bot import _reply_log_workout
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_workout({"raw_input": "went for a walk", "type": "other", "value": "not a number"}, 0)
+        with BotTestSession() as db:
+            entry = db.query(models.WorkoutEntry).filter_by(raw_input="went for a walk").first()
+            assert entry.value is None
+
+    def test_pushes_undo(self):
+        from telegram.bot import _reply_log_workout, _reply_undo, _sessions
+        chat_id = "test_workout_undo"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_log_workout({"raw_input": "bench pressed 185 lbs", "type": "strength", "value": 185, "unit": "lbs"}, 0, chat_id=chat_id)
+            undo_reply = _reply_undo(chat_id)
+        assert "bench pressed 185 lbs" in undo_reply
+        with BotTestSession() as db:
+            assert db.query(models.WorkoutEntry).filter_by(raw_input="bench pressed 185 lbs").count() == 0
+
+
+def _fake_llm_client(text):
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=text))]
+    client = MagicMock()
+    client.chat.completions.create.return_value = resp
+    return client
+
+
+class TestBotWeather:
+
+    def test_no_location_known_anywhere(self):
+        from telegram.bot import _reply_weather, _sessions
+        chat_id = "test_weather_none"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_weather(chat_id)
+        assert "don't know your location" in reply.lower()
+
+    def test_falls_back_to_last_known_webapp_location(self):
+        from telegram.bot import _reply_weather, _sessions
+        chat_id = "test_weather_webapp"
+        _sessions.pop(chat_id, None)
+        with BotTestSession() as db:
+            from settings import Settings
+            s = Settings(db)
+            s.set(keys.LAST_KNOWN_LAT, "40.7128")
+            s.set(keys.LAST_KNOWN_LON, "-74.0060")
+            db.commit()
+
+        fake_weather = {
+            "emojis": "☀️", "description": "clear skies", "high": 75, "low": 60,
+            "windy": False, "umbrella": False, "snow": False, "cold": False,
+        }
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("weather.fetch_weather", return_value=fake_weather) as mock_fetch:
+            reply = _reply_weather(chat_id)
+
+        mock_fetch.assert_called_once_with(40.7128, -74.0060)
+        assert "Clear skies" in reply
+        assert "75" in reply and "60" in reply
+        assert "last known location" in reply.lower()
+
+    def test_prefers_shared_session_location_over_webapp_fallback(self):
+        from telegram.bot import _reply_weather, _get_session, _sessions
+        chat_id = "test_weather_shared"
+        _sessions.pop(chat_id, None)
+        _get_session(chat_id)["last_location"] = {
+            "lat": 51.5074, "lon": -0.1278, "at": datetime.now(timezone.utc),
+        }
+        with BotTestSession() as db:
+            from settings import Settings
+            s = Settings(db)
+            s.set(keys.LAST_KNOWN_LAT, "40.7128")
+            s.set(keys.LAST_KNOWN_LON, "-74.0060")
+            db.commit()
+
+        fake_weather = {
+            "emojis": "🌧️", "description": "rain", "high": 55, "low": 48,
+            "windy": False, "umbrella": True, "snow": False, "cold": False,
+        }
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("weather.fetch_weather", return_value=fake_weather) as mock_fetch:
+            reply = _reply_weather(chat_id)
+
+        mock_fetch.assert_called_once_with(51.5074, -0.1278)
+        assert "Bring an umbrella" in reply
+        # Shared-location replies don't carry the "last known location" caveat --
+        # that's reserved for the webapp fallback specifically.
+        assert "last known location" not in reply.lower()
+
+    def test_fetch_failure_returns_friendly_message(self):
+        from telegram.bot import _reply_weather, _get_session, _sessions
+        chat_id = "test_weather_fetch_fail"
+        _sessions.pop(chat_id, None)
+        _get_session(chat_id)["last_location"] = {
+            "lat": 1.0, "lon": 2.0, "at": datetime.now(timezone.utc),
+        }
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("weather.fetch_weather", return_value=None):
+            reply = _reply_weather(chat_id)
+        assert "couldn't fetch" in reply.lower()
+
+
+class TestBotAskSchedule:
+
+    def test_empty_question_prompts_for_one(self):
+        from telegram.bot import _reply_ask_schedule
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_ask_schedule({"question": ""}, 0)
+        assert "what would you like to know" in reply.lower()
+
+    def test_nothing_scheduled_short_circuits_before_llm(self):
+        from telegram.bot import _reply_ask_schedule
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
+             patch("telegram.bot.llm_client") as mock_llm:
+            reply = _reply_ask_schedule({"question": "what's my last thing today?"}, 0)
+        assert "nothing on your schedule" in reply.lower()
+        mock_llm.assert_not_called()
+
+    def test_general_question_goes_through_llm_with_context(self):
+        _make_card("Dentist appointment", section="today",
+                   scheduled_at=datetime.combine(TODAY, datetime.min.time()).replace(hour=15))
+        from telegram.bot import _reply_ask_schedule
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
+             patch("telegram.bot.llm_client", return_value=_fake_llm_client("Your last thing today is the dentist appointment at 3:00 PM.")):
+            reply = _reply_ask_schedule({"question": "what's the last thing scheduled today?"}, 0)
+        assert "dentist" in reply.lower()
+
+    def test_duration_fit_question_is_answered_deterministically_not_by_llm(self):
+        """This is the exact case where the LLM was verified unreliable (see
+        the comment above the duration-fit branch in _reply_ask_schedule) --
+        the reply must come from Python arithmetic, and the LLM must never
+        even be called."""
+        near_future = datetime.now(timezone.utc) + timedelta(hours=1)
+        near_future_local = near_future.replace(tzinfo=None)
+        _make_card("Team standup", section="today", scheduled_at=near_future_local)
+        from telegram.bot import _reply_ask_schedule
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
+             patch("telegram.bot.llm_client") as mock_llm:
+            reply = _reply_ask_schedule(
+                {"question": "do I have time for a 20 minute nap?", "duration_minutes": 20}, 0)
+        assert reply.startswith("✓ Yes")
+        mock_llm.assert_not_called()
+
+    def test_duration_fit_correctly_says_no_when_gap_too_small(self):
+        near_future = datetime.now(timezone.utc) + timedelta(minutes=10)
+        near_future_local = near_future.replace(tzinfo=None)
+        _make_card("Team standup", section="today", scheduled_at=near_future_local)
+        from telegram.bot import _reply_ask_schedule
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
+             patch("telegram.bot.llm_client") as mock_llm:
+            reply = _reply_ask_schedule(
+                {"question": "do I have time for a 20 minute nap?", "duration_minutes": 20}, 0)
+        assert reply.startswith("✗")
+        mock_llm.assert_not_called()
+
+    def test_duration_fit_with_nothing_else_scheduled_is_yes(self):
+        # An untimed today-card keeps the function past its "nothing on your
+        # schedule at all" short-circuit, while leaving the timed-item
+        # timeline empty -- so there's no future item to hit the gap against.
+        _make_card("Read a book", section="today")
+        from telegram.bot import _reply_ask_schedule
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
+             patch("telegram.bot.llm_client") as mock_llm:
+            reply = _reply_ask_schedule(
+                {"question": "do I have time for a workout?", "duration_minutes": 45}, 0)
+        assert reply.startswith("✓ Yes")
+        assert "nothing else is scheduled" in reply.lower()
+        mock_llm.assert_not_called()
+
+
 class TestRouteMessageCapabilityDispatch:
     """Confirms _route_message's generic by_telegram_action() lookup (Level 3)
     actually reaches each capability handler -- what would have silently
@@ -677,6 +877,7 @@ class TestRouteMessageCapabilityDispatch:
         ("complete_habit", {"match_query": "meditate"}, "done for today"),
         ("log_food", {"raw_input": "toast", "meal_type": None}, "Food logged"),
         ("log_mood", {"energy": 4, "note": None}, "Energy logged"),
+        ("log_workout", {"raw_input": "ran 5 miles", "type": "run", "value": 5, "unit": "miles"}, "Workout logged"),
     ])
     def test_dispatches_to_the_right_handler(self, action, intent, expected_substring):
         _make_card("Dentist appointment")
@@ -1251,3 +1452,195 @@ class TestCheckStreakMilestones:
         text = mock_send.call_args[0][2]
         assert "task completion" in text
         assert "3-day" in text
+
+
+# ── Weekly review ────────────────────────────────────────────────────────────
+
+def _next_weekday(d, target_weekday):
+    """target_weekday: Monday=0 ... Sunday=6 (Python's date.weekday() convention)."""
+    return d + timedelta(days=(target_weekday - d.weekday()) % 7)
+
+
+SUNDAY = _next_weekday(TODAY, 6)
+SUNDAY_1800 = datetime.combine(SUNDAY, datetime.min.time()).replace(hour=18, minute=30)
+SUNDAY_1700 = datetime.combine(SUNDAY, datetime.min.time()).replace(hour=17, minute=30)
+
+
+class TestGenerateWeeklyReview:
+
+    def test_includes_completed_task_count(self):
+        for i in range(3):
+            _make_card(
+                f"Task {i}", completed=True,
+                completed_at=datetime.combine(TODAY - timedelta(days=i), datetime.min.time()).replace(hour=12),
+            )
+        from telegram.scheduler import generate_weekly_review
+        fake_client = _fake_llm_client("Great week overall!")
+        with patch("telegram.scheduler.SessionLocal", BotTestSession), \
+             patch("deps.llm_client", return_value=fake_client):
+            text = generate_weekly_review(TODAY, 0)
+        assert text is not None
+        assert "Great week overall!" in text
+        assert "Weekly review" in text
+        user_content = fake_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+        assert "Tasks completed: 3" in user_content
+
+    def test_includes_habit_completion_rate_and_streak(self):
+        habit_id = _make_habit("Meditate")
+        for i in (0, 1, 2):
+            _complete_habit(habit_id, TODAY - timedelta(days=i))
+        _recompute_streak(habit_id)
+        from telegram.scheduler import generate_weekly_review
+        fake_client = _fake_llm_client("Nice consistency.")
+        with patch("telegram.scheduler.SessionLocal", BotTestSession), \
+             patch("deps.llm_client", return_value=fake_client):
+            generate_weekly_review(TODAY, 0)
+        user_content = fake_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+        assert "Meditate: 3/7 days" in user_content
+        assert "3-day streak" in user_content
+
+    def test_includes_dismissed_experiment_from_this_week(self):
+        with BotTestSession() as db:
+            db.add(models.HealthExperiment(
+                week="2026-W01", text="Row 2 mi/day instead of 1 mi/day", status="dismissed",
+                dismissed_at=datetime.now(timezone.utc), needs_habit=False,
+                weight_delta=-0.1, weight_baseline=0.05,
+            ))
+            db.commit()
+        from telegram.scheduler import generate_weekly_review
+        fake_client = _fake_llm_client("Good progress on the rowing experiment.")
+        with patch("telegram.scheduler.SessionLocal", BotTestSession), \
+             patch("deps.llm_client", return_value=fake_client):
+            generate_weekly_review(TODAY, 0)
+        user_content = fake_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+        assert "Row 2 mi/day instead of 1 mi/day" in user_content
+        assert "improved" in user_content
+
+    def test_ignores_experiment_dismissed_outside_the_week(self):
+        with BotTestSession() as db:
+            db.add(models.HealthExperiment(
+                week="2025-W01", text="Old experiment", status="dismissed",
+                dismissed_at=datetime.now(timezone.utc) - timedelta(days=30), needs_habit=False,
+            ))
+            db.commit()
+        from telegram.scheduler import generate_weekly_review
+        fake_client = _fake_llm_client("Solid week.")
+        with patch("telegram.scheduler.SessionLocal", BotTestSession), \
+             patch("deps.llm_client", return_value=fake_client):
+            generate_weekly_review(TODAY, 0)
+        user_content = fake_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+        assert "Old experiment" not in user_content
+
+    def test_returns_none_on_llm_failure(self):
+        from telegram.scheduler import generate_weekly_review
+        with patch("telegram.scheduler.SessionLocal", BotTestSession), \
+             patch("deps.llm_client", side_effect=RuntimeError("LLM down")):
+            text = generate_weekly_review(TODAY, 0)
+        assert text is None
+
+
+class TestCheckWeeklyReview:
+
+    def test_skipped_when_day_does_not_match(self):
+        from telegram.scheduler import check_weekly_review
+        monday = SUNDAY + timedelta(days=1)
+        now_local = datetime.combine(monday, datetime.min.time()).replace(hour=18, minute=30)
+        with BotTestSession() as db:
+            result = check_weekly_review(db, "tok", "123", 0, now_local, monday)
+        assert result == "skipped"
+
+    def test_skipped_when_hour_does_not_match(self):
+        from telegram.scheduler import check_weekly_review
+        with BotTestSession() as db:
+            result = check_weekly_review(db, "tok", "123", 0, SUNDAY_1700, SUNDAY)
+        assert result == "skipped"
+
+    def test_sends_on_configured_day_and_hour(self):
+        from telegram.scheduler import check_weekly_review
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send, \
+             patch("telegram.scheduler.generate_weekly_review", return_value="<b>Review</b>\n\nGreat week.") as mock_gen:
+            with BotTestSession() as db:
+                result = check_weekly_review(db, "tok", "123", 0, SUNDAY_1800, SUNDAY)
+        assert result == "sent"
+        mock_gen.assert_called_once_with(SUNDAY, 0)
+        mock_send.assert_called_once_with("tok", "123", "<b>Review</b>\n\nGreat week.")
+
+    def test_does_not_resend_same_week(self):
+        from telegram.scheduler import check_weekly_review
+        with patch("telegram.scheduler.send_message", return_value=True), \
+             patch("telegram.scheduler.generate_weekly_review", return_value="text"):
+            with BotTestSession() as db:
+                check_weekly_review(db, "tok", "123", 0, SUNDAY_1800, SUNDAY)
+            with BotTestSession() as db:
+                result = check_weekly_review(db, "tok", "123", 0, SUNDAY_1800, SUNDAY)
+        assert result == "already_sent"
+
+    def test_respects_custom_schedule_time(self):
+        with BotTestSession() as db:
+            from settings import Settings
+            Settings(db).set(keys.WEEKLY_REVIEW_SCHEDULE_TIME, "WED:09:00")
+            db.commit()
+        from telegram.scheduler import check_weekly_review
+        wednesday = _next_weekday(TODAY, 2)
+        wed_0930 = datetime.combine(wednesday, datetime.min.time()).replace(hour=9, minute=30)
+        with patch("telegram.scheduler.send_message", return_value=True), \
+             patch("telegram.scheduler.generate_weekly_review", return_value="text"):
+            with BotTestSession() as db:
+                result = check_weekly_review(db, "tok", "123", 0, wed_0930, wednesday)
+            assert result == "sent"
+            # The default Sunday time no longer matches once overridden
+            with BotTestSession() as db2:
+                result2 = check_weekly_review(db2, "tok", "123", 0, SUNDAY_1800, SUNDAY)
+        assert result2 == "skipped"
+
+    def test_generation_failure_returns_error(self):
+        from telegram.scheduler import check_weekly_review
+        with patch("telegram.scheduler.generate_weekly_review", return_value=None):
+            with BotTestSession() as db:
+                result = check_weekly_review(db, "tok", "123", 0, SUNDAY_1800, SUNDAY)
+        assert result == "error: generation failed"
+
+
+class TestWeeklyReviewEndpoint:
+
+    def test_returns_error_when_not_configured(self, client):
+        res = client.post("/api/telegram/test-weekly-review")
+        assert res.status_code == 200
+        assert res.json()["ok"] is False
+
+    def test_sends_message_when_configured(self, client):
+        client.put("/api/telegram/config", json={
+            "bot_token": "valid_token", "chat_id": "123456",
+            "schedule_time": "07:30", "tz_offset": 0,
+        })
+        with patch("telegram.router.generate_weekly_review", return_value="Weekly review text") as mock_gen, \
+             patch("telegram.router.send_message", return_value=True) as mock_send:
+            res = client.post("/api/telegram/test-weekly-review")
+        assert res.json()["ok"] is True
+        mock_gen.assert_called_once()
+        mock_send.assert_called_once_with("valid_token", "123456", "Weekly review text")
+
+    def test_returns_error_when_generation_raises(self, client):
+        client.put("/api/telegram/config", json={
+            "bot_token": "tok", "chat_id": "123", "schedule_time": "07:30", "tz_offset": 0,
+        })
+        with patch("telegram.router.generate_weekly_review", side_effect=RuntimeError("LLM down")):
+            res = client.post("/api/telegram/test-weekly-review")
+        assert "LLM down" in res.json()["error"]
+
+    def test_returns_error_when_generation_returns_none(self, client):
+        client.put("/api/telegram/config", json={
+            "bot_token": "tok", "chat_id": "123", "schedule_time": "07:30", "tz_offset": 0,
+        })
+        with patch("telegram.router.generate_weekly_review", return_value=None):
+            res = client.post("/api/telegram/test-weekly-review")
+        assert res.json()["ok"] is False
+
+    def test_returns_error_when_send_fails(self, client):
+        client.put("/api/telegram/config", json={
+            "bot_token": "tok", "chat_id": "123", "schedule_time": "07:30", "tz_offset": 0,
+        })
+        with patch("telegram.router.generate_weekly_review", return_value="text"), \
+             patch("telegram.router.send_message", return_value=False):
+            res = client.post("/api/telegram/test-weekly-review")
+        assert res.json()["ok"] is False

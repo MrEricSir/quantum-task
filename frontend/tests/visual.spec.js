@@ -249,9 +249,20 @@ test.describe('today page', () => {
     await expect(page.getByText('A productive day ahead.')).toBeVisible()
   })
 
-  test('habits section appears before schedule', async ({ page }) => {
+  test('habits are visible in their own section', async ({ page }) => {
     await expect(page.getByText('Morning meditation')).toBeVisible()
     await expect(page.getByText('Evening walk')).toBeVisible()
+  })
+
+  test('habits section appears before schedule section', async ({ page }) => {
+    // Habits sit right under Insights, ahead of Schedule, so they're
+    // checkable off without scrolling past the day's task/event list first.
+    const titles = await page.locator('.today-section-title-text').allTextContents()
+    const habitsIdx   = titles.findIndex(t => t.includes('Habits'))
+    const scheduleIdx = titles.findIndex(t => t.includes('Schedule'))
+    expect(habitsIdx).toBeGreaterThanOrEqual(0)
+    expect(scheduleIdx).toBeGreaterThanOrEqual(0)
+    expect(habitsIdx).toBeLessThan(scheduleIdx)
   })
 
   test('schedule section with mocked tasks and event', async ({ page }) => {
@@ -265,11 +276,12 @@ test.describe('today page', () => {
     await expect(page.getByText('Call dentist')).toBeVisible()
   })
 
-  test('"Focus next" banner shows highest-priority untimed task', async ({ page }) => {
-    const banner = page.locator('.focus-next')
-    await expect(banner).toBeVisible()
-    await expect(banner.getByText('Focus next')).toBeVisible()
-    await expect(banner.getByText('Review pull requests')).toBeVisible()
+  test('highest-priority untimed task is marked "Up next" within the schedule list', async ({ page }) => {
+    const focusCard = page.locator('.event-card--focus', { hasText: 'Review pull requests' })
+    await expect(focusCard).toBeVisible()
+    await expect(focusCard.getByText('Up next')).toBeVisible()
+    // It appears exactly once — not duplicated in a separate banner
+    await expect(page.getByText('Review pull requests')).toHaveCount(1)
   })
 })
 
@@ -1283,12 +1295,12 @@ test.describe('project tag visibility', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Focus next banner — project name prefix
+// Focus card — project tag shows like any other tag pill
 // ---------------------------------------------------------------------------
-test.describe('focus next banner', () => {
-  test('shows project name prefix when focused task has a Project: tag', async ({ page }) => {
+test.describe('focus card tags', () => {
+  test('shows a Project: tag as a normal pill on the focused task', async ({ page }) => {
     const projectTag = { id: 12, name: 'Project: Brunch Planning', color: '#d97706' }
-    // Card 2 ("Review pull requests") is the first unscheduled today card — it becomes focus next
+    // Card 2 ("Review pull requests") is the first unscheduled today card — it becomes the focus card
     const todosWithProject = ALL_TODOS.map(t =>
       t.id === 2 ? { ...t, tags: [projectTag] } : t
     )
@@ -1296,18 +1308,17 @@ test.describe('focus next banner', () => {
     await page.route('**/api/cards', r => r.fulfill({ json: todosWithProject }))
     await page.goto('/today')
     await waitForApp(page)
-    const banner = page.locator('.focus-next')
-    await expect(banner).toBeVisible()
-    await expect(banner.locator('.focus-next-project')).toHaveText('Brunch Planning ›')
-    await expect(banner.getByText('Review pull requests')).toBeVisible()
+    const focusCard = page.locator('.event-card--focus', { hasText: 'Review pull requests' })
+    await expect(focusCard).toBeVisible()
+    await expect(focusCard.getByText('Project: Brunch Planning')).toBeVisible()
   })
 
-  test('shows no project prefix when focused task has no Project: tag', async ({ page }) => {
+  test('shows no Project: pill when the focused task has no Project: tag', async ({ page }) => {
     await page.goto('/today')
     await waitForApp(page)
-    const banner = page.locator('.focus-next')
-    await expect(banner).toBeVisible()
-    await expect(banner.locator('.focus-next-project')).toHaveCount(0)
+    const focusCard = page.locator('.event-card--focus', { hasText: 'Review pull requests' })
+    await expect(focusCard).toBeVisible()
+    await expect(focusCard.getByText(/^Project:/)).toHaveCount(0)
   })
 })
 

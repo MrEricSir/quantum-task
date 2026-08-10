@@ -113,6 +113,11 @@ The "action" field must be one of:
       Examples: "how many steps today?", "how's my health?", "what's my step count?",
                 "am I near my step goal?", "how's my weight doing?"
 
+  "query_weather"
+      User wants the current weather or forecast.
+      Examples: "what's the weather like today?", "is it going to rain?",
+                "how cold is it out?", "do I need a jacket?", "weather forecast"
+
   "query_streaks"
       User wants habit streak information.
       Examples: "what are my streaks?", "how long is my meditation streak?",
@@ -122,6 +127,22 @@ The "action" field must be one of:
       User wants a recommendation on what to work on or focus on next.
       Examples: "what should I work on?", "what's my priority?", "what should I do next?",
                 "help me focus", "what's most important right now?"
+
+  "ask_schedule"
+      User is asking a question that requires REASONING over today's schedule --
+      finding a specific item, computing a gap/duration, or answering a yes/no
+      about availability -- rather than wanting the whole day listed out
+      (use "query_schedule" for that instead).
+      Also return:
+        "question" — the user's question, verbatim
+        "duration_minutes" — if the question asks whether there's time for something,
+            the duration in minutes (stated or clearly implied, e.g. "a quick nap" → 15,
+            "a workout" → 45, "a 20 minute nap" → 20). null if no availability/fit
+            question is being asked, or a duration truly can't be estimated.
+      Examples: "what's the last thing I have scheduled today?", "do I have time for a
+                quick nap?" (duration_minutes=15), "am I free before 3pm?", "how much of
+                a gap do I have this afternoon?", "what's my first meeting?",
+                "is there room for a 30 minute workout today?" (duration_minutes=30)
 
 """
 + REGISTRY["habit_check"].telegram_description
@@ -138,6 +159,10 @@ The "action" field must be one of:
 
 """
 + REGISTRY["mood"].telegram_description
++ """
+
+"""
++ REGISTRY["workout"].telegram_description
 + """
 
   "reschedule"
@@ -186,7 +211,7 @@ _sessions: dict[str, dict] = {}
 
 def _get_session(chat_id: str) -> dict:
     if chat_id not in _sessions:
-        _sessions[chat_id] = {"undo": None, "undo_prev": None, "last_card": None, "pending": None}
+        _sessions[chat_id] = {"undo": None, "undo_prev": None, "last_card": None, "pending": None, "last_location": None}
     return _sessions[chat_id]
 
 
@@ -256,10 +281,6 @@ def handle_update(update: dict) -> None:
         msg = update.get("message") or update.get("edited_message")
         if not msg:
             return
-        text = (msg.get("text") or "").strip()
-        if not text:
-            print("[telegram] update has no text, skipping")
-            return
         chat_id_incoming = str(msg.get("chat", {}).get("id", ""))
 
         with SessionLocal() as db:
@@ -275,6 +296,27 @@ def handle_update(update: dict) -> None:
             return
         if chat_id_incoming != chat_id:
             print(f"[telegram] chat_id mismatch: got {chat_id_incoming!r} expected {chat_id!r}")
+            return
+
+        # A shared-location message has no "text" field at all -- handle it
+        # before the text checks below, so it isn't silently dropped. Stashed
+        # in the per-chat session for _reply_weather to prefer over the
+        # webapp's LAST_KNOWN_LAT/LON fallback when both are available.
+        location = msg.get("location")
+        if location and location.get("latitude") is not None and location.get("longitude") is not None:
+            session = _get_session(chat_id)
+            session["last_location"] = {
+                "lat": location["latitude"],
+                "lon": location["longitude"],
+                "at": datetime.now(timezone.utc),
+            }
+            ok = send_message(token, chat_id, "📍 Got it — I'll use that for weather.")
+            print(f"[telegram] location stored, send_message ok={ok}")
+            return
+
+        text = (msg.get("text") or "").strip()
+        if not text:
+            print("[telegram] update has no text, skipping")
             return
 
         print(f"[telegram] routing message: {text[:80]!r}")
@@ -309,6 +351,7 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "<b>habits</b> — habit status for today\n"
             "<b>streaks</b> — your current habit streaks\n"
             "<b>health</b> — steps, weight, and fitness data\n"
+            "<b>weather</b> — current conditions and forecast\n"
             "<b>overdue</b> — overdue tasks\n"
             "<b>completed</b> — what you finished today\n"
             "<b>priority</b> — what to focus on next\n"
@@ -341,6 +384,8 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_week(tz_offset)
     if lower in ("health", "steps", "fitness"):
         return _reply_health(tz_offset)
+    if lower in ("weather", "forecast"):
+        return _reply_weather(chat_id)
     if lower in ("streaks", "streak"):
         return _reply_streaks(tz_offset)
     if lower in ("priority", "focus", "next"):
@@ -375,11 +420,17 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     if action == "query_health":
         return _reply_health(tz_offset)
 
+    if action == "query_weather":
+        return _reply_weather(chat_id)
+
     if action == "query_streaks":
         return _reply_streaks(tz_offset)
 
     if action == "query_priority":
         return _reply_priority(tz_offset)
+
+    if action == "ask_schedule":
+        return _reply_ask_schedule(intent, tz_offset)
 
     if action == "reschedule":
         return _reply_reschedule(intent, tz_offset, chat_id)
@@ -1126,8 +1177,8 @@ def _reply_week(tz_offset: int) -> str:
         label = "Tomorrow" if d == today + timedelta(days=1) else d.strftime("%A, %b %-d")
         day_lines = [f"\n<b>{label}</b>"]
         items = by_day[d]
-        for ev in sorted(items["events"], key=lambda e: (e.all_day, e.start)):
-            day_lines.append(f"  📅 {ev.title} @ {_fmt_event_time(ev, tz_offset)}")
+        for ev in sorted(items["events"], key=lambda e: (e["all_day"], e["start"])):
+            day_lines.append(f"  📅 {ev['title']} @ {ev['time_str']}")
         for c in sorted(items["cards"], key=lambda x: x.scheduled_at):
             day_lines.append(f"  • {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
         lines.extend(day_lines)
@@ -1157,6 +1208,50 @@ def _reply_health(tz_offset: int) -> str:
         stripped = line.strip()
         if stripped and stripped != "Health data:":
             lines.append(stripped.replace("  - ", "• ").replace("- ", "• "))
+    return "\n".join(lines)
+
+
+def _reply_weather(chat_id: str = "") -> str:
+    """Current weather, resolving location in order: a location shared in this
+    Telegram chat recently, else the webapp's last-known lat/lon (persisted by
+    briefing/generate.py's _fetch_briefing_data specifically for "no browser
+    available" cases like this one), else a hint to share one."""
+    from weather import fetch_weather
+
+    lat = lon = None
+    used_webapp_location = False
+
+    if chat_id:
+        loc = _get_session(chat_id).get("last_location")
+        if loc:
+            lat, lon = loc["lat"], loc["lon"]
+
+    if lat is None or lon is None:
+        with SessionLocal() as db:
+            s = Settings(db)
+            lat, lon = s.last_known_lat, s.last_known_lon
+        used_webapp_location = lat is not None and lon is not None
+
+    if lat is None or lon is None:
+        return (
+            "I don't know your location yet — open the web app once with location "
+            "permission granted, or share your location in this chat."
+        )
+
+    result = fetch_weather(lat, lon)
+    if not result:
+        return "Couldn't fetch the weather right now — try again in a bit."
+
+    lines = [f"<b>{result['emojis']} {result['description'].capitalize()}</b>"]
+    lines.append(f"High {result['high']}°F / Low {result['low']}°F")
+    if result.get("umbrella"):
+        lines.append("☂️ Bring an umbrella")
+    if result.get("snow"):
+        lines.append("❄️ Snow expected")
+    if result.get("cold"):
+        lines.append("🧥 Bundle up, it's cold out")
+    if used_webapp_location:
+        lines.append("<i>(using your last known location from the app)</i>")
     return "\n".join(lines)
 
 
@@ -1219,7 +1314,7 @@ def _reply_priority(tz_offset: int) -> str:
     cal_events = _fetch_cal_events_for_date(today, tz_offset)
     upcoming_events = [
         ev for ev in cal_events
-        if not ev.all_day and ev.start.replace(tzinfo=None) - timedelta(minutes=tz_offset) >= now_local
+        if not ev["all_day"] and ev["start"].replace(tzinfo=None) - timedelta(minutes=tz_offset) >= now_local
     ]
 
     if not today_cards and not upcoming_events:
@@ -1235,7 +1330,7 @@ def _reply_priority(tz_offset: int) -> str:
     if upcoming_events:
         ctx_lines.append("Upcoming calendar events:")
         for ev in upcoming_events[:3]:
-            ctx_lines.append(f"  - {ev.title} at {_fmt_event_time(ev, tz_offset)}")
+            ctx_lines.append(f"  - {ev['title']} at {ev['time_str']}")
     pending = [c for c in today_cards if c not in overdue]
     if pending:
         ctx_lines.append("Other tasks today:")
@@ -1264,10 +1359,143 @@ def _reply_priority(tz_offset: int) -> str:
         if overdue:
             return f"🎯 Start with your most overdue task: <b>{overdue[0].title}</b>"
         if upcoming_events:
-            return f"🎯 You have <b>{upcoming_events[0].title}</b> coming up — prepare for that."
+            return f"🎯 You have <b>{upcoming_events[0]['title']}</b> coming up — prepare for that."
         return f"🎯 Start with: <b>{today_cards[0].title}</b>"
 
     return f"🎯 {suggestion}"
+
+
+def _reply_ask_schedule(intent: dict, tz_offset: int) -> str:
+    """Answer a question that needs reasoning over today's schedule (gaps,
+    duration, "what's the last/first thing", availability) rather than a raw
+    listing -- query_schedule/_reply_date covers the listing case. Modeled
+    directly on _reply_priority: gather context, one LLM call, 1-2 sentences.
+    Unlike _reply_priority (which only looks at what's still upcoming, since
+    it's answering "what should I do right now"), this includes the WHOLE
+    day so questions like "what was my last thing today" still work later
+    in the day."""
+    question = (intent.get("question") or "").strip()
+    if not question:
+        return "What would you like to know about your schedule?"
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    with SessionLocal() as db:
+        today_cards = (
+            db.query(models.Card)
+            .filter(
+                models.Card.completed == False,  # noqa: E712
+                models.Card.archived == False,   # noqa: E712
+            )
+            .all()
+        )
+    timed_cards = sorted(
+        [c for c in today_cards if c.scheduled_at and c.scheduled_at.date() == today],
+        key=lambda c: c.scheduled_at,
+    )
+    untimed_cards = [c for c in today_cards if c.section == "today" and not c.scheduled_at]
+
+    cal_events = sorted(
+        _fetch_cal_events_for_date(today, tz_offset),
+        key=lambda e: (e["all_day"], e["start"]),
+    )
+
+    if not timed_cards and not untimed_cards and not cal_events:
+        return "Nothing on your schedule today — ask away, but there's nothing to reason about!"
+
+    # Merge timed events + timed tasks into one chronological timeline and
+    # precompute every gap in Python -- verified directly that the LLM is
+    # unreliable at this: asked "how many minutes until my next thing" with a
+    # clean, unambiguous 60-minute gap in the context and it answered
+    # "approximately 0". Handing it ready-made numbers instead of raw
+    # timestamps turns the LLM's job into phrasing, not arithmetic.
+    timeline = [
+        (ev["start"].replace(tzinfo=None) - timedelta(minutes=tz_offset), ev["title"])
+        for ev in cal_events if not ev["all_day"]
+    ]
+    timeline += [(c.scheduled_at, c.title) for c in timed_cards]
+    timeline.sort(key=lambda x: x[0])
+
+    ctx_lines = [f"Current time: {now_local.strftime('%-I:%M %p')} on {today.strftime('%A, %B %-d')}"]
+
+    all_day_events = [ev["title"] for ev in cal_events if ev["all_day"]]
+    if all_day_events:
+        ctx_lines.append("All-day events today: " + ", ".join(all_day_events))
+
+    if timeline:
+        ctx_lines.append(
+            "Today's timed items, chronological -- gaps are already computed for you "
+            "in brackets, use those numbers directly rather than calculating your own:"
+        )
+        for i, (t, label) in enumerate(timeline):
+            if t >= now_local:
+                status = f"{round((t - now_local).total_seconds() / 60)} min from now"
+            else:
+                status = "already passed"
+            next_gap = ""
+            if i + 1 < len(timeline):
+                gap = round((timeline[i + 1][0] - t).total_seconds() / 60)
+                next_gap = f", {gap} min before {timeline[i + 1][1]}"
+            ctx_lines.append(f"  - {label} at {t.strftime('%-I:%M %p')} [{status}{next_gap}]")
+
+    if untimed_cards:
+        ctx_lines.append("Other tasks today with no specific time:")
+        for c in untimed_cards:
+            ctx_lines.append(f"  - {c.title}")
+
+    # Duration-fit questions ("do I have time for a 20 minute nap") need a
+    # yes/no conclusion, not just a number -- and that comparison turned out
+    # to be exactly where this model falls down, badly: given a clean,
+    # unambiguous 60-minute gap and a stated 20-minute duration, it answered
+    # "No" consistently across repeated tries, with the gap number stated
+    # correctly in the same sentence as the wrong verdict -- and it kept
+    # answering "No" even when handed the correct verdict verbatim as an
+    # "ANSWER: YES" context line with an explicit "never contradict this"
+    # instruction. Not a data or prompting problem, a hard capability
+    # ceiling for this model. So this reply is generated directly in
+    # Python rather than trusting the LLM's conclusion at all -- correctness
+    # matters more than natural phrasing for a yes/no the user acts on.
+    duration = intent.get("duration_minutes")
+    try:
+        duration = int(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration = None
+    if duration is not None:
+        next_future = next(((t, label) for t, label in timeline if t >= now_local), None)
+        if next_future is None:
+            return f"✓ Yes — nothing else is scheduled for the rest of today, plenty of room for {duration} min."
+        next_time, next_label = next_future
+        gap_minutes = round((next_time - now_local).total_seconds() / 60)
+        when = next_time.strftime('%-I:%M %p')
+        if gap_minutes >= duration:
+            return f"✓ Yes — {gap_minutes} min free before {next_label} at {when}, plenty of room for {duration} min."
+        return f"✗ Not quite — only {gap_minutes} min before {next_label} at {when}, and {duration} min is needed."
+
+    system = (
+        "You are a personal scheduling assistant. Answer the user's question directly "
+        "and specifically, using ONLY the schedule data given below -- never invent "
+        "anything not listed. Gap and time-until numbers are already computed for you "
+        "in brackets next to each item -- read them off directly, do not recompute your "
+        "own subtraction, you will get it wrong. "
+        "Reply in 1-2 sentences max -- be direct and specific. No lists, no bullet "
+        "points. If there truly isn't enough information to answer, say so briefly."
+    )
+    try:
+        client = llm_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"{chr(10).join(ctx_lines)}\n\nQuestion: {question}"},
+            ],
+            timeout=15,
+            temperature=0.2,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[telegram] ask_schedule LLM error: {e}")
+        return "Couldn't work that out right now — try <b>today</b> to see your full schedule instead."
 
 
 _ENERGY_LABELS = {1: "😴 Drained", 2: "😔 Low", 3: "😐 Okay", 4: "😊 Good", 5: "⚡ Energized"}
@@ -1338,6 +1566,45 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     return f"✓ Food logged{meal_label}: {raw}\nSend <b>undo</b> to remove it."
 
 
+def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
+    """Log a workout entry. Type/value/unit come straight from the intent
+    classification (see capabilities/workout.py's TELEGRAM_DESCRIPTION) rather
+    than a second LLM round-trip through routers/workouts.py's own parser --
+    same one-call-per-message shape as _reply_log_food."""
+    from routers.workouts import WORKOUT_TYPES
+
+    raw = (intent.get("raw_input") or "").strip()
+    wtype = intent.get("type") or "other"
+    if wtype not in WORKOUT_TYPES:
+        wtype = "other"
+    value = intent.get("value")
+    if value is not None:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = None
+    unit = intent.get("unit") or None
+    if unit:
+        unit = str(unit)[:20]
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+
+    with SessionLocal() as db:
+        entry = models.WorkoutEntry(
+            raw_input=raw, type=wtype, value=value, unit=unit, logged_at=now_local,
+        )
+        db.add(entry)
+        db.commit()
+        entry_id = entry.id
+
+    if chat_id:
+        session = _get_session(chat_id)
+        _push_undo(session, {"type": "workout_log", "entry_id": entry_id, "title": raw})
+
+    detail = f" ({value:g} {unit})" if value is not None and unit else ""
+    return f"✓ Workout logged{detail}: {raw}\nSend <b>undo</b> to remove it."
+
+
 def _reply_complete_habit(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     """Mark a habit complete for today."""
     query = intent.get("match_query") or ""
@@ -1406,6 +1673,7 @@ set_telegram_handler("food", _reply_log_food)
 set_telegram_handler("habit_check", _reply_complete_habit)
 set_telegram_handler("mood", _reply_log_mood)
 set_telegram_handler("task_complete", _reply_complete)
+set_telegram_handler("workout", _reply_log_workout)
 
 
 def _reply_avoiding(tz_offset: int) -> str:
@@ -1640,6 +1908,14 @@ def _undo_single_action(action: dict) -> str:
                 db.delete(entry)
                 db.commit()
         return f"↩ Removed food log: <b>{title}</b>"
+
+    if atype == "workout_log":
+        with SessionLocal() as db:
+            entry = db.query(models.WorkoutEntry).filter_by(id=action["entry_id"]).first()
+            if entry:
+                db.delete(entry)
+                db.commit()
+        return f"↩ Removed workout log: <b>{title}</b>"
 
     if atype == "add_note":
         with SessionLocal() as db:

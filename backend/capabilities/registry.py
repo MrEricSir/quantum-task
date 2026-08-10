@@ -43,10 +43,8 @@ _operations = [
               frozenset({"capture", "telegram"})),
     Operation("task_complete", "mark_complete", task_complete.PARSE_DESCRIPTION, task_complete.TELEGRAM_DESCRIPTION,
               frozenset({"capture", "telegram"})),
-    # Not reachable from Telegram today -- documents the gap explicitly
-    # rather than leaving it an unstated omission.
-    Operation("workout", None, workout.PARSE_DESCRIPTION, None,
-              frozenset({"capture"})),
+    Operation("workout", "log_workout", workout.PARSE_DESCRIPTION, workout.TELEGRAM_DESCRIPTION,
+              frozenset({"capture", "telegram"})),
 ]
 
 REGISTRY: dict[str, Operation] = {op.name: op for op in _operations}

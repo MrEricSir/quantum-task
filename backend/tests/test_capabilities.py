@@ -161,6 +161,7 @@ def test_registry_contains_all_five_operations():
     ("habit_check", "complete_habit"),
     ("mood", "log_mood"),
     ("task_complete", "mark_complete"),
+    ("workout", "log_workout"),
 ])
 def test_capture_and_telegram_operations_have_both_surfaces(name, action):
     op = REGISTRY[name]
@@ -168,17 +169,6 @@ def test_capture_and_telegram_operations_have_both_surfaces(name, action):
     assert op.surfaces == frozenset({"capture", "telegram"})
     assert op.telegram_description is not None
     assert op.telegram_handler is not None, f"{name} has no telegram_handler wired"
-
-
-def test_workout_documents_the_telegram_gap_explicitly():
-    """workout has no Telegram intent today -- the registry should say so
-    explicitly (telegram_action=None, surfaces without 'telegram'), not
-    silently omit it."""
-    op = REGISTRY["workout"]
-    assert op.telegram_action is None
-    assert op.telegram_description is None
-    assert op.telegram_handler is None
-    assert op.surfaces == frozenset({"capture"})
 
 
 def test_by_telegram_action_resolves_known_actions():

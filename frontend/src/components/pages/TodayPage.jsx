@@ -79,79 +79,7 @@ function MetricProgress({ habit, todayMetrics, isImperial }) {
   return null
 }
 
-// Mini sparkline for 30-day metric trends
-function MiniSparkline({ values, goal }) {
-  if (values.length < 2) return null
-  const W = 80; const H = 24; const PX = 2; const PY = 3
-  const iW = W - PX * 2; const iH = H - PY * 2
-  const allV = goal != null ? [...values, goal] : values
-  const minV = Math.min(...allV); const maxV = Math.max(...allV)
-  const rng = maxV - minV || 1
-  const sx = (i) => PX + (i / (values.length - 1)) * iW
-  const sy = (v) => PY + iH - ((v - minV) / rng) * iH
-  const pts = values.map((v, i) => `${sx(i)},${sy(v)}`).join(' ')
-  const area = [`${sx(0)},${H}`, ...values.map((v, i) => `${sx(i)},${sy(v)}`), `${sx(values.length - 1)},${H}`].join(' ')
-  return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flexShrink: 0, display: 'block' }}>
-      <polygon points={area} fill="rgba(139,92,246,0.1)" />
-      <polyline points={pts} fill="none" stroke="rgba(139,92,246,0.55)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
-      {goal != null && (
-        <line x1={PX} x2={W - PX} y1={sy(goal)} y2={sy(goal)} stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 2" />
-      )}
-    </svg>
-  )
-}
-
-// Standalone metric row for metrics not tied to a habit — shows 30-day sparkline trend
-function StandaloneMetricRow({ metric, goal, isImperial, measurements = [] }) {
-  const toDisp = (kg) => isImperial ? Math.round(kg * KG_TO_LBS * 10) / 10 : kg
-  const labels = { weight: 'Weight', fat_ratio: 'Body Fat' }
-  const label = labels[metric] ?? metric
-  const unit = metric === 'weight' ? (isImperial ? 'lbs' : 'kg') : '%'
-
-  // Last 30 data points for this metric, converted to display units
-  const history = measurements.filter(m => m.metric === metric).slice(-30)
-  const dispValues = history.map(m => metric === 'weight' ? toDisp(m.value) : m.value)
-  const dispGoal = goal != null ? (metric === 'weight' ? toDisp(goal) : goal) : null
-
-  // Most recent reading and how old it is
-  const recent = history.length > 0 ? history[history.length - 1] : null
-  const recentDisp = recent != null ? (metric === 'weight' ? toDisp(recent.value) : recent.value) : null
-
-  let dateStr = ''
-  if (recent) {
-    const now = new Date()
-    const todayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
-    const yest = new Date(now); yest.setDate(now.getDate()-1)
-    const yestKey = `${yest.getFullYear()}-${String(yest.getMonth()+1).padStart(2,'0')}-${String(yest.getDate()).padStart(2,'0')}`
-    if (recent.date !== todayKey) {
-      dateStr = recent.date === yestKey ? 'yesterday'
-        : new Date(recent.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    }
-  }
-
-  if (!recent && dispGoal == null) return null
-
-  return (
-    <div className="today-habit today-habit--standalone-metric">
-      <span className="today-habit-name">{label}</span>
-      <span className="today-standalone-value">
-        {recentDisp != null && (
-          <span className="today-standalone-reading">
-            {recentDisp.toFixed(1)}{metric === 'fat_ratio' ? '%' : ` ${unit}`}
-            {dateStr && <span className="today-standalone-date"> · {dateStr}</span>}
-          </span>
-        )}
-        {dispGoal != null && (
-          <span className="today-standalone-goal">goal ≤ {dispGoal.toFixed(1)}{metric === 'fat_ratio' ? '%' : ` ${unit}`}</span>
-        )}
-      </span>
-      {dispValues.length >= 2 && <MiniSparkline values={dispValues} goal={dispGoal} />}
-    </div>
-  )
-}
-
-export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, healthGoals, isImperial = false, allTags = [], onBreakdown, onSelect, selectedCardId }) {
+export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onSelect, selectedCardId }) {
   const activeCards = cards.filter((t) => !t.completed)
   const overdueCards = activeCards.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayCards   = activeCards.filter((t) => t.section === 'today')
@@ -176,6 +104,15 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
     (a, b) => (a.position ?? 0) - (b.position ?? 0)
   )
 
+  // The single task to visually emphasize as "up next" within the list below —
+  // first overdue (untimed; a timed task already has its own schedule slot),
+  // else the first untimed task in position order. Rendered inline via Card's
+  // isFocus prop rather than duplicated in a separate callout.
+  const focusCandidate = overdueUntimedTasks.length > 0
+    ? overdueUntimedTasks.slice().sort((a, b) => (b.overdue_days ?? 0) - (a.overdue_days ?? 0))[0]
+    : sortedUntimedTasks[0]
+  const focusTaskId = focusCandidate?.id ?? null
+
   const today = new Date()
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const todayEvents = calendarEvents.filter((e) => {
@@ -199,7 +136,8 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
 
   const hasScheduleOrTasks = allOverdueTasks.length > 0 || scheduleItems.length > 0 || sortedUntimedTasks.length > 0
 
-  // Build a map of metric → today's value from healthData
+  // Build a map of metric → today's value from healthData, for habits linked to
+  // a Withings metric (e.g. step-goal auto-completion progress)
   const todayMetrics = (() => {
     const measurements = healthData?.measurements ?? []
     const result = {}
@@ -208,19 +146,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
     }
     return result
   })()
-
-  // Standalone health metrics: weight/fat_ratio with any historical data or a goal, but no linked habit
-  const allMeasurements = healthData?.measurements ?? []
-  const linkedMetrics = new Set(habits.map(h => h.health_metric).filter(Boolean))
-  const standaloneMetrics = ['weight', 'fat_ratio'].filter(metric => {
-    if (linkedMetrics.has(metric)) return false  // handled by a habit's MetricProgress
-    return allMeasurements.some(m => m.metric === metric) || healthGoals?.[metric] != null
-  })
-
-  const hasHealthOrHabits = habits.length > 0 || standaloneMetrics.length > 0
-  const sectionTitle = habits.length > 0 && standaloneMetrics.length > 0
-    ? 'Health & Habits'
-    : habits.length > 0 ? 'Habits' : 'Health'
 
   const habitsDone    = habits.filter((h) => h.completed_today).length
   const habitsPending = habits.length - habitsDone
@@ -277,40 +202,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
           invalidationKey={briefingKey}
         />
 
-        {(overdueUntimedTasks.length > 0 || sortedUntimedTasks.length > 0) && (() => {
-          const focusTask = overdueUntimedTasks.length > 0
-            ? overdueUntimedTasks.slice().sort((a, b) => (b.overdue_days ?? 0) - (a.overdue_days ?? 0))[0]
-            : sortedUntimedTasks[0]
-          const projectTag = focusTask.tags?.find((t) => t.name.startsWith('Project: '))
-          const projectName = projectTag ? projectTag.name.slice('Project: '.length) : null
-          const isOverdue = (focusTask.overdue_days ?? 0) > 0
-          return (
-            <div className="focus-next">
-              <span className="focus-next-label">Focus next</span>
-              <button
-                className="focus-next-title focus-next-title--btn"
-                onClick={() => onEdit(focusTask)}
-                title="Open card"
-              >
-                {projectName && <span className="focus-next-project">{projectName} ›</span>}
-                {focusTask.title}
-              </button>
-              {isOverdue && (
-                <span className="focus-next-overdue">
-                  {focusTask.overdue_days}d overdue
-                </span>
-              )}
-              <button
-                className="focus-next-complete"
-                onClick={() => onToggle(focusTask)}
-                title="Mark complete"
-              >
-                <CheckIcon />
-              </button>
-            </div>
-          )
-        })()}
-
         <InsightsPanel
           refreshKey={briefingKey}
           onArchive={onArchive}
@@ -318,11 +209,11 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
           habits={habits}
         />
 
-        {hasHealthOrHabits && (
+        {habits.length > 0 && (
           <section className="today-section">
             <SectionHeader
-              title={sectionTitle}
-              status={habits.length > 0 ? (habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`) : ''}
+              title="Habits"
+              status={habitsAllDone ? 'All done' : `${habitsDone}/${habits.length}`}
               open={habitsOpen}
               onToggle={() => setHabitsOpen((v) => !v)}
               toggleable={habitsAllDone}
@@ -360,15 +251,6 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     )}
                   </div>
                 ))}
-                {standaloneMetrics.map(metric => (
-                  <StandaloneMetricRow
-                    key={metric}
-                    metric={metric}
-                    goal={healthGoals?.[metric] ?? null}
-                    isImperial={isImperial}
-                    measurements={allMeasurements}
-                  />
-                ))}
               </div>
             </CollapseBody>
           </section>
@@ -403,6 +285,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                       onSelect={onSelect}
                       isSelected={selectedCardId === todo.id}
                       inOverdueGroup
+                      isFocus={todo.id === focusTaskId}
                     />
                   ))}
                   {(scheduleItems.length > 0 || sortedUntimedTasks.length > 0) && (
@@ -427,6 +310,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     onBreakdown={onBreakdown}
                     onSelect={onSelect}
                     isSelected={selectedCardId === item.data.id}
+                    isFocus={item.data.id === focusTaskId}
                   />
                 )
               )}
@@ -444,6 +328,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                   onBreakdown={onBreakdown}
                   onSelect={onSelect}
                   isSelected={selectedCardId === todo.id}
+                  isFocus={todo.id === focusTaskId}
                 />
               ))}
             </div>

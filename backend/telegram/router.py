@@ -16,6 +16,7 @@ from deps import get_db
 from settings import Settings
 from telegram.bot import handle_update
 from telegram.notify import send_message, set_webhook, get_webhook_info
+from telegram.scheduler import generate_weekly_review
 from briefing import generate_today_briefing
 from datetime import datetime, timezone, timedelta
 
@@ -90,6 +91,35 @@ def test_telegram(db: Session = Depends(get_db)):
 
     if not text:
         return {"ok": False, "error": "Could not generate briefing (LLM error)."}
+
+    ok = send_message(token, chat_id, text)
+    if not ok:
+        return {"ok": False, "error": "Message failed. Check that the bot token and chat ID are correct."}
+    return {"ok": True}
+
+
+@router.post("/api/telegram/test-weekly-review")
+def test_weekly_review(db: Session = Depends(get_db)):
+    """Send the weekly review immediately as a test -- bypasses
+    check_weekly_review's day/hour/already-sent-this-week gates entirely, for
+    debugging without waiting for Sunday evening (or whatever
+    weekly_review_schedule_time is currently configured to)."""
+    s = Settings(db)
+    token   = s.telegram_token
+    chat_id = s.telegram_chat_id
+
+    if not token or not chat_id:
+        return {"ok": False, "error": "Bot token and chat ID must be configured first."}
+
+    tz_offset = s.tz_offset
+    today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
+    try:
+        text = generate_weekly_review(today, tz_offset)
+    except Exception as e:
+        return {"ok": False, "error": f"Weekly review generation error: {e}"}
+
+    if not text:
+        return {"ok": False, "error": "Could not generate weekly review (LLM error)."}
 
     ok = send_message(token, chat_id, text)
     if not ok:

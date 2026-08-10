@@ -2,15 +2,6 @@
   margin: 0 0 1rem;
 }
 
-.insights-title {
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted, #6b7280);
-  margin: 0 0 0.5rem;
-}
-
 .insights-list {
   display: flex;
   flex-direction: column;

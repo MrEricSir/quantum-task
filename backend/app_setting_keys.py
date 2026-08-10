@@ -67,6 +67,12 @@ OVERDUE_NUDGE_LAST_SENT = "overdue_nudge_last_sent"
 
 # ISO date of last evening summary sent — prevents double-send.
 EVENING_SUMMARY_LAST_SENT = "evening_summary_last_sent"
+
+# Day + local "HH:MM" time to send the weekly review, as "DOW:HH:MM" (DOW is a
+# 3-letter uppercase weekday, e.g. "SUN:18:00"). Default "SUN:18:00".
+WEEKLY_REVIEW_SCHEDULE_TIME = "weekly_review_schedule_time"
+# ISO week string (e.g. "2026-W33") of the last week a review was sent — prevents double-send.
+WEEKLY_REVIEW_LAST_SENT = "weekly_review_last_sent"
 # JSON {"date": "YYYY-MM-DD", "ids": [...]} — event IDs already alerted today.
 MEETING_ALERTS_SENT = "meeting_alerts_sent"
 # JSON {"habit_id:milestone": "YYYY-MM-DD"} — tracks when each streak milestone was sent.
