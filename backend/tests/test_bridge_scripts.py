@@ -382,6 +382,94 @@ class TestInstallScript:
             install_module.main()
 
 
+class TestQcdAutoInstall:
+    """A subprocess can never change its parent shell's cwd -- that's an
+    OS-level constraint, not something `qtask-bridge --switch` itself can
+    work around -- so qcd() (the shell function that actually does the cd)
+    must be installed automatically by the installer, not left as a manual
+    copy-paste step, or --switch just looks like it "doesn't actually
+    switch directories" from the user's side."""
+
+    def _run_install_main(self, tmp_path, monkeypatch, shell="/bin/bash",
+                           rc_name=".bash_profile", pre_existing_rc=None):
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        rc_path = home / rc_name
+        if pre_existing_rc is not None:
+            rc_path.write_text(pre_existing_rc)
+
+        install_dir = tmp_path / "local_bin"
+        config_dir = tmp_path / "config"
+
+        monkeypatch.setattr(install_module, "INSTALL_DIR", str(install_dir))
+        monkeypatch.setattr(install_module, "CONFIG_DIR", str(config_dir))
+        monkeypatch.setattr(install_module, "CONFIG_FILE", str(config_dir / "config.json"))
+        monkeypatch.setattr(install_module, "TOML_FILE", str(config_dir / "claude.toml"))
+        monkeypatch.setattr(install_module, "BRIDGE_PATH", str(install_dir / "qtask-bridge"))
+        monkeypatch.setattr(install_module, "APP_URL", "https://example.com")
+        monkeypatch.setattr(install_module, "TOKEN", "test-token")
+
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("SHELL", shell)
+        # Deliberately excludes INSTALL_DIR so the PATH-export branch runs too.
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"#!/usr/bin/env python3\nprint('fake bridge script')\n"
+
+        import subprocess as _subprocess
+        monkeypatch.setattr(install_module.urllib.request, "urlopen", lambda req: _FakeResponse())
+        monkeypatch.setattr(
+            install_module.subprocess, "run",
+            lambda *a, **k: _subprocess.CompletedProcess(a, 0, stdout="", stderr=""),
+        )
+
+        install_module.main()
+        return rc_path
+
+    def test_installs_qcd_function_into_rc_file(self, tmp_path, monkeypatch):
+        rc_path = self._run_install_main(tmp_path, monkeypatch)
+        content = rc_path.read_text()
+        assert "qcd() {" in content
+        assert "qtask-bridge --switch" in content
+        assert 'cd "$wt"' in content
+
+    def test_does_not_duplicate_qcd_on_reinstall(self, tmp_path, monkeypatch):
+        rc_path = self._run_install_main(tmp_path, monkeypatch)
+        content_after_first = rc_path.read_text()
+        self._run_install_main(tmp_path, monkeypatch, pre_existing_rc=content_after_first)
+        assert rc_path.read_text().count("qcd() {") == 1
+
+    def test_zsh_uses_zshrc(self, tmp_path, monkeypatch):
+        rc_path = self._run_install_main(tmp_path, monkeypatch, shell="/bin/zsh", rc_name=".zshrc")
+        assert "qcd() {" in rc_path.read_text()
+
+    def test_preserves_existing_rc_content(self, tmp_path, monkeypatch):
+        existing = "# my custom aliases\nalias ll='ls -la'\n"
+        rc_path = self._run_install_main(tmp_path, monkeypatch, pre_existing_rc=existing)
+        content = rc_path.read_text()
+        assert "alias ll" in content
+        assert "qcd() {" in content
+
+    def test_qcd_body_uses_switch_not_list(self, tmp_path, monkeypatch):
+        """Regression guard: qcd must call --switch (the interactive menu),
+        not --list (read-only, no path on stdout) -- an easy copy-paste slip
+        between the two that would silently break cd'ing entirely."""
+        rc_path = self._run_install_main(tmp_path, monkeypatch)
+        content = rc_path.read_text()
+        qcd_start = content.index("qcd() {")
+        qcd_body = content[qcd_start:content.index("}", qcd_start)]
+        assert "--switch" in qcd_body
+        assert "--list" not in qcd_body
+
+
 # ── Served scripts compile as valid Python ───────────────────────────────────
 
 class TestServedScriptsCompile:

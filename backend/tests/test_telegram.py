@@ -812,8 +812,15 @@ class TestBotAskSchedule:
         mock_llm.assert_not_called()
 
     def test_general_question_goes_through_llm_with_context(self):
+        # _reply_ask_schedule computes "today" internally from
+        # datetime.now(timezone.utc) with tz_offset=0 -- i.e. UTC's current
+        # date, not the local system's date.today(). Seed relative to that
+        # same reference, or this flakes whenever UTC has already rolled
+        # into the next day while the local system hasn't (evenings in any
+        # timezone west of UTC).
+        utc_today = datetime.now(timezone.utc).date()
         _make_card("Dentist appointment", section="today",
-                   scheduled_at=datetime.combine(TODAY, datetime.min.time()).replace(hour=15))
+                   scheduled_at=datetime.combine(utc_today, datetime.min.time()).replace(hour=15))
         from telegram.bot import _reply_ask_schedule
         with patch("telegram.bot.SessionLocal", BotTestSession), \
              patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
@@ -1500,6 +1507,12 @@ class TestGenerateWeeklyReview:
         assert "3-day streak" in user_content
 
     def test_includes_dismissed_experiment_from_this_week(self):
+        # dismissed_at is seeded as real UTC "now" and generate_weekly_review
+        # compares it (tz_offset=0, so no adjustment) against the "today" it's
+        # called with -- pass the same UTC date here, not the local system's
+        # TODAY, or this flakes whenever UTC has already rolled into the next
+        # day while the local system hasn't.
+        utc_today = datetime.now(timezone.utc).date()
         with BotTestSession() as db:
             db.add(models.HealthExperiment(
                 week="2026-W01", text="Row 2 mi/day instead of 1 mi/day", status="dismissed",
@@ -1511,7 +1524,7 @@ class TestGenerateWeeklyReview:
         fake_client = _fake_llm_client("Good progress on the rowing experiment.")
         with patch("telegram.scheduler.SessionLocal", BotTestSession), \
              patch("deps.llm_client", return_value=fake_client):
-            generate_weekly_review(TODAY, 0)
+            generate_weekly_review(utc_today, 0)
         user_content = fake_client.chat.completions.create.call_args[1]["messages"][1]["content"]
         assert "Row 2 mi/day instead of 1 mi/day" in user_content
         assert "improved" in user_content

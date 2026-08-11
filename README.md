@@ -264,13 +264,7 @@ running `git worktree list` to figure out where a job's code went:
 - **In Telegram** — the completion message includes the path alongside the branch
 - **In Claude Code itself** — each worktree gets a local, gitignored `.claude/settings.local.json` configuring a status line that shows the branch and path for the entire session, so you never have to wonder mid-conversation where you are. Note: Claude Code's workspace trust prompt gates this — on the very first launch in a brand-new worktree (which is every worktree), you may need to accept that prompt before the status line appears.
 - **In your terminal tab** — interactive sessions (`--watch`/`--card`) set the tab/window title to the branch name, so multiple job tabs stay identifiable at a glance
-- **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). `qtask-bridge --switch` narrows that to worktrees for whichever repo you're currently in (main checkout or another worktree, either works), shows them most-recently-active first, and prints only the chosen path on stdout — everything else (the menu, the prompt) goes to stderr, so it's safe to wrap in a shell function that `cd`s for you:
-  ```bash
-  qcd() {
-    local wt; wt="$(qtask-bridge --switch)"
-    [ -n "$wt" ] && cd "$wt"
-  }
-  ```
+- **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). `qtask-bridge --switch` narrows that to worktrees for whichever repo you're currently in (main checkout or another worktree, either works), shows them most-recently-active first, and prints only the chosen path on stdout — everything else (the menu, the prompt) goes to stderr. A subprocess can never `cd` its own parent shell, though (an OS-level constraint, not something `--switch` itself can work around), so the installer automatically adds a `qcd` shell function to your `~/.bash_profile`/`~/.zshrc` that wraps it and does the actual `cd` — nothing to copy-paste, just run `qcd` after installing (or re-run the installer if you already had `qtask-bridge` from before `--switch` existed) and open a new terminal (or `source` your shell config).
 
 `--list`, `--switch`, and `--cleanup` only scan repos listed explicitly under `[repos]` in `claude.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in any of them.
 

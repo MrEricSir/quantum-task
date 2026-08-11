@@ -174,16 +174,23 @@ def main():
 
     setup_global_gitignore()
 
-    # Add ~/.local/bin to PATH if needed
+    # Resolve the shell rc file once -- used below both to add ~/.local/bin to
+    # PATH (if missing) and to install the qcd() shell function (always, if
+    # not already present). A subprocess can never change its parent shell's
+    # cwd -- that's an OS-level constraint, not something --switch itself can
+    # work around -- so qcd() is the actual "switch directories" mechanism;
+    # --switch only prints the chosen path. Auto-installing qcd() here means
+    # that mechanism works with zero manual copy-pasting, not just the PATH line.
+    shell = os.environ.get("SHELL", "")
+    if "zsh" in shell:
+        rc = os.path.expanduser("~/.zshrc")
+    elif "bash" in shell:
+        rc = os.path.expanduser("~/.bash_profile")
+    else:
+        rc = None
+
     path_export = 'export PATH="$HOME/.local/bin:$PATH"'
     if INSTALL_DIR not in os.environ.get("PATH", "").split(os.pathsep):
-        shell = os.environ.get("SHELL", "")
-        if "zsh" in shell:
-            rc = os.path.expanduser("~/.zshrc")
-        elif "bash" in shell:
-            rc = os.path.expanduser("~/.bash_profile")
-        else:
-            rc = None
         if rc:
             try:
                 existing = open(rc).read() if os.path.exists(rc) else ""
@@ -191,12 +198,39 @@ def main():
                     with open(rc, "a") as rf:
                         rf.write("\n# Added by qtask-bridge installer\n" + path_export + "\n")
                     print("Added ~/.local/bin to PATH in " + rc)
-                    print("Run: source " + rc + "  (or open a new terminal)")
             except OSError as e:
                 print("Could not update " + rc + ": " + str(e))
                 print("Add manually: " + path_export)
         else:
             print("\nAdd to your shell config: " + path_export)
+
+    qcd_marker = "qcd() {"
+    qcd_snippet = (
+        "\n# Added by qtask-bridge installer -- switches to a worktree picked\n"
+        "# from `qtask-bridge --switch`'s menu (a subprocess can't cd its\n"
+        "# parent shell itself, so this wrapper does it).\n"
+        "qcd() {\n"
+        '  local wt; wt="$(qtask-bridge --switch)"\n'
+        '  [ -n "$wt" ] && cd "$wt"\n'
+        "}\n"
+    )
+    qcd_installed = False
+    if rc:
+        try:
+            existing = open(rc).read() if os.path.exists(rc) else ""
+            if qcd_marker not in existing:
+                with open(rc, "a") as rf:
+                    rf.write(qcd_snippet)
+                print("Added qcd() shell function to " + rc)
+                qcd_installed = True
+            else:
+                print("qcd() already present in " + rc + " -- left as-is")
+        except OSError as e:
+            print("Could not update " + rc + ": " + str(e))
+            print("Add manually:" + qcd_snippet)
+    else:
+        print("\nCouldn't detect your shell to install qcd() automatically -- add manually:")
+        print(qcd_snippet)
 
     print()
     print("Usage (run from your repo directory):")
@@ -209,12 +243,9 @@ def main():
     print("  qtask-bridge --run [branch]     # run the app in a qtask worktree (cwd, last one, or a branch fragment)")
     print("  qtask-bridge --review [branch]  # read-only lead-engineer-style review of a worktree's changes")
     print()
-    print("Tip: add this to your shell config for a one-keystroke menu to switch")
-    print("between qtask worktrees for whatever repo you're currently in:")
-    print("  qcd() {")
-    print('    local wt; wt="$(qtask-bridge --switch)"')
-    print('    [ -n "$wt" ] && cd "$wt"')
-    print("  }")
+    print("  qcd                             # menu-pick a worktree and actually cd into it")
+    if qcd_installed or rc:
+        print("(source " + (rc or "your shell config") + ", or open a new terminal, to start using qcd)")
 
 
 if __name__ == "__main__":
