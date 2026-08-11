@@ -74,6 +74,7 @@ class TestGetTelegramConfig:
         assert data["chat_id"] == ""
         assert data["schedule_time"] == "07:30"
         assert data["tz_offset"] == 0
+        assert data["weekly_review_schedule_time"] == "SUN:18:00"
 
     def test_returns_saved_values(self, client):
         client.put("/api/telegram/config", json={
@@ -148,6 +149,31 @@ class TestSaveTelegramConfig:
         data = client.get("/api/telegram/config").json()
         assert data["bot_token"] == "tok"
         assert data["chat_id"] == "123"
+
+    def test_saves_and_returns_custom_weekly_review_schedule(self, client):
+        client.put("/api/telegram/config", json={
+            "bot_token": "tok", "chat_id": "123", "schedule_time": "07:30", "tz_offset": 0,
+            "weekly_review_schedule_time": "WED:09:00",
+        })
+        data = client.get("/api/telegram/config").json()
+        assert data["weekly_review_schedule_time"] == "WED:09:00"
+
+    def test_omitted_weekly_review_schedule_falls_back_to_default(self, client):
+        client.put("/api/telegram/config", json={
+            "bot_token": "tok", "chat_id": "123", "schedule_time": "07:30", "tz_offset": 0,
+        })
+        data = client.get("/api/telegram/config").json()
+        assert data["weekly_review_schedule_time"] == "SUN:18:00"
+
+    # Whether a saved weekly_review_schedule_time actually gates
+    # check_weekly_review is covered by TestCheckWeeklyReview's
+    # test_respects_custom_schedule_time below -- that class uses
+    # BotTestSession (the scheduler tests' own in-memory engine), which is
+    # deliberately separate from this class's HTTP `client` fixture engine,
+    # so a single test can't cross both without one of the writes going to
+    # the wrong database. Together, this class's round-trip tests (endpoint
+    # persists the value) and that one (check_weekly_review honors whatever
+    # Settings returns) establish the full chain without needing to mix engines.
 
 
 # ── POST /api/telegram/test ───────────────────────────────────────────────────

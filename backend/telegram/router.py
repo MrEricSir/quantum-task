@@ -32,18 +32,20 @@ class _TelegramConfig(BaseModel):
     tz_offset: int = 0
     habit_reminder_time: str = ""
     overdue_nudge_time: str = ""
+    weekly_review_schedule_time: str = "SUN:18:00"
 
 
 @router.get("/api/telegram/config")
 def get_telegram_config(db: Session = Depends(get_db)):
     s = Settings(db)
     return {
-        "bot_token":           s.telegram_token,
-        "chat_id":             s.telegram_chat_id,
-        "schedule_time":       s.briefing_schedule_time,
-        "tz_offset":           s.tz_offset,
-        "habit_reminder_time": s.habit_reminder_time,
-        "overdue_nudge_time":  s.overdue_nudge_time,
+        "bot_token":                   s.telegram_token,
+        "chat_id":                     s.telegram_chat_id,
+        "schedule_time":               s.briefing_schedule_time,
+        "tz_offset":                   s.tz_offset,
+        "habit_reminder_time":         s.habit_reminder_time,
+        "overdue_nudge_time":          s.overdue_nudge_time,
+        "weekly_review_schedule_time": s.weekly_review_schedule_time,
     }
 
 
@@ -56,6 +58,7 @@ def save_telegram_config(body: _TelegramConfig, db: Session = Depends(get_db)):
     s.set(keys.BRIEFING_TZ_OFFSET,     str(body.tz_offset))
     s.set(keys.HABIT_REMINDER_TIME,    body.habit_reminder_time.strip())
     s.set(keys.OVERDUE_NUDGE_TIME,     body.overdue_nudge_time.strip())
+    s.set(keys.WEEKLY_REVIEW_SCHEDULE_TIME, body.weekly_review_schedule_time.strip() or "SUN:18:00")
     db.commit()
     return {"ok": True}
 

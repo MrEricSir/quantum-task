@@ -1,8 +1,18 @@
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import Modal from './Modal'
-import { fetchTelegramConfig, saveTelegramConfig, testTelegramConfig, registerTelegramWebhook } from '../../api'
+import { fetchTelegramConfig, saveTelegramConfig, testTelegramConfig, testWeeklyReview, registerTelegramWebhook } from '../../api'
 import './TelegramSettings.css'
+
+const WEEKLY_REVIEW_DAYS = [
+  { value: 'SUN', label: 'Sunday' },
+  { value: 'MON', label: 'Monday' },
+  { value: 'TUE', label: 'Tuesday' },
+  { value: 'WED', label: 'Wednesday' },
+  { value: 'THU', label: 'Thursday' },
+  { value: 'FRI', label: 'Friday' },
+  { value: 'SAT', label: 'Saturday' },
+]
 
 export default function TelegramSettings({ onClose }) {
   const [config, setConfig] = useState({
@@ -11,13 +21,17 @@ export default function TelegramSettings({ onClose }) {
     schedule_hour: 7,
     habit_reminder_hour: '',   // '' = disabled
     overdue_nudge_hour: '',    // '' = disabled
+    weekly_review_day: 'SUN',
+    weekly_review_hour: 18,
     tz_offset: new Date().getTimezoneOffset(),
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testingWeekly, setTestingWeekly] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [testResult, setTestResult] = useState(null) // null | { ok, error }
+  const [testWeeklyResult, setTestWeeklyResult] = useState(null) // null | { ok, error }
   const [registerResult, setRegisterResult] = useState(null) // null | { ok, error?, webhook_url? }
   const [saved, setSaved] = useState(false)
 
@@ -27,11 +41,16 @@ export default function TelegramSettings({ onClose }) {
         const hour = data.schedule_time ? parseInt(data.schedule_time.split(':')[0], 10) : 7
         const habitH = data.habit_reminder_time ? parseInt(data.habit_reminder_time.split(':')[0], 10) : ''
         const overdueH = data.overdue_nudge_time ? parseInt(data.overdue_nudge_time.split(':')[0], 10) : ''
+        const wrParts = (data.weekly_review_schedule_time || 'SUN:18:00').split(':')
+        const wrDay = wrParts[0] || 'SUN'
+        const wrHour = parseInt(wrParts[1], 10)
         setConfig(c => ({
           ...c, ...data,
           schedule_hour: isNaN(hour) ? 7 : hour,
           habit_reminder_hour: habitH === '' ? '' : (isNaN(habitH) ? '' : habitH),
           overdue_nudge_hour:  overdueH === '' ? '' : (isNaN(overdueH) ? '' : overdueH),
+          weekly_review_day:  wrDay,
+          weekly_review_hour: isNaN(wrHour) ? 18 : wrHour,
         }))
       })
       .catch(() => {})
@@ -44,6 +63,7 @@ export default function TelegramSettings({ onClose }) {
     schedule_time: `${String(config.schedule_hour).padStart(2, '0')}:00`,
     habit_reminder_time: config.habit_reminder_hour === '' ? '' : `${String(config.habit_reminder_hour).padStart(2, '0')}:00`,
     overdue_nudge_time:  config.overdue_nudge_hour  === '' ? '' : `${String(config.overdue_nudge_hour).padStart(2, '0')}:00`,
+    weekly_review_schedule_time: `${config.weekly_review_day}:${String(config.weekly_review_hour).padStart(2, '0')}:00`,
     tz_offset: new Date().getTimezoneOffset(),
   })
 
@@ -96,6 +116,26 @@ export default function TelegramSettings({ onClose }) {
       setTestResult({ ok: false, error: `Request failed: ${e.message}` })
     } finally {
       setTesting(false)
+    }
+  }
+
+  const handleTestWeekly = async () => {
+    setTestingWeekly(true)
+    setTestWeeklyResult(null)
+    try {
+      await saveTelegramConfig(toApiConfig())
+    } catch (e) {
+      setTestWeeklyResult({ ok: false, error: `Could not save config: ${e.message}` })
+      setTestingWeekly(false)
+      return
+    }
+    try {
+      const result = await testWeeklyReview()
+      setTestWeeklyResult(result)
+    } catch (e) {
+      setTestWeeklyResult({ ok: false, error: `Request failed: ${e.message}` })
+    } finally {
+      setTestingWeekly(false)
     }
   }
 
@@ -200,12 +240,41 @@ export default function TelegramSettings({ onClose }) {
               })}
             </select>
           </label>
+
+          <label className="telegram-label">
+            Weekly review
+            <div className="telegram-weekly-review-row">
+              <select
+                className="telegram-input telegram-input--select"
+                value={config.weekly_review_day}
+                onChange={e => setConfig(c => ({ ...c, weekly_review_day: e.target.value }))}
+              >
+                {WEEKLY_REVIEW_DAYS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+              <select
+                className="telegram-input telegram-input--select"
+                value={config.weekly_review_hour}
+                onChange={e => setConfig(c => ({ ...c, weekly_review_hour: parseInt(e.target.value, 10) }))}
+              >
+                {Array.from({ length: 24 }, (_, h) => {
+                  const label = h === 0 ? '12 AM (midnight)' : h < 12 ? `${h} AM` : h === 12 ? '12 PM (noon)' : `${h - 12} PM`
+                  return <option key={h} value={h}>{label}</option>
+                })}
+              </select>
+            </div>
+          </label>
         </div>
       )}
 
       {testResult && (
         <p className={`telegram-result ${testResult.ok ? 'telegram-result--ok' : 'telegram-result--err'}`}>
           {testResult.ok ? '✓ Message sent — check your Telegram.' : `✗ ${testResult.error}`}
+        </p>
+      )}
+
+      {testWeeklyResult && (
+        <p className={`telegram-result ${testWeeklyResult.ok ? 'telegram-result--ok' : 'telegram-result--err'}`}>
+          {testWeeklyResult.ok ? '✓ Weekly review sent — check your Telegram.' : `✗ ${testWeeklyResult.error}`}
         </p>
       )}
 
@@ -217,6 +286,14 @@ export default function TelegramSettings({ onClose }) {
           title={!configured ? 'Enter bot token and chat ID first' : ''}
         >
           {testing ? 'Sending…' : 'Send test briefing'}
+        </button>
+        <button
+          className="btn-ghost"
+          onClick={handleTestWeekly}
+          disabled={testingWeekly || loading || !configured}
+          title={!configured ? 'Enter bot token and chat ID first' : 'Sends immediately, ignoring the schedule above — no need to wait for it to actually be Sunday'}
+        >
+          {testingWeekly ? 'Sending…' : 'Send test weekly review'}
         </button>
         <button
           className="btn-primary"

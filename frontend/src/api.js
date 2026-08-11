@@ -588,6 +588,12 @@ export async function testTelegramConfig() {
   return res.json()
 }
 
+export async function testWeeklyReview() {
+  const res = await apiFetch('/api/telegram/test-weekly-review', { method: 'POST' })
+  if (!res.ok) throw new Error(`Server error ${res.status}`)
+  return res.json()
+}
+
 export async function registerTelegramWebhook() {
   const res = await apiFetch('/api/telegram/register-webhook', { method: 'POST' })
   if (!res.ok) throw new Error(`Server error ${res.status}`)

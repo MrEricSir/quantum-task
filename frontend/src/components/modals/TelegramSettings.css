@@ -122,6 +122,17 @@
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.telegram-weekly-review-row {
+  display: flex;
+  gap: 8px;
+}
+
+.telegram-weekly-review-row .telegram-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .telegram-divider {

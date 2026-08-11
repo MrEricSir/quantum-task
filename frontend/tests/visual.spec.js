@@ -1486,6 +1486,82 @@ test.describe('calendar page', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Telegram settings modal
+// ---------------------------------------------------------------------------
+test.describe('telegram settings modal', () => {
+  const baseConfig = {
+    bot_token: 'tok', chat_id: '123', schedule_time: '07:30', tz_offset: 0,
+    habit_reminder_time: '', overdue_nudge_time: '', weekly_review_schedule_time: 'SUN:18:00',
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/telegram/config', r => {
+      if (r.request().method() === 'GET') return r.fulfill({ json: baseConfig })
+      return r.fulfill({ json: { ok: true } })
+    })
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /telegram/i }).first().click()
+  })
+
+  test('shows a weekly review day and time picker', async ({ page }) => {
+    const row = page.locator('.telegram-label', { hasText: 'Weekly review' })
+    await expect(row.locator('select').first()).toBeVisible()
+    await expect(row.locator('select').nth(1)).toBeVisible()
+  })
+
+  test('loads the saved weekly review schedule', async ({ page }) => {
+    await page.route('**/api/telegram/config', r => {
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: { ...baseConfig, weekly_review_schedule_time: 'WED:09:00' } })
+      }
+      return r.fulfill({ json: { ok: true } })
+    })
+    await page.reload()
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /telegram/i }).first().click()
+
+    const row = page.locator('.telegram-label', { hasText: 'Weekly review' })
+    await expect(row.locator('select').first()).toHaveValue('WED')
+    await expect(row.locator('select').nth(1)).toHaveValue('9')
+  })
+
+  test('saving PUTs the weekly review schedule as DOW:HH:00', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/telegram/config', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ok: true } })
+      }
+      return r.fulfill({ json: baseConfig })
+    })
+
+    const row = page.locator('.telegram-label', { hasText: 'Weekly review' })
+    await row.locator('select').first().selectOption('FRI')
+    await row.locator('select').nth(1).selectOption('9')
+    await page.getByRole('button', { name: /^save$/i }).click()
+
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody.weekly_review_schedule_time).toBe('FRI:09:00')
+  })
+
+  test('send test weekly review shows a success message', async ({ page }) => {
+    await page.route('**/api/telegram/test-weekly-review', r => r.fulfill({ json: { ok: true } }))
+    await page.getByRole('button', { name: /send test weekly review/i }).click()
+    await expect(page.getByText(/weekly review sent/i)).toBeVisible()
+  })
+
+  test('send test weekly review shows an error message on failure', async ({ page }) => {
+    await page.route('**/api/telegram/test-weekly-review', r =>
+      r.fulfill({ json: { ok: false, error: 'Could not generate weekly review (LLM error).' } }))
+    await page.getByRole('button', { name: /send test weekly review/i }).click()
+    await expect(page.getByText(/could not generate weekly review/i)).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Health page
 // ---------------------------------------------------------------------------
 test.describe('health page', () => {
