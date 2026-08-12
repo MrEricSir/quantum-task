@@ -194,6 +194,8 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 
 You never have to go hunting for where a job's code landed — see [Finding your worktree](#finding-your-worktree) below for every way it's surfaced.
 
+Push is disabled by temporarily repointing `remote.origin.pushurl` for the whole repo (shared config, not per-worktree) while a job runs, then restoring it once the session ends normally. If a job is ever killed or crashes before that restore happens, the next job run against the same repo detects and clears the stale lock automatically — but if you want to push right now, mid "thorny git situation", without waiting on that: `qtask-bridge --unlock-push` clears it on demand from wherever you're standing (main checkout or any worktree). It only ever touches the exact value this tool itself sets — a real custom `pushurl` you've configured for an unrelated reason is left alone.
+
 **If the agent process dies mid-session** (crash, network drop, laptop sleeps), the job would otherwise sit at "running" forever with no way to tell it apart from one that's actually still working. The bridge pings a heartbeat every 5 minutes while a session is active; if a job goes 20+ minutes without one, it's automatically marked **stalled** (shown in the Code tab, distinct from an outright error) and — if Telegram is configured — you get a notification. Re-running the card queues a fresh job.
 
 #### Install the bridge agent
@@ -243,6 +245,7 @@ qtask-bridge --switch         # menu of worktrees for the current repo, most rec
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
 qtask-bridge --review [branch] # read-only lead-engineer-style review of a worktree's changes
+qtask-bridge --unlock-push    # clear a stuck no_push sentinel left by an interrupted job
 ```
 
 The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in an isolated git worktree on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The worktree is left in place locally for your review — the bridge never pushes.

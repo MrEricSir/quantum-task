@@ -16,6 +16,8 @@ Usage:
                               configured run_cmd
   qtask-bridge --review [NAME]  Read-only lead-engineer-style review of a resolved
                               qtask worktree's changes
+  qtask-bridge --unlock-push Clear a stuck no_push sentinel on the current repo's
+                              remote.origin.pushurl, left behind by an interrupted job
 
 Config files in ~/.config/qtask-bridge/:
   config.json  — app URL and auth token (written by installer)
@@ -368,6 +370,47 @@ def _git_teardown(work_dir, push_url_info):
     else:
         subprocess.run(["git", "config", "--unset", "remote.origin.pushurl"],
                        cwd=work_dir)
+
+
+def cmd_unlock_push(cwd=None):
+    """Manually clear a stuck no_push sentinel on the CURRENT repo's
+    remote.origin.pushurl. _git_teardown already restores this automatically
+    when a job's session ends normally, and _create_worktree's own
+    stale-sentinel check (above) clears it the next time a job runs against
+    the same repo -- but neither helps in the moment, mid "thorny git
+    situation", when you just want to push right now without waiting on a
+    new job. Operates on whatever repo the cwd resolves to (git's own
+    upward directory search finds the right one), not a specific worktree
+    target -- pushurl is shared base-repo config, not per-worktree, so
+    there's nothing to disambiguate.
+
+    Only ever touches the exact sentinel value this tool itself sets -- a
+    real custom pushurl configured for an unrelated reason is left alone,
+    with a message saying so, rather than silently clobbered."""
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                       cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print("[bridge] Not inside a git repo.", file=sys.stderr)
+        return
+    repo_dir = r.stdout.strip()
+
+    r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                       cwd=repo_dir, capture_output=True, text=True)
+    current = r.stdout.strip() if r.returncode == 0 else None
+
+    if current != PUSH_DISABLED_SENTINEL:
+        if current:
+            print(f"[bridge] remote.origin.pushurl is already set to something else "
+                  f"({current!r}) -- leaving it alone, that's your own config, not ours.")
+        else:
+            print("[bridge] Push isn't locked here -- nothing to do.")
+        return
+
+    r = subprocess.run(["git", "config", "--unset", "remote.origin.pushurl"], cwd=repo_dir)
+    if r.returncode != 0:
+        print(f"[bridge] Could not unset remote.origin.pushurl in {repo_dir}.", file=sys.stderr)
+        return
+    print(f"[bridge] Push unlocked for {repo_dir}.")
 
 
 def _run_setup_cmd(worktree_path, setup_cmd):
@@ -1409,6 +1452,10 @@ def main():
     group.add_argument("--review", nargs="?", const="", default=None, metavar="[BRANCH]",
                        help="Read-only lead-engineer-style review of a qtask worktree's "
                             "changes (cwd, last one, or a branch fragment)")
+    group.add_argument("--unlock-push", action="store_true",
+                       help="Clear a stuck no_push sentinel on the current repo's "
+                            "remote.origin.pushurl, left behind by an interrupted job "
+                            "(operates on cwd's repo, not a specific worktree)")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -1426,6 +1473,8 @@ def main():
         cmd_run(cfg, args.run or None)
     elif args.review is not None:
         cmd_review(cfg, args.review or None)
+    elif args.unlock_push:
+        cmd_unlock_push()
     else:
         cmd_card(cfg, args.card)
 
