@@ -66,6 +66,8 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
+import webbrowser
+from collections import namedtuple
 try:
     import tomllib
 except ModuleNotFoundError:
@@ -139,10 +141,23 @@ def _slugify(text, max_len=40):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len]
 
 
+RepoEntry = namedtuple(
+    "RepoEntry",
+    ["path", "setup_cmd", "test_cmd", "verify_acceptance", "run_cmd", "env_files", "open_url"],
+)
+_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None)
+
+
 def _repo_entry(cfg, target_repo):
     """
-    Return (path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files)
-    for a configured [repos] entry, or all-None.
+    Return a RepoEntry namedtuple for a configured [repos] entry, or all-None
+    fields if unconfigured. A plain namedtuple (not a dict) so the two
+    existing `path, *_ = _repo_entry(...)` call sites keep working
+    unchanged -- it's still a tuple, just with named fields for the call
+    sites that need more than one value, since positional unpacking of
+    seven fields (`_, _, _, _, run_cmd, _, open_url = ...`) is exactly the
+    kind of thing that silently breaks when a field gets inserted in the
+    middle later.
 
     Supports both the simple form:
         [repos]
@@ -155,19 +170,20 @@ def _repo_entry(cfg, target_repo):
         verify_acceptance = true
         run_cmd = "npm run dev"
         env_files = ["backend/.env", "frontend/.env"]
+        open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
     """
     entry = (cfg.get("repos") or {}).get(target_repo)
     if entry is None:
-        return None, None, None, None, None, None
+        return _EMPTY_REPO_ENTRY
     if isinstance(entry, str):
-        return entry, None, None, None, None, None
+        return RepoEntry(entry, None, None, None, None, None, None)
     if isinstance(entry, dict):
-        return (
+        return RepoEntry(
             entry.get("path"), entry.get("setup_cmd"),
             entry.get("test_cmd"), entry.get("verify_acceptance"),
-            entry.get("run_cmd"), entry.get("env_files"),
+            entry.get("run_cmd"), entry.get("env_files"), entry.get("open_url"),
         )
-    return None, None, None, None, None, None
+    return _EMPTY_REPO_ENTRY
 
 
 def _resolve_work_dir(cfg, target_repo):
@@ -767,14 +783,13 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
         # reserved port range / db name too (e.g. to pre-seed a database).
         _write_qtask_env(worktree_path, job_id)
 
-        _, setup_cmd, test_cmd, verify_acceptance, _, env_files = (
-            _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None, None, None)
-        )
-        setup_cmd = setup_cmd or cfg.get("setup_cmd")
-        test_cmd = test_cmd or cfg.get("test_cmd")
+        entry = _repo_entry(cfg, target_repo) if target_repo else _EMPTY_REPO_ENTRY
+        setup_cmd = entry.setup_cmd or cfg.get("setup_cmd")
+        test_cmd = entry.test_cmd or cfg.get("test_cmd")
+        verify_acceptance = entry.verify_acceptance
         if verify_acceptance is None:
             verify_acceptance = cfg.get("verify_acceptance", False)
-        env_files = env_files or cfg.get("env_files")
+        env_files = entry.env_files or cfg.get("env_files")
         _link_env_files(worktree_path, work_dir, env_files)
         _run_setup_cmd(worktree_path, setup_cmd)
 
@@ -1174,6 +1189,53 @@ def _load_env_file(path):
     return env
 
 
+def _resolve_open_url(worktree_path, extra_env, open_url_template):
+    """Resolve an open_url template (e.g. "http://localhost:$((QTASK_PORT_BASE
+    + 1))") against the worktree's reserved-port env vars via a real shell --
+    the same "let a shell evaluate it" approach _run_procfile/
+    _run_single_command already use for arbitrary run commands, so port
+    arithmetic like the "+1" above just works without a bespoke templating
+    engine of our own. QTASK_PORT_BASE alone isn't reliably "the" dev server
+    port to guess at automatically -- this repo's own Procfile.dev, for
+    example, puts the backend on QTASK_PORT_BASE and the frontend on
+    QTASK_PORT_BASE+1 -- so this has to stay an explicit per-repo setting,
+    not an automatic default. Returns None (and warns) if the template
+    doesn't evaluate cleanly, rather than opening a browser tab to a
+    obviously-wrong or empty URL."""
+    if not open_url_template:
+        return None
+    env = {**os.environ, **extra_env}
+    r = subprocess.run(["sh", "-c", f'printf %s "{open_url_template}"'],
+                       cwd=worktree_path, env=env, capture_output=True, text=True)
+    url = r.stdout.strip()
+    if r.returncode != 0 or not url:
+        print(f"[bridge] WARNING: could not resolve open_url {open_url_template!r} — skipping",
+              file=sys.stderr)
+        return None
+    return url
+
+
+def _open_when_ready(url, timeout=10):
+    """Poll the URL until it responds (or timeout), then open it in the
+    default browser. Opening immediately, before the dev server has
+    actually bound its port, would often land on a connection-refused
+    error page -- startup time varies a lot (a near-instant Vite frontend
+    vs. a Python backend with slow imports). Opens anyway once the timeout
+    elapses even if it never responded, rather than silently doing nothing
+    -- a slow-loading tab you can refresh is a better failure mode than no
+    tab at all. Runs in its own thread (see caller) so it never blocks
+    _run_procfile/_run_single_command's own output relay."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(url, timeout=1)
+            break
+        except Exception:
+            time.sleep(0.3)
+    webbrowser.open(url)
+    print(f"[bridge] Opened {url}")
+
+
 def _run_procfile(worktree_path, procfile_path, extra_env, stop_event=None):
     """Run every process in a Procfile concurrently, relay their output
     with a colorized [name] prefix, and stop all of them together --
@@ -1337,7 +1399,10 @@ def cmd_run(cfg, target):
     helpful message naming both options. .env.qtask's reserved port/DB
     vars are auto-injected into whatever runs, same idea as
     foreman/honcho auto-loading .env -- no manual `source .env.qtask`
-    step needed."""
+    step needed. If open_url is configured, opens it in the default
+    browser once the dev server actually responds (see
+    _resolve_open_url/_open_when_ready) -- covers both branches below
+    since either one might be what actually serves the webapp."""
     resolved = _resolve_worktree_target(cfg, target)
     if resolved is None:
         return
@@ -1345,14 +1410,18 @@ def cmd_run(cfg, target):
     print(f"[bridge] [{repo_name}] {branch}\n[bridge] {worktree_path}\n")
 
     extra_env = _load_env_file(os.path.join(worktree_path, ENV_FILENAME))
+    entry = _repo_entry(cfg, repo_name)
+
+    open_url = _resolve_open_url(worktree_path, extra_env, entry.open_url or cfg.get("open_url"))
+    if open_url:
+        threading.Thread(target=_open_when_ready, args=(open_url,), daemon=True).start()
 
     procfile_path = _find_procfile(worktree_path)
     if procfile_path:
         _run_procfile(worktree_path, procfile_path, extra_env)
         return
 
-    _, _, _, _, run_cmd, _ = _repo_entry(cfg, repo_name)
-    run_cmd = run_cmd or cfg.get("run_cmd")
+    run_cmd = entry.run_cmd or cfg.get("run_cmd")
     if run_cmd:
         _run_single_command(worktree_path, run_cmd, extra_env)
         return

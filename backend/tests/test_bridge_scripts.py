@@ -1096,45 +1096,68 @@ class TestRunVerification:
 
 
 class TestRepoEntryVerificationFields:
+    """_repo_entry returns a RepoEntry namedtuple -- named-field access here
+    (entry.run_cmd, not positional unpacking) is deliberate: it's exactly
+    the style that doesn't silently break when a field gets added later,
+    which is the whole reason _repo_entry was refactored to a namedtuple
+    partway through this feature set (see its docstring)."""
 
     def test_resolves_test_cmd_and_verify_acceptance_from_table_form(self):
         cfg = {"repos": {"owner/repo": {
             "path": "/x", "setup_cmd": "npm install",
             "test_cmd": "npm test", "verify_acceptance": True,
         }}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
-        assert path == "/x"
-        assert setup_cmd == "npm install"
-        assert test_cmd == "npm test"
-        assert verify_acceptance is True
-        assert run_cmd is None
-        assert env_files is None
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.setup_cmd == "npm install"
+        assert entry.test_cmd == "npm test"
+        assert entry.verify_acceptance is True
+        assert entry.run_cmd is None
+        assert entry.env_files is None
+        assert entry.open_url is None
 
     def test_plain_string_form_returns_none_for_new_fields(self):
         cfg = {"repos": {"owner/repo": "/x"}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
-        assert path == "/x"
-        assert test_cmd is None
-        assert verify_acceptance is None
-        assert run_cmd is None
-        assert env_files is None
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.test_cmd is None
+        assert entry.verify_acceptance is None
+        assert entry.run_cmd is None
+        assert entry.env_files is None
+        assert entry.open_url is None
 
     def test_unconfigured_repo_returns_all_none(self):
-        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None)
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None)
 
     def test_resolves_run_cmd_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
-        assert path == "/x"
-        assert run_cmd == "npm run dev"
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.run_cmd == "npm run dev"
 
     def test_resolves_env_files_from_table_form(self):
         cfg = {"repos": {"owner/repo": {
             "path": "/x", "env_files": ["backend/.env", "frontend/.env"],
         }}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.env_files == ["backend/.env", "frontend/.env"]
+
+    def test_resolves_open_url_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {
+            "path": "/x", "open_url": "http://localhost:$((QTASK_PORT_BASE + 1))",
+        }}}
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.open_url == "http://localhost:$((QTASK_PORT_BASE + 1))"
+
+    def test_path_star_unpack_still_works_unchanged(self):
+        """The two call sites that only need `path` do `path, *_ = _repo_entry(...)`
+        -- confirms that pattern still works now that RepoEntry has seven
+        fields instead of a plain tuple's original five."""
+        cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
+        path, *_ = agent_core._repo_entry(cfg, "owner/repo")
         assert path == "/x"
-        assert env_files == ["backend/.env", "frontend/.env"]
 
 
 # ── Manual verification (`qtask-bridge --run`) ─────────────────────────────────
@@ -1723,6 +1746,110 @@ class TestCmdRunDispatch:
 
         agent_core.cmd_run(cfg, branch)
         assert captured["extra_env"]["QTASK_JOB_ID"] == "4"
+
+    def _wait_for(self, predicate, timeout=2):
+        deadline = time.time() + timeout
+        while not predicate() and time.time() < deadline:
+            time.sleep(0.02)
+
+    def test_opens_configured_url_in_the_background(self, scratch_repo, monkeypatch):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": {"path": str(scratch_repo), "run_cmd": "echo hi",
+                                           "open_url": "http://localhost:9999"}}}
+        wt, branch = self._create(cfg, scratch_repo, 5, "Open URL Case")
+
+        opened = []
+        monkeypatch.setattr(agent_core, "_open_when_ready", lambda url, timeout=10: opened.append(url))
+        monkeypatch.setattr(agent_core, "_run_single_command", lambda *a, **k: None)
+
+        agent_core.cmd_run(cfg, branch)
+        self._wait_for(lambda: opened)
+        assert opened == ["http://localhost:9999"]
+
+    def test_does_not_open_anything_when_open_url_not_configured(self, scratch_repo, monkeypatch):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": {"path": str(scratch_repo), "run_cmd": "echo hi"}}}
+        wt, branch = self._create(cfg, scratch_repo, 6, "No Open URL Case")
+
+        opened = []
+        monkeypatch.setattr(agent_core, "_open_when_ready", lambda url, timeout=10: opened.append(url))
+        monkeypatch.setattr(agent_core, "_run_single_command", lambda *a, **k: None)
+
+        agent_core.cmd_run(cfg, branch)
+        time.sleep(0.1)  # give a wrongly-started background thread a chance to fire
+        assert opened == []
+
+    def test_open_url_works_alongside_a_procfile_too(self, scratch_repo, monkeypatch):
+        """open_url isn't tied to the run_cmd branch specifically -- it must
+        fire whichever way the app actually gets started."""
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": {"path": str(scratch_repo), "open_url": "http://localhost:9999"}}}
+        wt, branch = self._create(cfg, scratch_repo, 7, "Open URL Plus Procfile Case")
+        with open(os.path.join(wt, "Procfile.dev"), "w") as f:
+            f.write("web: echo hi\n")
+
+        opened = []
+        monkeypatch.setattr(agent_core, "_open_when_ready", lambda url, timeout=10: opened.append(url))
+        monkeypatch.setattr(agent_core, "_run_procfile", lambda *a, **k: None)
+
+        agent_core.cmd_run(cfg, branch)
+        self._wait_for(lambda: opened)
+        assert opened == ["http://localhost:9999"]
+
+
+class TestOpenUrlResolution:
+    """_resolve_open_url / _open_when_ready in isolation -- TestCmdRunDispatch
+    above covers the wiring into cmd_run."""
+
+    def test_resolves_shell_arithmetic_against_reserved_port_vars(self, tmp_path):
+        url = agent_core._resolve_open_url(
+            str(tmp_path), {"QTASK_PORT_BASE": "20770"},
+            "http://localhost:$((QTASK_PORT_BASE + 1))",
+        )
+        assert url == "http://localhost:20771"
+
+    def test_none_template_resolves_to_none(self, tmp_path):
+        assert agent_core._resolve_open_url(str(tmp_path), {}, None) is None
+
+    def test_empty_template_resolves_to_none(self, tmp_path):
+        assert agent_core._resolve_open_url(str(tmp_path), {}, "") is None
+
+    def test_warns_and_returns_none_when_the_template_is_not_valid_shell(self, tmp_path, capsys):
+        # The template is interpolated inside a double-quoted printf argument
+        # (see _resolve_open_url) -- a literal, unescaped double-quote in a
+        # misconfigured open_url breaks out of that wrapping and is exactly
+        # the kind of typo this warn-and-skip path exists for.
+        capsys.readouterr()
+        url = agent_core._resolve_open_url(str(tmp_path), {}, 'http://localhost:"unclosed')
+        assert url is None
+        assert "could not resolve open_url" in capsys.readouterr().err.lower()
+
+    def test_opens_immediately_once_the_url_responds(self, monkeypatch):
+        opened = []
+        monkeypatch.setattr(agent_core.webbrowser, "open", lambda u: opened.append(u))
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", lambda url, timeout=1: None)
+
+        start = time.time()
+        agent_core._open_when_ready("http://example.invalid", timeout=10)
+        elapsed = time.time() - start
+
+        assert opened == ["http://example.invalid"]
+        assert elapsed < 1  # didn't wait for the full 10s timeout
+
+    def test_opens_anyway_after_timeout_if_the_url_never_responds(self, monkeypatch):
+        opened = []
+        monkeypatch.setattr(agent_core.webbrowser, "open", lambda u: opened.append(u))
+
+        def _always_fails(url, timeout=1):
+            raise ConnectionRefusedError()
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _always_fails)
+
+        start = time.time()
+        agent_core._open_when_ready("http://example.invalid", timeout=0.3)
+        elapsed = time.time() - start
+
+        assert opened == ["http://example.invalid"]
+        assert elapsed >= 0.3
 
 
 # ── Manual self-review (`qtask-bridge --review`) ────────────────────────────────

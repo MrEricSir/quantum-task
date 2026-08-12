@@ -342,6 +342,16 @@ Multiple processes from a Procfile print with a colorized `[name]` prefix so the
 
 qtask-bridge is a single, dependency-free file, so `--run` doesn't shell out to an external process manager (Foreman, Overmind, Honcho) — the Procfile support above is built in.
 
+Set `open_url` (per-repo, works with either a Procfile or `run_cmd`) and `--run` opens it in your default browser automatically, once the dev server actually responds rather than the moment the process starts:
+
+```toml
+[repos."owner/api"]
+path = "~/folder_a/api"
+open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
+```
+
+It's a shell-evaluated string, not a plain literal, so ordinary shell arithmetic against the reserved port from `.env.qtask` (see [Avoiding port and database collisions](#avoiding-port-and-database-collisions) above) works directly — `QTASK_PORT_BASE` alone usually isn't "the" port to guess automatically (in this repo's own `Procfile.dev`, the backend sits at `QTASK_PORT_BASE` and the frontend one above it), so this stays an explicit per-repo setting rather than something inferred.
+
 #### Reviewing a change
 
 For a code-quality pass — assumptions, duplication, anti-patterns, test coverage, the kind of thing a careful reviewer checks before approving a PR — run `--review` on the same resolved worktree:

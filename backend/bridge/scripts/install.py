@@ -70,6 +70,21 @@ TOML_TEMPLATE = textwrap.dedent("""\
     #
     # run_cmd = "npm run dev"
 
+    # open_url: if set, `qtask-bridge --run` opens it in your default browser
+    # once the dev server actually responds (polls briefly, opens anyway
+    # after ~10s even if it never does, rather than silently doing nothing).
+    # A shell-evaluated string, not a plain literal -- reference the reserved
+    # port from .env.qtask (see "Avoiding port and database collisions" in
+    # the README) and do any arithmetic your repo's Procfile.dev needs
+    # (e.g. frontend on port+1) with real shell syntax:
+    #
+    # open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
+    #
+    # QTASK_PORT_BASE alone usually isn't "the" port to guess automatically
+    # -- this repo's own Procfile.dev puts the backend there and the
+    # frontend one above it -- so this is deliberately explicit per-repo,
+    # not an automatic default.
+
     # Verification, run automatically after a session ends (before the job
     # is marked complete) -- both are opt-in and off by default.
     #
