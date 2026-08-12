@@ -782,6 +782,92 @@ class TestAgentScript:
         assert "QTASK_PORT_BASE=20010" in wt1
         assert "QTASK_PORT_BASE=20010" in wt401
 
+    def test_links_env_files_from_base_repo_into_worktree(self, tmp_path):
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        (work_dir / "backend").mkdir(parents=True)
+        (work_dir / "frontend").mkdir(parents=True)
+        (work_dir / "backend" / ".env").write_text("SECRET=abc123\n")
+        (work_dir / "frontend" / ".env").write_text("VITE_KEY=xyz\n")
+        (wt / "backend").mkdir(parents=True)
+        (wt / "frontend").mkdir(parents=True)
+
+        agent_core._link_env_files(str(wt), str(work_dir), ["backend/.env", "frontend/.env"])
+
+        for rel in ("backend/.env", "frontend/.env"):
+            dst = wt / rel
+            assert os.path.islink(dst)
+            assert dst.read_text() == (work_dir / rel).read_text()
+
+    def test_env_files_stays_in_sync_since_its_a_symlink_not_a_copy(self, tmp_path):
+        """The whole reason to symlink instead of copy: editing the source
+        after linking is reflected immediately, with no need to re-run
+        anything."""
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        work_dir.mkdir()
+        wt.mkdir()
+        (work_dir / ".env").write_text("V=1\n")
+
+        agent_core._link_env_files(str(wt), str(work_dir), [".env"])
+        assert (wt / ".env").read_text() == "V=1\n"
+
+        (work_dir / ".env").write_text("V=2\n")
+        assert (wt / ".env").read_text() == "V=2\n"
+
+    def test_missing_source_file_is_skipped_not_fatal(self, tmp_path):
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        work_dir.mkdir()
+        wt.mkdir()
+
+        agent_core._link_env_files(str(wt), str(work_dir), [".env"])  # doesn't raise
+        assert not (wt / ".env").exists()
+
+    def test_never_clobbers_a_real_non_symlink_file_at_the_destination(self, tmp_path):
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        work_dir.mkdir()
+        wt.mkdir()
+        (work_dir / ".env").write_text("FROM_BASE_REPO=1\n")
+        (wt / ".env").write_text("REAL_TRACKED_FILE=dont_touch_me\n")
+
+        agent_core._link_env_files(str(wt), str(work_dir), [".env"])
+
+        assert not os.path.islink(wt / ".env")
+        assert (wt / ".env").read_text() == "REAL_TRACKED_FILE=dont_touch_me\n"
+
+    def test_replaces_a_stale_symlink_from_a_previous_link(self, tmp_path):
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        work_dir.mkdir()
+        wt.mkdir()
+        (work_dir / ".env").write_text("V=1\n")
+        agent_core._link_env_files(str(wt), str(work_dir), [".env"])
+
+        (work_dir / ".env").write_text("V=2\n")
+        agent_core._link_env_files(str(wt), str(work_dir), [".env"])  # re-link, doesn't error
+        assert (wt / ".env").read_text() == "V=2\n"
+
+    def test_creates_intermediate_directories_for_nested_paths(self, tmp_path):
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        (work_dir / "deeply" / "nested").mkdir(parents=True)
+        wt.mkdir()
+        (work_dir / "deeply" / "nested" / ".env").write_text("X=1\n")
+
+        agent_core._link_env_files(str(wt), str(work_dir), ["deeply/nested/.env"])
+        assert (wt / "deeply" / "nested" / ".env").read_text() == "X=1\n"
+
+    def test_none_and_empty_env_files_are_a_harmless_noop(self, tmp_path):
+        work_dir = tmp_path / "repo"
+        wt = tmp_path / "worktree"
+        work_dir.mkdir()
+        wt.mkdir()
+        agent_core._link_env_files(str(wt), str(work_dir), None)
+        agent_core._link_env_files(str(wt), str(work_dir), [])
+        assert list(wt.iterdir()) == []
+
     def test_sets_terminal_title_for_interactive_sessions_only(self, client):
         res = client.get("/api/bridge/agent.py")
         assert "def _set_terminal_title" in res.text
@@ -1016,29 +1102,39 @@ class TestRepoEntryVerificationFields:
             "path": "/x", "setup_cmd": "npm install",
             "test_cmd": "npm test", "verify_acceptance": True,
         }}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd = agent_core._repo_entry(cfg, "owner/repo")
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
         assert path == "/x"
         assert setup_cmd == "npm install"
         assert test_cmd == "npm test"
         assert verify_acceptance is True
         assert run_cmd is None
+        assert env_files is None
 
     def test_plain_string_form_returns_none_for_new_fields(self):
         cfg = {"repos": {"owner/repo": "/x"}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd = agent_core._repo_entry(cfg, "owner/repo")
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
         assert path == "/x"
         assert test_cmd is None
         assert verify_acceptance is None
         assert run_cmd is None
+        assert env_files is None
 
     def test_unconfigured_repo_returns_all_none(self):
-        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None)
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None)
 
     def test_resolves_run_cmd_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
-        path, setup_cmd, test_cmd, verify_acceptance, run_cmd = agent_core._repo_entry(cfg, "owner/repo")
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
         assert path == "/x"
         assert run_cmd == "npm run dev"
+
+    def test_resolves_env_files_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {
+            "path": "/x", "env_files": ["backend/.env", "frontend/.env"],
+        }}}
+        path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files = agent_core._repo_entry(cfg, "owner/repo")
+        assert path == "/x"
+        assert env_files == ["backend/.env", "frontend/.env"]
 
 
 # ── Manual verification (`qtask-bridge --run`) ─────────────────────────────────
@@ -1878,6 +1974,47 @@ class TestAgentScriptFullFlow:
         # (worktrees always live under ~/.local/share/qtask-bridge).
         worktree_dir = os.path.dirname(os.path.dirname(settings_path))
         subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                       cwd=scratch_repo, capture_output=True)
+
+    def test_run_job_links_configured_env_files_into_the_real_worktree(self, scratch_repo, monkeypatch):
+        """End-to-end: a real .env in the scratch repo, configured via
+        env_files, actually shows up symlinked in the real worktree run_job
+        creates -- not just the isolated _link_env_files unit tests above."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        (scratch_repo / ".env").write_text("REAL_SECRET=super-secret-value\n")
+
+        cfg = {
+            "app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+            "repos": {"scratch/repo": {"path": str(scratch_repo), "env_files": [".env"]}},
+        }
+        job = {"id": 2, "card_id": 85, "card_title": "Env files test",
+               "prompt": "do the thing", "target_repo": "scratch/repo"}
+
+        ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+
+        worktree_path = None
+        for call in api_calls:
+            if call[1] == "/api/bridge/jobs/2/start":
+                worktree_path = call[2]["worktree_path"]
+        assert worktree_path is not None, "job never reached the /start call"
+
+        linked_env = os.path.join(worktree_path, ".env")
+        assert os.path.islink(linked_env)
+        assert open(linked_env).read() == "REAL_SECRET=super-secret-value\n"
+
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
                        cwd=scratch_repo, capture_output=True)
 
     def _get_pushurl(self, repo):

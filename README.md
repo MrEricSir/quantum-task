@@ -286,6 +286,18 @@ The prompt Claude receives explicitly points it at this file and asks it to use 
 
 If the repo has a `Procfile.dev` or `Procfile` (see [Trying a change yourself](#trying-a-change-yourself)), Claude is told about it too — the process names and commands are listed directly in the prompt, not just a pointer to the file — so it can start the app itself mid-session to test its own changes without first having to rediscover how the repo is structured.
 
+#### Bringing your secrets into the worktree
+
+`git worktree add` only ever checks out tracked files, and `.env` files are gitignored by definition — so a fresh worktree has none of the real config/secrets your app actually needs to run (`DATABASE_URL`, API keys, auth passwords, whatever). Without anything else, `--run` (or Claude itself, mid-session) just fails to start. Configure `env_files` per repo — paths relative to the repo root, since names and locations vary from one project to the next — and the bridge symlinks each one from your base checkout into every fresh worktree automatically:
+
+```toml
+[repos."owner/myapp"]
+path = "~/folder_a/myapp"
+env_files = ["backend/.env", "frontend/.env"]
+```
+
+Symlinked, not copied: a copy would scatter live secrets across every worktree directory and go stale the moment you update the source file; a symlink stays in sync and there's only ever one real copy on disk. It's best-effort per file — a path that doesn't exist in your base checkout is skipped with a warning rather than failing the job, and if something real (not a symlink) already happens to be sitting at the destination, it's left alone rather than overwritten. Paths are almost always repo-specific, so unlike `setup_cmd`/`test_cmd`/`run_cmd` there's little reason to set a top-level fallback — configure it per-repo.
+
 #### Verifying a fix before you review it
 
 Two opt-in checks run automatically after a session ends, before the job is marked complete — both off by default, so nothing changes unless you configure them:

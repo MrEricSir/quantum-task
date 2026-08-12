@@ -32,9 +32,9 @@ TOML_TEMPLATE = textwrap.dedent("""\
 
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
-    # "verify_acceptance" / "run_cmd" keys. setup_cmd is a one-time command
-    # run in a fresh worktree before Claude launches, for repos that need
-    # dependencies installed (npm install, pip install, etc).
+    # "verify_acceptance" / "run_cmd" / "env_files" keys. setup_cmd is a
+    # one-time command run in a fresh worktree before Claude launches, for
+    # repos that need dependencies installed (npm install, pip install, etc).
     #
     # [repos]
     # "owner/myapp" = "/Users/you/code/myapp"
@@ -46,6 +46,19 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # Fallback setup_cmd used for any repo above that doesn't set its own.
     #
     # setup_cmd = "npm install"
+
+    # env_files: paths (relative to the repo root) to symlink from your base
+    # checkout into every fresh worktree -- `git worktree add` only ever
+    # checks out tracked files, and .env files are gitignored by
+    # definition, so without this a worktree has no real secrets/config to
+    # run with. Symlinked, not copied, so there's only ever one real copy
+    # on disk and it can't drift. Names/locations vary per repo (this is
+    # the one setting here that's almost never worth a top-level fallback),
+    # so set it per-repo:
+    #
+    # [repos."owner/myapp"]
+    # path = "/Users/you/code/myapp"
+    # env_files = ["backend/.env", "frontend/.env"]
 
     # run_cmd is what `qtask-bridge --run` uses to start the app in a
     # worktree for manual testing -- set per-repo (see [repos] above) or as

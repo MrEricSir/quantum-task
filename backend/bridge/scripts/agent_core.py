@@ -141,8 +141,8 @@ def _slugify(text, max_len=40):
 
 def _repo_entry(cfg, target_repo):
     """
-    Return (path, setup_cmd, test_cmd, verify_acceptance, run_cmd) for a configured
-    [repos] entry, or (None, None, None, None, None).
+    Return (path, setup_cmd, test_cmd, verify_acceptance, run_cmd, env_files)
+    for a configured [repos] entry, or all-None.
 
     Supports both the simple form:
         [repos]
@@ -154,19 +154,20 @@ def _repo_entry(cfg, target_repo):
         test_cmd = "npm test"
         verify_acceptance = true
         run_cmd = "npm run dev"
+        env_files = ["backend/.env", "frontend/.env"]
     """
     entry = (cfg.get("repos") or {}).get(target_repo)
     if entry is None:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     if isinstance(entry, str):
-        return entry, None, None, None, None
+        return entry, None, None, None, None, None
     if isinstance(entry, dict):
         return (
             entry.get("path"), entry.get("setup_cmd"),
             entry.get("test_cmd"), entry.get("verify_acceptance"),
-            entry.get("run_cmd"),
+            entry.get("run_cmd"), entry.get("env_files"),
         )
-    return None, None, None, None, None
+    return None, None, None, None, None, None
 
 
 def _resolve_work_dir(cfg, target_repo):
@@ -461,6 +462,42 @@ def _write_qtask_env(worktree_path, job_id):
         f.write(content)
 
 
+def _link_env_files(worktree_path, work_dir, env_files):
+    """Symlink each configured env file from the base repo into the fresh
+    worktree. `git worktree add` only ever checks out tracked files, and
+    .env files are gitignored by definition -- without this, --run (or the
+    coding agent itself) has no real secrets/config to work with. Symlinked
+    rather than copied: a copy would scatter live secrets across every
+    worktree directory and drift the moment the source file changes; a
+    symlink stays in sync and there's only ever one real copy on disk.
+
+    Paths in env_files are relative to the repo root and can point anywhere
+    in the tree (e.g. "backend/.env", "frontend/.env") -- resolved against
+    work_dir on the source side, worktree_path on the destination side,
+    same convention setup_cmd/run_cmd already use for their cwd.
+
+    Best-effort and non-fatal per file: a missing source, or a real
+    (non-symlink) file already sitting at the destination, is skipped with
+    a warning rather than failing the whole job over an optional
+    convenience or silently clobbering something unexpected."""
+    for rel_path in env_files or []:
+        src = os.path.join(work_dir, rel_path)
+        dst = os.path.join(worktree_path, rel_path)
+        if not os.path.isfile(src):
+            print(f"[bridge] WARNING: env_files entry {rel_path!r} not found at {src} — skipping",
+                  file=sys.stderr)
+            continue
+        if os.path.islink(dst):
+            os.remove(dst)
+        elif os.path.exists(dst):
+            print(f"[bridge] WARNING: {dst} already exists and isn't a symlink — "
+                  f"leaving it alone instead of overwriting", file=sys.stderr)
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.symlink(src, dst)
+        print(f"[bridge] Linked {rel_path} from base repo")
+
+
 def _set_terminal_title(title):
     """Set the terminal tab/window title via an OSC escape sequence, so a
     job's tab is identifiable at a glance across multiple open jobs.
@@ -730,13 +767,15 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
         # reserved port range / db name too (e.g. to pre-seed a database).
         _write_qtask_env(worktree_path, job_id)
 
-        _, setup_cmd, test_cmd, verify_acceptance, _ = (
-            _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None, None)
+        _, setup_cmd, test_cmd, verify_acceptance, _, env_files = (
+            _repo_entry(cfg, target_repo) if target_repo else (None, None, None, None, None, None)
         )
         setup_cmd = setup_cmd or cfg.get("setup_cmd")
         test_cmd = test_cmd or cfg.get("test_cmd")
         if verify_acceptance is None:
             verify_acceptance = cfg.get("verify_acceptance", False)
+        env_files = env_files or cfg.get("env_files")
+        _link_env_files(worktree_path, work_dir, env_files)
         _run_setup_cmd(worktree_path, setup_cmd)
 
         print(f"[bridge] Writing {SPEC_FILENAME}...")
@@ -1312,7 +1351,7 @@ def cmd_run(cfg, target):
         _run_procfile(worktree_path, procfile_path, extra_env)
         return
 
-    _, _, _, _, run_cmd = _repo_entry(cfg, repo_name)
+    _, _, _, _, run_cmd, _ = _repo_entry(cfg, repo_name)
     run_cmd = run_cmd or cfg.get("run_cmd")
     if run_cmd:
         _run_single_command(worktree_path, run_cmd, extra_env)
