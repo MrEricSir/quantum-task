@@ -10,6 +10,7 @@ import json as _json
 import traceback
 from datetime import datetime, timezone, timedelta
 
+import app_setting_keys as keys
 from capabilities.registry import REGISTRY, by_telegram_action, set_telegram_handler
 import models
 from database import SessionLocal
@@ -282,12 +283,26 @@ def handle_update(update: dict) -> None:
         if not msg:
             return
         chat_id_incoming = str(msg.get("chat", {}).get("id", ""))
+        update_id = update.get("update_id")
 
         with SessionLocal() as db:
             s = Settings(db)
             token     = s.telegram_token
             chat_id   = s.telegram_chat_id
             tz_offset = s.tz_offset
+
+            # Telegram resends an update if our webhook response doesn't arrive in
+            # time (e.g. a slow LLM call during a Cloud Run cold start). Without
+            # this, a slow-but-successful reply still gets reprocessed -- and
+            # re-sent -- on every retry, which is what produced repeated duplicate
+            # replies (e.g. logging the same food item several times over).
+            if update_id is not None:
+                last_update_id = s.telegram_last_update_id
+                if update_id <= last_update_id:
+                    print(f"[telegram] duplicate update_id={update_id} (last processed={last_update_id}), skipping")
+                    return
+                s.set(keys.TELEGRAM_LAST_UPDATE_ID, str(update_id))
+                db.commit()
 
         print(f"[telegram] incoming chat_id={chat_id_incoming!r} configured={chat_id!r} token_set={bool(token)}")
 

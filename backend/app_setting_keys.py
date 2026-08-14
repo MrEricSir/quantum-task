@@ -58,6 +58,11 @@ LAST_KNOWN_LON = "last_known_lon"
 # Random hex token sent as X-Telegram-Bot-Api-Secret-Token on every webhook POST.
 # Generated on first webhook registration; used to verify requests come from Telegram.
 TELEGRAM_WEBHOOK_SECRET = "telegram_webhook_secret"
+# Integer string: the highest Telegram update_id already processed. Telegram resends
+# an update if our webhook response doesn't arrive in time (e.g. a slow LLM call
+# during a Cloud Run cold start); this drops those retries instead of reprocessing
+# and re-sending the same reply.
+TELEGRAM_LAST_UPDATE_ID = "telegram_last_update_id"
 # Local "HH:MM" time to send an evening habit reminder; empty string to disable.
 HABIT_REMINDER_TIME = "habit_reminder_time"
 # Local "HH:MM" time to send a midday overdue-task nudge; empty string to disable.

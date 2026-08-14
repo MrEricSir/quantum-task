@@ -1683,3 +1683,69 @@ class TestWeeklyReviewEndpoint:
              patch("telegram.router.send_message", return_value=False):
             res = client.post("/api/telegram/test-weekly-review")
         assert res.json()["ok"] is False
+
+
+class TestHandleUpdateDedup:
+    """Telegram resends an update if our webhook response doesn't arrive in time
+    (e.g. a slow LLM call during a Cloud Run cold start). Without update_id
+    tracking, a slow-but-successful reply gets reprocessed -- and re-sent -- on
+    every retry, which is what produced repeated duplicate replies in practice."""
+
+    def _configure_bot(self, chat_id="12345"):
+        with BotTestSession() as db:
+            db.add(models.AppSetting(key=keys.TELEGRAM_BOT_TOKEN, value="test-token"))
+            db.add(models.AppSetting(key=keys.TELEGRAM_CHAT_ID, value=chat_id))
+            db.commit()
+
+    def _update(self, update_id, text="help", chat_id="12345"):
+        return {
+            "update_id": update_id,
+            "message": {"text": text, "chat": {"id": int(chat_id)}},
+        }
+
+    def test_processes_a_new_update(self):
+        from telegram.bot import handle_update
+        self._configure_bot()
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(self._update(100))
+        assert mock_send.call_count == 1
+
+    def test_skips_a_retried_update_with_the_same_update_id(self):
+        from telegram.bot import handle_update
+        self._configure_bot()
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(self._update(100))
+            handle_update(self._update(100))
+            handle_update(self._update(100))
+        assert mock_send.call_count == 1
+
+    def test_skips_a_stale_retry_that_arrives_after_a_newer_update(self):
+        from telegram.bot import handle_update
+        self._configure_bot()
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(self._update(105))
+            handle_update(self._update(100))
+        assert mock_send.call_count == 1
+
+    def test_processes_each_distinct_update_id(self):
+        from telegram.bot import handle_update
+        self._configure_bot()
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(self._update(100))
+            handle_update(self._update(101))
+        assert mock_send.call_count == 2
+
+    def test_updates_without_an_update_id_are_never_deduped(self):
+        # e.g. /api/telegram/simulate-message's fake_update, which has no update_id
+        from telegram.bot import handle_update
+        self._configure_bot()
+        update = {"message": {"text": "help", "chat": {"id": 12345}}}
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(update)
+            handle_update(update)
+        assert mock_send.call_count == 2

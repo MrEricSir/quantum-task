@@ -50,6 +50,10 @@ class Settings:
         return self.get(keys.TELEGRAM_WEBHOOK_SECRET)
 
     @property
+    def telegram_last_update_id(self) -> int:
+        return int(self.get(keys.TELEGRAM_LAST_UPDATE_ID, "0") or "0")
+
+    @property
     def briefing_schedule_time(self) -> str:
         return self.get(keys.BRIEFING_SCHEDULE_TIME, "07:30")
 
