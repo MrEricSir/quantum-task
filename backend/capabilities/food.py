@@ -24,7 +24,6 @@ TELEGRAM_DESCRIPTION = """\
       is mentioned in a past-tense or "I had / I ate / I drank" context.
       Also return:
         "raw_input" — exact food/drink description from the user's message
-        "meal_type" — "breakfast" | "lunch" | "dinner" | "snack" | "drink" | null
       Examples: "I had yogurt and iced tea for breakfast", "just ate a salad for lunch",
                 "had a coffee", "ate a muffin", "grabbed a green smoothie"\
 """

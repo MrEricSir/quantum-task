@@ -669,23 +669,6 @@
   margin: 0;
 }
 
-.food-group {
-  margin-bottom: 14px;
-}
-
-.food-group:last-child {
-  margin-bottom: 0;
-}
-
-.food-group-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
 .food-entry {
   display: flex;
   align-items: baseline;

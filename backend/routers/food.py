@@ -26,21 +26,10 @@ Respond with ONLY valid JSON (no markdown, no explanation).
 {{
   "name":      "concise name of what was consumed, e.g. 'donut', 'coffee with oat milk', 'chicken salad'",
   "category":  "food" | "drink",
-  "meal_type": "breakfast" | "lunch" | "dinner" | "snack" | "drink",
   "notes":     "1-2 sentence honest nutritional assessment — be specific, not preachy",
   "quality":   integer 1-10 (10 = highly nutritious whole foods; 1 = pure junk with no redeeming value),
   "calories":  integer estimated kcal — best estimate for a typical serving; null only if truly impossible
 }}
-
-meal_type rules:
-- Use "drink" for any beverage (coffee, tea, water, juice, alcohol)
-- Use the local hour of consumption (provided below) as the primary signal for meal classification:
-    5–10  → breakfast
-    11–13 → lunch
-    17–21 → dinner
-    outside those windows → snack (unless the text clearly says otherwise)
-- Text context overrides time (e.g. "late lunch" at 3pm → lunch)
-- "about to" / "going to" still counts as the current time
 
 assumption rule:
 - Unless milk, cream, sugar, syrup, honey, or another addition is explicitly
@@ -68,18 +57,16 @@ calories examples:
 - pizza slice → 285
 - chicken salad (large) → 450
 - bag of chips (regular) → 150
-
-Local hour of consumption: {hour}
 """
 
 
-def _parse_food(raw: str, hour: int = 12) -> dict:
+def _parse_food(raw: str) -> dict:
     try:
         client = llm_client()
         resp = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
-                {"role": "system", "content": _PARSE_SYSTEM.format(hour=hour)},
+                {"role": "system", "content": _PARSE_SYSTEM},
                 {"role": "user",   "content": raw},
             ],
             max_tokens=200,
@@ -89,9 +76,6 @@ def _parse_food(raw: str, hour: int = 12) -> dict:
         category  = data.get("category", "food")
         if category not in ("food", "drink"):
             category = "food"
-        meal_type = data.get("meal_type")
-        if meal_type not in ("breakfast", "lunch", "dinner", "snack", "drink"):
-            meal_type = "drink" if category == "drink" else "snack"
         notes   = data.get("notes") or None
         quality = data.get("quality")
         if quality is not None:
@@ -105,10 +89,10 @@ def _parse_food(raw: str, hour: int = 12) -> dict:
                 calories = max(0, int(calories))
             except (TypeError, ValueError):
                 calories = None
-        return {"name": name, "category": category, "meal_type": meal_type, "notes": notes, "quality": quality, "calories": calories}
+        return {"name": name, "category": category, "notes": notes, "quality": quality, "calories": calories}
     except Exception:
         # Fallback: store as-is with no LLM enrichment
-        return {"name": raw[:120], "category": "food", "meal_type": "snack", "notes": None, "quality": None, "calories": None}
+        return {"name": raw[:120], "category": "food", "notes": None, "quality": None, "calories": None}
 
 
 def _entry_dict(e: models.FoodEntry) -> dict:
@@ -117,7 +101,6 @@ def _entry_dict(e: models.FoodEntry) -> dict:
         "raw_input":   e.raw_input,
         "name":        e.name,
         "category":    e.category,
-        "meal_type":   e.meal_type,
         "consumed_at": e.consumed_at.isoformat(),
         "notes":       e.notes,
         "quality":     e.quality,
@@ -133,7 +116,6 @@ def create_food_entry(payload: dict, request: Request, db: Session = Depends(get
 
     # Default to the client's local time (derived from the UTC offset header),
     # stored as a naive datetime so date-range filtering works correctly.
-    # Parse it first so we can pass the local hour to the LLM for meal classification.
     offset_mins = utc_offset_minutes(request)
     local_now = datetime.now(timezone.utc) - timedelta(minutes=offset_mins)
     consumed_at = local_now.replace(tzinfo=None)
@@ -145,7 +127,7 @@ def create_food_entry(payload: dict, request: Request, db: Session = Depends(get
         except ValueError:
             pass
 
-    parsed = _parse_food(raw, hour=consumed_at.hour)
+    parsed = _parse_food(raw)
 
     entry = models.FoodEntry(
         raw_input=raw,

@@ -962,9 +962,6 @@ function FoodQualityTrend({ range }) {
 
 // ── Food log ──────────────────────────────────────────────────────────────────
 
-const MEAL_ICONS = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎', drink: '☕' }
-const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack', 'drink']
-
 function qualityColor(q) {
   if (q == null) return 'var(--text-muted)'
   if (q >= 7) return '#22c55e'
@@ -1006,18 +1003,6 @@ function FoodLog({ range = 30, revision = 0 }) {
     setEntries(prev => prev.filter(e => e.id !== id))
   }
 
-  // Group by meal_type in meal order, then unrecognised
-  const grouped = MEAL_ORDER.reduce((acc, mt) => {
-    const items = entries.filter(e => e.meal_type === mt)
-    if (items.length) acc.push({ meal_type: mt, items })
-    return acc
-  }, [])
-  const otherMeals = new Set(entries.map(e => e.meal_type).filter(mt => !MEAL_ORDER.includes(mt)))
-  otherMeals.forEach(mt => {
-    const items = entries.filter(e => e.meal_type === mt)
-    if (items.length) grouped.push({ meal_type: mt, items })
-  })
-
   return (
     <section className="health-section">
       <div className="health-section-header">
@@ -1050,48 +1035,41 @@ function FoodLog({ range = 30, revision = 0 }) {
         </button>
       </div>
 
-      {grouped.length === 0 && (
+      {entries.length === 0 && (
         <p className="food-empty">Nothing logged yet for this day.</p>
       )}
 
-      {grouped.map(({ meal_type, items }) => (
-        <div key={meal_type} className="food-group">
-          <div className="food-group-label">
-            {MEAL_ICONS[meal_type] ?? '🍽'} {meal_type}
+      {entries.map(entry => {
+        const time = new Date(entry.consumed_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        return (
+          <div key={entry.id} className="food-entry">
+            <span className="food-entry-time">{time}</span>
+            <span className="food-entry-name">{entry.name}</span>
+            {entry.calories != null && (
+              <span className="food-entry-calories" title="Estimated calories">
+                {entry.calories} kcal
+              </span>
+            )}
+            {entry.quality != null && (
+              <span
+                className="food-entry-quality"
+                style={{ color: qualityColor(entry.quality) }}
+                title={`Quality score: ${entry.quality}/10`}
+              >
+                {entry.quality}/10
+              </span>
+            )}
+            {entry.notes && (
+              <span className="food-entry-notes">{entry.notes}</span>
+            )}
+            <button
+              className="food-entry-delete"
+              onClick={() => handleDelete(entry.id)}
+              aria-label="Remove"
+            >✕</button>
           </div>
-          {items.map(entry => {
-            const time = new Date(entry.consumed_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-            return (
-              <div key={entry.id} className="food-entry">
-                <span className="food-entry-time">{time}</span>
-                <span className="food-entry-name">{entry.name}</span>
-                {entry.calories != null && (
-                  <span className="food-entry-calories" title="Estimated calories">
-                    {entry.calories} kcal
-                  </span>
-                )}
-                {entry.quality != null && (
-                  <span
-                    className="food-entry-quality"
-                    style={{ color: qualityColor(entry.quality) }}
-                    title={`Quality score: ${entry.quality}/10`}
-                  >
-                    {entry.quality}/10
-                  </span>
-                )}
-                {entry.notes && (
-                  <span className="food-entry-notes">{entry.notes}</span>
-                )}
-                <button
-                  className="food-entry-delete"
-                  onClick={() => handleDelete(entry.id)}
-                  aria-label="Remove"
-                >✕</button>
-              </div>
-            )
-          })}
-        </div>
-      ))}
+        )
+      })}
       <FoodQualityTrend range={range} />
     </section>
   )

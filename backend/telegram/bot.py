@@ -1557,7 +1557,6 @@ def _reply_log_mood(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     """Log a food or drink entry."""
     raw = (intent.get("raw_input") or "").strip()
-    meal_type = intent.get("meal_type") or None
 
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
@@ -1566,7 +1565,6 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
             raw_input=raw,
             name=raw,
             category="food",
-            meal_type=meal_type,
             consumed_at=now_local,
         )
         db.add(entry)
@@ -1577,8 +1575,7 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
         session = _get_session(chat_id)
         _push_undo(session, {"type": "food_log", "entry_id": entry_id, "title": raw})
 
-    meal_label = f" ({meal_type})" if meal_type else ""
-    return f"✓ Food logged{meal_label}: {raw}\nSend <b>undo</b> to remove it."
+    return f"✓ Food logged: {raw}\nSend <b>undo</b> to remove it."
 
 
 def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:

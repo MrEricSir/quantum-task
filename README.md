@@ -466,7 +466,7 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | What you send | What happens |
 |---|---|
 | `had a salad for lunch` | Logs a food entry |
-| `coffee this morning` | Logs with meal type detected |
+| `coffee this morning` | Logs a food entry |
 | `energy 4` | Logs today's energy level (1--5 scale) |
 | `feeling tired, 2/5` | Same -- natural phrasing works |
 | `rowed 5000m` | Logs a workout entry (type, value, and unit parsed automatically) |

@@ -633,21 +633,19 @@ class TestBotLogFood:
     def test_logs_food_entry(self):
         from telegram.bot import _reply_log_food
         with patch("telegram.bot.SessionLocal", BotTestSession):
-            reply = _reply_log_food({"raw_input": "yogurt and coffee", "meal_type": "breakfast"}, 0)
+            reply = _reply_log_food({"raw_input": "yogurt and coffee"}, 0)
         assert "Food logged" in reply
         assert "yogurt and coffee" in reply
-        assert "breakfast" in reply
         with BotTestSession() as db:
             entry = db.query(models.FoodEntry).filter_by(raw_input="yogurt and coffee").first()
             assert entry is not None
-            assert entry.meal_type == "breakfast"
 
     def test_pushes_undo(self):
         from telegram.bot import _reply_log_food, _reply_undo, _sessions
         chat_id = "test_food_undo"
         _sessions.pop(chat_id, None)
         with patch("telegram.bot.SessionLocal", BotTestSession):
-            _reply_log_food({"raw_input": "coffee", "meal_type": None}, 0, chat_id=chat_id)
+            _reply_log_food({"raw_input": "coffee"}, 0, chat_id=chat_id)
             undo_reply = _reply_undo(chat_id)
         assert "coffee" in undo_reply
         with BotTestSession() as db:
@@ -908,7 +906,7 @@ class TestRouteMessageCapabilityDispatch:
     @pytest.mark.parametrize("action,intent,expected_substring", [
         ("mark_complete", {"match_query": "dentist"}, "Marked complete"),
         ("complete_habit", {"match_query": "meditate"}, "done for today"),
-        ("log_food", {"raw_input": "toast", "meal_type": None}, "Food logged"),
+        ("log_food", {"raw_input": "toast"}, "Food logged"),
         ("log_mood", {"energy": 4, "note": None}, "Energy logged"),
         ("log_workout", {"raw_input": "ran 5 miles", "type": "run", "value": 5, "unit": "miles"}, "Workout logged"),
     ])
@@ -1104,7 +1102,7 @@ def _make_food_entry(consumed_at, quality=None):
     with BotTestSession() as db:
         db.add(models.FoodEntry(
             raw_input="test item", name="test item", category="food",
-            meal_type="snack", consumed_at=consumed_at, quality=quality,
+            consumed_at=consumed_at, quality=quality,
         ))
         db.commit()
 

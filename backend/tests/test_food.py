@@ -52,14 +52,13 @@ def client(db_session):
 _PARSED = {
     "name": "donut",
     "category": "food",
-    "meal_type": "snack",
     "notes": "High in sugar and refined carbs.",
     "quality": 3,
     "calories": 300,
 }
 
 
-def _mock_parse(raw: str, hour: int = 12) -> dict:
+def _mock_parse(raw: str) -> dict:
     return {**_PARSED, "name": raw[:20]}  # name reflects input for traceability
 
 
@@ -74,7 +73,6 @@ class TestFoodCRUD:
         data = r.json()
         assert data["name"] == "I ate a donut"
         assert data["category"] == "food"
-        assert data["meal_type"] == "snack"
         assert data["quality"] == 3
         assert "id" in data
         assert "consumed_at" in data
@@ -174,7 +172,7 @@ class TestFoodQualityTrend:
     def _seed(self, db_session, consumed_at: str, quality: int):
         entry = models.FoodEntry(
             raw_input="test", name="test", category="food",
-            meal_type="snack", quality=quality, calories=None, notes=None,
+            quality=quality, calories=None, notes=None,
             consumed_at=datetime.fromisoformat(consumed_at),
         )
         db_session.add(entry)
@@ -198,7 +196,7 @@ class TestFoodQualityTrend:
     def test_excludes_null_quality(self, client, db_session):
         entry = models.FoodEntry(
             raw_input="test", name="no quality", category="food",
-            meal_type="snack", quality=None, calories=None, notes=None,
+            quality=None, calories=None, notes=None,
             consumed_at=datetime.fromisoformat("2026-07-25T10:00:00"),
         )
         db_session.add(entry)

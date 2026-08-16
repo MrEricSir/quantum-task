@@ -107,7 +107,6 @@ def test_task_complete_parse_description_in_assembled_prompt():
 
 def test_food_telegram_description_in_intent_prompt():
     assert "log_food" in _TELEGRAM_INTENT_PROMPT
-    assert "meal_type" in _TELEGRAM_INTENT_PROMPT
     assert "raw_input" in _TELEGRAM_INTENT_PROMPT
 
 

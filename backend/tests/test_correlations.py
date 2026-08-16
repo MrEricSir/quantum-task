@@ -58,7 +58,7 @@ def _add_card_completed_on(db, date_str):
 
 def _add_food_entry_on(db, date_str, quality):
     db.add(models.FoodEntry(
-        raw_input="test", name="test", category="food", meal_type="snack",
+        raw_input="test", name="test", category="food",
         consumed_at=datetime.fromisoformat(f"{date_str}T12:00:00"), quality=quality,
     ))
 

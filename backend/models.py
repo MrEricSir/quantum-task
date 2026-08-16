@@ -212,7 +212,6 @@ class FoodEntry(Base):
     raw_input   = Column(String, nullable=False)          # original text from user
     name        = Column(String, nullable=False)           # parsed name ("donut", "coffee with milk")
     category    = Column(String, nullable=False)           # "food" | "drink"
-    meal_type   = Column(String, nullable=True)            # "breakfast"|"lunch"|"dinner"|"snack"|"drink"
     consumed_at = Column(DateTime, nullable=False)         # when eaten/drunk (defaults to now)
     notes       = Column(String, nullable=True)            # brief LLM nutritional assessment
     quality     = Column(Integer, nullable=True)           # 1–10 (10 = highly nutritious)
