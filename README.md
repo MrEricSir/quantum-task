@@ -424,10 +424,19 @@ Receive your daily briefing as a Telegram message each morning, and send message
 
 #### Capturing and completing tasks
 
+Capture goes through the exact same parsing pipeline as the webapp's Quick Add (splitting,
+date resolution, tag matching/creation) — not a separate, thinner implementation — so
+anything Quick Add can do, a Telegram message can do too.
+
 | What you send | What happens |
 |---|---|
 | `call dentist tomorrow at 2pm` | Captures a new task via the AI parser — same NLP as Quick Add |
 | `meeting with Sarah next Friday` | Captures with date resolved |
+| `call dentist and buy eggs` | Splits into two separate tasks, same as typing it into Quick Add |
+| `stretch every morning` | Captures a recurring task |
+| `meditate every day` | Creates a new habit (not a one-off task) |
+| `set my step goal to 10,000` | Sets the Daily Steps habit's target |
+| `set my weight goal to 75kg` | Sets the health goal used on the Health page |
 | `done dentist` | Marks the matching task complete |
 | `done meditation` | Marks the matching habit complete for today |
 | `undo` | Reverses your last action (capture, completion, or reschedule) |
@@ -467,6 +476,7 @@ Receive your daily briefing as a Telegram message each morning, and send message
 |---|---|
 | `had a salad for lunch` | Logs a food entry |
 | `coffee this morning` | Logs a food entry |
+| `had a bagel, coffee, and a banana` | Logs three separate food entries -- multi-item messages are split the same way as the webapp's food log |
 | `energy 4` | Logs today's energy level (1--5 scale) |
 | `feeling tired, 2/5` | Same -- natural phrasing works |
 | `rowed 5000m` | Logs a workout entry (type, value, and unit parsed automatically) |

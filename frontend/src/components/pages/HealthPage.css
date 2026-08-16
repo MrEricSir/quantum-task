@@ -718,6 +718,7 @@
   line-height: 1.4;
 }
 
+.food-entry-edit,
 .food-entry-delete {
   margin-left: auto;
   background: none;
@@ -732,12 +733,93 @@
   align-self: center;
 }
 
+.food-entry-edit {
+  margin-left: auto;
+}
+
+.food-entry-delete {
+  margin-left: 4px;
+}
+
+.food-entry:hover .food-entry-edit,
 .food-entry:hover .food-entry-delete {
   opacity: 0.5;
 }
 
+.food-entry-edit:hover,
 .food-entry-delete:hover {
   opacity: 1 !important;
+}
+
+.food-entry-edit-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.food-entry-edit-form input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.food-entry-edit-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.food-entry-edit-time {
+  width: 165px;
+}
+
+.food-entry-edit-calories,
+.food-entry-edit-quality {
+  width: 64px;
+}
+
+.food-entry-edit-notes {
+  flex: 1;
+  min-width: 100%;
+}
+
+.food-entry-edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.food-entry-edit-save {
+  padding: 3px 12px;
+  border-radius: 5px;
+  border: none;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.food-entry-edit-save:hover {
+  background: #6d28d9;
+}
+
+.food-entry-edit-cancel {
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
 }
 
 /* Quick add food preview */

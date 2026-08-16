@@ -629,27 +629,68 @@ class TestBotCompleteHabit:
 
 
 class TestBotLogFood:
+    """parse_food_entries() is the single shared split+enrich implementation
+    used by both the webapp's food log (routers/food.py) and Telegram --
+    mocked here the same way tests/test_food.py mocks it for the webapp side,
+    so both suites exercise their own glue code without hitting a real LLM."""
 
-    def test_logs_food_entry(self):
+    def _mock_items(self, *names):
+        return [
+            {"name": n, "category": "food", "source_text": n, "notes": None,
+             "quality": None, "calories": None}
+            for n in names
+        ]
+
+    def test_logs_a_single_food_entry(self):
         from telegram.bot import _reply_log_food
-        with patch("telegram.bot.SessionLocal", BotTestSession):
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_food_entries", return_value=self._mock_items("Yogurt and coffee")):
             reply = _reply_log_food({"raw_input": "yogurt and coffee"}, 0)
         assert "Food logged" in reply
-        assert "yogurt and coffee" in reply
+        assert "Yogurt and coffee" in reply
         with BotTestSession() as db:
-            entry = db.query(models.FoodEntry).filter_by(raw_input="yogurt and coffee").first()
+            entry = db.query(models.FoodEntry).filter_by(name="Yogurt and coffee").first()
             assert entry is not None
+
+    def test_splits_a_multi_item_message_into_separate_entries(self):
+        """The exact behavior this was built to fix: Telegram must split a
+        multi-item message into multiple entries the same way the webapp's
+        capture flow does, not store it as one combined entry."""
+        from telegram.bot import _reply_log_food
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_food_entries",
+                   return_value=self._mock_items("Bagel", "Coffee", "Banana")):
+            reply = _reply_log_food({"raw_input": "had a bagel, coffee, and a banana"}, 0)
+        assert "3 food items logged" in reply
+        assert "Bagel" in reply and "Coffee" in reply and "Banana" in reply
+        with BotTestSession() as db:
+            names = {e.name for e in db.query(models.FoodEntry).all()}
+            assert names == {"Bagel", "Coffee", "Banana"}
 
     def test_pushes_undo(self):
         from telegram.bot import _reply_log_food, _reply_undo, _sessions
         chat_id = "test_food_undo"
         _sessions.pop(chat_id, None)
-        with patch("telegram.bot.SessionLocal", BotTestSession):
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_food_entries", return_value=self._mock_items("Coffee")):
             _reply_log_food({"raw_input": "coffee"}, 0, chat_id=chat_id)
             undo_reply = _reply_undo(chat_id)
-        assert "coffee" in undo_reply
+        assert "Coffee" in undo_reply
         with BotTestSession() as db:
-            assert db.query(models.FoodEntry).filter_by(raw_input="coffee").count() == 0
+            assert db.query(models.FoodEntry).filter_by(name="Coffee").count() == 0
+
+    def test_undo_removes_every_entry_from_a_split_message(self):
+        from telegram.bot import _reply_log_food, _reply_undo, _sessions
+        chat_id = "test_food_undo_multi"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_food_entries",
+                   return_value=self._mock_items("Bagel", "Coffee", "Banana")):
+            _reply_log_food({"raw_input": "bagel, coffee, and a banana"}, 0, chat_id=chat_id)
+            undo_reply = _reply_undo(chat_id)
+        assert "3 food logs" in undo_reply
+        with BotTestSession() as db:
+            assert db.query(models.FoodEntry).count() == 0
 
 
 class TestBotLogMood:
@@ -921,12 +962,255 @@ class TestRouteMessageCapabilityDispatch:
         assert expected_substring in reply
 
     def test_unrecognised_action_falls_through_to_capture(self):
+        import schemas
         from telegram.bot import _route_message
+        fake_item = schemas.ParsedCard(type="task", title="buy milk", section="later")
         with patch("telegram.bot.SessionLocal", BotTestSession), \
-             patch("telegram.bot._parse_telegram_intent",
-                   return_value={"action": "capture", "title": "buy milk", "section": "later"}):
+             patch("telegram.bot._parse_telegram_intent", return_value={"action": "capture"}), \
+             patch("routers.cards.parse_bulk_text", return_value=[fake_item]):
             reply = _route_message("buy milk", 0)
         assert "milk" in reply.lower() or "added" in reply.lower() or "captured" in reply.lower()
+
+
+class TestCaptureFromText:
+    """_capture_from_text() is Telegram's 'capture' fallback, rebuilt to go
+    through the exact same parse_bulk_text() the webapp's Quick Add uses --
+    real splitting, resolve_dates/post_process corrections, recurrence,
+    goal-setting, and habit creation, none of which the old hand-rolled
+    single-item extraction supported. parse_bulk_text() itself is mocked
+    throughout (it's covered by its own LLM-touching tests elsewhere); these
+    tests exercise the dispatch/creation logic that runs on its output."""
+
+    def _item(self, **kwargs):
+        import schemas
+        defaults = {"type": "task", "title": "Untitled", "section": "later"}
+        return schemas.ParsedCard(**{**defaults, **kwargs})
+
+    def test_single_task_creates_a_card(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(title="buy milk", section="today")]):
+            reply = _capture_from_text("buy milk", 0)
+        assert "buy milk" in reply
+        assert "Today" in reply
+        assert "Send <b>undo</b> to remove it." in reply
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="buy milk").first()
+            assert card is not None
+            assert card.section == "today"
+
+    def test_splits_a_multi_item_message_into_separate_cards(self):
+        from telegram.bot import _capture_from_text
+        items = [self._item(title="call dentist"), self._item(title="buy eggs")]
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text", return_value=items):
+            reply = _capture_from_text("call dentist and buy eggs", 0)
+        assert "call dentist" in reply
+        assert "buy eggs" in reply
+        with BotTestSession() as db:
+            titles = {c.title for c in db.query(models.Card).all()}
+            assert titles == {"call dentist", "buy eggs"}
+
+    def test_recurrence_rule_is_saved(self):
+        """The old capture path had no recurrence_rule support at all."""
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(title="stretch", section="today", recurrence_rule="daily")]):
+            _capture_from_text("stretch every day", 0)
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="stretch").first()
+            assert card.recurrence_rule == "daily"
+
+    def test_suggested_tag_matches_existing_tag_case_insensitively(self):
+        with BotTestSession() as db:
+            db.add(models.Tag(name="Errands"))
+            db.commit()
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(title="buy milk", suggested_tags=["errands"])]):
+            _capture_from_text("buy milk", 0)
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="buy milk").first()
+            assert {t.name for t in card.tags} == {"Errands"}
+            assert db.query(models.Tag).count() == 1  # no duplicate created
+
+    def test_suggested_tag_with_no_existing_match_is_created(self):
+        """The old capture path only did an exact match and silently dropped
+        anything that didn't already exist -- never created new tags."""
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(title="buy milk", suggested_tags=["Groceries"])]):
+            _capture_from_text("buy milk", 0)
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="buy milk").first()
+            assert {t.name for t in card.tags} == {"Groceries"}
+
+    def test_habit_type_creates_a_habit_not_a_card(self):
+        """The old capture path had no way to create a habit at all."""
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="habit", title="Meditate daily")]):
+            reply = _capture_from_text("meditate every day", 0)
+        assert "Meditate daily" in reply
+        with BotTestSession() as db:
+            assert db.query(models.Habit).filter_by(name="Meditate daily").first() is not None
+            assert db.query(models.Card).count() == 0
+
+    def test_steps_goal_creates_a_daily_steps_habit(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="goal", title="steps goal",
+                                             health_metric="steps", health_goal=10000)]):
+            reply = _capture_from_text("set my step goal to 10000", 0)
+        assert "10000" in reply
+        with BotTestSession() as db:
+            habit = db.query(models.Habit).filter_by(name="Daily Steps").first()
+            assert habit is not None
+            assert habit.health_metric == "steps"
+            assert habit.health_goal == 10000
+
+    def test_weight_goal_persists_via_withings_goals(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="goal", title="weight goal",
+                                             health_metric="weight", health_goal=75.0)]):
+            _capture_from_text("set my weight goal to 75kg", 0)
+        with BotTestSession() as db:
+            from routers.withings import _load_goals
+            assert _load_goals(db)["weight"] == 75.0
+
+    def test_workout_type_parses_and_creates_a_workout_entry(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="workout", title="ran 5k", source_text="ran 5k")]), \
+             patch("routers.workouts._parse_workout",
+                   return_value={"type": "run", "value": 5.0, "unit": "km", "notes": "A 5k run."}):
+            reply = _capture_from_text("ran 5k", 0)
+        assert "ran 5k" in reply
+        with BotTestSession() as db:
+            entry = db.query(models.WorkoutEntry).first()
+            assert entry is not None
+            assert entry.type == "run"
+            assert entry.value == 5.0
+            assert entry.notes == "A 5k run."
+
+    def test_food_type_delegates_to_shared_food_logging(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="food", title="a bagel", source_text="a bagel")]), \
+             patch("telegram.bot.parse_food_entries",
+                   return_value=[{"name": "Bagel", "category": "food", "source_text": "a bagel",
+                                  "notes": None, "quality": None, "calories": None}]):
+            reply = _capture_from_text("had a bagel", 0)
+        assert "Bagel" in reply
+        with BotTestSession() as db:
+            assert db.query(models.FoodEntry).filter_by(name="Bagel").first() is not None
+
+    def test_mood_type_delegates_to_shared_mood_logging(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="mood", title="energy", energy=4, description="feeling good")]):
+            reply = _capture_from_text("feeling good, energy 4", 0)
+        assert "Energy logged" in reply
+        with BotTestSession() as db:
+            row = db.query(models.MoodLog).first()
+            assert row.energy == 4
+
+    def test_task_complete_type_delegates_to_existing_matcher(self):
+        _make_card("Dentist appointment")
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="task_complete", title="dentist")]):
+            reply = _capture_from_text("finished the dentist thing", 0)
+        assert "Marked complete" in reply
+
+    def test_habit_check_type_delegates_to_existing_matcher(self):
+        _make_habit("Meditate")
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="habit_check", title="meditate")]):
+            reply = _capture_from_text("did my meditation", 0)
+        assert "done for today" in reply
+
+    def test_assist_type_creates_nothing(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="assist", title="what should I focus on today?")]):
+            reply = _capture_from_text("what should I focus on today?", 0)
+        assert "question" in reply.lower()
+        with BotTestSession() as db:
+            assert db.query(models.Card).count() == 0
+
+    def test_falls_back_to_plain_capture_when_parsing_fails(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text", side_effect=RuntimeError("LLM down")):
+            reply = _capture_from_text("some free text", 0)
+        assert "some free text" in reply
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="some free text").first()
+            assert card is not None
+            assert card.section == "today"
+
+    def test_falls_back_to_plain_capture_when_no_items_returned(self):
+        from telegram.bot import _capture_from_text
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text", return_value=[]):
+            reply = _capture_from_text("some free text", 0)
+        with BotTestSession() as db:
+            assert db.query(models.Card).filter_by(title="some free text").first() is not None
+
+    def test_undo_removes_every_card_from_a_split_message(self):
+        from telegram.bot import _capture_from_text, _reply_undo, _sessions
+        chat_id = "test_capture_multi_undo"
+        _sessions.pop(chat_id, None)
+        items = [self._item(title="call dentist"), self._item(title="buy eggs")]
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text", return_value=items):
+            _capture_from_text("call dentist and buy eggs", 0, chat_id=chat_id)
+            undo_reply = _reply_undo(chat_id)
+        assert "Removed" in undo_reply
+        with BotTestSession() as db:
+            assert db.query(models.Card).count() == 0
+
+    def test_undo_removes_a_created_habit(self):
+        from telegram.bot import _capture_from_text, _reply_undo, _sessions
+        chat_id = "test_capture_habit_undo"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="habit", title="Meditate daily")]):
+            _capture_from_text("meditate every day", 0, chat_id=chat_id)
+            _reply_undo(chat_id)
+        with BotTestSession() as db:
+            assert db.query(models.Habit).count() == 0
+
+    def test_undo_removes_a_created_workout(self):
+        from telegram.bot import _capture_from_text, _reply_undo, _sessions
+        chat_id = "test_capture_workout_undo"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="workout", title="ran 5k", source_text="ran 5k")]), \
+             patch("routers.workouts._parse_workout",
+                   return_value={"type": "run", "value": 5.0, "unit": "km", "notes": None}):
+            _capture_from_text("ran 5k", 0, chat_id=chat_id)
+            _reply_undo(chat_id)
+        with BotTestSession() as db:
+            assert db.query(models.WorkoutEntry).count() == 0
 
 
 class TestCheckBridgeJobs:

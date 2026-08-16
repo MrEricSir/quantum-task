@@ -130,11 +130,11 @@ def get_cards(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/api/cards", response_model=schemas.Card, status_code=201)
-def create_card(card: schemas.CardCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    count = db.query(models.Card).filter(models.Card.section == card.section).count()
-    data = card.model_dump()
-    tag_ids = data.pop("tag_ids", [])
+def create_card_row(db: Session, data: dict, tag_ids: list[int]) -> models.Card:
+    """Shared Card-creation DB logic: position calc, today_since, GitHub
+    repo-tag auto-tagging, tag resolution. Used by POST /api/cards and
+    telegram/bot.py's capture handling."""
+    count = db.query(models.Card).filter(models.Card.section == data.get("section", "today")).count()
     # Cards linked to a GitHub item automatically pick up any tags configured
     # for that repo (or its owner), in addition to whatever was passed in.
     tag_ids = list(set(tag_ids) | set(github_sync.tag_ids_for_external_id(db, data.get("external_id"))))
@@ -147,6 +147,14 @@ def create_card(card: schemas.CardCreate, background_tasks: BackgroundTasks, db:
     db.add(db_card)
     db.commit()
     db.refresh(db_card)
+    return db_card
+
+
+@router.post("/api/cards", response_model=schemas.Card, status_code=201)
+def create_card(card: schemas.CardCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    data = card.model_dump()
+    tag_ids = data.pop("tag_ids", [])
+    db_card = create_card_row(db, data, tag_ids)
     background_tasks.add_task(_embeddings.upsert_bg, db_card.id, db_card.title, db_card.description)
     return db_card
 
@@ -205,9 +213,16 @@ def parse_card(request: Request, req: schemas.ParseRequest, db: Session = Depend
         )
 
 
-@router.post("/api/cards/parse-bulk", response_model=schemas.BulkParseResponse)
-def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
-    today = local_date(request)
+def parse_bulk_text(db: Session, text: str, today) -> list[schemas.ParsedCard]:
+    """Split free text into one or more structured items (task/habit/goal/
+    food/workout/habit_check/task_complete/mood/assist), each date-resolved
+    and post-processed. The single source of truth for turning free text into
+    ParsedCard items -- used by POST /api/cards/parse-bulk (webapp's Quick
+    Add) and telegram/bot.py's capture handling, so both surfaces split
+    multi-item messages and apply the same deterministic corrections
+    (resolve_dates, post_process) rather than each doing their own thinner
+    parsing.
+    """
     tomorrow = today + timedelta(days=1)
     tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
     tags_section = (
@@ -222,34 +237,41 @@ def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depend
         tomorrow=tomorrow.isoformat(),
         tags_section=tags_section,
     )
+    client = llm_client()
+    response = client.chat.completions.create(
+        model=plugin.model_name,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text},
+        ],
+    )
+    data = json.loads(response.choices[0].message.content)
+    raw_items = data.get("items", [])
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    items = []
+    for i, raw in enumerate(raw_items):
+        raw_title = raw.get("title", "") if isinstance(raw.get("title"), str) else ""
+        raw = plugin.normalize_raw(raw)
+        line = lines[i] if i < len(lines) else ""
+        if len(lines) == len(raw_items):
+            date_hint = line or raw_title
+        else:
+            date_hint = raw_title
+        parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=date_hint)
+        parsed = resolve_dates(parsed, text=date_hint, today=today)
+        if (parsed.source_text and not parsed.description
+                and parsed.source_text.lower().strip() != parsed.title.lower().strip()):
+            parsed.description = parsed.source_text
+        items.append(parsed)
+    return items
+
+
+@router.post("/api/cards/parse-bulk", response_model=schemas.BulkParseResponse)
+def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
+    today = local_date(request)
     try:
-        client = llm_client()
-        response = client.chat.completions.create(
-            model=plugin.model_name,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": req.text},
-            ],
-        )
-        data = json.loads(response.choices[0].message.content)
-        raw_items = data.get("items", [])
-        lines = [l.strip() for l in req.text.splitlines() if l.strip()]
-        items = []
-        for i, raw in enumerate(raw_items):
-            raw_title = raw.get("title", "") if isinstance(raw.get("title"), str) else ""
-            raw = plugin.normalize_raw(raw)
-            line = lines[i] if i < len(lines) else ""
-            if len(lines) == len(raw_items):
-                date_hint = line or raw_title
-            else:
-                date_hint = raw_title
-            parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=date_hint)
-            parsed = resolve_dates(parsed, text=date_hint, today=today)
-            if (parsed.source_text and not parsed.description
-                    and parsed.source_text.lower().strip() != parsed.title.lower().strip()):
-                parsed.description = parsed.source_text
-            items.append(parsed)
+        items = parse_bulk_text(db, req.text, today)
         return schemas.BulkParseResponse(items=items)
     except Exception as e:
         raise HTTPException(

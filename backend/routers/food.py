@@ -1,12 +1,11 @@
 """
 Food and drink log.
 
-POST   /api/food            – parse raw text with LLM, store entry
+POST   /api/food            – parse raw text with LLM, store one entry per distinct item
 GET    /api/food?date=...   – entries for a date (YYYY-MM-DD; defaults to today)
 DELETE /api/food/{id}       – remove an entry
 """
 
-import json
 from datetime import date, datetime, timedelta, timezone
 from typing import List
 
@@ -15,84 +14,10 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes
+from capabilities.food import parse_food_entries
+from deps import get_db, local_date, utc_offset_minutes
 
 router = APIRouter()
-
-_PARSE_SYSTEM = """\
-You parse food and drink log entries into structured data. \
-Respond with ONLY valid JSON (no markdown, no explanation).
-
-{{
-  "name":      "concise name of what was consumed, e.g. 'donut', 'coffee with oat milk', 'chicken salad'",
-  "category":  "food" | "drink",
-  "notes":     "1-2 sentence honest nutritional assessment — be specific, not preachy",
-  "quality":   integer 1-10 (10 = highly nutritious whole foods; 1 = pure junk with no redeeming value),
-  "calories":  integer estimated kcal — best estimate for a typical serving; null only if truly impossible
-}}
-
-assumption rule:
-- Unless milk, cream, sugar, syrup, honey, or another addition is explicitly
-  mentioned, assume the plain/black/unsweetened form (e.g. "tea" and "coffee"
-  mean plain tea and black coffee, not a version with added milk or sugar)
-
-quality examples:
-- leafy salad, grilled salmon → 9
-- black coffee, plain tea (no milk/sugar) → 8
-- oatmeal with fruit → 8
-- banana → 7
-- coffee with milk → 6
-- white rice with vegetables → 6
-- pizza slice → 4
-- donut → 3
-- bag of chips → 3
-- energy drink → 2
-
-calories examples:
-- black coffee → 5
-- plain tea → 2
-- coffee with oat milk → 60
-- banana → 90
-- donut → 300
-- pizza slice → 285
-- chicken salad (large) → 450
-- bag of chips (regular) → 150
-"""
-
-
-def _parse_food(raw: str) -> dict:
-    try:
-        client = llm_client()
-        resp = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": _PARSE_SYSTEM},
-                {"role": "user",   "content": raw},
-            ],
-            max_tokens=200,
-        )
-        data = json.loads(resp.choices[0].message.content.strip())
-        name      = str(data.get("name", raw[:80]))
-        category  = data.get("category", "food")
-        if category not in ("food", "drink"):
-            category = "food"
-        notes   = data.get("notes") or None
-        quality = data.get("quality")
-        if quality is not None:
-            try:
-                quality = max(1, min(10, int(quality)))
-            except (TypeError, ValueError):
-                quality = None
-        calories = data.get("calories")
-        if calories is not None:
-            try:
-                calories = max(0, int(calories))
-            except (TypeError, ValueError):
-                calories = None
-        return {"name": name, "category": category, "notes": notes, "quality": quality, "calories": calories}
-    except Exception:
-        # Fallback: store as-is with no LLM enrichment
-        return {"name": raw[:120], "category": "food", "notes": None, "quality": None, "calories": None}
 
 
 def _entry_dict(e: models.FoodEntry) -> dict:
@@ -127,17 +52,21 @@ def create_food_entry(payload: dict, request: Request, db: Session = Depends(get
         except ValueError:
             pass
 
-    parsed = _parse_food(raw)
+    parsed_items = parse_food_entries(raw)
 
-    entry = models.FoodEntry(
-        raw_input=raw,
-        consumed_at=consumed_at,
-        **parsed,
-    )
-    db.add(entry)
+    entries = []
+    for parsed in parsed_items:
+        entry = models.FoodEntry(
+            raw_input=parsed.pop("source_text", None) or raw,
+            consumed_at=consumed_at,
+            **parsed,
+        )
+        db.add(entry)
+        entries.append(entry)
     db.commit()
-    db.refresh(entry)
-    return _entry_dict(entry)
+    for entry in entries:
+        db.refresh(entry)
+    return [_entry_dict(e) for e in entries]
 
 
 @router.get("/api/food")
@@ -182,6 +111,40 @@ def get_food_quality_trend(days: int = 30, db: Session = Depends(get_db)):
         {"date": d, "value": round(sum(qs) / len(qs), 2)}
         for d, qs in sorted(by_date.items())
     ]
+
+
+@router.put("/api/food/{entry_id}")
+def update_food_entry(entry_id: int, payload: dict, db: Session = Depends(get_db)):
+    """Manual correction of a logged entry -- no LLM re-parse, just direct
+    field edits (the LLM already had its shot when the entry was created)."""
+    entry = db.query(models.FoodEntry).filter_by(id=entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    if "name" in payload:
+        name = (payload["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="name cannot be empty")
+        entry.name = name
+    if "category" in payload and payload["category"] in ("food", "drink"):
+        entry.category = payload["category"]
+    if "notes" in payload:
+        entry.notes = payload["notes"] or None
+    if "quality" in payload:
+        quality = payload["quality"]
+        entry.quality = max(1, min(10, int(quality))) if quality is not None else None
+    if "calories" in payload:
+        calories = payload["calories"]
+        entry.calories = max(0, int(calories)) if calories is not None else None
+    if "consumed_at" in payload and payload["consumed_at"]:
+        try:
+            entry.consumed_at = datetime.fromisoformat(payload["consumed_at"])
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid consumed_at format")
+
+    db.commit()
+    db.refresh(entry)
+    return _entry_dict(entry)
 
 
 @router.delete("/api/food/{entry_id}")

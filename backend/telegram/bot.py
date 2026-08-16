@@ -11,6 +11,7 @@ import traceback
 from datetime import datetime, timezone, timedelta
 
 import app_setting_keys as keys
+from capabilities.food import parse_food_entries
 from capabilities.registry import REGISTRY, by_telegram_action, set_telegram_handler
 import models
 from database import SessionLocal
@@ -493,7 +494,7 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
         return _reply_overdue(tz_offset)
 
     # "capture" or anything unrecognised
-    return _capture_from_intent(intent, text, tz_offset, chat_id)
+    return _capture_from_text(text, tz_offset, chat_id)
 
 
 # ── Calendar helpers ──────────────────────────────────────────────────────────
@@ -1094,47 +1095,136 @@ def _reply_complete(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     return f"✓ Marked complete: <b>{title}</b>\nSend <b>undo</b> to reverse."
 
 
-def _capture_from_intent(intent: dict, original_text: str, tz_offset: int, chat_id: str = "") -> str:
-    """Create a card from a 'capture' intent returned by the LLM."""
-    section = intent.get("section") or "later"
-    if section not in ("today", "week", "month", "later"):
-        section = "later"
-    title = (intent.get("title") or original_text).strip()
+_SECTION_LABELS = {"today": "Today", "week": "This Week", "month": "This Month", "later": "Later"}
 
-    scheduled_at = None
-    raw_dt = intent.get("scheduled_at")
-    if raw_dt:
-        try:
-            scheduled_at = datetime.fromisoformat(raw_dt)
-        except (ValueError, TypeError):
-            pass
+
+def _resolve_tag_ids(db, tag_names: list[str]) -> list[int]:
+    """Case-insensitive match against existing tags; create any that don't
+    exist yet. Mirrors QuickAddModal.jsx's resolveNewTags on the frontend."""
+    if not tag_names:
+        return []
+    by_lower = {t.name.lower(): t for t in db.query(models.Tag).all()}
+    ids = []
+    for name in tag_names:
+        tag = by_lower.get(name.lower())
+        if not tag:
+            tag = models.Tag(name=name)
+            db.add(tag)
+            db.flush()
+            by_lower[name.lower()] = tag
+        ids.append(tag.id)
+    return ids
+
+
+def _capture_from_text(text: str, tz_offset: int, chat_id: str = "") -> str:
+    """Create one or more items from free text via the same shared parsing
+    pipeline the webapp's Quick Add uses (routers.cards.parse_bulk_text) --
+    splitting multi-item messages, resolving dates, and applying the same
+    deterministic corrections -- rather than Telegram extracting title/
+    section/date itself from a single classification call with no
+    algorithmic fallback. Each parsed item is then dispatched by type,
+    reusing existing Telegram capability handlers for food/mood/habit_check/
+    task_complete (already correct) and the same DB-creation logic the
+    webapp's own endpoints use for task/habit/goal."""
+    from routers.cards import parse_bulk_text, create_card_row
+    from routers.habits import create_habit_row
+    from routers.withings import withings_set_goals
+    from routers.workouts import _parse_workout
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+
+    try:
+        with SessionLocal() as db:
+            items = parse_bulk_text(db, text, today)
+    except Exception as e:
+        print(f"[telegram] capture parse failed: {e}")
+        items = []
+
+    if not items:
+        return _capture_plain(text, tz_offset, chat_id)
+
+    blocks = []
+    card_ids = []
+    habit_ids = []
+    workout_ids = []
+    last_card = None
 
     with SessionLocal() as db:
-        max_pos = db.query(models.Card).filter_by(section=section).count()
-        card = models.Card(
-            title=title,
-            description=intent.get("description"),
-            section=section,
-            scheduled_at=scheduled_at,
-            position=max_pos,
-        )
-        tag_names = intent.get("suggested_tags") or []
-        if tag_names:
-            card.tags = db.query(models.Tag).filter(models.Tag.name.in_(tag_names)).all()
-        db.add(card)
+        for item in items:
+            if item.type == "task":
+                title = item.title.strip() or text.strip()
+                tag_ids = _resolve_tag_ids(db, item.suggested_tags)
+                data = {
+                    "title": title,
+                    "description": item.description,
+                    "section": item.section,
+                    "scheduled_at": item.scheduled_at,
+                    "recurrence_rule": item.recurrence_rule,
+                    "raw_input": text,
+                }
+                card = create_card_row(db, data, tag_ids)
+                card_ids.append(card.id)
+                last_card = {"id": card.id, "title": title}
+                blocks.append(f"✓ Added to <b>{_SECTION_LABELS.get(card.section, card.section)}</b>: {title}")
+
+            elif item.type == "habit":
+                tag_ids = _resolve_tag_ids(db, item.suggested_tags)
+                habit = create_habit_row(db, item.title, item.health_metric, item.health_goal, tag_ids)
+                habit_ids.append(habit.id)
+                blocks.append(f"✓ New habit: {item.title}")
+
+            elif item.type == "goal" and item.health_metric == "steps" and item.health_goal is not None:
+                habit = create_habit_row(db, "Daily Steps", "steps", item.health_goal, [])
+                habit_ids.append(habit.id)
+                blocks.append(f"✓ Step goal set: {item.health_goal:g}")
+
+            elif item.type == "goal" and item.health_metric and item.health_goal is not None:
+                withings_set_goals({item.health_metric: item.health_goal}, db)
+                blocks.append(f"✓ {item.health_metric} goal set: {item.health_goal:g}")
+
+            elif item.type == "workout":
+                raw = item.source_text or item.title
+                parsed = _parse_workout(raw)
+                entry = models.WorkoutEntry(raw_input=raw, logged_at=now_local, **parsed)
+                db.add(entry)
+                db.flush()
+                workout_ids.append(entry.id)
+                blocks.append(f"✓ Workout logged: {raw}")
+
+            elif item.type == "assist":
+                blocks.append(f"That sounded like a question, not something to capture: \"{item.title}\" — try asking me directly.")
+
+            # food / mood / habit_check / task_complete are delegated below,
+            # outside this session, to the existing Telegram handlers that
+            # already do this correctly (including their own undo).
         db.commit()
-        card_id = card.id
-        section_label = {
-            "today": "Today", "week": "This Week",
-            "month": "This Month", "later": "Later",
-        }.get(card.section, card.section)
 
-    if chat_id:
+    for item in items:
+        if item.type == "food":
+            blocks.append(_reply_log_food({"raw_input": item.source_text or item.title}, tz_offset, chat_id))
+        elif item.type == "mood":
+            blocks.append(_reply_log_mood({"energy": item.energy, "note": item.description}, tz_offset, chat_id))
+        elif item.type == "habit_check":
+            blocks.append(_reply_complete_habit({"match_query": item.title}, tz_offset, chat_id))
+        elif item.type == "task_complete":
+            blocks.append(_reply_complete({"match_query": item.title}, tz_offset, chat_id))
+
+    if chat_id and (card_ids or habit_ids or workout_ids):
         session = _get_session(chat_id)
-        _push_undo(session, {"type": "capture", "card_id": card_id, "title": title})
-        session["last_card"] = {"id": card_id, "title": title}
+        _push_undo(session, {
+            "type": "capture_multi", "card_ids": card_ids, "habit_ids": habit_ids,
+            "workout_ids": workout_ids,
+            "title": items[0].title if len(items) == 1 else text,
+        })
+        if last_card:
+            session["last_card"] = last_card
 
-    return f"✓ Added to <b>{section_label}</b>: {title}\nSend <b>undo</b> to remove it."
+    if not blocks:
+        return _capture_plain(text, tz_offset, chat_id)
+    if card_ids and len(blocks) == 1:
+        return blocks[0] + "\nSend <b>undo</b> to remove it."
+    return "\n".join(blocks) + "\nSend <b>undo</b> to reverse the most recent action."
 
 
 def _capture_plain(text: str, tz_offset: int, chat_id: str = "") -> str:
@@ -1555,27 +1645,38 @@ def _reply_log_mood(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 
 
 def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
-    """Log a food or drink entry."""
+    """Log one or more food/drink entries. Splits multi-item messages ("had a
+    bagel, coffee, and a banana") and enriches each with category/notes/
+    quality/calories via parse_food_entries() -- the same function the
+    webapp's food log uses, so both surfaces behave identically."""
     raw = (intent.get("raw_input") or "").strip()
-
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
+    parsed_items = parse_food_entries(raw)
+
+    entry_ids = []
+    names = []
     with SessionLocal() as db:
-        entry = models.FoodEntry(
-            raw_input=raw,
-            name=raw,
-            category="food",
-            consumed_at=now_local,
-        )
-        db.add(entry)
+        for parsed in parsed_items:
+            entry = models.FoodEntry(
+                raw_input=parsed.pop("source_text", None) or raw,
+                consumed_at=now_local,
+                **parsed,
+            )
+            db.add(entry)
+            db.flush()
+            entry_ids.append(entry.id)
+            names.append(parsed["name"])
         db.commit()
-        entry_id = entry.id
 
     if chat_id:
         session = _get_session(chat_id)
-        _push_undo(session, {"type": "food_log", "entry_id": entry_id, "title": raw})
+        _push_undo(session, {"type": "food_log", "entry_ids": entry_ids, "title": ", ".join(names)})
 
-    return f"✓ Food logged: {raw}\nSend <b>undo</b> to remove it."
+    if len(names) == 1:
+        return f"✓ Food logged: {names[0]}\nSend <b>undo</b> to remove it."
+    items_list = "\n".join(f"  • {n}" for n in names)
+    return f"✓ {len(names)} food items logged:\n{items_list}\nSend <b>undo</b> to remove them."
 
 
 def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
@@ -1879,6 +1980,26 @@ def _undo_single_action(action: dict) -> str:
             db.commit()
         return f"↩ Removed: <b>{title}</b>"
 
+    if atype == "capture_multi":
+        with SessionLocal() as db:
+            removed = 0
+            if action.get("card_ids"):
+                removed += db.query(models.Card).filter(
+                    models.Card.id.in_(action["card_ids"])
+                ).delete(synchronize_session=False)
+            if action.get("habit_ids"):
+                removed += db.query(models.Habit).filter(
+                    models.Habit.id.in_(action["habit_ids"])
+                ).delete(synchronize_session=False)
+            if action.get("workout_ids"):
+                removed += db.query(models.WorkoutEntry).filter(
+                    models.WorkoutEntry.id.in_(action["workout_ids"])
+                ).delete(synchronize_session=False)
+            db.commit()
+        if not removed:
+            return f'Could not undo — "{title}" no longer exists.'
+        return f"↩ Removed: <b>{title}</b>"
+
     if atype == "mark_complete":
         with SessionLocal() as db:
             card = db.query(models.Card).filter_by(id=action["card_id"]).first()
@@ -1915,11 +2036,14 @@ def _undo_single_action(action: dict) -> str:
 
     if atype == "food_log":
         with SessionLocal() as db:
-            entry = db.query(models.FoodEntry).filter_by(id=action["entry_id"]).first()
-            if entry:
+            entries = db.query(models.FoodEntry).filter(
+                models.FoodEntry.id.in_(action["entry_ids"])
+            ).all()
+            for entry in entries:
                 db.delete(entry)
-                db.commit()
-        return f"↩ Removed food log: <b>{title}</b>"
+            db.commit()
+        label = "food log" if len(action["entry_ids"]) == 1 else f"{len(action['entry_ids'])} food logs"
+        return f"↩ Removed {label}: <b>{title}</b>"
 
     if atype == "workout_log":
         with SessionLocal() as db:

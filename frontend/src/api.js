@@ -502,6 +502,16 @@ export async function fetchFoodEntries(date) {
   return res.json()
 }
 
+export async function updateFoodEntry(id, data) {
+  const res = await apiFetch(`/api/food/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to update food entry')
+  return res.json()
+}
+
 export async function deleteFoodEntry(id) {
   const res = await apiFetch(`/api/food/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete food entry')

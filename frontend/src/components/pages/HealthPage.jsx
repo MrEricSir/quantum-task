@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
+import { isoToLocal } from '../modals/CardForm'
 import HabitsPage from './HabitsPage'
 import './HealthPage.css'
 
@@ -977,11 +978,15 @@ function FoodLog({ range = 30, revision = 0 }) {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
   })
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState(null)
   const inputRef = useRef(null)
+  const editNameRef = useRef(null)
 
   const load = (d) => fetchFoodEntries(d).then(setEntries).catch(() => {})
 
   useEffect(() => { load(date) }, [date, revision]) // revision triggers reload after capture modal saves
+  useEffect(() => { if (editingId !== null) editNameRef.current?.focus() }, [editingId])
 
   const handleAdd = async () => {
     if (!input.trim() || saving) return
@@ -1001,6 +1006,38 @@ function FoodLog({ range = 30, revision = 0 }) {
   const handleDelete = async (id) => {
     await deleteFoodEntry(id).catch(() => {})
     setEntries(prev => prev.filter(e => e.id !== id))
+  }
+
+  const startEdit = (entry) => {
+    setEditingId(entry.id)
+    setEditForm({
+      name: entry.name,
+      calories: entry.calories != null ? String(entry.calories) : '',
+      quality: entry.quality != null ? String(entry.quality) : '',
+      notes: entry.notes || '',
+      consumed_at: isoToLocal(entry.consumed_at),
+    })
+  }
+
+  const confirmEdit = async () => {
+    const name = editForm.name.trim()
+    if (!name) { setEditingId(null); return }
+    try {
+      const updated = await updateFoodEntry(editingId, {
+        name,
+        calories: editForm.calories !== '' ? parseInt(editForm.calories, 10) : null,
+        quality: editForm.quality !== '' ? parseInt(editForm.quality, 10) : null,
+        notes: editForm.notes.trim() || null,
+        consumed_at: editForm.consumed_at || null,
+      })
+      setEntries(prev => prev.map(e => (e.id === editingId ? updated : e)).sort(
+        (a, b) => new Date(a.consumed_at) - new Date(b.consumed_at)
+      ))
+    } catch {
+      // keep editing open on failure
+      return
+    }
+    setEditingId(null)
   }
 
   return (
@@ -1040,6 +1077,55 @@ function FoodLog({ range = 30, revision = 0 }) {
       )}
 
       {entries.map(entry => {
+        if (editingId === entry.id) {
+          return (
+            <div key={entry.id} className="food-entry-edit-form">
+              <input
+                ref={editNameRef}
+                className="food-entry-edit-input"
+                value={editForm.name}
+                onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Escape') setEditingId(null) }}
+                placeholder="Name"
+              />
+              <input
+                type="datetime-local"
+                className="food-entry-edit-time"
+                value={editForm.consumed_at}
+                onChange={e => setEditForm({ ...editForm, consumed_at: e.target.value })}
+              />
+              <input
+                type="number"
+                className="food-entry-edit-calories"
+                value={editForm.calories}
+                onChange={e => setEditForm({ ...editForm, calories: e.target.value })}
+                placeholder="kcal"
+                min="0"
+              />
+              <input
+                type="number"
+                className="food-entry-edit-quality"
+                value={editForm.quality}
+                onChange={e => setEditForm({ ...editForm, quality: e.target.value })}
+                placeholder="1-10"
+                min="1"
+                max="10"
+              />
+              <input
+                className="food-entry-edit-notes"
+                value={editForm.notes}
+                onChange={e => setEditForm({ ...editForm, notes: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Escape') setEditingId(null) }}
+                placeholder="Notes"
+              />
+              <div className="food-entry-edit-actions">
+                <button className="food-entry-edit-save" onClick={confirmEdit}>Save</button>
+                <button className="food-entry-edit-cancel" onClick={() => setEditingId(null)}>Cancel</button>
+              </div>
+            </div>
+          )
+        }
+
         const time = new Date(entry.consumed_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
         return (
           <div key={entry.id} className="food-entry">
@@ -1062,6 +1148,11 @@ function FoodLog({ range = 30, revision = 0 }) {
             {entry.notes && (
               <span className="food-entry-notes">{entry.notes}</span>
             )}
+            <button
+              className="food-entry-edit"
+              onClick={() => startEdit(entry)}
+              aria-label="Edit"
+            >✎</button>
             <button
               className="food-entry-delete"
               onClick={() => handleDelete(entry.id)}

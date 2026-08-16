@@ -71,19 +71,23 @@ def get_habits(request: Request, archived: bool = False, db: Session = Depends(g
     return [_habit_out(db, h, today) for h in habits]
 
 
-@router.post("/api/habits", response_model=schemas.Habit, status_code=201)
-def create_habit(request: Request, habit: schemas.HabitCreate, db: Session = Depends(get_db)):
-    today = local_date(request)
-    db_habit = models.Habit(
-        name=habit.name,
-        health_metric=habit.health_metric,
-        health_goal=habit.health_goal,
-    )
-    if habit.tag_ids:
-        db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(habit.tag_ids)).all()
+def create_habit_row(db: Session, name: str, health_metric: str | None = None,
+                      health_goal: float | None = None, tag_ids: list[int] | None = None) -> models.Habit:
+    """Shared Habit-creation DB logic. Used by POST /api/habits and
+    telegram/bot.py's capture handling."""
+    db_habit = models.Habit(name=name, health_metric=health_metric, health_goal=health_goal)
+    if tag_ids:
+        db_habit.tags = db.query(models.Tag).filter(models.Tag.id.in_(tag_ids)).all()
     db.add(db_habit)
     db.commit()
     db.refresh(db_habit)
+    return db_habit
+
+
+@router.post("/api/habits", response_model=schemas.Habit, status_code=201)
+def create_habit(request: Request, habit: schemas.HabitCreate, db: Session = Depends(get_db)):
+    today = local_date(request)
+    db_habit = create_habit_row(db, habit.name, habit.health_metric, habit.health_goal, habit.tag_ids)
     return _habit_out(db, db_habit, today)
 
 
