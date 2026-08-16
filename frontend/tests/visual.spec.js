@@ -1732,6 +1732,65 @@ test.describe('health page', () => {
     const row = page.locator('.exp-history-row', { hasText: '2026-W22' })
     await expect(row.locator('.exp-verdict')).toHaveText('Significant change')
   })
+
+  test('food-elimination experiment outcome shows a card with before vs during counts', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 43, week: '2026-W23', text: 'Cut out coffee this week',
+        hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
+        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        food_name: 'coffee', food_target_frequency: 0,
+        food_baseline_frequency: 4.5, food_experiment_count: 1, food_baseline_weeks_n: 3,
+        created_at: '2026-06-08T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Coffee' })
+    await expect(card).toBeVisible()
+    await expect(card.getByText('→ target 0x/week')).toBeVisible()
+    await expect(card.getByText('adhered', { exact: true })).toBeVisible()
+    await expect(card.getByText('Before')).toBeVisible()
+    await expect(card.getByText('4.5x/week')).toBeVisible()
+    await expect(card.getByText('n=3 weeks')).toBeVisible()
+    await expect(card.getByText('During experiment')).toBeVisible()
+    await expect(card.getByText('1x')).toBeVisible()
+
+    await page.getByRole('button', { name: /show past experiments/i }).click()
+    const row = page.locator('.exp-history-row', { hasText: '2026-W23' })
+    await expect(row.locator('.exp-verdict')).toHaveText('Better than usual')
+  })
+
+  test('food experiment with low adherence shows "not adhered" and skips the weight/fat verdict', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 44, week: '2026-W24', text: 'Cut out coffee this week',
+        hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
+        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        // Weight delta looks "better than usual" on paper, but adherence
+        // was never actually achieved -- the verdict must not claim credit.
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        food_name: 'coffee', food_target_frequency: 0,
+        food_baseline_frequency: 4.5, food_experiment_count: 4, food_baseline_weeks_n: 3,
+        created_at: '2026-06-15T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Coffee' })
+    await expect(card.getByText('not adhered', { exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: /show past experiments/i }).click()
+    const row = page.locator('.exp-history-row', { hasText: '2026-W24' })
+    await expect(row.locator('.exp-verdict')).toHaveText('Not enough adherence to judge')
+  })
 })
 
 // ---------------------------------------------------------------------------

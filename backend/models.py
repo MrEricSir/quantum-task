@@ -255,6 +255,23 @@ class HealthExperiment(Base):
     workout_experiment_n   = Column(Integer, nullable=True)
     workout_p              = Column(Float, nullable=True)
 
+    # Food-elimination/reduction experiments (e.g. "cut out coffee this
+    # week") -- set at generation time when the experiment targets a
+    # regularly-eaten FoodEntry.name rather than a Withings metric or
+    # workout/habit routine. No t-test outcome (unlike workout_p) -- adherence
+    # is a plain count, not a significance test. weight_delta/fat_delta above
+    # are still the outcome signal, but weight_baseline/fat_baseline get
+    # overridden at outcome time to the mean across weeks this food was
+    # ACTUALLY present (food_baseline_weeks_n of them) rather than every
+    # other week regardless of relevance -- falls back to the generic
+    # all-other-weeks baseline (food_baseline_weeks_n stays null) when fewer
+    # than 2 such weeks exist in the data.
+    food_name               = Column(String, nullable=True)   # matched FoodEntry.name, lowercased
+    food_baseline_frequency = Column(Float, nullable=True)    # established occurrences/week before
+    food_target_frequency   = Column(Float, nullable=True)    # target during the experiment week (0 = eliminate)
+    food_experiment_count   = Column(Integer, nullable=True)  # actual occurrences logged during the week
+    food_baseline_weeks_n   = Column(Integer, nullable=True)  # weeks the food-specific baseline was averaged over
+
 
 class WithingsMeasurement(Base):
     """One row per (date, metric) — upserted on each sync."""

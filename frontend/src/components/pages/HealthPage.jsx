@@ -586,7 +586,21 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
 
 // ── Experiment history ────────────────────────────────────────────────────────
 
+function foodAdhered(exp) {
+  // Was the food actually cut back, not just logged as a target? Without
+  // this gate, a week where the food was still eaten as usual would still
+  // get a "better/worse than usual" weight/fat verdict as if the reduction
+  // had actually happened. Meaningful reduction = at most half the
+  // established weekly frequency during the experiment week (both are
+  // counts over a comparable ~1-week span, so directly comparable).
+  if (exp.food_baseline_frequency == null || exp.food_experiment_count == null) return null
+  return exp.food_experiment_count <= exp.food_baseline_frequency / 2
+}
+
 function experimentVerdict(exp) {
+  if (exp.food_name != null && foodAdhered(exp) === false) {
+    return { label: 'Not enough adherence to judge', cls: 'verdict--neutral' }
+  }
   const wDiff = exp.weight_delta != null && exp.weight_baseline != null
     ? exp.weight_delta - exp.weight_baseline : null
   const fDiff = exp.fat_delta != null && exp.fat_baseline != null
@@ -654,7 +668,7 @@ function ExperimentsHistory({ isImperial }) {
   )
 }
 
-// ── Workout-routine experiment outcome ────────────────────────────────────────
+// ── Routine (workout/food) experiment outcome ─────────────────────────────────
 
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
@@ -666,7 +680,48 @@ function fmtWorkoutValue(v, unit) {
   return unit ? `${display} ${unit}` : display
 }
 
+function fmtFrequency(v) {
+  if (v == null) return '—'
+  return `${Number.isInteger(v) ? v : v.toFixed(1)}x/week`
+}
+
 function ExperimentOutcomeCard({ exp }) {
+  if (exp.food_name != null) {
+    // Adherence is a plain count, not a significance test -- no segmentSignal
+    // badge here (unlike the workout case below, which has a real p-value).
+    // It still gets its own badge though: without it, a week where the food
+    // was eaten as usual would look identical to a week it was actually cut.
+    const adhered = foodAdhered(exp)
+    return (
+      <div className="seg-card">
+        <div className="seg-header">
+          <span className="seg-factor">{capitalize(exp.food_name)}</span>
+          {exp.food_target_frequency != null && (
+            <span className="seg-outcome">→ target {fmtFrequency(exp.food_target_frequency)}</span>
+          )}
+          {adhered != null && (
+            <span className={`seg-signal ${adhered ? 'seg-signal--strong' : 'seg-signal--weak'}`}>
+              {adhered ? 'adhered' : 'not adhered'}
+            </span>
+          )}
+        </div>
+        <div className="seg-rows">
+          <div className="seg-row">
+            <span className="seg-label">Before</span>
+            <span className="seg-value">{fmtFrequency(exp.food_baseline_frequency)}</span>
+            {exp.food_baseline_weeks_n != null && (
+              <span className="seg-n">n={exp.food_baseline_weeks_n} weeks</span>
+            )}
+          </div>
+          <div className="seg-row">
+            <span className="seg-label">During experiment</span>
+            <span className="seg-value">{exp.food_experiment_count ?? 0}x</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const signal = segmentSignal(exp.workout_p, {
     high: { n: exp.workout_experiment_n ?? 0 },
     low: { n: exp.workout_baseline_n ?? 0 },
@@ -696,7 +751,7 @@ function ExperimentOutcomeCard({ exp }) {
   )
 }
 
-function WorkoutOutcomeCards({ expKey }) {
+function RoutineOutcomeCards({ expKey }) {
   const [history, setHistory] = useState(null)
 
   useEffect(() => {
@@ -704,7 +759,10 @@ function WorkoutOutcomeCards({ expKey }) {
   }, [expKey])
 
   const outcomes = (history ?? [])
-    .filter(e => e.status === 'dismissed' && e.workout_type != null && e.workout_baseline_avg != null)
+    .filter(e => e.status === 'dismissed' && (
+      (e.workout_type != null && e.workout_baseline_avg != null)
+      || (e.food_name != null && e.food_baseline_frequency != null)
+    ))
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 3)
 
@@ -750,7 +808,7 @@ function AnalysisSection({ isImperial, habitCompletions }) {
         <ExperimentsHistory key={expKey} isImperial={isImperial} />
       </div>
 
-      <WorkoutOutcomeCards expKey={expKey} />
+      <RoutineOutcomeCards expKey={expKey} />
 
       {hasCorr && (() => {
         const { correlations = [], segments = [], summary, weight_n, fat_n } = corrData

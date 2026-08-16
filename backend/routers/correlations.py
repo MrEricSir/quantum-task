@@ -282,6 +282,38 @@ def _established_workouts(
     return results
 
 
+def _established_foods(
+    db: Session, today: date,
+    window_days: int = 21, min_days: int = 4,
+) -> list[dict]:
+    """Food names logged on enough distinct days recently to be candidates for
+    an elimination/reduction experiment ("cut out coffee this week"). Matched
+    by exact name (case-insensitive) -- FoodEntry.name is free text with no
+    canonical grouping, so near-duplicate phrasings of the same food (e.g.
+    "coffee" vs "black coffee") won't be merged. Counts distinct DAYS rather
+    than raw entry count so multiple same-day mentions don't inflate the
+    frequency. Capped to the 8 most frequent, mirroring the correlations
+    list's own [:6] capping elsewhere in this file."""
+    window_start = (today - timedelta(days=window_days)).isoformat()
+    entries = (
+        db.query(models.FoodEntry)
+        .filter(models.FoodEntry.consumed_at >= window_start)
+        .all()
+    )
+    days_by_name: dict[str, set[str]] = {}
+    for e in entries:
+        key = e.name.strip().lower()
+        days_by_name.setdefault(key, set()).add(str(e.consumed_at)[:10])
+
+    results = [
+        {"name": name, "days_per_week": round(len(days) / (window_days / 7), 1)}
+        for name, days in days_by_name.items()
+        if len(days) >= min_days
+    ]
+    results.sort(key=lambda r: -r["days_per_week"])
+    return results[:8]
+
+
 def _recent_experiments(db: Session, limit: int = 4) -> list[models.HealthExperiment]:
     """Most recent experiments (any status), for duplicate-avoidance context."""
     return (
@@ -296,6 +328,8 @@ def _format_recent_experiment(exp: models.HealthExperiment) -> str:
     if exp.workout_type and exp.workout_target_value is not None:
         unit = f" {exp.workout_unit}" if exp.workout_unit else ""
         return f"{exp.workout_type}: {exp.workout_target_value}{unit}"
+    if exp.food_name and exp.food_target_frequency is not None:
+        return f"food: {exp.food_name} → {exp.food_target_frequency}x/week"
     if exp.health_metric and exp.health_goal is not None:
         return f"{exp.health_metric}: {exp.health_goal}"
     return exp.action or exp.text or "(no specific target)"
@@ -502,10 +536,12 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "needs_habit": true or false,
   "health_metric": "steps" | "fat_ratio" | "weight" | null,
   "health_goal": numeric goal value or null,
-  "routine_type": "workout" | "habit" | null,
+  "routine_type": "workout" | "habit" | "food" | null,
   "workout_type": one of the established workout types given, or null,
   "workout_target_value": numeric target or null,
-  "workout_unit": the established unit for that workout type, or null
+  "workout_unit": the established unit for that workout type, or null,
+  "food_name": one of the frequently eaten foods given, or null,
+  "food_target_frequency": numeric target occurrences/week, 0 = eliminate entirely, or null
 }
 
 CRITICAL: "action" must ALWAYS contain a specific measurable target — never vague \
@@ -527,8 +563,8 @@ before bed", "meditate 10 minutes", "no alcohol", "sleep by 10pm" — these are 
 behavioral habits that cannot be verified by a Withings device, so \
 health_metric MUST be null. When in doubt, set null.
 
-routine_type/workout_*: an ALTERNATIVE to health_metric/health_goal, never both \
-at once — set at most one of the two pairs. If "Established routines" lists a \
+routine_type/workout_*/food_*: an ALTERNATIVE to health_metric/health_goal, never \
+more than one of the three groups at once. If "Established routines" lists a \
 workout type the user already does regularly (e.g. "row: 3x/week, avg 1.6 mi"), \
 you may propose a specific incremental increase to it instead of a fresh \
 Withings-metric goal — this is usually MORE interesting than a generic goal \
@@ -539,14 +575,23 @@ workout_unit to the unit given for that type. The action field must still state 
 the concrete target ("Row 2 miles every day instead of your usual ~1.6"). If \
 instead you want to propose increasing an established HABIT's target (e.g. \
 "meditate 15 min instead of 10"), set routine_type="habit" and leave the \
-workout_* fields null — habits are tracked by completion only, so just state \
-the new target clearly in the action field; there's no structured field for it.
+workout_*/food_* fields null — habits are tracked by completion only, so just \
+state the new target clearly in the action field; there's no structured field \
+for it. If "Frequently eaten foods" lists something the user eats regularly \
+(e.g. "coffee — ~4.5x/week"), you may instead propose reducing or eliminating \
+it for the week to see whether it's linked to the outcome — this is especially \
+interesting when diet quality or calories showed a notable correlation. Set \
+routine_type="food", food_name to the EXACT food name given, and \
+food_target_frequency to a number LOWER than its current frequency (0 for full \
+elimination, or a reduced count for a cutback). The action field must still \
+state the concrete target ("Cut out coffee entirely this week" or "Limit pizza \
+to once this week instead of your usual ~3x").
 
-Recently tried experiments: avoid proposing the same metric/routine with the \
-same or a near-identical target as one just tried — either pick a different \
-factor/routine, or a meaningfully different target (a genuinely bigger step, \
-not a token +1%). Repeating the exact same experiment back-to-back provides \
-no new information.\
+Recently tried experiments: avoid proposing the same metric/routine/food with \
+the same or a near-identical target as one just tried — either pick a different \
+factor/routine/food, or a meaningfully different target (a genuinely bigger \
+step, not a token +1%). Repeating the exact same experiment back-to-back \
+provides no new information.\
 """
 
 
@@ -583,6 +628,8 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
     established_habits = _established_habits(db, today)
     established_workouts = _established_workouts(db, today)
     established_workouts_by_type = {w["type"]: w for w in established_workouts}
+    established_foods = _established_foods(db, today)
+    established_foods_by_name = {f["name"]: f for f in established_foods}
 
     user_parts = ["Correlation data:"] + lines
     if recent:
@@ -601,6 +648,12 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
             user_parts.append(
                 f'- Workout type "{w["type"]}" — {w["sessions_per_week"]}x/week, avg {w["avg_value"]}{unit_part}'
             )
+    if established_foods:
+        user_parts.append(
+            "\nFrequently eaten foods you could propose reducing or eliminating instead of a fresh goal:"
+        )
+        for f in established_foods:
+            user_parts.append(f'- Food "{f["name"]}" — eaten ~{f["days_per_week"]}x/week')
     user_content = "\n".join(user_parts)
 
     try:
@@ -633,9 +686,9 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         # Routine-based experiment fields -- an alternative to health_metric/
         # health_goal, never both at once. routine_type explicitly signals
         # intent, so it wins the tie-break if the LLM (against instructions)
-        # set both. workout_type must exactly match an established routine --
-        # anything else is discarded rather than trusted, same defensive
-        # validation style already used for health_metric above.
+        # set both. workout_type/food_name must exactly match an established
+        # routine/food -- anything else is discarded rather than trusted, same
+        # defensive validation style already used for health_metric above.
         routine_type = llm_data.get("routine_type")
         workout_type = llm_data.get("workout_type") or None
         workout_target_value = llm_data.get("workout_target_value")
@@ -645,27 +698,61 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
             except (TypeError, ValueError):
                 workout_target_value = None
 
+        food_name = llm_data.get("food_name") or None
+        if food_name:
+            food_name = food_name.strip().lower()
+        food_target_frequency = llm_data.get("food_target_frequency")
+        if food_target_frequency is not None:
+            try:
+                food_target_frequency = float(food_target_frequency)
+            except (TypeError, ValueError):
+                food_target_frequency = None
+        food_baseline_frequency = None
+
         if (routine_type == "workout" and workout_type in established_workouts_by_type
                 and workout_target_value is not None):
             health_metric = None
             health_goal = None
             workout_unit = established_workouts_by_type[workout_type]["unit"]
+            food_name = None
+            food_target_frequency = None
+        elif (routine_type == "food" and food_name in established_foods_by_name
+                and food_target_frequency is not None):
+            health_metric = None
+            health_goal = None
+            workout_type = None
+            workout_target_value = None
+            workout_unit = None
+            food_baseline_frequency = established_foods_by_name[food_name]["days_per_week"]
         else:
             workout_type = None
             workout_target_value = None
             workout_unit = None
+            food_name = None
+            food_target_frequency = None
             if routine_type == "habit":
                 # No structured field for habit-routine experiments -- the
                 # established habit was just prompt context, not a hard link.
                 health_metric = None
                 health_goal = None
 
+        # Don't repeat the same food target back-to-back. Unlike workout/
+        # health-metric targets (nudged upward via _nudge_if_near_duplicate
+        # below), there's no natural "nudge" direction for a reduction target
+        # that's often already 0 -- so just drop it rather than silently
+        # repeat, deterministically, regardless of whether the LLM actually
+        # followed the "avoid repeating" prompt instruction.
+        if food_name and recent and recent[0].food_name == food_name:
+            food_name = None
+            food_target_frequency = None
+            food_baseline_frequency = None
+
         # Use prose text as authoritative source for step goals — the LLM's JSON
         # numbers are less reliable than the numbers it writes in action/hypothesis.
         # Skipped entirely for routine-based experiments: this fallback exists
         # only to recover a Withings step goal, and firing it here risks
-        # misreading an unrelated number in a workout/habit action string.
-        if routine_type not in ("workout", "habit"):
+        # misreading an unrelated number in a workout/habit/food action string.
+        if routine_type not in ("workout", "habit", "food"):
             import re as _re
 
             def _extract_steps(text: str | None) -> float | None:
@@ -726,6 +813,9 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         workout_type = None
         workout_target_value = None
         workout_unit = None
+        food_name = None
+        food_target_frequency = None
+        food_baseline_frequency = None
 
     habit_id = None
     if action:
@@ -755,6 +845,9 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         workout_type=workout_type,
         workout_target_value=workout_target_value,
         workout_unit=workout_unit,
+        food_name=food_name,
+        food_target_frequency=food_target_frequency,
+        food_baseline_frequency=food_baseline_frequency,
     )
     db.add(exp)
     db.flush()
@@ -789,7 +882,33 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
         "workout_baseline_n":      exp.workout_baseline_n,
         "workout_experiment_n":    exp.workout_experiment_n,
         "workout_p":               exp.workout_p,
+        "food_name":               exp.food_name,
+        "food_baseline_frequency": exp.food_baseline_frequency,
+        "food_target_frequency":   exp.food_target_frequency,
+        "food_experiment_count":   exp.food_experiment_count,
+        "food_baseline_weeks_n":   exp.food_baseline_weeks_n,
     }
+
+
+def _food_present_weeks(db: Session, food_name: str, candidate_weeks: set[str], min_days: int = 2) -> set[str]:
+    """Of the given ISO weeks, which ones had `food_name` (exact,
+    case-insensitive) logged on at least `min_days` distinct days -- i.e.
+    weeks the food was actually part of the regular pattern, not just any
+    week in the analysis window regardless of relevance. Used to build a
+    food-elimination experiment's baseline from a matched comparison
+    ("what does my trend look like on weeks I eat this") instead of the
+    generic all-other-weeks average every experiment type uses by default."""
+    if not candidate_weeks:
+        return set()
+    days_by_week: dict[str, set[str]] = {}
+    for e in db.query(models.FoodEntry).all():
+        if e.name.strip().lower() != food_name:
+            continue
+        d = str(e.consumed_at)[:10]
+        wk = _isoweek(d)
+        if wk in candidate_weeks:
+            days_by_week.setdefault(wk, set()).add(d)
+    return {wk for wk, days in days_by_week.items() if len(days) >= min_days}
 
 
 def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> None:
@@ -865,6 +984,44 @@ def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> N
                 exp.workout_p = round(float(result.pvalue), 4)
             except Exception:
                 pass
+
+    # Food-elimination outcome: adherence is a plain count, not a t-test --
+    # there's no natural per-week sample the way individual WorkoutEntry
+    # sessions provide one for the workout case above (this is a single
+    # experiment week, not a series of sessions within it).
+    if exp.food_name:
+        ws = _week_start(exp.week)
+        exp_start = ws.isoformat()
+        exp_end = (ws + timedelta(days=7)).isoformat()  # exclusive
+
+        matching = [
+            e for e in db.query(models.FoodEntry).filter(
+                models.FoodEntry.consumed_at >= exp_start,
+                models.FoodEntry.consumed_at < exp_end,
+            ).all()
+            if e.name.strip().lower() == exp.food_name
+        ]
+        exp.food_experiment_count = len(matching)
+
+        # Override the generic all-other-weeks weight/fat baseline (set
+        # above) with a matched comparison: weeks this food was ACTUALLY
+        # present at a regular clip, vs. the week it was cut. A comparison
+        # against weeks that had nothing to do with this food is weaker
+        # evidence than comparing against weeks the food was actually part
+        # of the pattern. Falls back to the generic baseline (already set)
+        # when fewer than 2 such weeks exist -- one week isn't a baseline,
+        # it's a single data point.
+        other_weeks = {r["date"] for r in weight_obs if r["date"] != exp.week} | \
+                      {r["date"] for r in fat_obs if r["date"] != exp.week}
+        present_weeks = _food_present_weeks(db, exp.food_name, other_weeks)
+        if len(present_weeks) >= 2:
+            present_weight = [r["delta_per_day"] for r in weight_obs if r["date"] in present_weeks]
+            present_fat = [r["delta_per_day"] for r in fat_obs if r["date"] in present_weeks]
+            if present_weight:
+                exp.weight_baseline = round(sum(present_weight) / len(present_weight), 6)
+            if present_fat:
+                exp.fat_baseline = round(sum(present_fat) / len(present_fat), 6)
+            exp.food_baseline_weeks_n = len(present_weeks)
 
 
 # ── Migration: AppSetting → table ────────────────────────────────────────────
