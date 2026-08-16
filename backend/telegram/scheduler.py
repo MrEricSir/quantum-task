@@ -67,11 +67,16 @@ def check_evening_summary(db: Session, token: str, chat_id: str,
     today_str = today.isoformat()
     tomorrow = today + timedelta(days=1)
 
-    # Tasks completed today (local date)
+    # Tasks completed today (local date). Deliberately not filtered on
+    # archived -- a GitHub-linked card gets completed AND archived in the
+    # same step when its issue/PR closes (github_sync.py), so requiring
+    # archived == False here silently dropped every GitHub-ticket task from
+    # the summary on the day it closed. Matches generate_weekly_review's own
+    # completed-task count and _day_has_completed_task below, neither of
+    # which filter on archived either.
     completed_today = [
         c for c in db.query(models.Card).filter(
             models.Card.completed == True,   # noqa: E712
-            models.Card.archived == False,   # noqa: E712
             models.Card.completed_at.isnot(None),
         ).all()
         if (c.completed_at.replace(tzinfo=None) - timedelta(minutes=tz_offset)).date() == today

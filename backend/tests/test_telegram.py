@@ -1683,6 +1683,75 @@ class TestWeeklyReviewEndpoint:
         assert res.json()["ok"] is False
 
 
+class TestCheckEveningSummary:
+    """github_sync.py marks a card BOTH completed and archived in the same step
+    when its linked GitHub issue/PR closes -- the evening summary's completed-
+    today query used to also filter on archived == False, which silently
+    dropped every GitHub-ticket task from the summary on the day it closed."""
+
+    def _set_reminder_time(self, hh_mm="19:00"):
+        from settings import Settings
+        with BotTestSession() as db:
+            Settings(db).set(keys.HABIT_REMINDER_TIME, hh_mm)
+            db.commit()
+
+    def test_skipped_when_hour_does_not_match(self):
+        from telegram.scheduler import check_evening_summary
+        self._set_reminder_time("19:00")
+        now_local = datetime.combine(TODAY, datetime.min.time()).replace(hour=10)
+        with BotTestSession() as db:
+            result = check_evening_summary(db, "tok", "123", 0, now_local, TODAY)
+        assert result == "skipped"
+
+    def test_includes_a_completed_and_archived_github_linked_card(self):
+        now_local = datetime.combine(TODAY, datetime.min.time()).replace(hour=19, minute=5)
+        with BotTestSession() as db:
+            db.add(models.Card(
+                title="Fix the flaky test", section="today", position=0,
+                completed=True, archived=True, completed_at=now_local,
+                external_id="github:owner/repo/issues/42",
+            ))
+            db.commit()
+        self._set_reminder_time("19:00")
+        from telegram.scheduler import check_evening_summary
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_evening_summary(db, "tok", "123", 0, now_local, TODAY)
+        assert result == "sent"
+        sent_text = mock_send.call_args[0][2]
+        assert "Fix the flaky test" in sent_text
+        assert "1 task" in sent_text
+
+    def test_still_excludes_a_task_completed_on_a_different_day(self):
+        now_local = datetime.combine(TODAY, datetime.min.time()).replace(hour=19, minute=5)
+        yesterday = datetime.combine(TODAY - timedelta(days=1), datetime.min.time()).replace(hour=12)
+        with BotTestSession() as db:
+            db.add(models.Card(
+                title="Old task", section="today", position=0,
+                completed=True, archived=True, completed_at=yesterday,
+            ))
+            db.commit()
+        self._set_reminder_time("19:00")
+        from telegram.scheduler import check_evening_summary
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                check_evening_summary(db, "tok", "123", 0, now_local, TODAY)
+        sent_text = mock_send.call_args[0][2]
+        assert "Old task" not in sent_text
+        assert "No tasks completed today" in sent_text
+
+    def test_does_not_resend_same_day(self):
+        now_local = datetime.combine(TODAY, datetime.min.time()).replace(hour=19, minute=5)
+        self._set_reminder_time("19:00")
+        from telegram.scheduler import check_evening_summary
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                check_evening_summary(db, "tok", "123", 0, now_local, TODAY)
+            with BotTestSession() as db:
+                result = check_evening_summary(db, "tok", "123", 0, now_local, TODAY)
+        assert result == "already_sent"
+
+
 class TestHandleUpdateDedup:
     """Telegram resends an update if our webhook response doesn't arrive in time
     (e.g. a slow LLM call during a Cloud Run cold start). Without update_id
