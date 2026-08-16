@@ -272,6 +272,16 @@ class HealthExperiment(Base):
     food_experiment_count   = Column(Integer, nullable=True)  # actual occurrences logged during the week
     food_baseline_weeks_n   = Column(Integer, nullable=True)  # weeks the food-specific baseline was averaged over
 
+    # One-variable confound check, filled alongside the baseline override
+    # above: average daily calories across those same food-present weeks vs.
+    # the experiment week. A full multivariate/confound-adjusted model isn't
+    # supportable with the ~12-13 weeks of paired data this app typically
+    # has (see PRODUCT_NOTES.md) -- this is the cheap, honest middle step:
+    # surface the single most obvious rival explanation (a broader calorie
+    # change) rather than silently crediting the specific food.
+    food_baseline_avg_calories   = Column(Float, nullable=True)
+    food_experiment_avg_calories = Column(Float, nullable=True)
+
 
 class WithingsMeasurement(Base):
     """One row per (date, metric) — upserted on each sync."""

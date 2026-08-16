@@ -454,6 +454,14 @@
   text-align: right;
 }
 
+.seg-caveat {
+  font-size: 11px;
+  color: #f59e0b;
+  opacity: 0.85;
+  line-height: 1.4;
+  margin: 6px 0 0;
+}
+
 /* ── Correlations section ── */
 
 .corr-summary {

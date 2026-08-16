@@ -887,6 +887,8 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
         "food_target_frequency":   exp.food_target_frequency,
         "food_experiment_count":   exp.food_experiment_count,
         "food_baseline_weeks_n":   exp.food_baseline_weeks_n,
+        "food_baseline_avg_calories":   exp.food_baseline_avg_calories,
+        "food_experiment_avg_calories": exp.food_experiment_avg_calories,
     }
 
 
@@ -1022,6 +1024,20 @@ def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> N
             if present_fat:
                 exp.fat_baseline = round(sum(present_fat) / len(present_fat), 6)
             exp.food_baseline_weeks_n = len(present_weeks)
+
+            # One-variable confound check: did overall calorie intake also
+            # move, or did it stay roughly where it was on weeks this food
+            # was part of the pattern? avg_calories is already computed per
+            # week by _load_weekly_obs, independent of the weight/fat metric,
+            # so either obs list has it for a given week.
+            cal_by_week = {
+                r["date"]: r["avg_calories"] for r in weight_obs + fat_obs
+                if r["avg_calories"] is not None
+            }
+            baseline_cals = [cal_by_week[wk] for wk in present_weeks if wk in cal_by_week]
+            if baseline_cals and exp.week in cal_by_week:
+                exp.food_baseline_avg_calories = round(sum(baseline_cals) / len(baseline_cals), 1)
+                exp.food_experiment_avg_calories = round(cal_by_week[exp.week], 1)
 
 
 # ── Migration: AppSetting → table ────────────────────────────────────────────

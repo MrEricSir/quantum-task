@@ -1791,6 +1791,50 @@ test.describe('health page', () => {
     const row = page.locator('.exp-history-row', { hasText: '2026-W24' })
     await expect(row.locator('.exp-verdict')).toHaveText('Not enough adherence to judge')
   })
+
+  test('food experiment with a large calorie shift shows a confound caveat', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 45, week: '2026-W25', text: 'Cut out coffee this week',
+        hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
+        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        food_name: 'coffee', food_target_frequency: 0,
+        food_baseline_frequency: 4.5, food_experiment_count: 0, food_baseline_weeks_n: 3,
+        food_baseline_avg_calories: 2000, food_experiment_avg_calories: 1600,
+        created_at: '2026-06-22T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Coffee' })
+    await expect(card.locator('.seg-caveat')).toContainText('Calories also dropped ~20%')
+  })
+
+  test('food experiment with a small calorie shift shows no confound caveat', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 46, week: '2026-W26', text: 'Cut out coffee this week',
+        hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
+        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        food_name: 'coffee', food_target_frequency: 0,
+        food_baseline_frequency: 4.5, food_experiment_count: 0, food_baseline_weeks_n: 3,
+        food_baseline_avg_calories: 2000, food_experiment_avg_calories: 1950,
+        created_at: '2026-06-29T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Coffee' })
+    await expect(card.locator('.seg-caveat')).toHaveCount(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

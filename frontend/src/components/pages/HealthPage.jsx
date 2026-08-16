@@ -597,6 +597,17 @@ function foodAdhered(exp) {
   return exp.food_experiment_count <= exp.food_baseline_frequency / 2
 }
 
+function foodCaloriePctChange(exp) {
+  // One-variable confound check: did overall intake also change, or did it
+  // stay roughly where it was on weeks this food was part of the pattern?
+  // Not a substitute for a real multivariate model (see PRODUCT_NOTES.md)
+  // -- just the cheapest, most honest thing to surface with this little
+  // weekly data: the single most obvious rival explanation.
+  if (exp.food_baseline_avg_calories == null || exp.food_experiment_avg_calories == null) return null
+  if (exp.food_baseline_avg_calories === 0) return null
+  return (exp.food_experiment_avg_calories - exp.food_baseline_avg_calories) / exp.food_baseline_avg_calories
+}
+
 function experimentVerdict(exp) {
   if (exp.food_name != null && foodAdhered(exp) === false) {
     return { label: 'Not enough adherence to judge', cls: 'verdict--neutral' }
@@ -718,6 +729,16 @@ function ExperimentOutcomeCard({ exp }) {
             <span className="seg-value">{exp.food_experiment_count ?? 0}x</span>
           </div>
         </div>
+        {(() => {
+          const pctChange = foodCaloriePctChange(exp)
+          if (pctChange == null || Math.abs(pctChange) <= 0.15) return null
+          return (
+            <p className="seg-caveat">
+              ⚠ Calories also {pctChange < 0 ? 'dropped' : 'rose'} ~{Math.round(Math.abs(pctChange) * 100)}%
+              this week — this result may reflect an overall intake change, not {exp.food_name} specifically.
+            </p>
+          )
+        })()}
       </div>
     )
   }

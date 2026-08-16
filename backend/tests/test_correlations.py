@@ -532,6 +532,54 @@ class TestRecordOutcomeFood:
         generic = sum(r["delta_per_day"] for r in weight_obs[:-1]) / 3
         assert abs(exp.weight_baseline - generic) > 1e-6
 
+    def test_confound_check_compares_average_calories(self, db):
+        base = date(2026, 3, 2)
+        for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
+            _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        exp_week = weight_obs[-1]["date"]
+
+        for offset, cals in ((7, 2000), (21, 2200)):  # the two food-present weeks
+            d = base + timedelta(days=offset)
+            db.add(models.FoodEntry(raw_input="coffee", name="Coffee", category="food",
+                                     consumed_at=datetime.combine(d, datetime.min.time())))
+            db.add(models.FoodEntry(raw_input="coffee", name="Coffee", category="food",
+                                     consumed_at=datetime.combine(d + timedelta(days=1), datetime.min.time())))
+            db.add(models.FoodEntry(raw_input="lunch", name="Lunch", category="food", calories=cals,
+                                     consumed_at=datetime.combine(d, datetime.min.time())))
+        # Calories logged during the experiment week itself
+        exp_day = base + timedelta(days=28)
+        db.add(models.FoodEntry(raw_input="lunch", name="Lunch", category="food", calories=1500,
+                                 consumed_at=datetime.combine(exp_day, datetime.min.time())))
+        db.commit()
+
+        exp = models.HealthExperiment(
+            week=exp_week, text="t", food_name="coffee",
+            food_target_frequency=0, food_baseline_frequency=4.0,
+        )
+        db.add(exp)
+        db.commit()
+
+        _record_outcome(exp, db, base + timedelta(days=35))
+
+        assert exp.food_baseline_avg_calories == 2100.0
+        assert exp.food_experiment_avg_calories == 1500.0
+
+    def test_confound_fields_stay_none_without_a_food_specific_baseline(self, db):
+        exp = models.HealthExperiment(
+            week="2026-W13", text="t", food_name="coffee",
+            food_target_frequency=0, food_baseline_frequency=4.0,
+        )
+        db.add(exp)
+        db.commit()
+
+        _record_outcome(exp, db, date.today())
+
+        assert exp.food_baseline_avg_calories is None
+        assert exp.food_experiment_avg_calories is None
+
     def test_falls_back_to_generic_baseline_with_fewer_than_2_present_weeks(self, db):
         base = date(2026, 3, 2)
         for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
