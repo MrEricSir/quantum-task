@@ -1733,6 +1733,58 @@ test.describe('health page', () => {
     await expect(row.locator('.exp-verdict')).toHaveText('Significant change')
   })
 
+  test('workout experiment with no adherence shows "not enough adherence" even when weight data looks favorable', async ({ page }) => {
+    // Regression test for a real bug: weight_delta/weight_baseline are
+    // populated for every experiment type, so the generic weight/fat
+    // verdict branch used to fire before the workout significance test was
+    // ever consulted -- a routine that was never actually increased (p not
+    // significant, target not met) still got credited with "Better than
+    // usual" purely because the weight numbers happened to look good.
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 47, week: '2026-W27', text: 'Row 2 mi/day instead of 1 mi/day',
+        hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
+        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
+        workout_baseline_avg: 1.1, workout_experiment_avg: 1.15, // barely moved
+        workout_baseline_n: 10, workout_experiment_n: 5, workout_p: 0.62, // not significant
+        created_at: '2026-07-06T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.getByRole('button', { name: /show past experiments/i }).click()
+    const row = page.locator('.exp-history-row', { hasText: '2026-W27' })
+    await expect(row.locator('.exp-verdict')).toHaveText('Not enough adherence to judge')
+  })
+
+  test('workout experiment with a large calorie shift shows a confound caveat', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 48, week: '2026-W28', text: 'Row 2 mi/day instead of 1 mi/day',
+        hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
+        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
+        workout_baseline_avg: 1.1, workout_experiment_avg: 2.0,
+        workout_baseline_n: 10, workout_experiment_n: 5, workout_p: 0.01,
+        workout_baseline_avg_calories: 2000, workout_experiment_avg_calories: 2400,
+        created_at: '2026-07-13T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Row' })
+    await expect(card.locator('.seg-caveat')).toContainText('Calories also rose ~20%')
+  })
+
   test('food-elimination experiment outcome shows a card with before vs during counts', async ({ page }) => {
     await page.route('**/api/withings/status', r =>
       r.fulfill({ json: { connected: true, last_synced: null } }))

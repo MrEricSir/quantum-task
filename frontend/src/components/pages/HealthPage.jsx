@@ -597,19 +597,44 @@ function foodAdhered(exp) {
   return exp.food_experiment_count <= exp.food_baseline_frequency / 2
 }
 
-function foodCaloriePctChange(exp) {
+function caloriePctChange(baseline, experiment) {
   // One-variable confound check: did overall intake also change, or did it
-  // stay roughly where it was on weeks this food was part of the pattern?
-  // Not a substitute for a real multivariate model (see PRODUCT_NOTES.md)
-  // -- just the cheapest, most honest thing to surface with this little
-  // weekly data: the single most obvious rival explanation.
-  if (exp.food_baseline_avg_calories == null || exp.food_experiment_avg_calories == null) return null
-  if (exp.food_baseline_avg_calories === 0) return null
-  return (exp.food_experiment_avg_calories - exp.food_baseline_avg_calories) / exp.food_baseline_avg_calories
+  // stay roughly where it was on weeks this food/workout was part of the
+  // pattern? Not a substitute for a real multivariate model (see
+  // PRODUCT_NOTES.md) -- just the cheapest, most honest thing to surface
+  // with this little weekly data: the single most obvious rival explanation.
+  if (baseline == null || experiment == null || baseline === 0) return null
+  return (experiment - baseline) / baseline
+}
+
+function foodCaloriePctChange(exp) {
+  return caloriePctChange(exp.food_baseline_avg_calories, exp.food_experiment_avg_calories)
+}
+
+function workoutCaloriePctChange(exp) {
+  return caloriePctChange(exp.workout_baseline_avg_calories, exp.workout_experiment_avg_calories)
+}
+
+function workoutAdhered(exp) {
+  // Did the routine actually change meaningfully, not just get logged as a
+  // target? Same concept as foodAdhered above -- and it turns out this one
+  // was a real bug, not just a missing refinement: weight_baseline/
+  // weight_delta are populated for every experiment type (see
+  // _record_outcome), so the generic weight/fat branch below always used to
+  // fire first for a workout experiment regardless of whether workout_p or
+  // the target were ever actually met, silently shadowing the real
+  // significance test this app already computes and stores.
+  if (exp.workout_baseline_avg == null || exp.workout_experiment_avg == null) return null
+  if (exp.workout_p != null && exp.workout_p < 0.05) return true
+  if (exp.workout_target_value != null && exp.workout_experiment_avg >= exp.workout_target_value) return true
+  return false
 }
 
 function experimentVerdict(exp) {
   if (exp.food_name != null && foodAdhered(exp) === false) {
+    return { label: 'Not enough adherence to judge', cls: 'verdict--neutral' }
+  }
+  if (exp.workout_type != null && workoutAdhered(exp) === false) {
     return { label: 'Not enough adherence to judge', cls: 'verdict--neutral' }
   }
   const wDiff = exp.weight_delta != null && exp.weight_baseline != null
@@ -623,9 +648,10 @@ function experimentVerdict(exp) {
     if (avg > 0.002)  return { label: 'Worse than usual',  cls: 'verdict--bad'  }
     return { label: 'No clear effect', cls: 'verdict--neutral' }
   }
-  // Workout-routine experiments have no weight/fat delta to fall back on --
-  // "better/worse" isn't a supportable judgment for e.g. "rowed further,"
-  // so this reports significance/target-met instead of a value judgment.
+  // Fallback for when there's no weight/fat data at all (e.g. no Withings
+  // connection) -- reports the workout significance/target-met directly
+  // instead of a value judgment ("better/worse" isn't supportable for e.g.
+  // "rowed further" on its own).
   if (exp.workout_baseline_avg != null && exp.workout_experiment_avg != null) {
     if (exp.workout_p != null && exp.workout_p < 0.05) {
       return { label: 'Significant change', cls: 'verdict--good' }
@@ -768,6 +794,16 @@ function ExperimentOutcomeCard({ exp }) {
           <span className="seg-n">n={exp.workout_experiment_n ?? 0}</span>
         </div>
       </div>
+      {(() => {
+        const pctChange = workoutCaloriePctChange(exp)
+        if (pctChange == null || Math.abs(pctChange) <= 0.15) return null
+        return (
+          <p className="seg-caveat">
+            ⚠ Calories also {pctChange < 0 ? 'dropped' : 'rose'} ~{Math.round(Math.abs(pctChange) * 100)}%
+            this week — this result may reflect an overall intake change, not {exp.workout_type} specifically.
+          </p>
+        )
+      })()}
     </div>
   )
 }

@@ -255,6 +255,16 @@ class HealthExperiment(Base):
     workout_experiment_n   = Column(Integer, nullable=True)
     workout_p              = Column(Float, nullable=True)
 
+    # Matched weight/fat baseline + one-variable calorie confound check, same
+    # concept as the food_baseline_weeks_n/food_*_avg_calories group below --
+    # weeks this workout type was actually being logged, not an unmatched
+    # average of all 90 days. Falls back to the generic all-other-weeks
+    # baseline (workout_baseline_weeks_n stays null) when fewer than 2 such
+    # weeks exist.
+    workout_baseline_weeks_n       = Column(Integer, nullable=True)
+    workout_baseline_avg_calories  = Column(Float, nullable=True)
+    workout_experiment_avg_calories = Column(Float, nullable=True)
+
     # Food-elimination/reduction experiments (e.g. "cut out coffee this
     # week") -- set at generation time when the experiment targets a
     # regularly-eaten FoodEntry.name rather than a Withings metric or
