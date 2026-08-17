@@ -1873,6 +1873,43 @@ test.describe('health page', () => {
     await expect(page.locator('.food-entry-name')).toHaveText('row · 5000 m')
   })
 
+  test('logging a matching workout auto-checks the linked experiment habit without a manual reload', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let habitChecked = false
+    await page.route(/\/api\/habits(\?|$)/, r => {
+      const url = r.request().url()
+      if (url.includes('archived=true')) return r.fulfill({ json: [] })
+      const habits = HABITS.map(h =>
+        h.id === 3 ? { ...h, completed_today: habitChecked } : h
+      )
+      return r.fulfill({ json: habits })
+    })
+    await page.route('**/api/workouts**', r => {
+      const url = r.request().url()
+      if (r.request().method() === 'POST') {
+        habitChecked = true
+        return r.fulfill({ status: 201, json: [{
+          id: 1, raw_input: 'rowed 2mi', type: 'row', value: 2, unit: 'mi',
+          notes: null, logged_at: '2026-06-03T08:00:00',
+        }] })
+      }
+      if (url.includes('/chart')) return r.fulfill({ json: [] })
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+
+    const habitCard = page.locator('.habit-card', { hasText: '1 hour screen-free time' })
+    await expect(habitCard.locator('.habit-card-check')).toHaveAttribute('aria-label', 'Mark complete')
+
+    await page.locator('.workout-input').fill('rowed 2mi')
+    await page.locator('.workout-input').press('Enter')
+
+    await expect(habitCard).toHaveClass(/habit-card--done/)
+    await expect(habitCard.locator('.habit-card-check')).toHaveAttribute('aria-label', 'Mark incomplete')
+  })
+
   test('workout-routine experiment outcome shows a card with baseline vs experiment values', async ({ page }) => {
     await page.route('**/api/withings/status', r =>
       r.fulfill({ json: { connected: true, last_synced: null } }))

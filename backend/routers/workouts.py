@@ -17,6 +17,7 @@ import models
 from capabilities.workout import parse_workout, WORKOUT_TYPES
 from daily_log import create_logged_entries, day_bounds, delete_logged_entry
 from deps import get_db, local_date
+from routers.correlations import check_habit_for_workout
 
 router = APIRouter()
 
@@ -40,12 +41,16 @@ def _build_row(parsed: dict, raw: str, logged_at: datetime) -> models.WorkoutEnt
 @router.post("/api/workouts", status_code=201)
 def create_workout_entry(payload: dict, request: Request, db: Session = Depends(get_db)):
     raw = (payload.get("raw_input") or "").strip()
-    return create_logged_entries(
+    entries = create_logged_entries(
         db, request, payload, "logged_at",
         parse_fn=lambda r: [parse_workout(r)],
         build_row=lambda parsed, ts: _build_row(parsed, raw, ts),
         serialize=_entry_dict,
     )
+    today = local_date(request)
+    for e in entries:
+        check_habit_for_workout(db, e["type"], today)
+    return entries
 
 
 @router.get("/api/workouts")

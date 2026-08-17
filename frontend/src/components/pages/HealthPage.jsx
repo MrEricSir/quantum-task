@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, updateWorkoutEntry, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import { isoToLocal } from '../modals/CardForm'
 import { useDailyLog } from '../../hooks/useDailyLog'
+import { HABITS_QUERY_KEY } from '../../hooks/useHabits'
 import HabitsPage from './HabitsPage'
 import './HealthPage.css'
 
@@ -926,6 +928,7 @@ const WORKOUT_COLORS = {
 function WorkoutLog({ range, revision = 0 }) {
   const [chartData, setChartData] = useState([])
   const editTypeRef = useRef(null)
+  const queryClient = useQueryClient()
 
   // Load chart data: single request for the full date range
   const loadChart = () => {
@@ -961,7 +964,12 @@ function WorkoutLog({ range, revision = 0 }) {
       notes: editForm.notes.trim() || null,
     }),
     revision,
-    onMutate: loadChart,
+    onMutate: () => {
+      loadChart()
+      // A logged workout may have auto-checked a linked experiment habit
+      // server-side -- refetch so the Habits section reflects it immediately.
+      queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
+    },
   })
 
   const onAdd = () => handleAdd({ logged_at: localDateTime() })

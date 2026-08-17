@@ -1146,6 +1146,7 @@ def _capture_from_text(text: str, tz_offset: int, chat_id: str = "") -> str:
     from routers.cards import parse_bulk_text, create_card_row
     from routers.habits import create_habit_row
     from routers.withings import withings_set_goals
+    from routers.correlations import check_habit_for_workout
     from capabilities.workout import parse_workout
 
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
@@ -1207,7 +1208,9 @@ def _capture_from_text(text: str, tz_offset: int, chat_id: str = "") -> str:
                 db.add(entry)
                 db.flush()
                 workout_ids.append(entry.id)
-                blocks.append(f"✓ Workout logged: {raw}")
+                matched_habit = check_habit_for_workout(db, parsed["type"], today)
+                habit_note = f" (also checked off {matched_habit.name})" if matched_habit else ""
+                blocks.append(f"✓ Workout logged: {raw}{habit_note}")
 
             elif item.type == "assist":
                 blocks.append(f"That sounded like a question, not something to capture: \"{item.title}\" — try asking me directly.")
@@ -1702,6 +1705,8 @@ def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     trusting type/value/unit straight from the intent-classification call --
     the same fix already applied to food logging this session. Gets the
     `notes` field for free, which the old one-call shape never populated."""
+    from routers.correlations import check_habit_for_workout
+
     raw = (intent.get("raw_input") or "").strip()
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
     parsed = parse_workout(raw)
@@ -1711,6 +1716,8 @@ def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
         db.add(entry)
         db.commit()
         entry_id = entry.id
+        matched_habit = check_habit_for_workout(db, parsed["type"], now_local.date())
+        matched_habit_name = matched_habit.name if matched_habit else None
 
     if chat_id:
         session = _get_session(chat_id)
@@ -1718,7 +1725,8 @@ def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 
     value, unit = parsed["value"], parsed["unit"]
     detail = f" ({value:g} {unit})" if value is not None and unit else ""
-    return f"✓ Workout logged{detail}: {raw}\nSend <b>undo</b> to remove it."
+    habit_note = f"\nAlso checked off <b>{matched_habit_name}</b> for today." if matched_habit_name else ""
+    return f"✓ Workout logged{detail}: {raw}{habit_note}\nSend <b>undo</b> to remove it."
 
 
 def _reply_complete_habit(intent: dict, tz_offset: int, chat_id: str = "") -> str:
@@ -1727,13 +1735,12 @@ def _reply_complete_habit(intent: dict, tz_offset: int, chat_id: str = "") -> st
     if not query:
         return "Which habit did you complete? Try: <b>done meditation</b>"
 
-    from streak import recompute_from
+    from routers.habits import check_habit_row
     now_local = datetime.now(timezone.utc).replace(tzinfo=None)  # rough — used only for date
     with SessionLocal() as db:
         s = Settings(db)
         tz_offset = s.tz_offset
         today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
-        today_str = today.isoformat()
 
         habits = db.query(models.Habit).filter_by(archived=False).all()
 
@@ -1747,15 +1754,9 @@ def _reply_complete_habit(intent: dict, tz_offset: int, chat_id: str = "") -> st
             names = ", ".join(h.name for h in habits) if habits else "none"
             return f'No habit matching "{query}". Your habits: {names}'
 
-        # Check if already done today
-        existing = db.query(models.HabitCompletion).filter_by(habit_id=match.id, date=today_str).first()
-        if existing:
+        newly_completed = check_habit_row(db, match.id, today)
+        if not newly_completed:
             return f"✓ <b>{match.name}</b> was already marked done today."
-
-        db.add(models.HabitCompletion(habit_id=match.id, date=today_str))
-        db.flush()
-        recompute_from(db, match.id, today)
-        db.commit()
 
         # Get current streak for a little feedback
         from streak import get_current_streak

@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from database import Base
 import models
 from routers import workouts as workouts_router
+from routers.correlations import _current_isoweek
 from deps import get_db
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -270,3 +271,43 @@ class TestWorkoutChart:
         client.post("/api/workouts", json={"raw_input": "lifted", "logged_at": "2026-07-25T18:00:00"})
         data = client.get("/api/workouts/chart?start=2026-07-25&end=2026-07-25").json()
         assert set(data[0]["types"]) == {"row", "strength"}
+
+
+# ── Habit auto-completion ───────────────────────────────────────────────────────
+
+class TestWorkoutHabitAutoCompletion:
+
+    def _seed_active_experiment(self, db_session, workout_type="row"):
+        habit = models.Habit(name="🧪 Row 2 miles")
+        db_session.add(habit)
+        db_session.commit()
+        db_session.add(models.HealthExperiment(
+            week=_current_isoweek(), text="t", status="active",
+            workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
+            habit_id=habit.id,
+        ))
+        db_session.commit()
+        return habit
+
+    def test_logging_a_matching_workout_checks_the_linked_habit(self, client, db_session, monkeypatch):
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
+        habit = self._seed_active_experiment(db_session, workout_type="row")
+
+        r = client.post("/api/workouts", json={"raw_input": "rowed 5000m"})
+        assert r.status_code == 201
+
+        completions = db_session.query(models.HabitCompletion).filter_by(habit_id=habit.id).all()
+        assert len(completions) == 1
+
+    def test_logging_a_non_matching_workout_does_not_check_the_habit(self, client, db_session, monkeypatch):
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_run)
+        habit = self._seed_active_experiment(db_session, workout_type="row")
+
+        client.post("/api/workouts", json={"raw_input": "ran 3 miles"})
+
+        assert db_session.query(models.HabitCompletion).filter_by(habit_id=habit.id).count() == 0
+
+    def test_no_active_experiment_does_not_error(self, client, monkeypatch):
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
+        r = client.post("/api/workouts", json={"raw_input": "rowed 5000m"})
+        assert r.status_code == 201

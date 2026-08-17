@@ -232,6 +232,10 @@ class HealthExperiment(Base):
     habit_id         = Column(Integer, nullable=True)  # linked 🧪 habit (no FK — habit may be archived)
     health_metric    = Column(String, nullable=True)
     health_goal      = Column(Float, nullable=True)
+    routine_type     = Column(String, nullable=True)   # raw LLM "workout"|"habit"|"food"|None,
+                                                         # persisted as-given for post-hoc debugging
+                                                         # of generation drift (independent of which
+                                                         # field-group actually ends up populated)
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     dismissed_at = Column(DateTime, nullable=True)
     status      = Column(String, default="active")    # "active" | "dismissed"

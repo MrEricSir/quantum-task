@@ -154,16 +154,27 @@ def _require_manual(habit_id: int, db: Session) -> models.Habit:
     return db_habit
 
 
+def check_habit_row(db: Session, habit_id: int, today: date) -> bool:
+    """Mark a habit completed for today, no-op if already checked. Returns
+    whether it newly completed (vs. an already-done no-op). Shared by the
+    manual check-off endpoint, Telegram's habit-completion handler, and
+    workout-triggered auto-completion -- deliberately does not enforce
+    _require_manual, since that guard only makes sense for direct manual UI
+    toggling of Withings-tracked habits."""
+    today_str = today.isoformat()
+    if db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first():
+        return False
+    db.add(models.HabitCompletion(habit_id=habit_id, date=today_str))
+    db.flush()
+    recompute_from(db, habit_id, today)
+    db.commit()
+    return True
+
+
 @router.post("/api/habits/{habit_id}/check")
 def check_habit(request: Request, habit_id: int, db: Session = Depends(get_db)):
     _require_manual(habit_id, db)
-    today = local_date(request)
-    today_str = today.isoformat()
-    if not db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first():
-        db.add(models.HabitCompletion(habit_id=habit_id, date=today_str))
-        db.flush()
-        recompute_from(db, habit_id, today)
-        db.commit()
+    check_habit_row(db, habit_id, local_date(request))
     return {"ok": True}
 
 

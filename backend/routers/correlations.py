@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 import models
 from deps import get_db, llm_client, LLM_MODEL, local_date
+from routers.habits import check_habit_row
 
 router = APIRouter()
 
@@ -54,6 +55,28 @@ def _week_start(wk: str) -> date:
 def _current_isoweek() -> str:
     y, w, _ = date.today().isocalendar()
     return f"{y}-W{w:02d}"
+
+
+def check_habit_for_workout(db: Session, workout_type: str, today: date) -> models.Habit | None:
+    """If there's an active workout-routine experiment this week targeting
+    workout_type, check off its linked habit for today. Matches on type only,
+    not on hitting workout_target_value -- this is a lightweight "did you do
+    the routine today" signal, not the statistical adherence check (that's
+    computed separately from workout_experiment_avg/workout_p at outcome
+    time). Returns the habit that got checked, or None if nothing matched."""
+    exp = (
+        db.query(models.HealthExperiment)
+        .filter_by(week=_current_isoweek(), status="active")
+        .filter(models.HealthExperiment.workout_type == workout_type)
+        .first()
+    )
+    if not exp or not exp.habit_id:
+        return None
+    habit = db.query(models.Habit).filter_by(id=exp.habit_id, archived=False).first()
+    if not habit:
+        return None
+    check_habit_row(db, habit.id, today)
+    return habit
 
 
 # ── Shared data loader ────────────────────────────────────────────────────────
@@ -572,7 +595,11 @@ when a real established routine is available. Set routine_type="workout", \
 workout_type to the EXACT type string given, workout_target_value to a \
 meaningfully higher number than the established avg (not a trivial +1%), and \
 workout_unit to the unit given for that type. The action field must still state \
-the concrete target ("Row 2 miles every day instead of your usual ~1.6"). If \
+the concrete target using the SAME numbers you just set, e.g. for \
+workout_type="row"/workout_target_value=2/workout_unit="mi" against an \
+established avg of 1.6: "Row 2 mi every day instead of your usual ~1.6" — the \
+pattern is "<Activity> <workout_target_value> <workout_unit> every day instead \
+of your usual ~<established avg>", not a fixed phrase to copy verbatim. If \
 instead you want to propose increasing an established HABIT's target (e.g. \
 "meditate 15 min instead of 10"), set routine_type="habit" and leave the \
 workout_*/food_* fields null — habits are tracked by completion only, so just \
@@ -584,8 +611,18 @@ interesting when diet quality or calories showed a notable correlation. Set \
 routine_type="food", food_name to the EXACT food name given, and \
 food_target_frequency to a number LOWER than its current frequency (0 for full \
 elimination, or a reduced count for a cutback). The action field must still \
-state the concrete target ("Cut out coffee entirely this week" or "Limit pizza \
-to once this week instead of your usual ~3x").
+state the concrete target using the SAME food name and number, following the \
+pattern "Cut out <food_name> entirely this week" (food_target_frequency=0) or \
+"Limit <food_name> to <food_target_frequency>x this week instead of your usual \
+~<current frequency>".
+
+CONSISTENCY (important): whichever single group you populate above -- \
+health_metric/health_goal, OR routine_type="workout" with workout_*, OR \
+routine_type="food" with food_* -- the other two groups' fields must be left \
+null, AND "action"/"text"/"hypothesis" must describe that exact same thing. \
+Never write an action about a workout routine while health_metric is set to \
+something else (or vice versa) -- that combination is invalid even if each \
+field individually looks plausible.
 
 Recently tried experiments: avoid proposing the same metric/routine/food with \
 the same or a near-identical target as one just tried — either pick a different \
@@ -810,6 +847,7 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         needs_habit = False
         health_metric = None
         health_goal = None
+        routine_type = None
         workout_type = None
         workout_target_value = None
         workout_unit = None
@@ -842,6 +880,7 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
         habit_id=habit_id,
         health_metric=health_metric,
         health_goal=health_goal,
+        routine_type=routine_type,
         workout_type=workout_type,
         workout_target_value=workout_target_value,
         workout_unit=workout_unit,

@@ -984,6 +984,48 @@ class TestBotLogWorkout:
         with BotTestSession() as db:
             assert db.query(models.WorkoutEntry).filter_by(raw_input="bench pressed 185 lbs").count() == 0
 
+    def _seed_active_experiment(self, db, workout_type="row"):
+        from routers.correlations import _current_isoweek
+        habit = models.Habit(name="🧪 Row 2 miles")
+        db.add(habit)
+        db.commit()
+        db.add(models.HealthExperiment(
+            week=_current_isoweek(), text="t", status="active",
+            workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
+            habit_id=habit.id,
+        ))
+        db.commit()
+        return habit
+
+    def test_matching_workout_checks_the_linked_habit_and_mentions_it(self):
+        from telegram.bot import _reply_log_workout
+        with BotTestSession() as db:
+            habit = self._seed_active_experiment(db, workout_type="row")
+            habit_id = habit.id
+
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_workout", return_value=self._mock_parsed(wtype="row")):
+            reply = _reply_log_workout({"raw_input": "rowed 5000m"}, 0)
+
+        assert "Also checked off" in reply
+        assert "Row 2 miles" in reply
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 1
+
+    def test_non_matching_workout_does_not_mention_a_habit(self):
+        from telegram.bot import _reply_log_workout
+        with BotTestSession() as db:
+            habit = self._seed_active_experiment(db, workout_type="row")
+            habit_id = habit.id
+
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_workout", return_value=self._mock_parsed(wtype="run")):
+            reply = _reply_log_workout({"raw_input": "ran 3 miles"}, 0)
+
+        assert "Also checked off" not in reply
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 0
+
 
 def _fake_llm_client(text):
     resp = MagicMock()
@@ -1310,6 +1352,32 @@ class TestCaptureFromText:
             assert entry.type == "run"
             assert entry.value == 5.0
             assert entry.notes == "A 5k run."
+
+    def test_workout_capture_checks_a_matching_active_experiment_habit(self):
+        from telegram.bot import _capture_from_text
+        from routers.correlations import _current_isoweek
+        with BotTestSession() as db:
+            habit = models.Habit(name="🧪 Row 2 miles")
+            db.add(habit)
+            db.commit()
+            db.add(models.HealthExperiment(
+                week=_current_isoweek(), text="t", status="active",
+                workout_type="row", workout_target_value=2.0, workout_unit="mi",
+                habit_id=habit.id,
+            ))
+            db.commit()
+            habit_id = habit.id
+
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.parse_bulk_text",
+                   return_value=[self._item(type="workout", title="rowed 2mi", source_text="rowed 2mi")]), \
+             patch("capabilities.workout.parse_workout",
+                   return_value={"type": "row", "value": 2.0, "unit": "mi", "notes": None}):
+            reply = _capture_from_text("rowed 2mi", 0)
+
+        assert "also checked off" in reply.lower()
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 1
 
     def test_food_type_delegates_to_shared_food_logging(self):
         from telegram.bot import _capture_from_text

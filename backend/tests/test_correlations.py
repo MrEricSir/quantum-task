@@ -25,7 +25,7 @@ from routers.correlations import (
     _load_weekly_obs, _migrate_appsetting,
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
-    _week_start,
+    _week_start, _current_isoweek, check_habit_for_workout,
 )
 
 
@@ -736,6 +736,7 @@ class TestGenerateExperimentRoutines:
         assert exp.workout_unit == "mi"
         assert exp.health_metric is None
         assert exp.habit_id is not None
+        assert exp.routine_type == "workout"
 
     def test_unestablished_workout_type_is_discarded(self, db):
         payload = {
@@ -749,6 +750,21 @@ class TestGenerateExperimentRoutines:
 
         assert exp.workout_type is None
         assert exp.workout_target_value is None
+        # routine_type is persisted as-given for debugging, independent of
+        # whether the workout_type it named was actually established.
+        assert exp.routine_type == "workout"
+
+    def test_llm_failure_falls_back_without_crashing(self, db):
+        """A malformed/failed LLM call falls back to the canned steps
+        experiment -- routine_type must be initialized in that except branch
+        too, or building the HealthExperiment row raises a NameError."""
+        broken_client = MagicMock()
+        broken_client.chat.completions.create.side_effect = RuntimeError("boom")
+        with patch("routers.correlations.llm_client", return_value=broken_client):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.routine_type is None
+        assert exp.action is None
 
     def test_habit_routine_clears_health_metric(self, db):
         payload = {
@@ -875,3 +891,100 @@ class TestGenerateExperimentRoutines:
         sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         assert "Frequently eaten foods" in sent_content
         assert "coffee" in sent_content
+
+
+class TestCheckHabitForWorkout:
+
+    def _active_experiment(self, db, workout_type="row", habit_id=None, week=None):
+        exp = models.HealthExperiment(
+            week=week or _current_isoweek(), text="t", status="active",
+            workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
+            habit_id=habit_id,
+        )
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def _habit(self, db, name="🧪 Row 2 miles", archived=False):
+        habit = models.Habit(name=name, archived=archived)
+        db.add(habit)
+        db.commit()
+        return habit
+
+    def test_matching_active_experiment_checks_the_linked_habit(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, workout_type="row", habit_id=habit.id)
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is not None
+        assert result.id == habit.id
+        completion = db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date="2026-06-20",
+        ).first()
+        assert completion is not None
+
+    def test_no_active_experiment_is_a_noop(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, workout_type="row", habit_id=habit.id)
+        db.query(models.HealthExperiment).update({"status": "dismissed"})
+        db.commit()
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_workout_type_mismatch_is_a_noop(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, workout_type="row", habit_id=habit.id)
+
+        result = check_habit_for_workout(db, "run", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_already_checked_today_is_idempotent(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, workout_type="row", habit_id=habit.id)
+        db.add(models.HabitCompletion(habit_id=habit.id, date="2026-06-20"))
+        db.commit()
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is not None
+        assert db.query(models.HabitCompletion).filter_by(habit_id=habit.id).count() == 1
+
+    def test_no_linked_habit_is_a_noop(self, db):
+        self._active_experiment(db, workout_type="row", habit_id=None)
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_archived_habit_is_a_noop(self, db):
+        habit = self._habit(db, archived=True)
+        self._active_experiment(db, workout_type="row", habit_id=habit.id)
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_missing_habit_row_is_a_noop(self, db):
+        self._active_experiment(db, workout_type="row", habit_id=9999)
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_experiment_from_a_different_week_does_not_match(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, workout_type="row", habit_id=habit.id, week="2020-W01")
+
+        result = check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
