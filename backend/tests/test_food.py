@@ -309,3 +309,18 @@ class TestFoodQualityTrend:
         data = client.get("/api/food/quality-trend?days=30").json()
         dates = [d["date"] for d in data]
         assert dates == sorted(dates)
+
+    def test_cutoff_uses_client_local_date_not_server_clock(self, client, db_session):
+        """The trailing-window cutoff is anchored on X-Local-Date, not the
+        server's clock -- a client several days behind/ahead of the server
+        (or a server clock skew) must still get a cutoff based on their own
+        local date."""
+        self._seed(db_session, "2025-12-31T10:00:00", 5)  # just outside a 7-day window ending 2026-01-08
+        self._seed(db_session, "2026-01-08T10:00:00", 3)  # inside that window
+        r = client.get(
+            "/api/food/quality-trend?days=7",
+            headers={"X-Local-Date": "2026-01-08"},
+        )
+        dates = [d["date"] for d in r.json()]
+        assert "2026-01-08" in dates
+        assert "2025-12-31" not in dates

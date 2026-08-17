@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 import app_setting_keys as keys
 from capabilities.food import parse_food_entries
 from routers.cards import update_card_row
-from routers.workouts import _parse_workout
+from capabilities.workout import parse_workout
 from capabilities.registry import REGISTRY, by_telegram_action, set_telegram_handler
 import models
 from database import SessionLocal
@@ -1146,7 +1146,7 @@ def _capture_from_text(text: str, tz_offset: int, chat_id: str = "") -> str:
     from routers.cards import parse_bulk_text, create_card_row
     from routers.habits import create_habit_row
     from routers.withings import withings_set_goals
-    from routers.workouts import _parse_workout
+    from capabilities.workout import parse_workout
 
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
     today = now_local.date()
@@ -1202,7 +1202,7 @@ def _capture_from_text(text: str, tz_offset: int, chat_id: str = "") -> str:
 
             elif item.type == "workout":
                 raw = item.source_text or item.title
-                parsed = _parse_workout(raw)
+                parsed = parse_workout(raw)
                 entry = models.WorkoutEntry(raw_input=raw, logged_at=now_local, **parsed)
                 db.add(entry)
                 db.flush()
@@ -1698,13 +1698,13 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 
 def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     """Log a workout entry, parsed via the same LLM enrichment call the
-    webapp's workout log uses (routers.workouts._parse_workout) instead of
+    webapp's workout log uses (capabilities.workout.parse_workout) instead of
     trusting type/value/unit straight from the intent-classification call --
     the same fix already applied to food logging this session. Gets the
     `notes` field for free, which the old one-call shape never populated."""
     raw = (intent.get("raw_input") or "").strip()
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
-    parsed = _parse_workout(raw)
+    parsed = parse_workout(raw)
 
     with SessionLocal() as db:
         entry = models.WorkoutEntry(raw_input=raw, logged_at=now_local, **parsed)

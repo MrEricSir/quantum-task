@@ -67,10 +67,10 @@ def _mock_parse_yoga(raw: str) -> dict:
 class TestWorkoutCRUD:
 
     def test_create_returns_parsed_entry(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         r = client.post("/api/workouts", json={"raw_input": "rowed 5000m"})
         assert r.status_code == 201
-        data = r.json()
+        data = r.json()[0]
         assert data["type"] == "row"
         assert data["value"] == 5000.0
         assert data["unit"] == "m"
@@ -78,35 +78,35 @@ class TestWorkoutCRUD:
         assert "logged_at" in data
 
     def test_create_strength_entry(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_strength)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_strength)
         r = client.post("/api/workouts", json={"raw_input": "bench pressed 185 lbs"})
         assert r.status_code == 201
-        data = r.json()
+        data = r.json()[0]
         assert data["type"] == "strength"
         assert data["value"] == 185.0
         assert data["unit"] == "lbs"
 
     def test_create_yoga_no_value(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_yoga)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_yoga)
         r = client.post("/api/workouts", json={"raw_input": "yoga"})
         assert r.status_code == 201
-        data = r.json()
+        data = r.json()[0]
         assert data["type"] == "yoga"
         assert data["value"] is None
         assert data["unit"] is None
 
     def test_create_requires_raw_input(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         r = client.post("/api/workouts", json={"raw_input": ""})
         assert r.status_code == 422
 
     def test_create_missing_raw_input(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         r = client.post("/api/workouts", json={})
         assert r.status_code == 422
 
     def test_get_entries_for_date(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         client.post("/api/workouts", json={"raw_input": "rowed 5000m", "logged_at": "2026-07-25T10:00:00"})
         r = client.get("/api/workouts?date_str=2026-07-25")
         assert r.status_code == 200
@@ -120,15 +120,15 @@ class TestWorkoutCRUD:
         assert r.json() == []
 
     def test_get_entries_excludes_other_dates(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         client.post("/api/workouts", json={"raw_input": "rowed", "logged_at": "2026-07-24T10:00:00"})
         r = client.get("/api/workouts?date_str=2026-07-25")
         assert r.status_code == 200
         assert r.json() == []
 
     def test_delete_removes_entry(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
-        created = client.post("/api/workouts", json={"raw_input": "rowed 5000m", "logged_at": "2026-07-25T10:00:00"}).json()
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
+        created = client.post("/api/workouts", json={"raw_input": "rowed 5000m", "logged_at": "2026-07-25T10:00:00"}).json()[0]
         r = client.delete(f"/api/workouts/{created['id']}")
         assert r.status_code == 200
         entries = client.get("/api/workouts?date_str=2026-07-25").json()
@@ -139,23 +139,91 @@ class TestWorkoutCRUD:
         assert r.status_code == 404
 
 
+# ── Update ──────────────────────────────────────────────────────────────────────
+
+class TestWorkoutUpdate:
+
+    def _create(self, client, monkeypatch, raw_input="rowed 5000m"):
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
+        return client.post("/api/workouts", json={"raw_input": raw_input}).json()[0]
+
+    def test_updates_type(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"type": "run"})
+        assert r.status_code == 200
+        assert r.json()["type"] == "run"
+
+    def test_invalid_type_is_ignored(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"type": "not-a-type"})
+        assert r.status_code == 200
+        assert r.json()["type"] == "row"
+
+    def test_updates_value_and_unit(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"value": 10, "unit": "km"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["value"] == 10.0
+        assert data["unit"] == "km"
+
+    def test_can_clear_value(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"value": None})
+        assert r.json()["value"] is None
+
+    def test_invalid_value_returns_422(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"value": "not-a-number"})
+        assert r.status_code == 422
+
+    def test_updates_notes(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"notes": "Felt strong."})
+        assert r.json()["notes"] == "Felt strong."
+
+    def test_updates_logged_at(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"logged_at": "2026-06-15T08:30:00"})
+        assert r.status_code == 200
+        assert r.json()["logged_at"].startswith("2026-06-15T08:30:00")
+
+    def test_invalid_logged_at_returns_422(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"logged_at": "not-a-date"})
+        assert r.status_code == 422
+
+    def test_partial_update_leaves_other_fields_untouched(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        client.put(f"/api/workouts/{entry['id']}", json={"value": 42})
+        r = client.put(f"/api/workouts/{entry['id']}", json={"notes": "Renamed"})
+        data = r.json()
+        assert data["notes"] == "Renamed"
+        assert data["value"] == 42.0
+
+    def test_update_nonexistent_returns_404(self, client):
+        r = client.put("/api/workouts/9999", json={"notes": "x"})
+        assert r.status_code == 404
+
+
 # ── Timezone handling ──────────────────────────────────────────────────────────
 
 class TestWorkoutTimezone:
 
     def test_explicit_logged_at_is_stored_as_given(self, client, monkeypatch):
         """Frontend-provided local datetime is stored and filtered correctly."""
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         client.post("/api/workouts", json={"raw_input": "rowed", "logged_at": "2026-07-25T18:16:00"})
         assert len(client.get("/api/workouts?date_str=2026-07-25").json()) == 1
         assert len(client.get("/api/workouts?date_str=2026-07-26").json()) == 0
 
     def test_utc_offset_minutes_is_called_for_default_timestamp(self, client, monkeypatch):
         """utc_offset_minutes() is invoked when no logged_at is in the payload."""
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_run)
+        import daily_log
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_run)
         calls = []
-        original = workouts_router.utc_offset_minutes
-        monkeypatch.setattr(workouts_router, "utc_offset_minutes", lambda r: calls.append(r) or original(r))
+        original = daily_log.utc_offset_minutes
+        monkeypatch.setattr(daily_log, "utc_offset_minutes", lambda r: calls.append(r) or original(r))
         client.post("/api/workouts", json={"raw_input": "ran 3 miles"})
         assert len(calls) == 1  # offset function was called to determine local time
 
@@ -174,7 +242,7 @@ class TestWorkoutTimezone:
 class TestWorkoutChart:
 
     def test_chart_returns_all_days_in_range(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         client.post("/api/workouts", json={"raw_input": "rowed", "logged_at": "2026-07-24T10:00:00"})
         r = client.get("/api/workouts/chart?start=2026-07-23&end=2026-07-25")
         assert r.status_code == 200
@@ -184,7 +252,7 @@ class TestWorkoutChart:
         assert dates == ["2026-07-23", "2026-07-24", "2026-07-25"]
 
     def test_chart_populated_day_has_types(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         client.post("/api/workouts", json={"raw_input": "rowed", "logged_at": "2026-07-24T10:00:00"})
         data = client.get("/api/workouts/chart?start=2026-07-23&end=2026-07-25").json()
         day24 = next(d for d in data if d["date"] == "2026-07-24")
@@ -196,9 +264,9 @@ class TestWorkoutChart:
             assert day["types"] == []
 
     def test_chart_multiple_types_same_day(self, client, monkeypatch):
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_row)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         client.post("/api/workouts", json={"raw_input": "rowed", "logged_at": "2026-07-25T08:00:00"})
-        monkeypatch.setattr(workouts_router, "_parse_workout", _mock_parse_strength)
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_strength)
         client.post("/api/workouts", json={"raw_input": "lifted", "logged_at": "2026-07-25T18:00:00"})
         data = client.get("/api/workouts/chart?start=2026-07-25&end=2026-07-25").json()
         assert set(data[0]["types"]) == {"row", "strength"}

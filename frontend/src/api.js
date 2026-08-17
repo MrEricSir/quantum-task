@@ -540,6 +540,16 @@ export async function fetchWorkoutEntries(date) {
   return res.json()
 }
 
+export async function updateWorkoutEntry(id, data) {
+  const res = await apiFetch(`/api/workouts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to update workout entry')
+  return res.json()
+}
+
 export async function fetchWorkoutChart(start, end) {
   const params = new URLSearchParams()
   if (start) params.set('start', start)

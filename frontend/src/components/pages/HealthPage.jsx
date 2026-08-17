@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, updateWorkoutEntry, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import { isoToLocal } from '../modals/CardForm'
+import { useDailyLog } from '../../hooks/useDailyLog'
 import HabitsPage from './HabitsPage'
 import './HealthPage.css'
 
@@ -923,14 +924,8 @@ const WORKOUT_COLORS = {
 }
 
 function WorkoutLog({ range, revision = 0 }) {
-  const [entries, setEntries] = useState([])
   const [chartData, setChartData] = useState([])
-  const [input, setInput] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [date, setDate] = useState(() => localDate())
-  const inputRef = useRef(null)
-
-  const load = (d) => fetchWorkoutEntries(d).then(setEntries).catch(() => {})
+  const editTypeRef = useRef(null)
 
   // Load chart data: single request for the full date range
   const loadChart = () => {
@@ -942,30 +937,36 @@ function WorkoutLog({ range, revision = 0 }) {
     fetchWorkoutChart(start, end).then(setChartData).catch(() => {})
   }
 
-  useEffect(() => { load(date) }, [date, revision])   // revision triggers reload after capture modal saves
   useEffect(() => { loadChart() }, [range, revision]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAdd = async () => {
-    if (!input.trim() || saving) return
-    setSaving(true)
-    try {
-      await createWorkoutEntry({ raw_input: input.trim(), logged_at: localDateTime() })
-      setInput('')
-      await load(date)
-      loadChart()
-    } catch {
-      // keep input
-    } finally {
-      setSaving(false)
-      inputRef.current?.focus()
-    }
-  }
+  const {
+    entries, input, setInput, saving, date, setDate,
+    editingId, editForm, setEditForm, setEditingId,
+    inputRef, handleAdd, handleDelete, startEdit, confirmEdit,
+  } = useDailyLog({
+    fetchEntries: fetchWorkoutEntries,
+    createEntry: createWorkoutEntry,
+    updateEntry: updateWorkoutEntry,
+    deleteEntry: deleteWorkoutEntry,
+    buildEditForm: (entry) => ({
+      type: entry.type,
+      value: entry.value != null ? String(entry.value) : '',
+      unit: entry.unit || '',
+      notes: entry.notes || '',
+    }),
+    buildUpdatePayload: (editForm) => ({
+      type: editForm.type,
+      value: editForm.value !== '' ? parseFloat(editForm.value) : null,
+      unit: editForm.unit.trim() || null,
+      notes: editForm.notes.trim() || null,
+    }),
+    revision,
+    onMutate: loadChart,
+  })
 
-  const handleDelete = async (id) => {
-    await deleteWorkoutEntry(id).catch(() => {})
-    setEntries(prev => prev.filter(e => e.id !== id))
-    loadChart()
-  }
+  const onAdd = () => handleAdd({ logged_at: localDateTime() })
+
+  useEffect(() => { if (editingId !== null) editTypeRef.current?.focus() }, [editingId])
 
   // Chart: stacked presence dots — one column per day, colored dots per type
   const labelIndices = labelIndicesFor(chartData.length)
@@ -1026,10 +1027,10 @@ function WorkoutLog({ range, revision = 0 }) {
           placeholder="rowed 5000m · bench pressed 185 lbs · ran 3 miles · yoga 45 min…"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          onKeyDown={e => e.key === 'Enter' && onAdd()}
           disabled={saving}
         />
-        <button className="food-add-btn" onClick={handleAdd} disabled={!input.trim() || saving}>
+        <button className="food-add-btn" onClick={onAdd} disabled={!input.trim() || saving}>
           {saving ? '…' : 'Log'}
         </button>
       </div>
@@ -1038,14 +1039,57 @@ function WorkoutLog({ range, revision = 0 }) {
         <p className="food-empty">No workouts logged for this day.</p>
       )}
 
-      {entries.map(e => (
-        <div key={e.id} className="food-entry">
-          <span className="workout-type-dot" style={{ background: WORKOUT_COLORS[e.type] ?? WORKOUT_COLORS.other }} />
-          <span className="food-entry-name">{e.type}{e.value != null ? ` · ${e.value}${e.unit ? ' ' + e.unit : ''}` : ''}</span>
-          {e.notes && <span className="food-entry-notes">{e.notes}</span>}
-          <button className="food-entry-delete" onClick={() => handleDelete(e.id)} aria-label="Remove">✕</button>
-        </div>
-      ))}
+      {entries.map(e => {
+        if (editingId === e.id) {
+          return (
+            <div key={e.id} className="food-entry-edit-form">
+              <select
+                ref={editTypeRef}
+                className="workout-entry-edit-type"
+                value={editForm.type}
+                onChange={ev => setEditForm({ ...editForm, type: ev.target.value })}
+              >
+                {Object.keys(WORKOUT_COLORS).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input
+                type="number"
+                className="workout-entry-edit-value"
+                value={editForm.value}
+                onChange={ev => setEditForm({ ...editForm, value: ev.target.value })}
+                placeholder="value"
+              />
+              <input
+                className="workout-entry-edit-unit"
+                value={editForm.unit}
+                onChange={ev => setEditForm({ ...editForm, unit: ev.target.value })}
+                onKeyDown={ev => { if (ev.key === 'Escape') setEditingId(null) }}
+                placeholder="unit"
+              />
+              <input
+                className="workout-entry-edit-notes"
+                value={editForm.notes}
+                onChange={ev => setEditForm({ ...editForm, notes: ev.target.value })}
+                onKeyDown={ev => { if (ev.key === 'Escape') setEditingId(null) }}
+                placeholder="Notes"
+              />
+              <div className="food-entry-edit-actions">
+                <button className="food-entry-edit-save" onClick={confirmEdit}>Save</button>
+                <button className="food-entry-edit-cancel" onClick={() => setEditingId(null)}>Cancel</button>
+              </div>
+            </div>
+          )
+        }
+
+        return (
+          <div key={e.id} className="food-entry">
+            <span className="workout-type-dot" style={{ background: WORKOUT_COLORS[e.type] ?? WORKOUT_COLORS.other }} />
+            <span className="food-entry-name">{e.type}{e.value != null ? ` · ${e.value}${e.unit ? ' ' + e.unit : ''}` : ''}</span>
+            {e.notes && <span className="food-entry-notes">{e.notes}</span>}
+            <button className="food-entry-edit" onClick={() => startEdit(e)} aria-label="Edit">✎</button>
+            <button className="food-entry-delete" onClick={() => handleDelete(e.id)} aria-label="Remove">✕</button>
+          </div>
+        )
+      })}
     </section>
   )
 }
@@ -1086,74 +1130,42 @@ function qualityColor(q) {
 }
 
 function FoodLog({ range = 30, revision = 0 }) {
-  const [entries, setEntries] = useState([])
-  const [input, setInput] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [date, setDate] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-  })
-  const [editingId, setEditingId] = useState(null)
-  const [editForm, setEditForm] = useState(null)
-  const inputRef = useRef(null)
   const editNameRef = useRef(null)
 
-  const load = (d) => fetchFoodEntries(d).then(setEntries).catch(() => {})
-
-  useEffect(() => { load(date) }, [date, revision]) // revision triggers reload after capture modal saves
-  useEffect(() => { if (editingId !== null) editNameRef.current?.focus() }, [editingId])
-
-  const handleAdd = async () => {
-    if (!input.trim() || saving) return
-    setSaving(true)
-    try {
-      await createFoodEntry({ raw_input: input.trim(), consumed_at: localDateTime() })
-      setInput('')
-      await load(date)
-    } catch {
-      // keep input
-    } finally {
-      setSaving(false)
-      inputRef.current?.focus()
-    }
-  }
-
-  const handleDelete = async (id) => {
-    await deleteFoodEntry(id).catch(() => {})
-    setEntries(prev => prev.filter(e => e.id !== id))
-  }
-
-  const startEdit = (entry) => {
-    setEditingId(entry.id)
-    setEditForm({
+  const {
+    entries, input, setInput, saving, date, setDate,
+    editingId, editForm, setEditForm, setEditingId,
+    inputRef, handleAdd, handleDelete, startEdit, confirmEdit,
+  } = useDailyLog({
+    fetchEntries: fetchFoodEntries,
+    createEntry: createFoodEntry,
+    updateEntry: updateFoodEntry,
+    deleteEntry: deleteFoodEntry,
+    buildEditForm: (entry) => ({
       name: entry.name,
       calories: entry.calories != null ? String(entry.calories) : '',
       quality: entry.quality != null ? String(entry.quality) : '',
       notes: entry.notes || '',
       consumed_at: isoToLocal(entry.consumed_at),
-    })
-  }
-
-  const confirmEdit = async () => {
-    const name = editForm.name.trim()
-    if (!name) { setEditingId(null); return }
-    try {
-      const updated = await updateFoodEntry(editingId, {
+    }),
+    buildUpdatePayload: (editForm) => {
+      const name = editForm.name.trim()
+      if (!name) return null
+      return {
         name,
         calories: editForm.calories !== '' ? parseInt(editForm.calories, 10) : null,
         quality: editForm.quality !== '' ? parseInt(editForm.quality, 10) : null,
         notes: editForm.notes.trim() || null,
         consumed_at: editForm.consumed_at || null,
-      })
-      setEntries(prev => prev.map(e => (e.id === editingId ? updated : e)).sort(
-        (a, b) => new Date(a.consumed_at) - new Date(b.consumed_at)
-      ))
-    } catch {
-      // keep editing open on failure
-      return
-    }
-    setEditingId(null)
-  }
+      }
+    },
+    sortKey: (e) => new Date(e.consumed_at),
+    revision,
+  })
+
+  const onAdd = () => handleAdd({ consumed_at: localDateTime() })
+
+  useEffect(() => { if (editingId !== null) editNameRef.current?.focus() }, [editingId])
 
   return (
     <section className="health-section">
@@ -1175,12 +1187,12 @@ function FoodLog({ range = 30, revision = 0 }) {
           placeholder="I ate a donut · just had coffee · chicken salad for lunch…"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          onKeyDown={e => e.key === 'Enter' && onAdd()}
           disabled={saving}
         />
         <button
           className="food-add-btn"
-          onClick={handleAdd}
+          onClick={onAdd}
           disabled={!input.trim() || saving}
         >
           {saving ? '…' : 'Log'}

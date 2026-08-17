@@ -927,7 +927,7 @@ class TestBotLogMood:
 
 
 class TestBotLogWorkout:
-    """_parse_workout() (routers/workouts.py) is the same LLM enrichment call
+    """parse_workout() (capabilities/workout.py) is the same LLM enrichment call
     the webapp's workout log uses -- mocked here the same way TestBotLogFood
     mocks parse_food_entries, so Telegram-logged workouts get real type/
     value/unit/notes instead of trusting the intent-classification call."""
@@ -938,7 +938,7 @@ class TestBotLogWorkout:
     def test_logs_workout_entry(self):
         from telegram.bot import _reply_log_workout
         with patch("telegram.bot.SessionLocal", BotTestSession), \
-             patch("telegram.bot._parse_workout", return_value=self._mock_parsed()):
+             patch("telegram.bot.parse_workout", return_value=self._mock_parsed()):
             reply = _reply_log_workout({"raw_input": "rowed 5000m"}, 0)
         assert "Workout logged" in reply
         assert "rowed 5000m" in reply
@@ -954,7 +954,7 @@ class TestBotLogWorkout:
         # the concrete enrichment gain from the fix.
         from telegram.bot import _reply_log_workout
         with patch("telegram.bot.SessionLocal", BotTestSession), \
-             patch("telegram.bot._parse_workout",
+             patch("telegram.bot.parse_workout",
                    return_value=self._mock_parsed(notes="A steady-state rowing session.")):
             _reply_log_workout({"raw_input": "rowed 5000m"}, 0)
         with BotTestSession() as db:
@@ -964,7 +964,7 @@ class TestBotLogWorkout:
     def test_invalid_value_stored_as_null(self):
         from telegram.bot import _reply_log_workout
         with patch("telegram.bot.SessionLocal", BotTestSession), \
-             patch("telegram.bot._parse_workout",
+             patch("telegram.bot.parse_workout",
                    return_value=self._mock_parsed(wtype="other", value=None, unit=None)):
             _reply_log_workout({"raw_input": "went for a walk"}, 0)
         with BotTestSession() as db:
@@ -976,7 +976,7 @@ class TestBotLogWorkout:
         chat_id = "test_workout_undo"
         _sessions.pop(chat_id, None)
         with patch("telegram.bot.SessionLocal", BotTestSession), \
-             patch("telegram.bot._parse_workout",
+             patch("telegram.bot.parse_workout",
                    return_value=self._mock_parsed(wtype="strength", value=185, unit="lbs")):
             _reply_log_workout({"raw_input": "bench pressed 185 lbs"}, 0, chat_id=chat_id)
             undo_reply = _reply_undo(chat_id)
@@ -1300,7 +1300,7 @@ class TestCaptureFromText:
         with patch("telegram.bot.SessionLocal", BotTestSession), \
              patch("routers.cards.parse_bulk_text",
                    return_value=[self._item(type="workout", title="ran 5k", source_text="ran 5k")]), \
-             patch("routers.workouts._parse_workout",
+             patch("capabilities.workout.parse_workout",
                    return_value={"type": "run", "value": 5.0, "unit": "km", "notes": "A 5k run."}):
             reply = _capture_from_text("ran 5k", 0)
         assert "ran 5k" in reply
@@ -1414,7 +1414,7 @@ class TestCaptureFromText:
         with patch("telegram.bot.SessionLocal", BotTestSession), \
              patch("routers.cards.parse_bulk_text",
                    return_value=[self._item(type="workout", title="ran 5k", source_text="ran 5k")]), \
-             patch("routers.workouts._parse_workout",
+             patch("capabilities.workout.parse_workout",
                    return_value={"type": "run", "value": 5.0, "unit": "km", "notes": None}):
             _capture_from_text("ran 5k", 0, chat_id=chat_id)
             _reply_undo(chat_id)

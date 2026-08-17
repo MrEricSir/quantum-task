@@ -830,6 +830,27 @@
   cursor: pointer;
 }
 
+.food-entry-edit-form select {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.workout-entry-edit-value,
+.workout-entry-edit-unit {
+  width: 72px;
+}
+
+.workout-entry-edit-notes {
+  flex: 1;
+  min-width: 100%;
+}
+
 /* Quick add food preview */
 .quick-food-preview {
   display: flex;

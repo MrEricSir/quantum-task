@@ -1682,6 +1682,197 @@ test.describe('health page', () => {
     await expect(page.locator('.food-entry-name')).toHaveText('Coffee')
   })
 
+  test('food log add posts raw text and reloads the list', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let postBody = null
+    await page.route('**/api/food**', r => {
+      if (r.request().method() === 'POST') {
+        postBody = r.request().postDataJSON()
+        return r.fulfill({ status: 201, json: [{
+          id: 1, raw_input: 'coffee', name: 'Coffee', category: 'drink',
+          consumed_at: '2026-06-03T08:00:00', notes: null, quality: null, calories: null,
+        }] })
+      }
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: postBody ? [{
+          id: 1, raw_input: 'coffee', name: 'Coffee', category: 'drink',
+          consumed_at: '2026-06-03T08:00:00', notes: null, quality: null, calories: null,
+        }] : [] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.locator('.food-input').fill('coffee')
+    await page.locator('.food-input').press('Enter')
+    await expect.poll(() => postBody).not.toBeNull()
+    expect(postBody.raw_input).toBe('coffee')
+    await expect(page.locator('.food-entry-name')).toHaveText('Coffee')
+  })
+
+  test('deleting a food entry removes it from the list', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let deleted = false
+    await page.route('**/api/food**', r => {
+      if (r.request().method() === 'DELETE') {
+        deleted = true
+        return r.fulfill({ json: { ok: true } })
+      }
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: [{
+          id: 1, raw_input: 'coffee', name: 'Coffee', category: 'drink',
+          consumed_at: '2026-06-03T08:00:00', notes: null, quality: null, calories: null,
+        }] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.locator('.food-entry-name')).toHaveText('Coffee')
+    await page.locator('.food-entry-delete').click()
+    await expect.poll(() => deleted).toBe(true)
+    await expect(page.locator('.food-entry')).toHaveCount(0)
+  })
+
+  test('workout log add posts raw text and reloads the list', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let postBody = null
+    await page.route('**/api/workouts**', r => {
+      const url = r.request().url()
+      if (r.request().method() === 'POST') {
+        postBody = r.request().postDataJSON()
+        return r.fulfill({ status: 201, json: [{
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 5000, unit: 'm',
+          notes: null, logged_at: '2026-06-03T08:00:00',
+        }] })
+      }
+      if (url.includes('/chart')) return r.fulfill({ json: [] })
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: postBody ? [{
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 5000, unit: 'm',
+          notes: null, logged_at: '2026-06-03T08:00:00',
+        }] : [] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.locator('.workout-input').fill('rowed 5000m')
+    await page.locator('.workout-input').press('Enter')
+    await expect.poll(() => postBody).not.toBeNull()
+    expect(postBody.raw_input).toBe('rowed 5000m')
+    await expect(page.locator('.food-entry-name')).toHaveText('row · 5000 m')
+  })
+
+  test('deleting a workout entry removes it from the list', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let deleted = false
+    await page.route('**/api/workouts**', r => {
+      const url = r.request().url()
+      if (r.request().method() === 'DELETE') {
+        deleted = true
+        return r.fulfill({ json: { ok: true } })
+      }
+      if (url.includes('/chart')) return r.fulfill({ json: [] })
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: [{
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 5000, unit: 'm',
+          notes: null, logged_at: '2026-06-03T08:00:00',
+        }] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.locator('.food-entry-name')).toHaveText('row · 5000 m')
+    await page.locator('.food-entry-delete').click()
+    await expect.poll(() => deleted).toBe(true)
+    await expect(page.locator('.food-entry')).toHaveCount(0)
+  })
+
+  test('clicking edit on a workout entry shows a pre-filled edit form', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/workouts**', r => {
+      const url = r.request().url()
+      if (url.includes('/chart')) return r.fulfill({ json: [] })
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: [{
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 5000, unit: 'm',
+          notes: 'Felt good', logged_at: '2026-06-03T08:00:00',
+        }] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.locator('.food-entry-edit').click()
+    await expect(page.locator('.workout-entry-edit-type')).toHaveValue('row')
+    await expect(page.locator('.workout-entry-edit-value')).toHaveValue('5000')
+    await expect(page.locator('.workout-entry-edit-unit')).toHaveValue('m')
+    await expect(page.locator('.workout-entry-edit-notes')).toHaveValue('Felt good')
+  })
+
+  test('saving a workout entry edit PUTs the updated fields', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let putBody = null
+    await page.route('**/api/workouts**', r => {
+      const url = r.request().url()
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: {
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 6000, unit: 'm',
+          notes: 'Felt good', logged_at: '2026-06-03T08:00:00',
+        } })
+      }
+      if (url.includes('/chart')) return r.fulfill({ json: [] })
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: [{
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 5000, unit: 'm',
+          notes: null, logged_at: '2026-06-03T08:00:00',
+        }] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.locator('.food-entry-edit').click()
+    await page.locator('.workout-entry-edit-value').fill('6000')
+    await page.locator('.food-entry-edit-save').click()
+
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody.value).toBe(6000)
+    await expect(page.locator('.food-entry-edit-form')).toHaveCount(0)
+  })
+
+  test('cancelling a workout entry edit discards changes', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/workouts**', r => {
+      const url = r.request().url()
+      if (url.includes('/chart')) return r.fulfill({ json: [] })
+      if (r.request().method() === 'GET') {
+        return r.fulfill({ json: [{
+          id: 1, raw_input: 'rowed 5000m', type: 'row', value: 5000, unit: 'm',
+          notes: null, logged_at: '2026-06-03T08:00:00',
+        }] })
+      }
+      return r.fulfill({ json: [] })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.locator('.food-entry-edit').click()
+    await page.locator('.workout-entry-edit-value').fill('9999')
+    await page.locator('.food-entry-edit-cancel').click()
+    await expect(page.locator('.food-entry-edit-form')).toHaveCount(0)
+    await expect(page.locator('.food-entry-name')).toHaveText('row · 5000 m')
+  })
+
   test('workout-routine experiment outcome shows a card with baseline vs experiment values', async ({ page }) => {
     await page.route('**/api/withings/status', r =>
       r.fulfill({ json: { connected: true, last_synced: null } }))
