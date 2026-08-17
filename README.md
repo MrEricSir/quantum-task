@@ -212,7 +212,7 @@ the command can be fetched by a bare `curl` on a machine with no prior login. If
 somewhere it might leak, click **Rotate token** in the same panel; that invalidates the old
 command without touching your app password or any machine you've already installed on.
 
-This installs `qtask-bridge` into your PATH, creates `~/.config/qtask-bridge/claude.toml`, and
+This installs `qtask-bridge` into your PATH, creates `~/.config/qtask-bridge/config.toml`, and
 configures git to ignore the files the bridge writes into every worktree (`BRIDGE_SPEC.md`,
 `.claude/settings.local.json`, `.env.qtask`) **globally** — via git's own `core.excludesFile`
 mechanism, not by editing any target repo's own `.gitignore`. If you don't already have a
@@ -221,7 +221,7 @@ points git at it; if you do, it appends to whatever you've already got. Either w
 tracked files are ever touched — re-running the installer is safe and idempotent if you're
 already set up.
 
-**Where you run it from only matters if you skip configuration.** For any card linked to a GitHub issue, the bridge resolves the actual repo directory from `claude.toml` — not from your current directory — so once that's set up, `qtask-bridge` can be run from anywhere (your home directory, a cron job, doesn't matter). Configure it one of two ways:
+**Where you run it from only matters if you skip configuration.** For any card linked to a GitHub issue, the bridge resolves the actual repo directory from `config.toml` — not from your current directory — so once that's set up, `qtask-bridge` can be run from anywhere (your home directory, a cron job, doesn't matter). Configure it one of two ways:
 
 ```toml
 # Option A — explicit path per repo (also where a per-repo setup_cmd goes)
@@ -235,6 +235,8 @@ repo_roots = ["~/folder_a"]
 ```
 
 Your current directory is used only as a fallback, for a card with *no* linked GitHub issue — for that case, run the bridge from inside the repo you want it to act on.
+
+`qtask-bridge` checks `config.toml`'s structure on every run and prints anything wrong with it to stderr up front — a typo'd key, a `[repos."x"]` table missing its `path`, `env_files` set to a plain string instead of a list, and so on. If you edit this file by hand and something you configured doesn't seem to be taking effect, run any `qtask-bridge` command and look for a `[bridge] Warning: N problem(s) in config.toml` block before assuming it's a bug elsewhere.
 
 ```bash
 qtask-bridge --watch          # poll for jobs; launch Claude Code interactively when one arrives
@@ -269,7 +271,7 @@ running `git worktree list` to figure out where a job's code went:
 - **In your terminal tab** — interactive sessions (`--watch`/`--card`) set the tab/window title to the branch name, so multiple job tabs stay identifiable at a glance
 - **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). `qtask-bridge --switch` narrows that to worktrees for whichever repo you're currently in (main checkout or another worktree, either works), shows them most-recently-active first, and prints only the chosen path on stdout — everything else (the menu, the prompt) goes to stderr. A subprocess can never `cd` its own parent shell, though (an OS-level constraint, not something `--switch` itself can work around), so the installer automatically adds a `qcd` shell function to your `~/.bash_profile`/`~/.zshrc` that wraps it and does the actual `cd` — nothing to copy-paste, just run `qcd` after installing (or re-run the installer if you already had `qtask-bridge` from before `--switch` existed) and open a new terminal (or `source` your shell config).
 
-`--list`, `--switch`, and `--cleanup` only scan repos listed explicitly under `[repos]` in `claude.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in any of them.
+`--list`, `--switch`, and `--cleanup` only scan repos listed explicitly under `[repos]` in `config.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in any of them.
 
 #### Avoiding port and database collisions
 

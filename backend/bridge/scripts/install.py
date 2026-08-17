@@ -15,14 +15,14 @@ TOKEN   = "__QTASK_TOKEN__"
 INSTALL_DIR = os.path.expanduser("~/.local/bin")
 CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
+TOML_FILE   = os.path.join(CONFIG_DIR, "config.toml")
 BRIDGE_PATH = os.path.join(INSTALL_DIR, "qtask-bridge")
 
 # Indented consistently with the rest of this script (unlike a
 # column-0 literal) so textwrap.dedent() actually has something
 # uniform to strip — both here at generation time and again below
 # at install time, when it's re-dedented back down to column 0
-# before being written to claude.toml.
+# before being written to config.toml.
 TOML_TEMPLATE = textwrap.dedent("""\
     # qtask-bridge configuration
 

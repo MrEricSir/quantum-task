@@ -21,7 +21,7 @@ Usage:
 
 Config files in ~/.config/qtask-bridge/:
   config.json  — app URL and auth token (written by installer)
-  claude.toml  — repo mappings and agent name (edit to configure multi-repo)
+  config.toml  — repo mappings and agent name (edit to configure multi-repo)
 
 ── Coding-agent adapter contract ───────────────────────────────────────────────
 This file is agent-agnostic — it never mentions a specific coding CLI by name.
@@ -75,7 +75,7 @@ except ModuleNotFoundError:
 
 CONFIG_DIR  = os.path.expanduser("~/.config/qtask-bridge")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-TOML_FILE   = os.path.join(CONFIG_DIR, "claude.toml")
+TOML_FILE   = os.path.join(CONFIG_DIR, "config.toml")
 POLL_INTERVAL = 30        # seconds between polls in --watch mode
 OUTPUT_FLUSH_INTERVAL = 5 # seconds between output POSTs while streaming
 OUTPUT_FLUSH_LINES = 20   # flush after this many lines even if interval not reached
@@ -89,6 +89,79 @@ PUSH_DISABLED_SENTINEL = "no_push"  # remote.origin.pushurl value while a job ho
 PROCFILE_NAMES = ("Procfile.dev", "Procfile")  # checked in this order; dev-specific wins
 PROCESS_COLORS = ("\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m", "\033[31m")  # cycled by index
 COLOR_RESET = "\033[0m"
+
+
+# Top-level config.toml keys that are either copied verbatim into cfg
+# (scalars/lists, used directly or as a fallback when a repo entry doesn't
+# set its own) or handled specially (repos/repo_roots). Kept as one set so
+# _validate_toml_structure can flag anything else as an unrecognized
+# top-level key -- almost always a typo.
+_TOML_SCALAR_FALLBACK_KEYS = {
+    "name", "setup_cmd", "test_cmd", "verify_acceptance", "env_files", "run_cmd", "open_url",
+}
+_TOML_TOP_LEVEL_KEYS = _TOML_SCALAR_FALLBACK_KEYS | {"repos", "repo_roots"}
+_TOML_REPO_TABLE_KEYS = {
+    "path", "setup_cmd", "test_cmd", "verify_acceptance", "run_cmd", "env_files", "open_url",
+}
+
+
+def _validate_toml_structure(toml):
+    """Return a list of human-readable problem descriptions for structural
+    issues in an already-successfully-parsed config.toml -- wrong types,
+    unrecognized/misspelled keys, a repo table missing its required "path".
+    None of these are TOML syntax errors (tomllib already succeeded), so
+    without this they fail silently: an unrecognized key is just ignored, a
+    wrong-type value either gets ignored too or surfaces later as a
+    confusing error deep inside whatever command assumed the documented
+    shape (e.g. "no run_cmd and no Procfile found" when the user did
+    configure a top-level run_cmd fallback, just with a typo'd key)."""
+    problems = []
+
+    unknown_top = set(toml.keys()) - _TOML_TOP_LEVEL_KEYS
+    if unknown_top:
+        problems.append(f"unrecognized top-level key(s): {', '.join(sorted(unknown_top))}")
+
+    for key in ("name", "setup_cmd", "test_cmd", "run_cmd", "open_url"):
+        if key in toml and toml[key] is not None and not isinstance(toml[key], str):
+            problems.append(f'"{key}": expected a string, got {type(toml[key]).__name__}')
+    if "verify_acceptance" in toml and toml["verify_acceptance"] is not None and not isinstance(toml["verify_acceptance"], bool):
+        problems.append(f'"verify_acceptance": expected true/false, got {type(toml["verify_acceptance"]).__name__}')
+    if "env_files" in toml and toml["env_files"] is not None and not isinstance(toml["env_files"], list):
+        problems.append(f'"env_files": expected a list of paths, got {type(toml["env_files"]).__name__}')
+
+    repos = toml.get("repos")
+    if repos is not None and not isinstance(repos, dict):
+        problems.append(f'"repos" should be a table, got {type(repos).__name__}')
+        repos = {}
+    for name, entry in (repos or {}).items():
+        if isinstance(entry, str):
+            continue  # shorthand "owner/repo" = "/path" form -- nothing to validate
+        if not isinstance(entry, dict):
+            problems.append(f'repos."{name}": expected a path string or a table, got {type(entry).__name__}')
+            continue
+        if not entry.get("path"):
+            problems.append(f'repos."{name}": missing required "path"')
+        unknown = set(entry.keys()) - _TOML_REPO_TABLE_KEYS
+        if unknown:
+            problems.append(f'repos."{name}": unrecognized key(s): {", ".join(sorted(unknown))}')
+        for key in ("path", "setup_cmd", "test_cmd", "run_cmd", "open_url"):
+            if key in entry and entry[key] is not None and not isinstance(entry[key], str):
+                problems.append(f'repos."{name}".{key}: expected a string, got {type(entry[key]).__name__}')
+        if "env_files" in entry and entry["env_files"] is not None and not isinstance(entry["env_files"], list):
+            problems.append(f'repos."{name}".env_files: expected a list of paths, got {type(entry["env_files"]).__name__}')
+        if "verify_acceptance" in entry and entry["verify_acceptance"] is not None and not isinstance(entry["verify_acceptance"], bool):
+            problems.append(f'repos."{name}".verify_acceptance: expected true/false, got {type(entry["verify_acceptance"]).__name__}')
+
+    repo_roots = toml.get("repo_roots")
+    if repo_roots is not None:
+        if not isinstance(repo_roots, list):
+            problems.append(f'"repo_roots" should be a list, got {type(repo_roots).__name__}')
+        else:
+            for i, r in enumerate(repo_roots):
+                if not isinstance(r, str):
+                    problems.append(f"repo_roots[{i}]: expected a string, got {type(r).__name__}")
+
+    return problems
 
 
 def load_config():
@@ -105,12 +178,30 @@ def load_config():
         try:
             with open(TOML_FILE, "rb") as f:
                 toml = tomllib.load(f)
-            if toml.get("name"):
-                cfg["name"] = toml["name"]
-            cfg["repos"]      = dict(toml.get("repos") or {})
-            cfg["repo_roots"] = list(toml.get("repo_roots") or [])
         except Exception as e:
             print(f"[bridge] Warning: could not parse {TOML_FILE}: {e}", file=sys.stderr)
+            print(f"[bridge] Falling back to {CONFIG_FILE} only -- repos, repo_roots, and any "
+                  f"fallback commands configured in config.toml are NOT in effect until this is fixed.",
+                  file=sys.stderr)
+        else:
+            # Every top-level scalar/list fallback config.toml documents
+            # ("setup_cmd"/"run_cmd"/etc as a repo-less default) -- not just
+            # name/repos/repo_roots. Previously only those three were copied
+            # here, so a top-level run_cmd/setup_cmd/etc fallback silently
+            # never took effect even though the installed TOML_TEMPLATE
+            # explicitly documents setting them this way.
+            for key in _TOML_SCALAR_FALLBACK_KEYS:
+                if key in toml:
+                    cfg[key] = toml[key]
+            cfg["repos"]      = dict(toml.get("repos") or {})
+            cfg["repo_roots"] = list(toml.get("repo_roots") or [])
+
+            problems = _validate_toml_structure(toml)
+            if problems:
+                print(f"[bridge] Warning: {len(problems)} problem(s) in {TOML_FILE}:", file=sys.stderr)
+                for p in problems:
+                    print(f"  - {p}", file=sys.stderr)
+                print("[bridge] These entries are ignored/behave as unconfigured until fixed.", file=sys.stderr)
     return cfg
 
 
@@ -743,7 +834,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
 
     print(f"\n[bridge] Job {job_id} — card #{card_id}")
 
-    # Resolve the base repo clone from claude.toml; fall back to cwd for unlinked cards
+    # Resolve the base repo clone from config.toml; fall back to cwd for unlinked cards
     work_dir = _resolve_work_dir(cfg, target_repo)
     if work_dir is None:
         msg = (
@@ -1025,7 +1116,7 @@ def cmd_switch(cfg):
     worktree for the repo you're currently in."""
     repo_name = _current_repo_name(cfg)
     if repo_name is None:
-        print("[bridge] Not inside a configured repo (check claude.toml [repos]).",
+        print("[bridge] Not inside a configured repo (check config.toml [repos]).",
               file=sys.stderr)
         return
 
@@ -1066,7 +1157,7 @@ def cmd_list(cfg):
     with its merge status, and exit. For '--cleanup without the prompt'
     -- e.g. to answer 'where did job N's code go' from any shell."""
     if not (cfg.get("repos") or {}):
-        print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
+        print("[bridge] No repos configured in config.toml [repos] — nothing to scan.")
         return
 
     found = _scan_qtask_worktrees(cfg)
@@ -1087,7 +1178,7 @@ def cmd_cleanup(cfg):
     touch worktrees for branches you created yourself (only ones under
     refs/heads/qtask/)."""
     if not (cfg.get("repos") or {}):
-        print("[bridge] No repos configured in claude.toml [repos] — nothing to scan.")
+        print("[bridge] No repos configured in config.toml [repos] — nothing to scan.")
         return
 
     found = _scan_qtask_worktrees(cfg)
@@ -1351,7 +1442,7 @@ def _resolve_worktree_target(cfg, target):
     found = _scan_qtask_worktrees(cfg)
     if not found:
         print("[bridge] No qtask worktrees found. Run a job first, or check "
-              "claude.toml [repos].")
+              "config.toml [repos].")
         return None
 
     if not target:

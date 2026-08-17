@@ -191,11 +191,11 @@ class TestInstallScript:
         res = _get_install_script(client)
         assert "qtask-bridge" in res.text
 
-    def test_writes_claude_toml(self, client):
+    def test_writes_config_toml(self, client):
         res = _get_install_script(client)
-        assert "claude.toml" in res.text
+        assert "config.toml" in res.text
 
-    def test_claude_toml_only_written_if_not_exists(self, client):
+    def test_config_toml_only_written_if_not_exists(self, client):
         res = _get_install_script(client)
         assert "already exists" in res.text  # skips on reinstall
 
@@ -404,7 +404,7 @@ class TestQcdAutoInstall:
         monkeypatch.setattr(install_module, "INSTALL_DIR", str(install_dir))
         monkeypatch.setattr(install_module, "CONFIG_DIR", str(config_dir))
         monkeypatch.setattr(install_module, "CONFIG_FILE", str(config_dir / "config.json"))
-        monkeypatch.setattr(install_module, "TOML_FILE", str(config_dir / "claude.toml"))
+        monkeypatch.setattr(install_module, "TOML_FILE", str(config_dir / "config.toml"))
         monkeypatch.setattr(install_module, "BRIDGE_PATH", str(install_dir / "qtask-bridge"))
         monkeypatch.setattr(install_module, "APP_URL", "https://example.com")
         monkeypatch.setattr(install_module, "TOKEN", "test-token")
@@ -617,9 +617,9 @@ class TestAgentScript:
         assert '"claude"' in res.text or "'claude'" in res.text
         assert "BRIDGE_SPEC" in res.text
 
-    def test_agent_reads_claude_toml(self, client):
+    def test_agent_reads_config_toml(self, client):
         res = client.get("/api/bridge/agent.py")
-        assert "claude.toml" in res.text
+        assert "config.toml" in res.text
         assert "tomllib" in res.text
 
     def test_agent_has_resolve_work_dir(self, client):
@@ -1093,6 +1093,167 @@ class TestRunVerification:
         result = agent_core._run_verification(str(tmp_path), None, True, self.SPEC_WITH_CRITERIA)
         assert "### Tests" not in result
         assert "NOT MET: needs work" in result
+
+
+class TestLoadConfig:
+    """load_config() reads config.json (installer-written) + config.toml
+    (hand-edited). Problems in the TOML used to fail silently in two ways:
+    top-level fallback keys (run_cmd/setup_cmd/etc as a repo-less default)
+    were never actually copied into the returned cfg despite being
+    documented in TOML_TEMPLATE, and structural mistakes (typos, wrong
+    types, a missing "path") were never flagged at all."""
+
+    def _write_config(self, tmp_path, monkeypatch, toml_text=None):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        toml_file = config_dir / "config.toml"
+        config_file.write_text(json.dumps({"app_url": "https://example.com", "token": "tok"}))
+        if toml_text is not None:
+            toml_file.write_text(toml_text)
+        monkeypatch.setattr(agent_core, "CONFIG_FILE", str(config_file))
+        monkeypatch.setattr(agent_core, "TOML_FILE", str(toml_file))
+
+    def test_copies_top_level_fallback_keys_from_toml(self, tmp_path, monkeypatch):
+        # The actual bug report: these six top-level fallbacks are
+        # documented in TOML_TEMPLATE ("...or as a fallback here") but were
+        # never copied out of the parsed TOML into the returned cfg, so
+        # cfg.get("run_cmd") etc always silently returned None.
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+name = "my-machine"
+setup_cmd = "npm install"
+test_cmd = "npm test"
+run_cmd = "npm run dev"
+open_url = "http://localhost:3000"
+verify_acceptance = true
+env_files = ["backend/.env"]
+""")
+        cfg = agent_core.load_config()
+        assert cfg["name"] == "my-machine"
+        assert cfg["setup_cmd"] == "npm install"
+        assert cfg["test_cmd"] == "npm test"
+        assert cfg["run_cmd"] == "npm run dev"
+        assert cfg["open_url"] == "http://localhost:3000"
+        assert cfg["verify_acceptance"] is True
+        assert cfg["env_files"] == ["backend/.env"]
+
+    def test_repos_and_repo_roots_still_load(self, tmp_path, monkeypatch):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+repo_roots = ["~/code"]
+[repos]
+"owner/repo" = "/x"
+""")
+        cfg = agent_core.load_config()
+        assert cfg["repos"] == {"owner/repo": "/x"}
+        assert cfg["repo_roots"] == ["~/code"]
+
+    def test_no_toml_file_uses_config_json_only(self, tmp_path, monkeypatch):
+        self._write_config(tmp_path, monkeypatch, toml_text=None)
+        cfg = agent_core.load_config()
+        assert cfg["repos"] == {}
+        assert cfg["repo_roots"] == []
+        assert cfg.get("run_cmd") is None
+
+    def test_no_warnings_for_a_valid_config(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+name = "my-machine"
+[repos."owner/repo"]
+path = "/x"
+setup_cmd = "npm install"
+env_files = ["backend/.env"]
+verify_acceptance = true
+""")
+        agent_core.load_config()
+        assert capsys.readouterr().err == ""
+
+    def test_toml_parse_error_warns_and_falls_back(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="this is not valid toml [[[")
+        cfg = agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "could not parse" in err
+        assert "NOT in effect" in err
+        assert cfg["repos"] == {}
+
+    def test_flags_unrecognized_top_level_key(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text='reposs = {}\n')
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "unrecognized top-level key" in err
+        assert "reposs" in err
+
+    def test_flags_repo_missing_path(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+setup_cmd = "npm install"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert 'missing required "path"' in err
+
+    def test_flags_repo_unrecognized_key(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+setupcmd = "npm install"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "unrecognized key" in err
+        assert "setupcmd" in err
+
+    def test_flags_env_files_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+env_files = "backend/.env"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "env_files" in err
+        assert "expected a list" in err
+
+    def test_flags_verify_acceptance_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+verify_acceptance = "true"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "verify_acceptance" in err
+        assert "expected true/false" in err
+
+    def test_flags_repo_entry_of_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos]
+"owner/repo" = 42
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "expected a path string or a table" in err
+
+    def test_flags_repo_roots_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text='repo_roots = "~/code"\n')
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "repo_roots" in err
+        assert "should be a list" in err
+
+    def test_flags_repo_roots_entry_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="repo_roots = [1, 2]\n")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "repo_roots[0]" in err
+
+    def test_flags_multiple_problems_at_once(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+env_files = "not-a-list"
+setupcmd = "typo"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "3 problem(s)" in err  # missing path + unrecognized key + wrong type
 
 
 class TestRepoEntryVerificationFields:
@@ -1604,7 +1765,7 @@ class TestCmdUnlockPush:
     _git_teardown (normal session end) or _create_worktree's own
     stale-sentinel self-heal (next job run) to clear it. Operates on
     whatever repo cwd resolves to via `git rev-parse --show-toplevel` --
-    deliberately not scoped through claude.toml [repos] like --run/--review,
+    deliberately not scoped through config.toml [repos] like --run/--review,
     since pushurl is shared base-repo config, not per-worktree, so there's
     no worktree target to disambiguate."""
 
@@ -2548,7 +2709,7 @@ class TestRealInstalledBinary:
             )
             # --run needs the repo listed under [repos] to find it via
             # _scan_qtask_worktrees -- unlike --card, which can fall back to cwd.
-            (home_dir / ".config" / "qtask-bridge" / "claude.toml").write_text(
+            (home_dir / ".config" / "qtask-bridge" / "config.toml").write_text(
                 f'[repos]\n"scratch/repo" = "{scratch_repo}"\n'
             )
 
@@ -2617,7 +2778,7 @@ class TestRealInstalledBinary:
             (home_dir / ".config" / "qtask-bridge" / "config.json").write_text(
                 json.dumps({"app_url": backend.url, "token": "test-token"})
             )
-            (home_dir / ".config" / "qtask-bridge" / "claude.toml").write_text(
+            (home_dir / ".config" / "qtask-bridge" / "config.toml").write_text(
                 f'[repos]\n"scratch/repo" = "{scratch_repo}"\n'
             )
 
