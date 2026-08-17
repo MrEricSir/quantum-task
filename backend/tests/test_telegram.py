@@ -449,6 +449,69 @@ class TestBotBulkReschedule:
             for c in cards:
                 assert c.section == "today"
 
+    def test_sets_today_since_for_cards_moved_into_today(self):
+        _make_card("Week task", section="week")
+        from telegram.bot import _reply_bulk_reschedule
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_bulk_reschedule({"filter": "week", "section": "today"}, tz_offset=0)
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="Week task").first()
+            assert card.section == "today"
+            assert card.today_since is not None
+
+
+class TestBotReschedule:
+
+    def test_reschedules_to_new_section(self):
+        _make_card("Dentist appointment", section="later")
+        from telegram.bot import _reply_reschedule
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_reschedule({"match_query": "dentist", "section": "week"}, 0)
+        assert "Dentist appointment" in reply
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="Dentist appointment").first()
+            assert card.section == "week"
+
+    def test_sets_today_since_when_moved_into_today(self):
+        # Previously untested, and previously broken: the old hand-set-
+        # fields version of this handler never touched today_since at all.
+        _make_card("Dentist appointment", section="later")
+        from telegram.bot import _reply_reschedule
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_reschedule({"match_query": "dentist", "section": "today"}, 0)
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="Dentist appointment").first()
+            assert card.section == "today"
+            assert card.today_since is not None
+
+    def test_clears_today_since_when_moved_out_of_today(self):
+        with BotTestSession() as db:
+            db.add(models.Card(
+                title="Dentist appointment", section="today", position=0,
+                today_since=datetime.now(timezone.utc),
+            ))
+            db.commit()
+        from telegram.bot import _reply_reschedule
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_reschedule({"match_query": "dentist", "section": "later"}, 0)
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="Dentist appointment").first()
+            assert card.section == "later"
+            assert card.today_since is None
+
+    def test_pushes_undo(self):
+        _make_card("Dentist appointment", section="later")
+        from telegram.bot import _reply_reschedule, _reply_undo, _sessions
+        chat_id = "test_reschedule_undo"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_reschedule({"match_query": "dentist", "section": "week"}, 0, chat_id=chat_id)
+            undo_reply = _reply_undo(chat_id)
+        assert "Dentist appointment" in undo_reply
+        with BotTestSession() as db:
+            card = db.query(models.Card).filter_by(title="Dentist appointment").first()
+            assert card.section == "later"
+
 
 # ── Bridge intent tests ───────────────────────────────────────────────────────
 
@@ -590,6 +653,76 @@ class TestBotMarkComplete:
             card = db.query(models.Card).filter_by(title="Dentist appointment").first()
             assert card.completed is False
 
+    def test_completing_a_recurring_card_spawns_the_next_occurrence(self):
+        # This was the concrete bug: completing via Telegram used to hand-set
+        # completed=True directly, bypassing update_card_row entirely, so a
+        # recurring card's next occurrence never got created.
+        with BotTestSession() as db:
+            db.add(models.Card(
+                title="Water the plants", section="today", position=0,
+                recurrence_rule="daily", scheduled_at=datetime(2026, 6, 1, 9, 0, 0),
+            ))
+            db.commit()
+        from telegram.bot import _reply_complete
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_complete({"match_query": "water the plants"}, 0)
+        with BotTestSession() as db:
+            cards = db.query(models.Card).filter_by(title="Water the plants").all()
+        assert len(cards) == 2
+        completed = [c for c in cards if c.completed]
+        next_occ = [c for c in cards if not c.completed]
+        assert len(completed) == 1 and len(next_occ) == 1
+        assert next_occ[0].recurrence_rule == "daily"
+        assert next_occ[0].scheduled_at == datetime(2026, 6, 2, 9, 0, 0)
+
+    def test_completing_via_disambiguation_also_spawns_the_next_occurrence(self):
+        with BotTestSession() as db:
+            db.add(models.Card(
+                title="Water the plants", section="today", position=0,
+                recurrence_rule="daily", scheduled_at=datetime(2026, 6, 1, 9, 0, 0),
+            ))
+            db.add(models.Card(title="Water the garden bed", section="today", position=0))
+            db.commit()
+        from telegram.bot import _reply_complete, _resolve_disambiguation, _get_session, _sessions
+        chat_id = "test_complete_disambig_recurrence"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_complete({"match_query": "water the"}, 0, chat_id=chat_id)
+            session = _get_session(chat_id)
+            assert session["pending"]["action"] == "complete"
+            _resolve_disambiguation(session, "1", 0, chat_id)
+        with BotTestSession() as db:
+            cards = db.query(models.Card).filter_by(title="Water the plants").all()
+        assert len(cards) == 2
+
+    def test_undo_does_not_spawn_another_occurrence(self):
+        # completed: False must never trigger recurrence-spawn.
+        with BotTestSession() as db:
+            db.add(models.Card(
+                title="Water the plants", section="today", position=0,
+                recurrence_rule="daily", scheduled_at=datetime(2026, 6, 1, 9, 0, 0),
+            ))
+            db.commit()
+        from telegram.bot import _reply_complete, _reply_undo, _sessions
+        chat_id = "test_complete_undo_recurrence"
+        _sessions.pop(chat_id, None)
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            _reply_complete({"match_query": "water the plants"}, 0, chat_id=chat_id)
+            _reply_undo(chat_id)
+        with BotTestSession() as db:
+            cards = db.query(models.Card).filter_by(title="Water the plants").all()
+        # The spawned next occurrence from completing is still there, but no
+        # further occurrence was spawned by the undo itself.
+        assert len(cards) == 2
+
+    def test_completing_invalidates_the_insights_cache(self):
+        _make_card("Dentist appointment")
+        from telegram.bot import _reply_complete
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("routers.cards.invalidate_insights_cache") as mock_invalidate:
+            _reply_complete({"match_query": "dentist"}, 0)
+        mock_invalidate.assert_called_once()
+
 
 class TestBotCompleteHabit:
 
@@ -626,6 +759,67 @@ class TestBotCompleteHabit:
         with patch("telegram.bot.SessionLocal", BotTestSession):
             reply = _reply_complete_habit({"match_query": "meditate"}, 0)
         assert "already marked done" in reply
+
+    def test_completes_via_word_overlap_match(self):
+        # Previously untested: the word-overlap tier of the old hand-inlined
+        # matcher, now shared with card matching via _fuzzy_find_habits.
+        habit_id = _make_habit("Morning meditation practice")
+        from telegram.bot import _reply_complete_habit
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_complete_habit({"match_query": "meditation practice today"}, 0)
+        assert "done for today" in reply
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 1
+
+
+class TestFuzzyMatch:
+    """_fuzzy_match() (via _fuzzy_find_cards/_fuzzy_find_habits) is the
+    single shared exact -> substring -> word-overlap matcher for card and
+    habit lookup -- previously two subtly different implementations."""
+
+    def test_exact_match_wins_over_a_substring_candidate(self):
+        from telegram.bot import _fuzzy_find_cards
+        _make_card("Dentist")
+        _make_card("Dentist appointment reminder")
+        with BotTestSession() as db:
+            cards = db.query(models.Card).all()
+        matches = _fuzzy_find_cards(cards, "Dentist")
+        assert len(matches) == 1
+        assert matches[0].title == "Dentist"
+
+    def test_substring_match(self):
+        from telegram.bot import _fuzzy_find_cards
+        _make_card("Call the dentist")
+        with BotTestSession() as db:
+            cards = db.query(models.Card).all()
+        matches = _fuzzy_find_cards(cards, "dentist")
+        assert len(matches) == 1
+        assert matches[0].title == "Call the dentist"
+
+    def test_word_overlap_match(self):
+        from telegram.bot import _fuzzy_find_cards
+        _make_card("Prepare quarterly budget review")
+        with BotTestSession() as db:
+            cards = db.query(models.Card).all()
+        matches = _fuzzy_find_cards(cards, "budget review meeting")
+        assert len(matches) == 1
+        assert matches[0].title == "Prepare quarterly budget review"
+
+    def test_no_match_returns_empty(self):
+        from telegram.bot import _fuzzy_find_cards
+        _make_card("Dentist")
+        with BotTestSession() as db:
+            cards = db.query(models.Card).all()
+        assert _fuzzy_find_cards(cards, "xyz123") == []
+
+    def test_habit_matching_uses_the_same_shared_matcher(self):
+        from telegram.bot import _fuzzy_find_habits
+        _make_habit("Morning meditation practice")
+        with BotTestSession() as db:
+            habits = db.query(models.Habit).all()
+        matches = _fuzzy_find_habits(habits, "meditation practice routine")
+        assert len(matches) == 1
+        assert matches[0].name == "Morning meditation practice"
 
 
 class TestBotLogFood:
@@ -733,12 +927,19 @@ class TestBotLogMood:
 
 
 class TestBotLogWorkout:
+    """_parse_workout() (routers/workouts.py) is the same LLM enrichment call
+    the webapp's workout log uses -- mocked here the same way TestBotLogFood
+    mocks parse_food_entries, so Telegram-logged workouts get real type/
+    value/unit/notes instead of trusting the intent-classification call."""
+
+    def _mock_parsed(self, wtype="row", value=5000, unit="m", notes=None):
+        return {"type": wtype, "value": value, "unit": unit, "notes": notes}
 
     def test_logs_workout_entry(self):
         from telegram.bot import _reply_log_workout
-        with patch("telegram.bot.SessionLocal", BotTestSession):
-            reply = _reply_log_workout(
-                {"raw_input": "rowed 5000m", "type": "row", "value": 5000, "unit": "m"}, 0)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._parse_workout", return_value=self._mock_parsed()):
+            reply = _reply_log_workout({"raw_input": "rowed 5000m"}, 0)
         assert "Workout logged" in reply
         assert "rowed 5000m" in reply
         with BotTestSession() as db:
@@ -748,18 +949,24 @@ class TestBotLogWorkout:
             assert entry.value == 5000
             assert entry.unit == "m"
 
-    def test_unknown_type_falls_back_to_other(self):
+    def test_stores_the_notes_field(self):
+        # The old one-call shape never populated notes at all -- this is
+        # the concrete enrichment gain from the fix.
         from telegram.bot import _reply_log_workout
-        with patch("telegram.bot.SessionLocal", BotTestSession):
-            _reply_log_workout({"raw_input": "did something", "type": "not_a_real_type"}, 0)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._parse_workout",
+                   return_value=self._mock_parsed(notes="A steady-state rowing session.")):
+            _reply_log_workout({"raw_input": "rowed 5000m"}, 0)
         with BotTestSession() as db:
-            entry = db.query(models.WorkoutEntry).filter_by(raw_input="did something").first()
-            assert entry.type == "other"
+            entry = db.query(models.WorkoutEntry).filter_by(raw_input="rowed 5000m").first()
+            assert entry.notes == "A steady-state rowing session."
 
     def test_invalid_value_stored_as_null(self):
         from telegram.bot import _reply_log_workout
-        with patch("telegram.bot.SessionLocal", BotTestSession):
-            _reply_log_workout({"raw_input": "went for a walk", "type": "other", "value": "not a number"}, 0)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._parse_workout",
+                   return_value=self._mock_parsed(wtype="other", value=None, unit=None)):
+            _reply_log_workout({"raw_input": "went for a walk"}, 0)
         with BotTestSession() as db:
             entry = db.query(models.WorkoutEntry).filter_by(raw_input="went for a walk").first()
             assert entry.value is None
@@ -768,8 +975,10 @@ class TestBotLogWorkout:
         from telegram.bot import _reply_log_workout, _reply_undo, _sessions
         chat_id = "test_workout_undo"
         _sessions.pop(chat_id, None)
-        with patch("telegram.bot.SessionLocal", BotTestSession):
-            _reply_log_workout({"raw_input": "bench pressed 185 lbs", "type": "strength", "value": 185, "unit": "lbs"}, 0, chat_id=chat_id)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._parse_workout",
+                   return_value=self._mock_parsed(wtype="strength", value=185, unit="lbs")):
+            _reply_log_workout({"raw_input": "bench pressed 185 lbs"}, 0, chat_id=chat_id)
             undo_reply = _reply_undo(chat_id)
         assert "bench pressed 185 lbs" in undo_reply
         with BotTestSession() as db:

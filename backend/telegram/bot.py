@@ -12,6 +12,8 @@ from datetime import datetime, timezone, timedelta
 
 import app_setting_keys as keys
 from capabilities.food import parse_food_entries
+from routers.cards import update_card_row
+from routers.workouts import _parse_workout
 from capabilities.registry import REGISTRY, by_telegram_action, set_telegram_handler
 import models
 from database import SessionLocal
@@ -732,10 +734,12 @@ def _reply_add_note(intent: dict, chat_id: str = "") -> str:
 
         match = matches[0]
         old_description = match.description or ""
-        match.description = (old_description + "\n" + note).strip() if old_description else note
-        card_id = match.id
+        new_description = (old_description + "\n" + note).strip() if old_description else note
         title = match.title
-        db.commit()
+        # "completed" is deliberately absent from this data dict -- adding a
+        # note must never trigger update_card_row's recurrence-spawn logic.
+        match = update_card_row(db, match, {"description": new_description}, None, datetime.now(timezone.utc).date())
+        card_id = match.id
 
     if chat_id:
         _push_undo(session, {"type": "add_note", "card_id": card_id, "title": title, "old_description": old_description})
@@ -914,15 +918,17 @@ def _reply_bulk_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> s
             return f"No {filter_labels.get(filter_type, 'tasks')} found."
 
         undo_data = []
+        # "completed" is deliberately absent from this data dict -- a bulk
+        # reschedule must never trigger update_card_row's recurrence-spawn.
+        data = {"section": section}
+        if target_date:
+            data["scheduled_at"] = scheduled_at
         for card in candidates:
             undo_data.append({
                 "card_id": card.id, "title": card.title,
                 "old_section": card.section, "old_scheduled_at": card.scheduled_at,
             })
-            card.section = section
-            if target_date:
-                card.scheduled_at = scheduled_at
-        db.commit()
+            update_card_row(db, card, dict(data), None, today)
 
     section_label = {"today": "Today", "week": "This Week", "month": "This Month", "later": "Later"}.get(section, section)
     n = len(candidates)
@@ -935,36 +941,49 @@ def _reply_bulk_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> s
     return f"↗ Moved {n} task{'s' if n != 1 else ''} to <b>{section_label}</b>{date_part}\nSend <b>undo</b> to reverse."
 
 
-def _fuzzy_find_cards(cards: list, query: str) -> list:
-    """Return best-matching cards (up to 3) for disambiguation.
+def _fuzzy_match(items: list, key, query: str) -> list:
+    """Return best-matching items (up to 3) for disambiguation, where
+    `key(item)` extracts the name/title to match against.
 
     Strategy: exact → substring (either direction) → word overlap.
     A single exact or unambiguous substring match returns a one-element list.
     Multiple equally-good matches return up to 3 for the caller to disambiguate.
+
+    Shared by card matching (_fuzzy_find_cards) and habit matching
+    (_fuzzy_find_habits) -- the two used to be separate, subtly different
+    implementations of the same algorithm.
     """
     q = query.lower().strip()
     q_words = {w for w in q.split() if len(w) > 2}
 
     # 1. Exact match — always unambiguous
-    for c in cards:
-        if c.title.lower() == q:
-            return [c]
+    for item in items:
+        if key(item).lower() == q:
+            return [item]
 
-    # 2. Substring: query in title, or title in query
-    sub = [c for c in cards if q in c.title.lower() or c.title.lower() in q]
+    # 2. Substring: query in name, or name in query
+    sub = [item for item in items if q in key(item).lower() or key(item).lower() in q]
     if sub:
         return sub[:3]
 
     # 3. Word overlap — most shared words wins; ties kept for disambiguation
     if q_words:
-        scored = [(len(q_words & set(c.title.lower().split())), c) for c in cards]
-        scored = [(s, c) for s, c in scored if s > 0]
+        scored = [(len(q_words & set(key(item).lower().split())), item) for item in items]
+        scored = [(s, item) for s, item in scored if s > 0]
         if scored:
             scored.sort(key=lambda x: -x[0])
             top = scored[0][0]
-            return [c for s, c in scored if s == top][:3]
+            return [item for s, item in scored if s == top][:3]
 
     return []
+
+
+def _fuzzy_find_cards(cards: list, query: str) -> list:
+    return _fuzzy_match(cards, lambda c: c.title, query)
+
+
+def _fuzzy_find_habits(habits: list, query: str) -> list:
+    return _fuzzy_match(habits, lambda h: h.name, query)
 
 
 def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: str):
@@ -1005,9 +1024,8 @@ def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: s
             card = db.query(models.Card).filter_by(id=selected["id"]).first()
             if not card or card.completed:
                 return f'"{selected["title"]}" is already done or not found.'
-            card.completed = True
-            card.completed_at = datetime.now(timezone.utc)
-            db.commit()
+            today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
+            update_card_row(db, card, {"completed": True}, None, today)
         _push_undo(session, {"type": "mark_complete", "card_id": selected["id"], "title": selected["title"]})
         session["last_card"] = {"id": selected["id"], "title": selected["title"]}
         return f'✓ Marked complete: <b>{selected["title"]}</b>\nSend <b>undo</b> to reverse.'
@@ -1024,10 +1042,10 @@ def _resolve_disambiguation(session: dict, text: str, tz_offset: int, chat_id: s
             if not card:
                 return f'"{selected["title"]}" not found.'
             old_description = card.description or ""
-            card.description = (old_description + "\n" + note).strip() if old_description else note
-            card_id = card.id
+            new_description = (old_description + "\n" + note).strip() if old_description else note
             title = card.title
-            db.commit()
+            card = update_card_row(db, card, {"description": new_description}, None, datetime.now(timezone.utc).date())
+            card_id = card.id
         _push_undo(session, {"type": "add_note", "card_id": card_id, "title": title, "old_description": old_description})
         session["last_card"] = {"id": card_id, "title": title}
         return f'📝 Note added to <b>{title}</b>\nSend <b>undo</b> to remove it.'
@@ -1082,11 +1100,10 @@ def _reply_complete(intent: dict, tz_offset: int, chat_id: str = "") -> str:
             return f"Which task did you mean?\n{numbered}"
 
         match = matches[0]
-        match.completed = True
-        match.completed_at = datetime.now(timezone.utc)
-        card_id = match.id
         title = match.title
-        db.commit()
+        today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
+        match = update_card_row(db, match, {"completed": True}, None, today)
+        card_id = match.id
 
     if chat_id:
         _push_undo(session, {"type": "mark_complete", "card_id": card_id, "title": title})
@@ -1680,32 +1697,17 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 
 
 def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
-    """Log a workout entry. Type/value/unit come straight from the intent
-    classification (see capabilities/workout.py's TELEGRAM_DESCRIPTION) rather
-    than a second LLM round-trip through routers/workouts.py's own parser --
-    same one-call-per-message shape as _reply_log_food."""
-    from routers.workouts import WORKOUT_TYPES
-
+    """Log a workout entry, parsed via the same LLM enrichment call the
+    webapp's workout log uses (routers.workouts._parse_workout) instead of
+    trusting type/value/unit straight from the intent-classification call --
+    the same fix already applied to food logging this session. Gets the
+    `notes` field for free, which the old one-call shape never populated."""
     raw = (intent.get("raw_input") or "").strip()
-    wtype = intent.get("type") or "other"
-    if wtype not in WORKOUT_TYPES:
-        wtype = "other"
-    value = intent.get("value")
-    if value is not None:
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            value = None
-    unit = intent.get("unit") or None
-    if unit:
-        unit = str(unit)[:20]
-
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    parsed = _parse_workout(raw)
 
     with SessionLocal() as db:
-        entry = models.WorkoutEntry(
-            raw_input=raw, type=wtype, value=value, unit=unit, logged_at=now_local,
-        )
+        entry = models.WorkoutEntry(raw_input=raw, logged_at=now_local, **parsed)
         db.add(entry)
         db.commit()
         entry_id = entry.id
@@ -1714,6 +1716,7 @@ def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:
         session = _get_session(chat_id)
         _push_undo(session, {"type": "workout_log", "entry_id": entry_id, "title": raw})
 
+    value, unit = parsed["value"], parsed["unit"]
     detail = f" ({value:g} {unit})" if value is not None and unit else ""
     return f"✓ Workout logged{detail}: {raw}\nSend <b>undo</b> to remove it."
 
@@ -1733,29 +1736,12 @@ def _reply_complete_habit(intent: dict, tz_offset: int, chat_id: str = "") -> st
         today_str = today.isoformat()
 
         habits = db.query(models.Habit).filter_by(archived=False).all()
-        q = query.lower().strip()
 
-        # Exact match first, then substring, then word overlap
-        match = None
-        for h in habits:
-            if h.name.lower() == q:
-                match = h
-                break
-        if not match:
-            for h in habits:
-                if q in h.name.lower() or h.name.lower() in q:
-                    match = h
-                    break
-        if not match:
-            q_words = {w for w in q.split() if len(w) > 2}
-            if q_words:
-                best, best_score = None, 0
-                for h in habits:
-                    score = len(q_words & set(h.name.lower().split()))
-                    if score > best_score:
-                        best, best_score = h, score
-                if best_score > 0:
-                    match = best
+        # No disambiguation UI for habits today (unlike cards) -- just take
+        # the best match; ties keep the first-encountered habit, same as
+        # the old hand-inlined version of this matcher did.
+        matches = _fuzzy_find_habits(habits, query)
+        match = matches[0] if matches else None
 
         if not match:
             names = ", ".join(h.name for h in habits) if habits else "none"
@@ -1935,14 +1921,17 @@ def _reply_reschedule(intent: dict, tz_offset: int, chat_id: str = "") -> str:
         match = matches[0]
         old_section = match.section
         old_scheduled_at = match.scheduled_at
-        card_id = match.id
         title = match.title
 
+        # "completed" is deliberately absent from this data dict -- a
+        # reschedule must never trigger update_card_row's recurrence-spawn.
+        data = {}
         if section:
-            match.section = section
+            data["section"] = section
         if target_date:
-            match.scheduled_at = scheduled_at  # may be None if no time given
-        db.commit()
+            data["scheduled_at"] = scheduled_at  # may be None if no time given
+        match = update_card_row(db, match, data, None, today)
+        card_id = match.id
 
     if chat_id:
         _push_undo(session, {
@@ -2007,9 +1996,10 @@ def _undo_single_action(action: dict) -> str:
                 return f'Could not undo — "{title}" no longer exists.'
             if not card.completed:
                 return f'"{title}" is already not marked complete.'
-            card.completed    = False
-            card.completed_at = None
-            db.commit()
+            # "completed": False never triggers recurrence-spawn (that only
+            # fires transitioning False->True) -- safe to route through the
+            # shared function even here.
+            update_card_row(db, card, {"completed": False}, None, datetime.now(timezone.utc).date())
         return f"↩ Unmarked complete: <b>{title}</b>"
 
     if atype == "reschedule":
@@ -2017,9 +2007,8 @@ def _undo_single_action(action: dict) -> str:
             card = db.query(models.Card).filter_by(id=action["card_id"]).first()
             if not card:
                 return f'Could not undo — "{title}" no longer exists.'
-            card.section      = action["old_section"]
-            card.scheduled_at = action["old_scheduled_at"]
-            db.commit()
+            data = {"section": action["old_section"], "scheduled_at": action["old_scheduled_at"]}
+            update_card_row(db, card, data, None, datetime.now(timezone.utc).date())
         return f"↩ Moved <b>{title}</b> back to {action['old_section'].title()}"
 
     if atype == "mood_log":
@@ -2058,20 +2047,20 @@ def _undo_single_action(action: dict) -> str:
             card = db.query(models.Card).filter_by(id=action["card_id"]).first()
             if not card:
                 return f'Could not undo — "{title}" no longer exists.'
-            card.description = action.get("old_description") or None
-            db.commit()
+            data = {"description": action.get("old_description") or None}
+            update_card_row(db, card, data, None, datetime.now(timezone.utc).date())
         return f"↩ Note removed from: <b>{title}</b>"
 
     if atype == "bulk_reschedule":
         cards_data = action.get("cards", [])
         count = 0
+        today = datetime.now(timezone.utc).date()
         for item in cards_data:
             with SessionLocal() as db:
                 card = db.query(models.Card).filter_by(id=item["card_id"]).first()
                 if card:
-                    card.section = item["old_section"]
-                    card.scheduled_at = item["old_scheduled_at"]
-                    db.commit()
+                    data = {"section": item["old_section"], "scheduled_at": item["old_scheduled_at"]}
+                    update_card_row(db, card, data, None, today)
                     count += 1
         return f"↩ Moved {count} task{'s' if count != 1 else ''} back"
 

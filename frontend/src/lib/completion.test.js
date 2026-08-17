@@ -2,34 +2,52 @@ import { describe, it, expect } from 'vitest'
 import { scoreMatch, findBestMatch } from './completion.js'
 
 describe('scoreMatch', () => {
-  it('returns 3 for exact match', () => {
-    expect(scoreMatch('meditation', 'meditation')).toBe(3)
+  it('returns 1000 for exact match', () => {
+    expect(scoreMatch('meditation', 'meditation')).toBe(1000)
   })
 
   it('is case-insensitive', () => {
-    expect(scoreMatch('Meditation', 'meditation')).toBe(3)
-    expect(scoreMatch('meditation', 'Meditation')).toBe(3)
-    expect(scoreMatch('MEDITATION', 'MEDITATION')).toBe(3)
+    expect(scoreMatch('Meditation', 'meditation')).toBe(1000)
+    expect(scoreMatch('meditation', 'Meditation')).toBe(1000)
+    expect(scoreMatch('MEDITATION', 'MEDITATION')).toBe(1000)
   })
 
-  it('returns 1 when name contains query', () => {
-    expect(scoreMatch('morning meditation', 'meditation')).toBe(1)
+  it('returns 500 when name contains query', () => {
+    expect(scoreMatch('morning meditation', 'meditation')).toBe(500)
   })
 
-  it('returns 1 when query contains name', () => {
-    expect(scoreMatch('meditation', 'morning meditation')).toBe(1)
+  it('returns 500 when query contains name', () => {
+    expect(scoreMatch('meditation', 'morning meditation')).toBe(500)
   })
 
   it('returns 0 for no match', () => {
     expect(scoreMatch('exercise', 'meditation')).toBe(0)
   })
 
-  it('returns 0 for empty query', () => {
-    expect(scoreMatch('meditation', '')).toBe(1) // '' is included in any string
+  it('returns 500 for empty query', () => {
+    expect(scoreMatch('meditation', '')).toBe(500) // '' is included in any string
   })
 
   it('exact match beats substring', () => {
     expect(scoreMatch('run', 'run')).toBeGreaterThan(scoreMatch('morning run', 'run'))
+  })
+
+  it('returns the shared-word count for word-overlap matches (neither containing the other)', () => {
+    expect(scoreMatch('daily budget review', 'quarterly budget review meeting')).toBe(2)
+  })
+
+  it('substring beats any word-overlap count', () => {
+    expect(scoreMatch('morning run', 'run')).toBeGreaterThan(scoreMatch('evening jog session', 'jog session extra words'))
+  })
+
+  it('ignores words of length 2 or less when scoring word overlap', () => {
+    // 'go' and 'to' are both length 2, so they don't count even though
+    // 'to' is also literally present in the name -- only 'gym' overlaps
+    expect(scoreMatch('run to the gym', 'go to gym')).toBe(1)
+  })
+
+  it('returns 0 when no words overlap', () => {
+    expect(scoreMatch('quarterly budget review', 'evening jog session')).toBe(0)
   })
 })
 

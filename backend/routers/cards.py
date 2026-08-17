@@ -337,13 +337,23 @@ def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depe
     return {"ok": True, "id": db_card.id, "title": db_card.title, "section": db_card.section}
 
 
-@router.put("/api/cards/{card_id}", response_model=schemas.Card)
-def update_card(request: Request, card_id: int, card: schemas.CardUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    db_card = db.query(models.Card).filter(models.Card.id == card_id).first()
-    if not db_card:
-        raise HTTPException(status_code=404, detail="Card not found")
-    data = card.model_dump(exclude_unset=True)
-    tag_ids = data.pop("tag_ids", None)
+def update_card_row(db: Session, db_card: models.Card, data: dict, tag_ids: list[int] | None, today) -> models.Card:
+    """Shared Card-update DB logic: completed_at/archived_at/today_since
+    bookkeeping, tag resolution, recurrence-spawn on completion, commit, and
+    insights-cache invalidation. Used by PUT /api/cards/{id} and Telegram's
+    card-mutating handlers (mark-complete, add-note, reschedule,
+    bulk-reschedule, and their undos), so both surfaces get the same side
+    effects instead of Telegram hand-setting fields directly and silently
+    skipping them -- concretely, a recurring task completed via Telegram
+    used to never spawn its next occurrence, and no Telegram card mutation
+    ever invalidated the insights cache.
+
+    `data` should contain only the fields actually being changed -- pass
+    "completed" only when actually completing/uncompleting a card, since its
+    presence in `data` is what gates recurrence-spawn below (an undo
+    restoring section/description/etc, for instance, must never spawn a
+    next occurrence).
+    """
     completing = data.get("completed") and not db_card.completed
     now = datetime.now(timezone.utc)
     if "completed" in data:
@@ -368,7 +378,7 @@ def update_card(request: Request, card_id: int, card: schemas.CardUpdate, backgr
     if completing and db_card.recurrence_rule:
         base = db_card.scheduled_at or now
         next_dt = _next_occurrence(base, db_card.recurrence_rule)
-        next_section = _section_for_date(next_dt.date(), local_date(request))
+        next_section = _section_for_date(next_dt.date(), today)
         count = db.query(models.Card).filter(models.Card.section == next_section).count()
         next_card = models.Card(
             title=db_card.title,
@@ -386,7 +396,19 @@ def update_card(request: Request, card_id: int, card: schemas.CardUpdate, backgr
     db.commit()
     db.refresh(db_card)
     invalidate_insights_cache()
-    if "title" in data or "description" in data:
+    return db_card
+
+
+@router.put("/api/cards/{card_id}", response_model=schemas.Card)
+def update_card(request: Request, card_id: int, card: schemas.CardUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    db_card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if not db_card:
+        raise HTTPException(status_code=404, detail="Card not found")
+    data = card.model_dump(exclude_unset=True)
+    tag_ids = data.pop("tag_ids", None)
+    title_or_desc_changed = "title" in data or "description" in data
+    db_card = update_card_row(db, db_card, data, tag_ids, local_date(request))
+    if title_or_desc_changed:
         background_tasks.add_task(_embeddings.upsert_bg, db_card.id, db_card.title, db_card.description)
     return db_card
 

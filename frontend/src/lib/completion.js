@@ -1,12 +1,21 @@
 /**
  * Matching logic for the quick-add completion flow (habit check-off / task complete).
+ *
+ * Same exact -> substring -> word-overlap strategy as the backend's
+ * _fuzzy_match (telegram/bot.py) -- ported rather than shared, since Python
+ * and JS can't literally share code. Tiers are magnitude-separated (1000 /
+ * 500 / raw word-overlap count) rather than sequential filtering, because
+ * findBestMatch below scans a single flat pool of habits+tasks for one max
+ * score instead of narrowing tier by tier the way the backend does.
  */
-
 export function scoreMatch(name, query) {
   const n = name.toLowerCase(), q = query.toLowerCase()
-  if (n === q) return 3
-  if (n.includes(q) || q.includes(n)) return 1
-  return 0
+  if (n === q) return 1000
+  if (n.includes(q) || q.includes(n)) return 500
+  const qWords = q.split(/\s+/).filter((w) => w.length > 2)
+  const nWords = new Set(n.split(/\s+/))
+  const overlap = qWords.filter((w) => nWords.has(w)).length
+  return overlap
 }
 
 /**
