@@ -246,7 +246,7 @@ qtask-bridge --list           # list qtask worktrees across configured repos (re
 qtask-bridge --switch         # menu of worktrees for the current repo, most recent first
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
-qtask-bridge --review [branch] # read-only lead-engineer-style review of a worktree's changes
+qtask-bridge --review [branch] # lead-engineer-style review of a worktree's changes, offers to apply fixes after
 qtask-bridge --unlock-push    # clear a stuck no_push sentinel left by an interrupted job
 ```
 
@@ -363,9 +363,11 @@ qtask-bridge --review             # cwd if you're already in a qtask worktree, e
 qtask-bridge --review 84-ranking  # branch fragment, same resolution as --run
 ```
 
-This is the deliberately scoped-down first step of the self-review pass: manual (you run it, it doesn't run itself), and read-only (it reports, it never fixes — the same posture `verify_acceptance` already has, for the same reason). It's a different question from the checks above: not "does it work" (`test_cmd`) or "does it meet the spec's acceptance criteria" (`verify_acceptance`), but "is this good code."
+This is the deliberately scoped-down first step of the self-review pass: manual (you run it, it doesn't run itself), and the review pass itself is read-only (it reports, it never fixes on its own — the same posture `verify_acceptance` already has, for the same reason). It's a different question from the checks above: not "does it work" (`test_cmd`) or "does it meet the spec's acceptance criteria" (`verify_acceptance`), but "is this good code."
 
 `BRIDGE_SPEC.md` is deleted from the worktree once a job finishes, but the original spec text isn't lost — it's recovered from the server (matched back to this worktree by branch name) and given to the review as context, along with any `test_cmd`/`verify_acceptance` results from the original run, so the review can focus on real problems instead of re-deriving what's already known. If no matching job record is found, the review still runs — just without that context.
+
+Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining leaves the worktree untouched, same as before. Accepting launches an interactive session in the same worktree with the review's own findings handed back as context, so applying them doesn't mean re-explaining what was just found from scratch — you can then also redirect it, push back on any individual suggestion, or ask it to stop partway through. A failed review (agent crashed, network error) skips the prompt entirely rather than asking you to act on an incomplete result.
 
 #### Code tab actions
 

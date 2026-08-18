@@ -2160,6 +2160,72 @@ class TestCmdReview:
         agent_core.cmd_review(cfg, "nonexistent-branch-xyz")
         assert "No qtask worktrees found" in capsys.readouterr().out
 
+    def test_declining_the_followup_does_not_launch_interactive(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 7, "Decline Case")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "print('line one')"], raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        interactive_calls = []
+        monkeypatch.setattr(agent_core, "interactive_command",
+                             lambda prompt: interactive_calls.append(prompt) or ["true"], raising=False)
+
+        agent_core.cmd_review(cfg, branch)
+
+        assert interactive_calls == []
+        assert "No changes applied" in capsys.readouterr().out
+
+    def test_accepting_the_followup_launches_interactive_with_review_context(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 8, "Accept Case")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "print('found a bug in foo.py')"], raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        real_run = agent_core.subprocess.run
+        run_calls = []
+
+        def fake_run(cmd, **kw):
+            if cmd and cmd[0] == "claude":
+                run_calls.append((cmd, kw))
+                return None
+            return real_run(cmd, **kw)
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        monkeypatch.setattr(agent_core, "interactive_command", lambda prompt: ["claude", prompt], raising=False)
+        monkeypatch.setattr(agent_core, "AGENT_LABEL", "Claude Code", raising=False)
+
+        agent_core.cmd_review(cfg, branch)
+
+        assert len(run_calls) == 1
+        cmd, kwargs = run_calls[0]
+        assert "found a bug in foo.py" in cmd[1]
+        assert kwargs["cwd"] == wt
+
+    def test_failed_review_skips_the_followup_prompt(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 9, "Failure Case")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "import sys; sys.exit(1)"], raising=False)
+
+        def _fail_if_asked(_):
+            raise AssertionError("should not prompt after a failed review")
+        monkeypatch.setattr("builtins.input", _fail_if_asked)
+
+        agent_core.cmd_review(cfg, branch)  # must not raise
+
+        assert "Review finished (exit 1)" in capsys.readouterr().out
+
 
 # ── Regression: run_job() through the actual rendered/concatenated text ───────
 

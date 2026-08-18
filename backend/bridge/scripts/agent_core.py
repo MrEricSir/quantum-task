@@ -1591,16 +1591,38 @@ def _make_review_prompt(spec_text, verification_text):
     return "\n".join(parts)
 
 
+def _make_review_followup_prompt(review_output):
+    """Build the prompt for the optional interactive follow-up after a
+    read-only review: hands the agent its own just-printed findings back
+    as context (this is a fresh process -- nothing else carries them over)
+    and asks it to act on them, same posture as _make_prompt's normal job
+    prompts (discuss ambiguity rather than guessing)."""
+    return (
+        "You just performed the following read-only code review of your own "
+        "changes in this worktree:\n\n"
+        f"{review_output}\n\n"
+        "Apply the fixes/improvements identified above. If any point is "
+        "ambiguous, or you're unsure whether a suggestion should actually be "
+        "applied, ask before proceeding rather than guessing."
+    )
+
+
 def cmd_review(cfg, target):
     """Read-only lead-engineer-style review of a resolved qtask worktree's
     changes, run on demand from the command line -- the deliberately
     scoped-down first step of the self-review pass: manual, not
-    server-triggered, and reports only, never fixes. Streams output live
-    (Popen + line-by-line print, like _run_streaming) rather than the
-    blocking capture_output=True pattern _check_acceptance_criteria uses --
-    that pattern is fine for a background job nobody's watching live, but a
-    human sitting at this terminal waiting on the result needs to see it
-    arrive, not stare at a silent pause for 30-60+ seconds."""
+    server-triggered, and reports only, never fixes on its own. Streams
+    output live (Popen + line-by-line print, like _run_streaming) rather
+    than the blocking capture_output=True pattern _check_acceptance_criteria
+    uses -- that pattern is fine for a background job nobody's watching
+    live, but a human sitting at this terminal waiting on the result needs
+    to see it arrive, not stare at a silent pause for 30-60+ seconds.
+
+    Once the review finishes, offers to launch an interactive follow-up
+    session (same worktree) with the review's own findings handed back as
+    context, so applying them doesn't require the user to re-explain what
+    was just found in a separate, context-free session. Still opt-in --
+    declining leaves the worktree untouched, same as today."""
     resolved = _resolve_worktree_target(cfg, target)
     if resolved is None:
         return
@@ -1621,10 +1643,35 @@ def cmd_review(cfg, target):
         print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
         return
 
+    output_lines = []
     for line in proc.stdout:
         print(line.rstrip("\n"))
+        output_lines.append(line.rstrip("\n"))
     proc.wait()
     print(f"\n[bridge] Review finished (exit {proc.returncode}).")
+
+    if proc.returncode != 0:
+        return
+
+    try:
+        answer = input("[bridge] Apply these changes now? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt, OSError):
+        # OSError covers non-interactive stdin (e.g. piped/redirected input,
+        # or a test harness capturing stdin) -- same "can't ask, so don't
+        # apply" outcome as an explicit decline.
+        print()
+        return
+    if answer not in ("y", "yes"):
+        print("[bridge] No changes applied. Worktree left as-is.")
+        return
+
+    followup_prompt = _make_review_followup_prompt("\n".join(output_lines))
+    print(f"\n[bridge] Launching {AGENT_LABEL} interactively to apply the review...\n")
+    try:
+        subprocess.run(interactive_command(followup_prompt), cwd=worktree_path, check=False)
+    except FileNotFoundError:
+        print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
+        print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
 
 
 def main():
