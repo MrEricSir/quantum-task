@@ -1,0 +1,32 @@
+.pull-to-refresh-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  height: 0;
+  opacity: 0;
+}
+
+/* While actively dragging, height tracks the finger 1:1 with no transition
+   lag; on release (snap-back or settling into the refreshing height), this
+   animates smoothly instead of jumping. */
+.pull-to-refresh-indicator--settling {
+  transition: height 0.15s ease, opacity 0.15s ease;
+}
+
+.pull-to-refresh-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: #a78bfa;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pull-to-refresh-spinner--active {
+  animation: pull-to-refresh-spin 0.7s linear infinite;
+}
+
+@keyframes pull-to-refresh-spin {
+  to { transform: rotate(360deg); }
+}

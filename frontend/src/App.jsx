@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   DndContext,
@@ -41,6 +42,8 @@ import { useWithings } from './hooks/useWithings'
 import { useEngineering } from './hooks/useEngineering'
 import { useModals } from './hooks/useModals'
 import { ModalContext } from './context/ModalContext'
+import { RefreshContext } from './context/RefreshContext'
+import PullToRefresh from './components/layout/PullToRefresh'
 import {
   fetchTags,
   fetchCards,
@@ -166,6 +169,23 @@ export default function App() {
     loadStatus: reloadWithingsStatus,
     loadHealthData: reloadWithingsHealthData,
   } = useWithings({ authed })
+
+  const queryClient = useQueryClient()
+  // Refreshes every data domain, not just the current page's -- simpler than
+  // page-aware selective refresh, and a page that isn't mounted just doesn't
+  // react to a refresh it isn't displaying, so there's no real waste.
+  // invalidateQueries() with no args covers cards/habits/archived habits/
+  // calendar (and any future react-query hook) automatically.
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries(),
+      refreshEngineeringItems?.(),
+      reloadWithingsStatus?.(),
+      reloadWithingsHealthData?.(),
+    ])
+    setHealthLogRevision((v) => v + 1)
+    invalidateBriefing()
+  }, [queryClient, refreshEngineeringItems, reloadWithingsStatus, reloadWithingsHealthData, invalidateBriefing])
 
   const [isImperial, setIsImperial] = useState(() => localStorage.getItem('health-unit') === 'imperial')
   const toggleUnit = () => setIsImperial(v => {
@@ -664,6 +684,7 @@ export default function App() {
 
   return (
     <ModalContext.Provider value={modalContextValue}>
+    <RefreshContext.Provider value={{ refreshAll }}>
     <div className="app">
       <video className="app-bg-video" autoPlay muted loop playsInline disablePictureInPicture>
         <source src="/bg.webm" type="video/webm" />
@@ -780,7 +801,7 @@ export default function App() {
           onClearTags={handleClearTags}
         />
 
-      <main className="board-wrapper">
+      <PullToRefresh className="board-wrapper" onRefresh={refreshAll}>
         <TagFilterBar
           tags={visibleTags}
           selectedTagIds={selectedTagIds}
@@ -929,7 +950,7 @@ export default function App() {
             }}
           />
         ) : null}
-      </main>
+      </PullToRefresh>
 
       {(selectedCard || panelInitialMode === 'new') && (
         <CardDetailPanel
@@ -1101,6 +1122,7 @@ export default function App() {
       )}
 
     </div>
+    </RefreshContext.Provider>
     </ModalContext.Provider>
   )
 }

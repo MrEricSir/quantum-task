@@ -536,6 +536,79 @@ test.describe('mobile header layout', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Pull to refresh
+// ---------------------------------------------------------------------------
+test.describe('pull to refresh', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
+
+  // Constructs real Touch/TouchEvent objects inside the page (not via
+  // page.touchscreen, which only supports taps) so the component's own
+  // touchstart/touchmove/touchend listeners see a real pull gesture.
+  async function pullDown(page, selector, pixels) {
+    await page.evaluate(({ selector, pixels }) => {
+      const el = document.querySelector(selector)
+      const startY = 50
+      const touch = (clientY) => new Touch({ identifier: 1, target: el, clientX: 40, clientY })
+      el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(startY)], bubbles: true, cancelable: true }))
+      const steps = 5
+      for (let i = 1; i <= steps; i++) {
+        const y = startY + (pixels * i) / steps
+        el.dispatchEvent(new TouchEvent('touchmove', { touches: [touch(y)], bubbles: true, cancelable: true }))
+      }
+      el.dispatchEvent(new TouchEvent('touchend', { touches: [], bubbles: true, cancelable: true }))
+    }, { selector, pixels })
+  }
+
+  test('pulling past the threshold at scroll-top triggers a refresh', async ({ page }) => {
+    let cardFetches = 0
+    await page.route('**/api/cards', r => { cardFetches++; return r.fulfill({ json: ALL_TODOS }) })
+    await page.goto('/today')
+    await waitForApp(page)
+    expect(cardFetches).toBe(1)
+
+    await pullDown(page, '.board-wrapper', 200) // well past the 70px threshold
+
+    await expect.poll(() => cardFetches).toBeGreaterThan(1)
+  })
+
+  test('pulling below the threshold does not trigger a refresh', async ({ page }) => {
+    let cardFetches = 0
+    await page.route('**/api/cards', r => { cardFetches++; return r.fulfill({ json: ALL_TODOS }) })
+    await page.goto('/today')
+    await waitForApp(page)
+    expect(cardFetches).toBe(1)
+
+    await pullDown(page, '.board-wrapper', 40) // well under the 70px threshold
+
+    await page.waitForTimeout(300)
+    expect(cardFetches).toBe(1)
+  })
+
+  test('starting a pull when not scrolled to the top does not trigger the gesture', async ({ page }) => {
+    let cardFetches = 0
+    await page.route('**/api/cards', r => { cardFetches++; return r.fulfill({ json: ALL_TODOS }) })
+    await page.goto('/today')
+    await waitForApp(page)
+    expect(cardFetches).toBe(1)
+
+    // Force real scrollability regardless of how much mock content rendered,
+    // then scroll down so the gesture starts away from scrollTop === 0.
+    await page.evaluate(() => {
+      const el = document.querySelector('.board-wrapper')
+      const spacer = document.createElement('div')
+      spacer.style.height = '2000px'
+      el.appendChild(spacer)
+      el.scrollTop = 500
+    })
+
+    await pullDown(page, '.board-wrapper', 200)
+
+    await page.waitForTimeout(300)
+    expect(cardFetches).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Settings modals
 // ---------------------------------------------------------------------------
 test.describe('settings modals', () => {
