@@ -1,21 +1,15 @@
-import { CalendarIcon, SunIcon, TableIcon, CommitIcon, HeartIcon, CheckIcon } from '@radix-ui/react-icons'
+import { CheckIcon } from '@radix-ui/react-icons'
+import { orderedNavItems } from '../../lib/navItems'
 import './Sidebar.css'
 
-const NAV_ITEMS = [
-  { page: 'today',       label: 'Today',       Icon: SunIcon      },
-  { page: 'board',       label: 'Board',       Icon: TableIcon    },
-  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon },
-  { page: 'health',      label: 'Habits',      Icon: HeartIcon    },
-  { page: 'engineering', label: 'Engineering', Icon: CommitIcon   },
-]
-
-export default function Sidebar({ tags, selectedTagIds, page, onNavigate, onToggleTag, onClearTags }) {
+export default function Sidebar({ tags, selectedTagIds, page, navOrder, onNavigate, onToggleTag, onClearTags }) {
   const showTags = tags.length > 0
+  const navItems = orderedNavItems(navOrder)
 
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map(({ page: p, label, Icon }) => (
+        {navItems.map(({ page: p, label, Icon }) => (
           <button
             key={p}
             className={`sidebar-item ${page === p ? 'sidebar-item--active' : ''}`}

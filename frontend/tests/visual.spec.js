@@ -115,6 +115,8 @@ async function mockAPIs(page) {
   await page.route('**/api/engineering/status-config', r => r.fulfill({ json: {} }))
   await page.route('**/api/engineering/repo-tags', r => r.fulfill({ json: {} }))
   await page.route('**/api/bridge/install-token', r => r.fulfill({ json: { token: 'test-install-token' } }))
+  await page.route('**/api/settings/navigation', r =>
+    r.fulfill({ json: { order: ['today', 'board', 'calendar', 'health', 'engineering'], default_page: 'today' } }))
 
   await page.route('**/api/cards/*/thread/context-from', r =>
     r.fulfill({ json: { context_text: '### Today\n- Buy milk\n- Call dentist', label: 'Today', count: 2 } }))
@@ -657,6 +659,48 @@ test.describe('settings modals', () => {
     await expect(page.getByRole('heading', { name: 'Withings' })).toBeVisible()
     await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: /connect withings/i })).toBeVisible()
+  })
+
+  test('navigation settings opens with heading, ordered pages, and Save/Cancel footer buttons', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /navigation/i }).click()
+    await expect(page.getByRole('heading', { name: 'Navigation' })).toBeVisible()
+    const rows = page.locator('.nav-settings-row')
+    await expect(rows).toHaveCount(5)
+    await expect(rows.nth(0)).toContainText('Today')
+    await expect(rows.nth(1)).toContainText('Board')
+    await expect(page.getByRole('button', { name: /save/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /cancel/i })).toBeVisible()
+  })
+
+  test('navigation settings reorders pages with move buttons', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /navigation/i }).click()
+    const rows = page.locator('.nav-settings-row')
+    await rows.nth(1).getByRole('button', { name: /move board up/i }).click()
+    await expect(rows.nth(0)).toContainText('Board')
+    await expect(rows.nth(1)).toContainText('Today')
+  })
+
+  test('navigation settings saves reordered pages and chosen default page', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/settings/navigation', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: putBody })
+      }
+      return r.fulfill({ json: { order: ['today', 'board', 'calendar', 'health', 'engineering'], default_page: 'today' } })
+    })
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /navigation/i }).click()
+    await page.locator('.nav-settings-row', { hasText: 'Board' }).getByRole('button', { name: /move board up/i }).click()
+    await page.getByLabel(/default page/i).selectOption('board')
+    await page.getByRole('button', { name: /^save$/i }).click()
+
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody.order[0]).toBe('board')
+    expect(putBody.default_page).toBe('board')
+    await expect(page.getByRole('heading', { name: 'Navigation' })).not.toBeVisible()
   })
 })
 

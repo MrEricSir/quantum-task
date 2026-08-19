@@ -1,18 +1,11 @@
-import { SunIcon, CalendarIcon, TableIcon, CommitIcon, HeartIcon } from '@radix-ui/react-icons'
+import { orderedNavItems } from '../../lib/navItems'
 import './MobileNav.css'
 
-const NAV_ITEMS = [
-  { page: 'today',       label: 'Today',       Icon: SunIcon           },
-  { page: 'board',       label: 'Board',       Icon: TableIcon         },
-  { page: 'calendar',    label: 'Calendar',    Icon: CalendarIcon      },
-  { page: 'health',      label: 'Habits',      Icon: HeartIcon         },
-  { page: 'engineering', label: 'Engineering', Icon: CommitIcon        },
-]
-
-export default function MobileNav({ page, onNavigate }) {
+export default function MobileNav({ page, navOrder, onNavigate }) {
+  const navItems = orderedNavItems(navOrder)
   return (
     <nav className="mobile-nav">
-      {NAV_ITEMS.map(({ page: p, label, Icon }) => (
+      {navItems.map(({ page: p, label, Icon }) => (
         <button
           key={p}
           className={`mobile-nav-item${page === p ? ' mobile-nav-item--active' : ''}`}

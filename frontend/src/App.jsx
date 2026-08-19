@@ -31,6 +31,7 @@ import HealthPage from './components/pages/HealthPage'
 import LoginPage from './components/pages/LoginPage'
 import WithingsSettings from './components/modals/WithingsSettings'
 import TelegramSettings from './components/modals/TelegramSettings'
+import NavigationSettings from './components/modals/NavigationSettings'
 import QueueIndicator from './components/shared/QueueIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
@@ -56,9 +57,11 @@ import {
   createWorkoutEntry,
   logMood,
   refreshEngineeringItem,
+  fetchNavPreferences,
 } from './api'
 import './App.css'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from './lib/sections'
+import { NAV_PAGE_IDS } from './lib/navItems'
 
 // Pure, closure-free helpers for reading tag/page state directly from a
 // pathname string. Used both at render time (via the reactive `location`
@@ -95,6 +98,8 @@ export default function App() {
   const [tagsLoading, setTagsLoading] = useState(true)
   const [briefingKey, setBriefingKey] = useState(0)
   const [healthLogRevision, setHealthLogRevision] = useState(0)
+  const [navOrder, setNavOrder] = useState(NAV_PAGE_IDS)
+  const [defaultPage, setDefaultPage] = useState('today')
   const invalidateBriefing = useCallback(() => setBriefingKey((k) => k + 1), [])
 
   const showUndo = useCallback((label, onUndo) => {
@@ -111,6 +116,7 @@ export default function App() {
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
     showTelegramSettings, setShowTelegramSettings,
+    showNavSettings, setShowNavSettings,
     showShortcuts, setShowShortcuts,
     defaultSection, showNewSheet, setShowNewSheet,
     openNewCard: openNewCardSheet,
@@ -330,11 +336,18 @@ export default function App() {
   )
 
   useEffect(() => {
-    checkAuth()
-      .then(({ authed: a, enabled: e }) => {
+    Promise.all([
+      checkAuth(),
+      // Falls back to the built-in default if unauthenticated (401) or on any
+      // fetch error -- matches the previous hardcoded '/today' behavior.
+      fetchNavPreferences().catch(() => ({ order: NAV_PAGE_IDS, default_page: 'today' })),
+    ])
+      .then(([{ authed: a, enabled: e }, prefs]) => {
         setAuthed(a)
         setAuthEnabled(e)
-        if (location.pathname === '/') navigate('/today', { replace: true })
+        setNavOrder(prefs.order)
+        setDefaultPage(prefs.default_page)
+        if (location.pathname === '/') navigate(`/${prefs.default_page}`, { replace: true })
       })
       .catch(() => setAuthed(false))
   }, [])
@@ -756,6 +769,9 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
                     &#127991; Tags
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowNavSettings(true)}>
+                    &#128393; Navigation
+                  </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
                     disabled={typeof Notification === 'undefined' || notifPermission === 'denied'}
@@ -796,6 +812,7 @@ export default function App() {
           tags={visibleTags}
           selectedTagIds={selectedTagIds}
           page={currentPage}
+          navOrder={navOrder}
           onNavigate={handlePageNavigate}
           onToggleTag={handleTagToggle}
           onClearTags={handleClearTags}
@@ -995,6 +1012,7 @@ export default function App() {
 
       <MobileNav
         page={currentPage}
+        navOrder={navOrder}
         onNavigate={handlePageNavigate}
       />
 
@@ -1055,6 +1073,16 @@ export default function App() {
           onUpdate={handleUpdateTag}
           onDelete={handleDeleteTag}
           onReplace={handleReplaceTag}
+        />
+      )}
+
+      {showNavSettings && (
+        <NavigationSettings
+          onClose={() => setShowNavSettings(false)}
+          onSaved={({ order, default_page }) => {
+            setNavOrder(order)
+            setDefaultPage(default_page)
+          }}
         />
       )}
 

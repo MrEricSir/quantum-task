@@ -27,7 +27,7 @@ from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, SESSION_TOKEN
 
-from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, mood, workouts
+from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, mood, workouts, preferences
 import assist as assist_pkg
 import bridge as bridge_pkg
 import briefing as briefing_pkg
@@ -392,6 +392,7 @@ app.include_router(mood.router)
 app.include_router(bridge_pkg.router)
 app.include_router(workouts.router)
 app.include_router(backup_pkg.router)
+app.include_router(preferences.router)
 
 # Serve bundled frontend for all non-API routes (must be last).
 # Using an explicit catch-all route instead of StaticFiles mount to avoid

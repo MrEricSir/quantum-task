@@ -14,6 +14,7 @@ export function useModals() {
   const [showGithubSettings, setShowGithubSettings] = useState(false)
   const [showWithingsSettings, setShowWithingsSettings] = useState(false)
   const [showTelegramSettings, setShowTelegramSettings] = useState(false)
+  const [showNavSettings, setShowNavSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [defaultSection, setDefaultSection] = useState('today')
   const [showNewSheet, setShowNewSheet] = useState(false)
@@ -34,6 +35,7 @@ export function useModals() {
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
     showTelegramSettings, setShowTelegramSettings,
+    showNavSettings, setShowNavSettings,
     showShortcuts, setShowShortcuts,
     defaultSection,
     showNewSheet, setShowNewSheet,

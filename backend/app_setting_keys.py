@@ -99,3 +99,11 @@ BRIDGE_INSTALL_TOKEN = "bridge_install_token"
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.
 STREAK_DAYS_V1 = "streak_days_v1"
+
+# ── Navigation preferences ──────────────────────────────────────────────────────
+# JSON array of page ids controlling sidebar/mobile-nav order, e.g.
+# ["today","board","calendar","health","engineering"]. May be a subset or miss newly
+# added pages -- routers/preferences.py fills in the gaps against its known page list.
+NAV_ORDER = "nav_order"
+# Page id (one of routers/preferences.py's NAV_PAGE_IDS) to redirect to on "/".
+DEFAULT_PAGE = "default_page"

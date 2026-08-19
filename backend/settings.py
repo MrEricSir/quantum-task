@@ -122,3 +122,13 @@ class Settings:
     def last_known_lon(self) -> float | None:
         v = self.get(keys.LAST_KNOWN_LON)
         return float(v) if v else None
+
+    # ── Navigation preferences ───────────────────────────────────────────────
+
+    @property
+    def nav_order(self) -> str:
+        return self.get(keys.NAV_ORDER, "[]")
+
+    @property
+    def default_page(self) -> str:
+        return self.get(keys.DEFAULT_PAGE, "today")

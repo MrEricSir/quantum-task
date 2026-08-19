@@ -586,6 +586,22 @@ export async function fetchMoodRecent(days = 30) {
   return res.json()
 }
 
+export async function fetchNavPreferences() {
+  const res = await apiFetch('/api/settings/navigation')
+  if (!res.ok) throw new Error('Failed to fetch navigation preferences')
+  return res.json()
+}
+
+export async function saveNavPreferences(prefs) {
+  const res = await apiFetch('/api/settings/navigation', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(prefs),
+  })
+  if (!res.ok) throw new Error('Failed to save navigation preferences')
+  return res.json()
+}
+
 export async function fetchTelegramConfig() {
   const res = await apiFetch('/api/telegram/config')
   if (!res.ok) throw new Error('Failed to fetch Telegram config')

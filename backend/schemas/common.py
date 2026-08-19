@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 
 
 class Tag(BaseModel):
@@ -25,3 +25,8 @@ class TagUpdate(BaseModel):
 
 class TagReplacement(BaseModel):
     new_tag_id: int
+
+
+class NavPreferences(BaseModel):
+    order: List[str]
+    default_page: str
