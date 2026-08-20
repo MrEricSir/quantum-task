@@ -19,6 +19,10 @@ Usage:
   qtask-bridge --unlock-push Clear a stuck no_push sentinel on the current repo's
                               remote.origin.pushurl, left behind by an interrupted job
 
+  --agent NAME  Modifier, combinable with any command above: use this coding agent for
+                just this run, overriding config.toml's "agent" key for one invocation
+                only, e.g. `qtask-bridge --card 84 --agent aider`.
+
 Config files in ~/.config/qtask-bridge/:
   config.json  — app URL and auth token (written by installer)
   config.toml  — repo mappings and agent name (edit to configure multi-repo, or to
@@ -29,15 +33,17 @@ This file is agent-agnostic — it never mentions a specific coding CLI by name.
 The served agent.py concatenates this file with EVERY known adapter (see
 backend/bridge/render.py's _ADAPTER_FILES), not just one, so more than one coding
 agent's support can live in a single served script and be chosen at runtime rather
-than at render time. Each adapter (e.g. agent_claude.py) defines the same five names,
+than at render time. Each adapter (e.g. agent_claude.py) defines the same six names,
 each suffixed `__{agent}` so they can all coexist in one module namespace without
 colliding:
 
-    AGENT_LABEL__{agent}: str                          e.g. "Claude Code"
-    AGENT_NOT_FOUND_HINT__{agent}: str                  install hint if the binary is missing
-    interactive_command__{agent}(prompt) -> list[str]   argv to launch an interactive session
-    streaming_command__{agent}(prompt) -> list[str]     argv to launch a non-interactive session
-    write_ide_settings__{agent}(worktree_path) -> None  write any agent-specific IDE config
+    AGENT_LABEL__{agent}: str                            e.g. "Claude Code"
+    AGENT_NOT_FOUND_HINT__{agent}: str                    install hint if the binary is missing
+    IDE_SETTINGS_GITIGNORE_ENTRY__{agent}: str | None     path write_ide_settings__{agent}
+                                                           writes, or None if it writes nothing
+    interactive_command__{agent}(prompt) -> list[str]     argv to launch an interactive session
+    streaming_command__{agent}(prompt) -> list[str]       argv to launch a non-interactive session
+    write_ide_settings__{agent}(worktree_path) -> None    write any agent-specific IDE config
 
 _activate_adapter() (below) reads config.toml's "agent" key (default "claude") at the
 top of main() and aliases the bare names (AGENT_LABEL, interactive_command, etc.) —
@@ -45,6 +51,13 @@ which is what every other function in this file actually calls — to whichever
 suffix was selected. Everything below this point that touches AGENT_LABEL,
 interactive_command, streaming_command, write_ide_settings, or AGENT_NOT_FOUND_HINT
 is referring to those bare, runtime-aliased names, not any one adapter's directly.
+IDE_SETTINGS_GITIGNORE_ENTRY is the one exception: _activate_adapter() aliases it too
+(so the "every adapter defines all six" completeness check stays uniform), but nothing
+in this file's CLI logic ever reads the bare name -- its real consumer is install.py's
+BRIDGE_IGNORE_ENTRIES, a hand-synced list checked against every adapter's value by
+tests/test_bridge_scripts.py rather than derived automatically at render time (weighed
+and rejected server-side dynamic derivation as more complexity than justified for one
+real adapter; see BRIDGE_MULTI_AGENT_SUPPORT.md's Phase 2 writeup).
 
 There's deliberately no `import` between this file and any adapter: the served
 artifact must stay a single flat file the installer copies verbatim to
@@ -62,8 +75,9 @@ file (see the comment at the bottom, after main()) -- render.py appends it once,
 after every file is concatenated, so it can never fire before every adapter's
 definitions have actually run. Getting this wrong once already shipped a real
 `NameError: name 'write_ide_settings' is not defined` to a live machine. To add a
-different coding agent, write a new adapter file implementing the same five names
-(suffixed with the new agent's name) and add it to render.py's _ADAPTER_FILES.
+different coding agent, write a new adapter file implementing the same six names
+(suffixed with the new agent's name), add it to render.py's _ADAPTER_FILES, and add its
+IDE_SETTINGS_GITIGNORE_ENTRY value (if not None) to install.py's BRIDGE_IGNORE_ENTRIES.
 """
 import argparse
 import json
@@ -117,8 +131,13 @@ _TOML_REPO_TABLE_KEYS = {
 }
 
 # See the "Coding-agent adapter contract" section of this file's module docstring.
+# IDE_SETTINGS_GITIGNORE_ENTRY is included so _activate_adapter()'s completeness check (below)
+# still requires every adapter to declare it (even as None) -- but nothing at CLI runtime
+# actually reads the aliased bare name; its real consumer is install.py's
+# BRIDGE_IGNORE_ENTRIES (install-time gitignore setup, hand-synced -- see
+# BRIDGE_MULTI_AGENT_SUPPORT.md's Phase 2 for why not derived automatically).
 _ADAPTER_CONTRACT_NAMES = (
-    "AGENT_LABEL", "AGENT_NOT_FOUND_HINT",
+    "AGENT_LABEL", "AGENT_NOT_FOUND_HINT", "IDE_SETTINGS_GITIGNORE_ENTRY",
     "interactive_command", "streaming_command", "write_ide_settings",
 )
 _DEFAULT_AGENT = "claude"  # config.toml's "agent" key, when unset
@@ -127,10 +146,12 @@ _DEFAULT_AGENT = "claude"  # config.toml's "agent" key, when unset
 def _activate_adapter(agent_name):
     """Alias the bare adapter-contract names (AGENT_LABEL, interactive_command, etc. -- what
     every other function in this file actually calls) to the `__{agent_name}`-suffixed
-    definitions whichever adapter source was concatenated in under, per config.toml's "agent"
-    key. Called once, at the very top of main(), before any subcommand dispatch -- including
-    subcommands (--list, --cleanup, --switch, --run, --unlock-push) that never end up touching
-    these names, so a bad agent config can't block those from working.
+    definitions whichever adapter source was concatenated in under. `agent_name` is whatever
+    main() resolved -- the `--agent` CLI flag if given, else config.toml's "agent" key, else
+    _DEFAULT_AGENT (this function itself doesn't care which source it came from). Called
+    once, at the very top of main(), before any subcommand dispatch -- including subcommands
+    (--list, --cleanup, --switch, --run, --unlock-push) that never end up touching these
+    names, so a bad agent selection can't block those from working.
 
     Falls back to _DEFAULT_AGENT with a warning if the configured agent has no adapter
     compiled into this build of the served script (e.g. config.toml says "aider" but this
@@ -1745,10 +1766,14 @@ def main():
                        help="Clear a stuck no_push sentinel on the current repo's "
                             "remote.origin.pushurl, left behind by an interrupted job "
                             "(operates on cwd's repo, not a specific worktree)")
+    parser.add_argument("--agent", metavar="NAME", default=None,
+                       help="Use this coding agent for just this run, overriding "
+                            "config.toml's \"agent\" key (default: claude). Combine with "
+                            "any command above, e.g. `qtask-bridge --card 84 --agent aider`.")
     args = parser.parse_args()
 
     cfg = load_config()
-    _activate_adapter(cfg.get("agent") or _DEFAULT_AGENT)
+    _activate_adapter(args.agent or cfg.get("agent") or _DEFAULT_AGENT)
     if args.watch:
         cmd_watch(cfg)
     elif args.tag:

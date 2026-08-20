@@ -30,12 +30,12 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # Defaults to your hostname if left empty.
     name = ""
 
-    # Which coding agent to launch. Defaults to "claude" if unset. Every served
-    # qtask-bridge binary carries every adapter it was built with, so switching
-    # here takes effect on your next run -- no reinstall needed, as long as this
-    # binary was built with the agent you're switching to.
+    # Which coding agent to launch. Defaults to "claude" if unset. Currently supported:
+    # "claude" (Claude Code) or "aider". Every served qtask-bridge binary carries every
+    # adapter it was built with, so switching here takes effect on your next run -- no
+    # reinstall needed, as long as this binary was built with the agent you're switching to.
     #
-    # agent = "claude"
+    # agent = "aider"
 
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
@@ -116,10 +116,14 @@ TOML_TEMPLATE = textwrap.dedent("""\
 """)
 
 # Files qtask-bridge writes into every worktree it creates -- BRIDGE_SPEC.md
-# (agent_core.py's SPEC_FILENAME), .claude/settings.local.json (agent_claude.py's
-# write_ide_settings), .env.qtask (agent_core.py's ENV_FILENAME). Kept in sync
-# by hand; there are only three.
-BRIDGE_IGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".claude/settings.local.json", ".env.qtask"]
+# (agent_core.py's SPEC_FILENAME), .env.qtask (agent_core.py's ENV_FILENAME), plus one
+# entry per adapter's IDE_SETTINGS_GITIGNORE_ENTRY__<name> for whatever IDE config
+# write_ide_settings() writes (.claude/settings.local.json is agent_claude.py's --
+# IDE_SETTINGS_GITIGNORE_ENTRY__claude). Kept in sync by hand, checked against every
+# adapter in render.py's _ADAPTER_FILES by
+# TestAdapterGitignoreEntriesStaySynced (tests/test_bridge_scripts.py) -- add a new
+# adapter's entry here (if not None) when adding it to _ADAPTER_FILES, or that test fails.
+BRIDGE_IGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".env.qtask", ".claude/settings.local.json"]
 
 
 def setup_global_gitignore():

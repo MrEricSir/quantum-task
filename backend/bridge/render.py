@@ -26,6 +26,7 @@ _TOKEN_PLACEHOLDER = "__QTASK_TOKEN__"
 # contract (see agent_claude.py) and adding it here.
 _ADAPTER_FILES = {
     "claude": "agent_claude.py",
+    "aider": "agent_aider.py",
 }
 
 

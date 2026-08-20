@@ -26,6 +26,7 @@ not just import bridge.scripts.agent_core in isolation.
 """
 import sys
 import os
+import importlib.util
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import http.server
@@ -1278,6 +1279,7 @@ class TestActivateAdapter:
     def test_aliases_bare_names_to_the_requested_agent(self, monkeypatch):
         monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__fake", "Fake Agent")
         monkeypatch.setitem(agent_core.__dict__, "AGENT_NOT_FOUND_HINT__fake", "install fake-agent")
+        monkeypatch.setitem(agent_core.__dict__, "IDE_SETTINGS_GITIGNORE_ENTRY__fake", None)
         monkeypatch.setitem(agent_core.__dict__, "interactive_command__fake", lambda p: ["fake", p])
         monkeypatch.setitem(agent_core.__dict__, "streaming_command__fake", lambda p: ["fake", "--yolo", p])
         monkeypatch.setitem(agent_core.__dict__, "write_ide_settings__fake", lambda path: None)
@@ -1292,6 +1294,7 @@ class TestActivateAdapter:
     def test_falls_back_to_claude_with_a_warning_for_an_unknown_agent(self, monkeypatch, capsys):
         monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__claude", "Claude Code")
         monkeypatch.setitem(agent_core.__dict__, "AGENT_NOT_FOUND_HINT__claude", "npm install -g @anthropic-ai/claude-code")
+        monkeypatch.setitem(agent_core.__dict__, "IDE_SETTINGS_GITIGNORE_ENTRY__claude", ".claude/settings.local.json")
         monkeypatch.setitem(agent_core.__dict__, "interactive_command__claude", lambda p: ["claude", p])
         monkeypatch.setitem(agent_core.__dict__, "streaming_command__claude", lambda p: ["claude", "--print", p])
         monkeypatch.setitem(agent_core.__dict__, "write_ide_settings__claude", lambda path: None)
@@ -1304,15 +1307,16 @@ class TestActivateAdapter:
         assert agent_core.AGENT_LABEL == "Claude Code"
 
     def test_partial_adapter_definition_also_falls_back(self, monkeypatch, capsys):
-        """Missing even one of the five names (e.g. a broken/incomplete adapter file) must
+        """Missing even one of the six names (e.g. a broken/incomplete adapter file) must
         not alias a half-defined adapter -- falls back to the known-complete default instead
         of leaving some names pointing at the requested agent and others stale."""
         monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__claude", "Claude Code")
         monkeypatch.setitem(agent_core.__dict__, "AGENT_NOT_FOUND_HINT__claude", "npm install -g @anthropic-ai/claude-code")
+        monkeypatch.setitem(agent_core.__dict__, "IDE_SETTINGS_GITIGNORE_ENTRY__claude", ".claude/settings.local.json")
         monkeypatch.setitem(agent_core.__dict__, "interactive_command__claude", lambda p: ["claude", p])
         monkeypatch.setitem(agent_core.__dict__, "streaming_command__claude", lambda p: ["claude", "--print", p])
         monkeypatch.setitem(agent_core.__dict__, "write_ide_settings__claude", lambda path: None)
-        # "partial" only defines AGENT_LABEL -- the other four names are missing.
+        # "partial" only defines AGENT_LABEL -- the other five names are missing.
         monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__partial", "Partial Agent")
 
         agent_core._activate_adapter("partial")
@@ -1320,6 +1324,106 @@ class TestActivateAdapter:
         err = capsys.readouterr().err
         assert "no adapter for coding agent 'partial'" in err
         assert agent_core.AGENT_LABEL == "Claude Code"
+
+
+class TestAdapterGitignoreEntriesStaySynced:
+    """install.py's BRIDGE_IGNORE_ENTRIES is a hand-synced list (see agent_core.py's module
+    docstring, Phase 2 of BRIDGE_MULTI_AGENT_SUPPORT.md, for why not derived automatically at
+    render time). This is the guard rail that catches the failure mode manual sync risks:
+    someone adds a new adapter to render.py's _ADAPTER_FILES but forgets to also add its
+    IDE_SETTINGS_GITIGNORE_ENTRY__<name> value here, silently leaving that adapter's IDE
+    config file eligible to be committed into a worktree branch."""
+
+    def _load_adapter_module(self, agent_name, filename):
+        path = bridge_render._SCRIPTS_DIR / filename
+        spec = importlib.util.spec_from_file_location(f"_test_adapter_{agent_name}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_every_adapters_gitignore_entry_is_listed(self):
+        for agent_name, filename in bridge_render._ADAPTER_FILES.items():
+            module = self._load_adapter_module(agent_name, filename)
+            entry = getattr(module, f"IDE_SETTINGS_GITIGNORE_ENTRY__{agent_name}")
+            if entry is not None:
+                assert entry in install_module.BRIDGE_IGNORE_ENTRIES, (
+                    f"adapter '{agent_name}' declares IDE_SETTINGS_GITIGNORE_ENTRY__{agent_name} "
+                    f"= {entry!r}, but it's missing from install.py's BRIDGE_IGNORE_ENTRIES"
+                )
+
+    def test_no_stale_entries_left_behind(self):
+        """The reverse check: every non-fixed entry in BRIDGE_IGNORE_ENTRIES should be
+        traceable to a currently-configured adapter -- catches a leftover entry from an
+        adapter that was since removed from _ADAPTER_FILES."""
+        fixed = {"BRIDGE_SPEC.md", ".env.qtask"}
+        expected = set(fixed)
+        for agent_name, filename in bridge_render._ADAPTER_FILES.items():
+            module = self._load_adapter_module(agent_name, filename)
+            entry = getattr(module, f"IDE_SETTINGS_GITIGNORE_ENTRY__{agent_name}")
+            if entry is not None:
+                expected.add(entry)
+        assert set(install_module.BRIDGE_IGNORE_ENTRIES) == expected
+
+
+class TestAiderAdapter:
+    """Unit-level checks against agent_aider.py's own module (dynamically imported, not the
+    concatenated served script -- TestAgentScriptFullFlow and TestRealInstalledBinary cover
+    it through the real rendered text)."""
+
+    @pytest.fixture
+    def aider_module(self):
+        path = bridge_render._SCRIPTS_DIR / "agent_aider.py"
+        spec = importlib.util.spec_from_file_location("_test_agent_aider", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_registered_in_adapter_files(self):
+        assert bridge_render._ADAPTER_FILES.get("aider") == "agent_aider.py"
+
+    def test_agent_label_and_not_found_hint(self, aider_module):
+        assert aider_module.AGENT_LABEL__aider == "Aider"
+        assert "pip install" in aider_module.AGENT_NOT_FOUND_HINT__aider
+
+    def test_no_ide_settings_gitignore_entry(self, aider_module):
+        assert aider_module.IDE_SETTINGS_GITIGNORE_ENTRY__aider is None
+
+    def test_write_ide_settings_is_a_real_no_op(self, aider_module, tmp_path):
+        # Must not raise and must not create anything -- unlike claude's version, which
+        # writes a real file (see test_no_ide_settings_directory_created below in spirit).
+        assert aider_module.write_ide_settings__aider(str(tmp_path)) is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_interactive_command_ignores_prompt_but_loads_spec_via_dash_dash_load(self, aider_module):
+        """See agent_aider.py's module docstring: no documented way to seed aider with an
+        initial chat message and stay interactive, unlike claude's `["claude", prompt]" --
+        but --load can at least auto-run /read BRIDGE_SPEC.md on startup."""
+        cmd = aider_module.interactive_command__aider("some prompt")
+        assert cmd[0] == "aider"
+        assert cmd[1] == "--load"
+        load_path = cmd[2]
+        assert os.path.exists(load_path)
+        with open(load_path) as f:
+            assert f.read() == "/read BRIDGE_SPEC.md\n"
+        os.unlink(load_path)  # this test's own responsibility, not the adapter's (see docstring)
+
+    def test_streaming_command_contains_message_and_yes_always(self, aider_module):
+        cmd = aider_module.streaming_command__aider("implement the fix")
+        assert cmd[0] == "aider"
+        assert "--message" in cmd
+        assert cmd[cmd.index("--message") + 1] == "implement the fix"
+        assert "--yes-always" in cmd
+        assert "--auto-commits" in cmd
+
+    def test_streaming_command_suppresses_startup_prompts(self, aider_module):
+        """--no-check-update / --no-analytics / --no-detect-urls / --disable-playwright --
+        every other documented source of a blocking startup prompt/network call, per
+        aider.chat/docs/config/options.html (verified 2026-08, see agent_aider.py's module
+        docstring). A --watch/--tag job has no attached stdin to answer any of these if they
+        fired."""
+        cmd = aider_module.streaming_command__aider("x")
+        for flag in ("--no-check-update", "--no-analytics", "--no-detect-urls", "--disable-playwright"):
+            assert flag in cmd, f"missing {flag}"
 
 
 class TestRepoEntryVerificationFields:
@@ -2327,6 +2431,7 @@ class TestAgentScriptFullFlow:
         for name, marker in [
             ("AGENT_LABEL__claude", "AGENT_LABEL__claude ="),
             ("AGENT_NOT_FOUND_HINT__claude", "AGENT_NOT_FOUND_HINT__claude ="),
+            ("IDE_SETTINGS_GITIGNORE_ENTRY__claude", "IDE_SETTINGS_GITIGNORE_ENTRY__claude ="),
             ("interactive_command__claude", "def interactive_command__claude"),
             ("streaming_command__claude", "def streaming_command__claude"),
             ("write_ide_settings__claude", "def write_ide_settings__claude"),
@@ -2351,6 +2456,15 @@ class TestAgentScriptFullFlow:
             dispatch_line = next(i for i, l in enumerate(main_body) if l.strip().startswith(marker))
             assert activate_line < dispatch_line, \
                 f"_activate_adapter() must run before {marker} is dispatched"
+
+    def test_agent_flag_takes_precedence_over_config_toml_in_source(self, client):
+        """Structural check on main()'s _activate_adapter(...) call itself: args.agent (the
+        --agent CLI flag) must be tried before cfg.get("agent") (config.toml), matching Phase
+        4's "one-off override" intent -- `or` short-circuits left to right, so this is a
+        source-order assertion, not just a documentation claim."""
+        res = client.get("/api/bridge/agent.py")
+        line = next(l for l in res.text.splitlines() if l.strip().startswith("_activate_adapter(args"))
+        assert line.strip().startswith("_activate_adapter(args.agent or cfg.get(\"agent\")"), line
 
     def _load_rendered_agent_module(self):
         """exec the real request-time-rendered agent.py -- deliberately not
@@ -2417,6 +2531,53 @@ class TestAgentScriptFullFlow:
         # (worktrees always live under ~/.local/share/qtask-bridge).
         worktree_dir = os.path.dirname(os.path.dirname(settings_path))
         subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                       cwd=scratch_repo, capture_output=True)
+
+    def test_run_job_streaming_with_aider_selected_passes_the_expected_flags(self, scratch_repo, monkeypatch):
+        """streaming_command__aider is what --watch/--tag/--review actually launch --
+        TestRealInstalledBinary's aider test covers --card (interactive_command__aider,
+        deliberately argument-less -- see agent_aider.py), so this is the one place
+        --message/--yes-always/etc actually getting passed through run_job(streaming=True)
+        is verified, against the real rendered+concatenated script."""
+        ns = self._load_rendered_agent_module()
+        ns["_activate_adapter"]("aider")  # override _load_rendered_agent_module's claude default
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        captured_cmd = {}
+        real_popen = ns["subprocess"].Popen
+        def fake_popen(cmd, *a, **k):
+            if cmd[:1] == ["aider"]:
+                captured_cmd["cmd"] = cmd
+                return real_popen(["echo", "done"], *a, **k)
+            return real_popen(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "Popen", fake_popen)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 84, "card_title": "Fix ranking quote searches",
+               "prompt": "do the thing", "target_repo": None}
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=True, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        assert captured_cmd, "streaming_command__aider was never invoked via subprocess.Popen"
+        cmd = captured_cmd["cmd"]
+        assert cmd[0] == "aider"
+        assert "--message" in cmd
+        assert "--yes-always" in cmd
+        assert "--auto-commits" in cmd
+
+        settings_path = None
+        for call in api_calls:
+            if call[1] == "/api/bridge/jobs/1/start":
+                worktree_path = call[2]["worktree_path"]
+        assert worktree_path, "job never reached the /start call"
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
                        cwd=scratch_repo, capture_output=True)
 
     def test_run_job_links_configured_env_files_into_the_real_worktree(self, scratch_repo, monkeypatch):
@@ -2823,6 +2984,161 @@ class TestRealInstalledBinary:
         pushurl = subprocess.run(["git", "config", "--get", "remote.origin.pushurl"],
                                  cwd=scratch_repo, capture_output=True, text=True)
         assert pushurl.returncode != 0, "pushurl left stuck after a real end-to-end run"
+
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
+                       cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch], cwd=scratch_repo, capture_output=True)
+
+    def test_card_flow_runs_with_aider_selected_via_config_toml(self, scratch_repo, tmp_path):
+        """Same genuine-subprocess rigor as the claude test above, but with config.toml's
+        "agent" key set to "aider" -- the actual point of Phase 1-3 of
+        BRIDGE_MULTI_AGENT_SUPPORT.md: a second real adapter selectable purely via local
+        config, no reinstall, no server involvement. --card uses run_job(streaming=False) --
+        interactive_command__aider, not streaming_command__aider -- so the stub `aider`
+        executable is expected to run with `--load <tempfile>` and nothing else (see
+        agent_aider.py's module docstring for why the actual prompt text can't be seeded the
+        way claude's `["claude", prompt]` can); --message/--yes-always are covered separately
+        in TestAgentScriptFullFlow's aider streaming test, since --watch/--tag (the only
+        callers of the streaming path) aren't single-shot subprocess invocations this test
+        style fits."""
+        home_dir = tmp_path / "home"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (home_dir / ".config" / "qtask-bridge").mkdir(parents=True)
+
+        invocation_log = tmp_path / "aider_invocation.log"
+        aider_stub = bin_dir / "aider"
+        aider_stub.write_text(f'#!/bin/sh\necho "$@" > {invocation_log}\nexit 0\n')
+        aider_stub.chmod(0o755)
+
+        script_path = bin_dir / "qtask-bridge"
+        script_path.write_text(bridge_render.render_agent_script())
+        script_path.chmod(0o755)
+
+        job = {
+            "id": 1, "card_id": 84, "status": "pending", "target_repo": None,
+            "branch_name": None, "agent_name": None, "worktree_path": None,
+            "result": None, "output": None,
+            "spec_snapshot": "## Acceptance Criteria\n- [ ] the fix works",
+            "created_at": "2026-01-01T00:00:00", "updated_at": None,
+            "card_title": "Fix ranking quote searches",
+            "prompt": "Implement the fix described in BRIDGE_SPEC.md.",
+            "spec": "## Acceptance Criteria\n- [ ] the fix works",
+        }
+
+        with _FakeBridgeBackend(job) as backend:
+            (home_dir / ".config" / "qtask-bridge" / "config.json").write_text(
+                json.dumps({"app_url": backend.url, "token": "test-token"})
+            )
+            (home_dir / ".config" / "qtask-bridge" / "config.toml").write_text('agent = "aider"\n')
+
+            env = {"HOME": str(home_dir), "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+            result = subprocess.run(
+                [str(script_path), "--card", "84"],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            assert "command not found" not in result.stderr, result.stderr
+            assert "syntax error" not in result.stderr, result.stderr
+            assert "NameError" not in result.stderr, result.stderr
+            assert "Traceback" not in result.stderr, result.stderr
+            assert "no adapter for coding agent" not in result.stderr, \
+                f"aider adapter wasn't recognized -- fell back to claude:\n{result.stderr}"
+            assert result.returncode == 0, \
+                f"qtask-bridge exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+            start_calls = backend.calls_to("/start")
+            assert start_calls, "job never reached POST .../start — worktree creation didn't happen"
+            worktree_path = start_calls[0][2]["worktree_path"]
+            branch = start_calls[0][2]["branch"]
+
+            assert os.path.isdir(worktree_path)
+            # write_ide_settings__aider is a no-op -- confirms the aider adapter actually ran
+            # (not silently falling back to claude, which would create this directory).
+            assert not os.path.exists(os.path.join(worktree_path, ".claude"))
+            assert os.path.exists(os.path.join(worktree_path, ".env.qtask"))
+
+            assert backend.calls_to("/complete"), "job never reached POST .../complete"
+            assert not backend.calls_to("/error"), f"job errored: {backend.calls_to('/error')}"
+
+            assert invocation_log.exists(), "the aider stub never ran"
+            invoked_args = invocation_log.read_text().split()
+            assert invoked_args[0] == "--load", invoked_args
+            with open(invoked_args[1]) as f:
+                assert f.read().strip() == "/read BRIDGE_SPEC.md"
+
+        pushurl = subprocess.run(["git", "config", "--get", "remote.origin.pushurl"],
+                                 cwd=scratch_repo, capture_output=True, text=True)
+        assert pushurl.returncode != 0, "pushurl left stuck after a real end-to-end run"
+
+        subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
+                       cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "branch", "-D", branch], cwd=scratch_repo, capture_output=True)
+
+    def test_card_flow_agent_flag_overrides_config_toml(self, scratch_repo, tmp_path):
+        """Phase 4: --agent is a one-off override, not a permanent config change.
+        config.toml says "claude" here -- if the flag didn't win, the claude stub (which
+        would create .claude/settings.local.json) would run instead of the aider one."""
+        home_dir = tmp_path / "home"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (home_dir / ".config" / "qtask-bridge").mkdir(parents=True)
+
+        claude_stub = bin_dir / "claude"
+        claude_stub.write_text("#!/bin/sh\nexit 0\n")
+        claude_stub.chmod(0o755)
+
+        aider_invoked = tmp_path / "aider_ran"
+        aider_stub = bin_dir / "aider"
+        aider_stub.write_text(f'#!/bin/sh\ntouch {aider_invoked}\nexit 0\n')
+        aider_stub.chmod(0o755)
+
+        script_path = bin_dir / "qtask-bridge"
+        script_path.write_text(bridge_render.render_agent_script())
+        script_path.chmod(0o755)
+
+        job = {
+            "id": 1, "card_id": 84, "status": "pending", "target_repo": None,
+            "branch_name": None, "agent_name": None, "worktree_path": None,
+            "result": None, "output": None,
+            "spec_snapshot": "## Acceptance Criteria\n- [ ] the fix works",
+            "created_at": "2026-01-01T00:00:00", "updated_at": None,
+            "card_title": "Fix ranking quote searches",
+            "prompt": "Implement the fix described in BRIDGE_SPEC.md.",
+            "spec": "## Acceptance Criteria\n- [ ] the fix works",
+        }
+
+        with _FakeBridgeBackend(job) as backend:
+            (home_dir / ".config" / "qtask-bridge" / "config.json").write_text(
+                json.dumps({"app_url": backend.url, "token": "test-token"})
+            )
+            (home_dir / ".config" / "qtask-bridge" / "config.toml").write_text('agent = "claude"\n')
+
+            env = {"HOME": str(home_dir), "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+            result = subprocess.run(
+                [str(script_path), "--card", "84", "--agent", "aider"],
+                cwd=scratch_repo, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            assert "NameError" not in result.stderr, result.stderr
+            assert "Traceback" not in result.stderr, result.stderr
+            assert result.returncode == 0, \
+                f"qtask-bridge exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+            start_calls = backend.calls_to("/start")
+            assert start_calls, "job never reached POST .../start"
+            worktree_path = start_calls[0][2]["worktree_path"]
+            branch = start_calls[0][2]["branch"]
+
+            assert aider_invoked.exists(), \
+                "--agent aider should have overridden config.toml's \"claude\", but the aider stub never ran"
+            assert not os.path.exists(os.path.join(worktree_path, ".claude")), \
+                "claude adapter ran despite --agent aider -- override didn't take effect"
+
+            assert backend.calls_to("/complete"), "job never reached POST .../complete"
+            assert not backend.calls_to("/error"), f"job errored: {backend.calls_to('/error')}"
 
         subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
                        cwd=scratch_repo, capture_output=True)
