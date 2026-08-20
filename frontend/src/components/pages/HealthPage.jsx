@@ -912,6 +912,115 @@ function AnalysisSection({ isImperial, habitCompletions }) {
   )
 }
 
+// ── Manual measurement entry ───────────────────────────────────────────────────
+// Lets a user without Withings hardware (or a metric it doesn't cover) type a value in by
+// hand. Writes to the same measurements table Withings sync uses, so charts, habit goal
+// auto-completion, insights, and Telegram all pick it up identically -- see
+// routers/health.py and ARCHITECTURE_FUTURE.md's HealthProvider work this builds on.
+
+const MANUAL_METRIC_OPTIONS = [
+  { metric: 'weight',             label: 'Weight',         unit: 'kg'   },
+  { metric: 'steps',              label: 'Steps',          unit: ''     },
+  { metric: 'fat_ratio',          label: 'Body fat',       unit: '%'    },
+  { metric: 'bp_systolic',        label: 'BP systolic',    unit: 'mmHg' },
+  { metric: 'bp_diastolic',       label: 'BP diastolic',   unit: 'mmHg' },
+  { metric: 'heart_rate',         label: 'Heart rate',     unit: 'bpm'  },
+  { metric: 'spo2',               label: 'SpO2',           unit: '%'    },
+  { metric: 'sleep_score',        label: 'Sleep score',    unit: ''     },
+  { metric: 'sleep_minutes',      label: 'Sleep duration', unit: 'min'  },
+  { metric: 'sleep_deep_minutes', label: 'Deep sleep',     unit: 'min'  },
+]
+const MANUAL_METRIC_LABELS = Object.fromEntries(MANUAL_METRIC_OPTIONS.map(o => [o.metric, o.label]))
+
+function MeasurementLog({ measurements, isImperial, onAdd, onDelete }) {
+  const [metric, setMetric] = useState('weight')
+  const [value, setValue] = useState('')
+  const [date, setDate] = useState(() => localDate())
+  const [saving, setSaving] = useState(false)
+
+  const manualEntries = measurements
+    .filter(m => m.source === 'manual')
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+    .slice(0, 10)
+
+  const handleAdd = async () => {
+    if (value === '' || saving) return
+    setSaving(true)
+    try {
+      const numeric = parseFloat(value)
+      // Weight is always stored in kg -- convert a lbs entry before sending.
+      const stored = (metric === 'weight' && isImperial) ? numeric / KG_TO_LBS : numeric
+      await onAdd({ date, metric, value: stored })
+      setValue('')
+    } catch {
+      // onAdd's caller owns error surfacing; nothing further to do here.
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const displayEntry = (m) => {
+    if (m.metric === 'weight' && isImperial) {
+      return `${Math.round(m.value * KG_TO_LBS * 10) / 10} lbs`
+    }
+    const unit = MANUAL_METRIC_OPTIONS.find(o => o.metric === m.metric)?.unit
+    return `${m.value}${unit ? ' ' + unit : ''}`
+  }
+
+  return (
+    <section className="health-section">
+      <div className="health-section-header">
+        <h3 className="health-section-title">Log a measurement</h3>
+        <input
+          type="date"
+          className="food-date-picker"
+          value={date}
+          onChange={e => setDate(e.target.value)}
+        />
+      </div>
+
+      <div className="food-input-row">
+        <select
+          className="measurement-metric-select"
+          value={metric}
+          onChange={e => setMetric(e.target.value)}
+        >
+          {MANUAL_METRIC_OPTIONS.map(o => (
+            <option key={o.metric} value={o.metric}>
+              {o.label}{o.metric === 'weight' && isImperial ? ' (lbs)' : o.unit ? ` (${o.unit})` : ''}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          className="measurement-value-input"
+          placeholder="Value"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          disabled={saving}
+        />
+        <button className="food-add-btn" onClick={handleAdd} disabled={value === '' || saving}>
+          {saving ? '…' : 'Log'}
+        </button>
+      </div>
+
+      {manualEntries.length === 0 && (
+        <p className="food-empty">No manual entries yet.</p>
+      )}
+
+      {manualEntries.map(m => (
+        <div key={m.id} className="food-entry">
+          <span className="food-entry-name">{MANUAL_METRIC_LABELS[m.metric] ?? m.metric}: {displayEntry(m)}</span>
+          <span className="food-entry-notes">{m.date}</span>
+          <button className="food-entry-delete" onClick={() => onDelete(m.id)} aria-label="Remove">✕</button>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 // ── Workout log ───────────────────────────────────────────────────────────────
 
 const WORKOUT_COLORS = {
@@ -1303,7 +1412,7 @@ function FoodLog({ range = 30, revision = 0 }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function HealthPage({ habits = [], archivedHabits = [], allTags = [], selectedTagIds, onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0 }) {
+export default function HealthPage({ habits = [], archivedHabits = [], allTags = [], selectedTagIds, onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0, onAddMeasurement, onDeleteMeasurement }) {
   const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
   const [moodToday, setMoodToday] = useState(null)
@@ -1413,13 +1522,19 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
         </div>
       </div>
 
-      {/* Food and workout logs — always visible, independent of Withings */}
+      {/* Manual measurement entry, food, and workout logs — always visible, independent of Withings */}
+      <MeasurementLog
+        measurements={measurements}
+        isImperial={isImperial}
+        onAdd={onAddMeasurement}
+        onDelete={onDeleteMeasurement}
+      />
       <FoodLog range={range} revision={healthLogRevision} />
       <WorkoutLog range={range} revision={healthLogRevision} />
 
       {!showCharts && (
         <div className="health-not-connected">
-          <p>Connect your Withings account to start tracking steps, body fat, and weight.</p>
+          <p>Connect your Withings account, or log a measurement above by hand, to start tracking steps, body fat, and weight.</p>
           <button className="btn-primary" onClick={openWithingsSettings}>Connect Withings</button>
         </div>
       )}

@@ -174,6 +174,8 @@ export default function App() {
     handleSaveGoals: handleSaveWithingsGoals,
     loadStatus: reloadWithingsStatus,
     loadHealthData: reloadWithingsHealthData,
+    handleAddMeasurement,
+    handleDeleteMeasurement,
   } = useWithings({ authed })
 
   const queryClient = useQueryClient()
@@ -938,6 +940,8 @@ export default function App() {
             isImperial={isImperial}
             onToggleUnit={toggleUnit}
             healthLogRevision={healthLogRevision}
+            onAddMeasurement={handleAddMeasurement}
+            onDeleteMeasurement={handleDeleteMeasurement}
           />
         ) : isEngineeringPage ? (
           <EngineeringPage

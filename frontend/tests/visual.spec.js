@@ -141,6 +141,12 @@ async function mockAPIs(page) {
     r.fulfill({ json: { steps: null, fat_ratio: null, weight: null } }))
   await page.route('**/api/withings/health-data**', r =>
     r.fulfill({ json: { measurements: [], habit_completions: {} } }))
+  await page.route('**/api/health/measurements**', r => {
+    if (r.request().method() === 'POST') {
+      return r.fulfill({ status: 201, json: { id: 1, ...r.request().postDataJSON(), source: 'manual' } })
+    }
+    return r.fulfill({ json: { ok: true } })
+  })
 
   // Briefing SSE: send weather + text then close
   await page.route('**/api/briefing**', r =>
@@ -1714,6 +1720,59 @@ test.describe('health page', () => {
   test('"Connect Withings" prompt is shown when not connected', async ({ page }) => {
     await expect(page.locator('.health-not-connected')).toBeVisible()
     await expect(page.locator('.health-not-connected').getByRole('button', { name: /connect withings/i })).toBeVisible()
+  })
+
+  test('manual measurement log is visible even when Withings is not connected', async ({ page }) => {
+    const section = page.locator('.health-section', { hasText: 'Log a measurement' })
+    await expect(page.getByRole('heading', { name: 'Log a measurement' })).toBeVisible()
+    await expect(section.getByRole('button', { name: /^log$/i })).toBeVisible()
+  })
+
+  test('logging a manual measurement POSTs the entry and shows it in the list', async ({ page }) => {
+    let postBody = null
+    await page.route('**/api/health/measurements**', r => {
+      if (r.request().method() === 'POST') {
+        postBody = r.request().postDataJSON()
+        return r.fulfill({ status: 201, json: { id: 42, ...postBody, source: 'manual' } })
+      }
+      return r.fulfill({ json: { ok: true } })
+    })
+    // Reflect the newly-added entry on the next health-data reload.
+    await page.route('**/api/withings/health-data**', r =>
+      r.fulfill({ json: {
+        measurements: postBody ? [{ id: 42, ...postBody, source: 'manual' }] : [],
+        habit_completions: {},
+      } }))
+
+    const section = page.locator('.health-section', { hasText: 'Log a measurement' })
+    await section.locator('select').selectOption('weight')
+    await section.locator('input[type="number"]').fill('70.5')
+    await section.getByRole('button', { name: /^log$/i }).click()
+
+    await expect.poll(() => postBody).not.toBeNull()
+    expect(postBody.metric).toBe('weight')
+    expect(postBody.value).toBe(70.5)
+    await expect(section.locator('.food-entry', { hasText: 'Weight' })).toBeVisible()
+  })
+
+  test('deleting a manual measurement entry calls DELETE with its id', async ({ page }) => {
+    await page.route('**/api/withings/health-data**', r =>
+      r.fulfill({ json: {
+        measurements: [{ id: 7, date: '2026-06-01', metric: 'weight', value: 70, source: 'manual' }],
+        habit_completions: {},
+      } }))
+    await page.goto('/health')
+    await waitForApp(page)
+
+    let deletedId = null
+    await page.route('**/api/health/measurements/7', r => {
+      deletedId = 7
+      return r.fulfill({ json: { ok: true } })
+    })
+
+    const section = page.locator('.health-section', { hasText: 'Log a measurement' })
+    await section.locator('.food-entry-delete').click()
+    await expect.poll(() => deletedId).toBe(7)
   })
 
   test('food log input is visible when Withings is connected', async ({ page }) => {

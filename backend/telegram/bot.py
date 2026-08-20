@@ -1321,19 +1321,22 @@ def _reply_health(tz_offset: int) -> str:
         from health_context import build_health_context
         data, ctx = build_health_context(db, today)
 
+    # Check ctx (actual data, from Withings sync OR manual entry) before falling back to a
+    # Withings-specific message -- a manual-entry-only user has no credentials row but still
+    # has real data to show, and used to always get told to connect Withings regardless.
+    if ctx:
+        # ctx already has "Health data:" as header — reformat for Telegram
+        lines = ["<b>❤️ Health</b>"]
+        for line in ctx.splitlines():
+            stripped = line.strip()
+            if stripped and stripped != "Health data:":
+                lines.append(stripped.replace("  - ", "• ").replace("- ", "• "))
+        return "\n".join(lines)
+
     if not has_credentials:
-        return "Withings isn't connected yet. Link it in the app under Settings → Withings."
+        return "No health data yet. Connect Withings, or log a measurement by hand in the app under Health."
 
-    if not ctx:
-        return "No health data available yet. Make sure your Withings device has synced recently."
-
-    # ctx already has "Health data:" as header — reformat for Telegram
-    lines = ["<b>❤️ Health</b>"]
-    for line in ctx.splitlines():
-        stripped = line.strip()
-        if stripped and stripped != "Health data:":
-            lines.append(stripped.replace("  - ", "• ").replace("- ", "• "))
-    return "\n".join(lines)
+    return "No health data available yet. Make sure your Withings device has synced recently."
 
 
 def _reply_weather(chat_id: str = "") -> str:

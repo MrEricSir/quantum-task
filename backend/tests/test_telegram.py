@@ -352,6 +352,46 @@ class TestBotReadNote:
         assert "Dentist appointment" in reply
         assert "Bring insurance card" in reply
 
+
+class TestBotReplyHealth:
+    """A manual-entry-only user (no WithingsCredentials row) has real health data via
+    routers.health's manual entry, but used to always get told to connect Withings
+    regardless -- has_credentials was checked before ctx. See routers/health.py and the
+    _reply_health fix in telegram/bot.py."""
+
+    def test_shows_data_from_manual_entry_with_no_withings_credentials(self):
+        today = date.today().isoformat()
+        with BotTestSession() as db:
+            db.add(models.WithingsMeasurement(date=today, metric="weight", value=70.5, source="manual"))
+            db.commit()
+
+        from telegram.bot import _reply_health
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_health(0)
+
+        assert "Weight" in reply
+        assert "isn't connected" not in reply
+
+    def test_no_data_and_no_credentials_mentions_both_options(self):
+        from telegram.bot import _reply_health
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_health(0)
+        assert "Connect Withings" in reply
+        assert "log a measurement" in reply
+
+    def test_no_data_but_credentials_exist_suggests_checking_sync(self):
+        with BotTestSession() as db:
+            db.add(models.WithingsCredentials(
+                access_token="tok", token_type="Bearer", refresh_token="ref",
+                userid=1, client_id="cid", consumer_secret="secret", expires_in=10800,
+            ))
+            db.commit()
+
+        from telegram.bot import _reply_health
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_health(0)
+        assert "synced recently" in reply
+
     def test_no_notes_message(self):
         _make_card("Dentist appointment")
         from telegram.bot import _reply_read_note

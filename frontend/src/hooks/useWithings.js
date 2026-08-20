@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchWithingsStatus, fetchWithingsHealthData, syncWithings, disconnectWithings, fetchWithingsGoals, saveWithingsGoals } from '../api'
+import { fetchWithingsStatus, fetchWithingsHealthData, syncWithings, disconnectWithings, fetchWithingsGoals, saveWithingsGoals, createHealthMeasurement, deleteHealthMeasurement } from '../api'
 
 export function useWithings({ authed }) {
   const [status, setStatus] = useState(null)      // { connected, last_synced }
@@ -76,5 +76,20 @@ export function useWithings({ authed }) {
     setHealthData(null)
   }
 
-  return { status, healthData, healthGoals, syncing, syncError, handleSync, handleDisconnect, handleSaveGoals, loadStatus, loadHealthData }
+  const handleAddMeasurement = async (data) => {
+    const result = await createHealthMeasurement(data)
+    loadHealthData()
+    return result
+  }
+
+  const handleDeleteMeasurement = async (id) => {
+    await deleteHealthMeasurement(id)
+    loadHealthData()
+  }
+
+  return {
+    status, healthData, healthGoals, syncing, syncError,
+    handleSync, handleDisconnect, handleSaveGoals, loadStatus, loadHealthData,
+    handleAddMeasurement, handleDeleteMeasurement,
+  }
 }

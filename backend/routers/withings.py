@@ -115,21 +115,31 @@ def _load_credentials(db: Session):
 
 # ── Sync logic ────────────────────────────────────────────────────────────────
 
-def _upsert_measurement(db: Session, date_str: str, metric: str, value: float) -> None:
+def upsert_measurement(
+    db: Session, date_str: str, metric: str, value: float, source: str = "withings"
+) -> models.WithingsMeasurement:
+    """Insert or update the (date, metric) row. `source` is overwritten on every write --
+    whichever caller wrote most recently (device sync or manual entry) is the current source
+    of truth for that reading; see migration 00038 for why that's the intended behavior."""
     existing = db.query(models.WithingsMeasurement).filter_by(
         date=date_str, metric=metric
     ).first()
     if existing:
         existing.value = value
+        existing.source = source
         existing.synced_at = datetime.now(timezone.utc)
+        return existing
     else:
-        db.add(models.WithingsMeasurement(
+        row = models.WithingsMeasurement(
             date=date_str,
             metric=metric,
             value=value,
+            source=source,
             synced_at=datetime.now(timezone.utc),
-        ))
-        db.flush()  # make visible to subsequent queries in same transaction
+        )
+        db.add(row)
+        db.flush()  # make visible to subsequent queries in same transaction, populates row.id
+        return row
 
 
 _AUTO_CHECK_LOOKBACK_DAYS = 3  # re-check this many trailing days, not just today
@@ -149,10 +159,10 @@ def _auto_check_habits(db: Session, today: date, lookback_days: int = _AUTO_CHEC
     day's data arrived late.
     """
     for days_back in range(lookback_days):
-        _auto_check_habits_for_date(db, today - timedelta(days=days_back))
+        auto_check_habits_for_date(db, today - timedelta(days=days_back))
 
 
-def _auto_check_habits_for_date(db: Session, check_date: date) -> None:
+def auto_check_habits_for_date(db: Session, check_date: date) -> None:
     """Auto-complete habits whose Withings goal was met on `check_date`.
 
     Steps: goal met when value >= goal.
@@ -452,7 +462,7 @@ def _do_sync_impl(db: Session) -> dict:
     readings, errors = fetch_measurements(creds_data, start, today)
     for metric, points in readings.items():
         for m in points:
-            _upsert_measurement(db, m.date, metric, m.value)
+            upsert_measurement(db, m.date, metric, m.value)
             synced[metric] = synced.get(metric, 0) + 1
 
     db.commit()
@@ -653,7 +663,7 @@ def withings_health_data(days: int = 90, db: Session = Depends(get_db)):
 
     return schemas.WithingsHealthData(
         measurements=[
-            schemas.WithingsMeasurementOut(date=m.date, metric=m.metric, value=m.value)
+            schemas.WithingsMeasurementOut(id=m.id, date=m.date, metric=m.metric, value=m.value, source=m.source)
             for m in measurements
         ],
         habit_completions=habit_completions,

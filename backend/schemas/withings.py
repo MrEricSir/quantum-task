@@ -8,9 +8,11 @@ class WithingsStatus(BaseModel):
 
 
 class WithingsMeasurementOut(BaseModel):
+    id: int
     date: str
     metric: str
     value: float
+    source: str = "withings"
 
 
 class WithingsHealthData(BaseModel):

@@ -170,6 +170,7 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 
 ### Health
 - Connect a Withings account (watch + smart scale) to sync step count, body fat %, and weight
+- **No smart scale? Log any metric by hand** — a "Log a measurement" form on the Health page covers all ten tracked metrics (steps, weight, body fat, blood pressure, heart rate, SpO2, sleep score/duration/deep-sleep) with a date picker; manually-entered readings feed charts, habit goal auto-completion, insights, and Telegram identically to a synced Withings reading, and stay editable/deletable from a small recent-entries list. If a device later syncs the same date/metric, its reading takes over as the source of truth.
 - Set a numeric goal per metric; step habits auto-check when the daily goal is synced
 - Charts showing steps (bar) and body fat % (line) over the past 90 days
 - Habit completion overlay on each chart to see how habits track with progress

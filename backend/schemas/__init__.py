@@ -27,6 +27,7 @@ from schemas.jobs import (
     AssistRequest, GlobalAssistRequest, ContextFromRequest,
 )
 from schemas.withings import WithingsStatus, WithingsMeasurementOut, WithingsHealthData
+from schemas.health import HealthMeasurementCreate
 from schemas.engineering import EngineeringItem
 
 # Legacy Note schemas — kept for any lingering imports
@@ -78,6 +79,8 @@ __all__ = [
     "AssistRequest", "GlobalAssistRequest", "ContextFromRequest",
     # withings
     "WithingsStatus", "WithingsMeasurementOut", "WithingsHealthData",
+    # health
+    "HealthMeasurementCreate",
     # engineering
     "EngineeringItem",
     # legacy

@@ -307,6 +307,7 @@ class WithingsMeasurement(Base):
     metric = Column(String, nullable=False)  # 'steps' | 'fat_ratio'
     value = Column(Float, nullable=False)
     synced_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    source = Column(String, nullable=False, default="withings")  # 'withings' | 'manual'
 
 
 

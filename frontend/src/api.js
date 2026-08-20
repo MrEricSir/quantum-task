@@ -455,6 +455,21 @@ export async function saveWithingsGoals(goals) {
   return res.json()
 }
 
+export async function createHealthMeasurement(data) {
+  const res = await apiFetch('/api/health/measurements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to save measurement')
+  return res.json()
+}
+
+export async function deleteHealthMeasurement(id) {
+  const res = await apiFetch(`/api/health/measurements/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete measurement')
+}
+
 export async function fetchInsights() {
   const res = await apiFetch('/api/insights')
   if (!res.ok) throw new Error('Failed to fetch insights')

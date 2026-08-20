@@ -614,7 +614,8 @@
 }
 
 .food-input,
-.workout-input {
+.workout-input,
+.measurement-value-input {
   flex: 1;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
@@ -628,12 +629,14 @@
 }
 
 .food-input:focus,
-.workout-input:focus {
+.workout-input:focus,
+.measurement-value-input:focus {
   border-color: rgba(255, 255, 255, 0.25);
 }
 
 .food-input::placeholder,
-.workout-input::placeholder {
+.workout-input::placeholder,
+.measurement-value-input::placeholder {
   color: var(--text-muted);
   opacity: 0.5;
 }
@@ -641,9 +644,28 @@
 @media (hover: none) {
   /* Prevent iOS Safari from zooming into the input on focus */
   .food-input,
-  .workout-input {
+  .workout-input,
+  .measurement-value-input {
     font-size: 16px;
   }
+}
+
+.measurement-metric-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+  max-width: 180px;
+}
+
+.measurement-metric-select:focus {
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 .food-add-btn {
