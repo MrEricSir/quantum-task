@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from deps import get_db
+from integrations.base import Measurement
 from streak import recompute_from
 
 router = APIRouter()
@@ -202,6 +203,118 @@ def _withings_get(creds_data: dict, path: str, params: dict) -> dict:
     return body.get("body", {})
 
 
+# ── Pure API fetch (no DB access) ───────────────────────────────────────────────
+# Withings numeric measurement-type codes -> canonical metric name + rounding precision.
+_MEASURE_TYPE_MAP = {
+    6:  ("fat_ratio",    2),  # FAT_RATIO
+    1:  ("weight",       2),  # WEIGHT (kg)
+    9:  ("bp_diastolic", 1),  # DIASTOLIC BP (mmHg)
+    10: ("bp_systolic",  1),  # SYSTOLIC BP (mmHg)
+    11: ("heart_rate",   1),  # HEART RATE (bpm)
+    54: ("spo2",         1),  # SPO2 (%)
+}
+
+
+def _fetch_steps(creds_data: dict, start: date, end: date) -> list[Measurement]:
+    body = _withings_get(creds_data, "v2/measure", {
+        "action": "getactivity",
+        "data_fields": "steps",
+        "startdateymd": start.isoformat(),
+        "enddateymd": end.isoformat(),
+    })
+    return [
+        Measurement(date=item["date"], value=float(item["steps"]))
+        for item in body.get("activities", [])
+        if item.get("steps") is not None
+    ]
+
+
+def _fetch_body_measurements(creds_data: dict, start: date, end: date) -> dict[str, list[Measurement]]:
+    body = _withings_get(creds_data, "measure", {
+        "action": "getmeas",
+        "startdate": int(datetime.combine(start, datetime.min.time()).timestamp()),
+        "enddate": int(datetime.combine(end + timedelta(days=1), datetime.min.time()).timestamp()),
+    })
+    readings: dict[str, list[Measurement]] = {}
+    seen_types: set[int] = set()
+    for group in body.get("measuregrps", []):
+        grp_date = date.fromtimestamp(group["date"]).isoformat()
+        for measure in group.get("measures", []):
+            t = measure.get("type")
+            seen_types.add(t)
+            mapped = _MEASURE_TYPE_MAP.get(t)
+            if not mapped:
+                continue
+            metric, precision = mapped
+            raw = measure["value"] * (10 ** measure["unit"])
+            readings.setdefault(metric, []).append(Measurement(date=grp_date, value=round(raw, precision)))
+    # Log which measurement types came back to help diagnose missing data
+    print(f"[withings] getmeas returned types: {sorted(seen_types)}", flush=True)
+    return readings
+
+
+def _fetch_sleep(creds_data: dict, start: date, end: date) -> dict[str, list[Measurement]]:
+    body = _withings_get(creds_data, "v2/sleep", {
+        "action": "getsummary",
+        "startdateymd": start.isoformat(),
+        "enddateymd": end.isoformat(),
+        "data_fields": "sleep_score,total_sleep_time,deep_sleep_duration,spo2_average",
+    })
+    readings: dict[str, list[Measurement]] = {}
+    for item in body.get("series", []):
+        d = item.get("date")
+        if not d:
+            continue
+        data = item.get("data", {})
+        if data.get("sleep_score") is not None:
+            readings.setdefault("sleep_score", []).append(Measurement(date=d, value=float(data["sleep_score"])))
+        if data.get("total_sleep_time") is not None:
+            readings.setdefault("sleep_minutes", []).append(Measurement(date=d, value=round(float(data["total_sleep_time"]), 0)))
+        if data.get("deep_sleep_duration") is not None:
+            readings.setdefault("sleep_deep_minutes", []).append(Measurement(date=d, value=round(float(data["deep_sleep_duration"]), 0)))
+        if data.get("spo2_average") is not None:
+            readings.setdefault("spo2", []).append(Measurement(date=d, value=round(float(data["spo2_average"]), 1)))
+    return readings
+
+
+def fetch_measurements(creds_data: dict, start: date, end: date) -> tuple[dict[str, list[Measurement]], dict[str, str]]:
+    """Pure fetch from the Withings API -- no DB access, no persistence.
+
+    Returns (canonical metric name -> readings, section name -> error message for any of the
+    three sections that failed; a failed section is simply absent from readings, the other
+    two still populate normally).
+
+    Used by both do_sync() below (which upserts the result) and
+    integrations.withings.WithingsProvider.sync() (which returns it as-is, per the
+    HealthProvider interface) -- one implementation of "call the Withings API and parse a
+    reading" instead of two, per Part 1's "shared function, not two implementations" rule.
+    """
+    readings: dict[str, list[Measurement]] = {}
+    errors: dict[str, str] = {}
+
+    try:
+        readings["steps"] = _fetch_steps(creds_data, start, end)
+    except Exception as exc:
+        print(f"[withings] activity sync error: {exc}", flush=True)
+        errors["activity"] = str(exc)
+
+    try:
+        for metric, points in _fetch_body_measurements(creds_data, start, end).items():
+            readings.setdefault(metric, []).extend(points)
+    except Exception as exc:
+        print(f"[withings] measurements sync error: {exc}", flush=True)
+        errors["measurements"] = str(exc)
+
+    try:
+        for metric, points in _fetch_sleep(creds_data, start, end).items():
+            readings.setdefault(metric, []).extend(points)
+    except Exception as exc:
+        print(f"[withings] sleep sync error: {exc}", flush=True)
+        errors["sleep"] = str(exc)
+
+    return readings, errors
+
+
 def _refresh_token(creds_data: dict, db: Session) -> dict:
     """Exchange a refresh token for a new access token and persist it."""
     resp = _requests.post(
@@ -333,91 +446,14 @@ def _do_sync_impl(db: Session) -> dict:
     today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
     start = today - timedelta(days=89)
     synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0, "spo2": 0, "sleep_score": 0, "sleep_minutes": 0, "sleep_deep_minutes": 0}
-    errors: dict[str, str] = {}
 
-    # ── Steps (activity) ──────────────────────────────────────────────────────
-    try:
-        body = _withings_get(creds_data, "v2/measure", {
-            "action": "getactivity",
-            "data_fields": "steps",
-            "startdateymd": start.isoformat(),
-            "enddateymd": today.isoformat(),
-        })
-        for item in body.get("activities", []):
-            if item.get("steps") is not None:
-                _upsert_measurement(db, item["date"], "steps", float(item["steps"]))
-                synced["steps"] += 1
-    except Exception as exc:
-        print(f"[withings] activity sync error: {exc}", flush=True)
-        errors["activity"] = str(exc)
-
-    # ── Body measurements (weight, fat, HR, BP, SpO2) ─────────────────────────
-    try:
-        body = _withings_get(creds_data, "measure", {
-            "action": "getmeas",
-            "startdate": int(datetime.combine(start, datetime.min.time()).timestamp()),
-            "enddate": int(datetime.combine(today + timedelta(days=1), datetime.min.time()).timestamp()),
-        })
-        seen_types: set[int] = set()
-        for group in body.get("measuregrps", []):
-            grp_date = date.fromtimestamp(group["date"]).isoformat()
-            for measure in group.get("measures", []):
-                t = measure.get("type")
-                seen_types.add(t)
-                raw = measure["value"] * (10 ** measure["unit"])
-                if t == 6:    # FAT_RATIO
-                    _upsert_measurement(db, grp_date, "fat_ratio", round(raw, 2))
-                    synced["fat_ratio"] += 1
-                elif t == 1:  # WEIGHT (kg)
-                    _upsert_measurement(db, grp_date, "weight", round(raw, 2))
-                    synced["weight"] += 1
-                elif t == 9:  # DIASTOLIC BP (mmHg)
-                    _upsert_measurement(db, grp_date, "bp_diastolic", round(raw, 1))
-                    synced["bp_diastolic"] += 1
-                elif t == 10: # SYSTOLIC BP (mmHg)
-                    _upsert_measurement(db, grp_date, "bp_systolic", round(raw, 1))
-                    synced["bp_systolic"] += 1
-                elif t == 11: # HEART RATE (bpm)
-                    _upsert_measurement(db, grp_date, "heart_rate", round(raw, 1))
-                    synced["heart_rate"] += 1
-                elif t == 54: # SPO2 (%)
-                    _upsert_measurement(db, grp_date, "spo2", round(raw, 1))
-                    synced["spo2"] += 1
-        # Log which measurement types came back to help diagnose missing data
-        print(f"[withings] getmeas returned types: {sorted(seen_types)}", flush=True)
-    except Exception as exc:
-        print(f"[withings] measurements sync error: {exc}", flush=True)
-        errors["measurements"] = str(exc)
-
-    # ── Sleep summary ─────────────────────────────────────────────────────────
-    # Requires USER_SLEEP_EVENTS scope; silently skipped if not granted.
-    try:
-        body = _withings_get(creds_data, "v2/sleep", {
-            "action": "getsummary",
-            "startdateymd": start.isoformat(),
-            "enddateymd": today.isoformat(),
-            "data_fields": "sleep_score,total_sleep_time,deep_sleep_duration,spo2_average",
-        })
-        for item in body.get("series", []):
-            d = item.get("date")
-            if not d:
-                continue
-            data = item.get("data", {})
-            if data.get("sleep_score") is not None:
-                _upsert_measurement(db, d, "sleep_score", float(data["sleep_score"]))
-                synced["sleep_score"] += 1
-            if data.get("total_sleep_time") is not None:
-                _upsert_measurement(db, d, "sleep_minutes", round(float(data["total_sleep_time"]), 0))
-                synced["sleep_minutes"] += 1
-            if data.get("deep_sleep_duration") is not None:
-                _upsert_measurement(db, d, "sleep_deep_minutes", round(float(data["deep_sleep_duration"]), 0))
-                synced["sleep_deep_minutes"] += 1
-            if data.get("spo2_average") is not None:
-                _upsert_measurement(db, d, "spo2", round(float(data["spo2_average"]), 1))
-                synced["spo2"] += 1
-    except Exception as exc:
-        print(f"[withings] sleep sync error: {exc}", flush=True)
-        errors["sleep"] = str(exc)
+    # Requires USER_SLEEP_EVENTS scope for the sleep portion; silently skipped if not granted
+    # (fetch_measurements catches that section's failure independently of the other two).
+    readings, errors = fetch_measurements(creds_data, start, today)
+    for metric, points in readings.items():
+        for m in points:
+            _upsert_measurement(db, m.date, metric, m.value)
+            synced[metric] = synced.get(metric, 0) + 1
 
     db.commit()
     _auto_check_habits(db, today)
@@ -453,57 +489,77 @@ def withings_status(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/api/withings/auth-url")
-def withings_auth_url():
-    """Return the Withings OAuth authorization URL."""
+def get_auth_url() -> str:
+    """Build the Withings OAuth authorization URL. Raises RuntimeError if not configured.
+
+    Shared by the /auth-url endpoint below and integrations.withings.WithingsProvider.
+    """
     from withings_api import WithingsAuth, AuthScope
     if not WITHINGS_CLIENT_ID or not WITHINGS_SECRET:
-        return JSONResponse({"error": "Withings credentials not configured"}, status_code=503)
+        raise RuntimeError("Withings credentials not configured")
     auth = WithingsAuth(
         client_id=WITHINGS_CLIENT_ID,
         consumer_secret=WITHINGS_SECRET,
         callback_uri=WITHINGS_CALLBACK_URI,
         scope=(AuthScope.USER_METRICS, AuthScope.USER_ACTIVITY, AuthScope.USER_SLEEP_EVENTS),
     )
-    return {"url": auth.get_authorize_url()}
+    return auth.get_authorize_url()
+
+
+@router.get("/api/withings/auth-url")
+def withings_auth_url():
+    """Return the Withings OAuth authorization URL."""
+    try:
+        return {"url": get_auth_url()}
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+
+
+def exchange_code(code: str, db: Session) -> dict:
+    """Exchange an OAuth authorization code for tokens and persist them. Raises on failure.
+
+    Shared by the /callback endpoint below and integrations.withings.WithingsProvider.
+    """
+    from withings_api.common import Credentials2
+    # Exchange code directly — avoids requests_oauthlib state validation
+    # and the adjust_withings_token bug that masks real error codes.
+    resp = _requests.post(
+        "https://wbsapi.withings.net/v2/oauth2",
+        data={
+            "action": "requesttoken",
+            "grant_type": "authorization_code",
+            "client_id": WITHINGS_CLIENT_ID,
+            "client_secret": WITHINGS_SECRET,
+            "code": code,
+            "redirect_uri": WITHINGS_CALLBACK_URI,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    print(f"[withings] token response status={payload.get('status')} body_keys={list((payload.get('body') or {}).keys())}")
+    if payload.get("status") != 0:
+        err = payload.get("error") or f"status={payload.get('status')}"
+        raise RuntimeError(f"Withings token error: {err}")
+    body = payload["body"]
+    creds = Credentials2(
+        access_token=body["access_token"],
+        token_type=body.get("token_type", "Bearer"),
+        refresh_token=body["refresh_token"],
+        userid=int(body["userid"]),
+        client_id=WITHINGS_CLIENT_ID,
+        consumer_secret=WITHINGS_SECRET,
+        expires_in=int(body.get("expires_in", 10800)),
+    )
+    _save_credentials(db, creds)
+    return _load_credentials_dict(db)
 
 
 @router.get("/api/withings/callback")
 def withings_callback(code: str, db: Session = Depends(get_db)):
     """OAuth callback: exchange authorization code for tokens."""
-    from withings_api.common import Credentials2
     try:
-        # Exchange code directly — avoids requests_oauthlib state validation
-        # and the adjust_withings_token bug that masks real error codes.
-        resp = _requests.post(
-            "https://wbsapi.withings.net/v2/oauth2",
-            data={
-                "action": "requesttoken",
-                "grant_type": "authorization_code",
-                "client_id": WITHINGS_CLIENT_ID,
-                "client_secret": WITHINGS_SECRET,
-                "code": code,
-                "redirect_uri": WITHINGS_CALLBACK_URI,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        print(f"[withings] token response status={payload.get('status')} body_keys={list((payload.get('body') or {}).keys())}")
-        if payload.get("status") != 0:
-            err = payload.get("error") or f"status={payload.get('status')}"
-            raise RuntimeError(f"Withings token error: {err}")
-        body = payload["body"]
-        creds = Credentials2(
-            access_token=body["access_token"],
-            token_type=body.get("token_type", "Bearer"),
-            refresh_token=body["refresh_token"],
-            userid=int(body["userid"]),
-            client_id=WITHINGS_CLIENT_ID,
-            consumer_secret=WITHINGS_SECRET,
-            expires_in=int(body.get("expires_in", 10800)),
-        )
-        _save_credentials(db, creds)
+        exchange_code(code, db)
         # Do NOT call do_sync here — it makes 4 sequential Withings API calls
         # and can exceed Cloud Run's request timeout, killing the redirect response.
         # The frontend triggers a sync automatically after detecting ?withings=connected.
