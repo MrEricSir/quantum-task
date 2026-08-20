@@ -1154,6 +1154,16 @@ repo_roots = ["~/code"]
         assert cfg["repo_roots"] == []
         assert cfg.get("run_cmd") is None
 
+    def test_agent_defaults_to_claude_when_unset(self, tmp_path, monkeypatch):
+        self._write_config(tmp_path, monkeypatch, toml_text=None)
+        cfg = agent_core.load_config()
+        assert cfg["agent"] == "claude"
+
+    def test_agent_read_from_toml(self, tmp_path, monkeypatch):
+        self._write_config(tmp_path, monkeypatch, toml_text='agent = "aider"\n')
+        cfg = agent_core.load_config()
+        assert cfg["agent"] == "aider"
+
     def test_no_warnings_for_a_valid_config(self, tmp_path, monkeypatch, capsys):
         self._write_config(tmp_path, monkeypatch, toml_text="""
 name = "my-machine"
@@ -1254,6 +1264,62 @@ setupcmd = "typo"
         agent_core.load_config()
         err = capsys.readouterr().err
         assert "3 problem(s)" in err  # missing path + unrecognized key + wrong type
+
+
+class TestActivateAdapter:
+    """_activate_adapter() aliases the bare adapter-contract names (AGENT_LABEL,
+    interactive_command, etc.) to whichever `__{agent}`-suffixed definitions are actually
+    present in the module namespace. Unit-tested here against a plain import of agent_core
+    (not the concatenated served script) by monkeypatching fake suffixed entries directly
+    into its __dict__ -- exercises the aliasing/fallback logic itself in isolation from
+    concatenation. TestAgentScriptFullFlow covers the real agent_claude.py names via the
+    actual rendered script."""
+
+    def test_aliases_bare_names_to_the_requested_agent(self, monkeypatch):
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__fake", "Fake Agent")
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_NOT_FOUND_HINT__fake", "install fake-agent")
+        monkeypatch.setitem(agent_core.__dict__, "interactive_command__fake", lambda p: ["fake", p])
+        monkeypatch.setitem(agent_core.__dict__, "streaming_command__fake", lambda p: ["fake", "--yolo", p])
+        monkeypatch.setitem(agent_core.__dict__, "write_ide_settings__fake", lambda path: None)
+
+        agent_core._activate_adapter("fake")
+
+        assert agent_core.AGENT_LABEL == "Fake Agent"
+        assert agent_core.AGENT_NOT_FOUND_HINT == "install fake-agent"
+        assert agent_core.interactive_command("hi") == ["fake", "hi"]
+        assert agent_core.streaming_command("hi") == ["fake", "--yolo", "hi"]
+
+    def test_falls_back_to_claude_with_a_warning_for_an_unknown_agent(self, monkeypatch, capsys):
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__claude", "Claude Code")
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_NOT_FOUND_HINT__claude", "npm install -g @anthropic-ai/claude-code")
+        monkeypatch.setitem(agent_core.__dict__, "interactive_command__claude", lambda p: ["claude", p])
+        monkeypatch.setitem(agent_core.__dict__, "streaming_command__claude", lambda p: ["claude", "--print", p])
+        monkeypatch.setitem(agent_core.__dict__, "write_ide_settings__claude", lambda path: None)
+
+        agent_core._activate_adapter("nonexistent-agent")
+
+        err = capsys.readouterr().err
+        assert "no adapter for coding agent 'nonexistent-agent'" in err
+        assert "falling back to 'claude'" in err
+        assert agent_core.AGENT_LABEL == "Claude Code"
+
+    def test_partial_adapter_definition_also_falls_back(self, monkeypatch, capsys):
+        """Missing even one of the five names (e.g. a broken/incomplete adapter file) must
+        not alias a half-defined adapter -- falls back to the known-complete default instead
+        of leaving some names pointing at the requested agent and others stale."""
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__claude", "Claude Code")
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_NOT_FOUND_HINT__claude", "npm install -g @anthropic-ai/claude-code")
+        monkeypatch.setitem(agent_core.__dict__, "interactive_command__claude", lambda p: ["claude", p])
+        monkeypatch.setitem(agent_core.__dict__, "streaming_command__claude", lambda p: ["claude", "--print", p])
+        monkeypatch.setitem(agent_core.__dict__, "write_ide_settings__claude", lambda path: None)
+        # "partial" only defines AGENT_LABEL -- the other four names are missing.
+        monkeypatch.setitem(agent_core.__dict__, "AGENT_LABEL__partial", "Partial Agent")
+
+        agent_core._activate_adapter("partial")
+
+        err = capsys.readouterr().err
+        assert "no adapter for coding agent 'partial'" in err
+        assert agent_core.AGENT_LABEL == "Claude Code"
 
 
 class TestRepoEntryVerificationFields:
@@ -2246,12 +2312,12 @@ class TestAgentScriptFullFlow:
     before being caught."""
 
     def test_adapter_names_are_defined_before_the_main_guard(self, client):
-        """The direct, structural version of the regression check: whatever
-        the concatenation order, every name agent_core.py's own module
-        docstring lists as the adapter contract must appear in the source
-        BEFORE the (single, appended-by-render.py) __main__ guard -- or
-        whichever of them main()'s call graph reaches first raises
-        NameError the moment a real run reaches it, exactly as it did here."""
+        """The direct, structural version of the regression check: whatever the
+        concatenation order, every __claude-suffixed name agent_claude.py defines must appear
+        in the source BEFORE the (single, appended-by-render.py) __main__ guard -- or
+        _activate_adapter() would raise a KeyError/fall through to the "no adapter" warning
+        path the moment a real run reaches it, exactly as the pre-suffix version of this bug
+        raised NameError."""
         res = client.get("/api/bridge/agent.py")
         lines = res.text.splitlines()
         guard_line_nums = [i for i, l in enumerate(lines) if l.strip() == 'if __name__ == "__main__":']
@@ -2259,26 +2325,49 @@ class TestAgentScriptFullFlow:
             f"expected exactly one top-level __main__ guard line, found {len(guard_line_nums)}"
         guard_line = guard_line_nums[0]
         for name, marker in [
-            ("AGENT_LABEL", "AGENT_LABEL ="),
-            ("AGENT_NOT_FOUND_HINT", "AGENT_NOT_FOUND_HINT ="),
-            ("interactive_command", "def interactive_command"),
-            ("streaming_command", "def streaming_command"),
-            ("write_ide_settings", "def write_ide_settings"),
+            ("AGENT_LABEL__claude", "AGENT_LABEL__claude ="),
+            ("AGENT_NOT_FOUND_HINT__claude", "AGENT_NOT_FOUND_HINT__claude ="),
+            ("interactive_command__claude", "def interactive_command__claude"),
+            ("streaming_command__claude", "def streaming_command__claude"),
+            ("write_ide_settings__claude", "def write_ide_settings__claude"),
         ]:
             defined_line = next(i for i, l in enumerate(lines) if l.startswith(marker))
             assert defined_line < guard_line, \
-                f"{name} is defined AFTER the __main__ guard — main() would fire before it exists"
+                f"{name} is defined AFTER the __main__ guard — _activate_adapter() would fire before it exists"
+
+    def test_activate_adapter_runs_before_any_subcommand_dispatch_in_main(self, client):
+        """_activate_adapter() must run before main() dispatches to any subcommand that
+        touches the bare adapter names (cmd_card/cmd_watch/cmd_tag/cmd_review) -- otherwise
+        those commands would see the bare names undefined. Checked structurally against
+        main()'s actual source rather than just trusting the current call order stays put."""
+        res = client.get("/api/bridge/agent.py")
+        lines = res.text.splitlines()
+        main_start = next(i for i, l in enumerate(lines) if l.startswith("def main():"))
+        guard_line = next(i for i, l in enumerate(lines) if l.strip() == 'if __name__ == "__main__":')
+        main_body = lines[main_start:guard_line]
+
+        activate_line = next(i for i, l in enumerate(main_body) if "_activate_adapter(" in l)
+        for marker in ("cmd_card(", "cmd_watch(", "cmd_tag(", "cmd_review("):
+            dispatch_line = next(i for i, l in enumerate(main_body) if l.strip().startswith(marker))
+            assert activate_line < dispatch_line, \
+                f"_activate_adapter() must run before {marker} is dispatched"
 
     def _load_rendered_agent_module(self):
         """exec the real request-time-rendered agent.py -- deliberately not
         under __name__ == "__main__", so main() itself doesn't fire, but
-        every top-level statement in both concatenated files (including all
+        every top-level statement in every concatenated file (including all
         function/constant definitions) still executes, exactly as it would
         for real. This is the one place in this test file that needs the
-        actual concatenation, not a plain import."""
+        actual concatenation, not a plain import.
+
+        Also runs _activate_adapter("claude") -- since main() never fires here,
+        nothing else would alias the bare adapter names (AGENT_LABEL,
+        interactive_command, etc.) that run_job()'s call graph needs. Harmless for
+        the cmd_list/cmd_cleanup-only tests below that never touch those names."""
         script_text = bridge_render.render_agent_script()
         ns = {"__name__": "test_full_flow"}
         exec(compile(script_text, "agent.py", "exec"), ns)  # noqa: S102
+        ns["_activate_adapter"]("claude")
         return ns
 
     def test_run_job_reaches_write_ide_settings_without_nameerror(self, scratch_repo, monkeypatch):

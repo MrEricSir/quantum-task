@@ -21,38 +21,49 @@ Usage:
 
 Config files in ~/.config/qtask-bridge/:
   config.json  — app URL and auth token (written by installer)
-  config.toml  — repo mappings and agent name (edit to configure multi-repo)
+  config.toml  — repo mappings and agent name (edit to configure multi-repo, or to
+                  switch coding agents via the "agent" key, e.g. agent = "claude")
 
 ── Coding-agent adapter contract ───────────────────────────────────────────────
 This file is agent-agnostic — it never mentions a specific coding CLI by name.
-It expects the following five names to exist in this same module's namespace
-at call time, supplied by whichever adapter file (e.g. agent_claude.py) is
-concatenated alongside it when the served agent.py is rendered:
+The served agent.py concatenates this file with EVERY known adapter (see
+backend/bridge/render.py's _ADAPTER_FILES), not just one, so more than one coding
+agent's support can live in a single served script and be chosen at runtime rather
+than at render time. Each adapter (e.g. agent_claude.py) defines the same five names,
+each suffixed `__{agent}` so they can all coexist in one module namespace without
+colliding:
 
-    AGENT_LABEL: str                          human-readable name, e.g. "Claude Code"
-    AGENT_NOT_FOUND_HINT: str                  install hint shown if the binary is missing
-    interactive_command(prompt) -> list[str]   argv to launch an interactive session
-    streaming_command(prompt) -> list[str]     argv to launch a non-interactive session
-    write_ide_settings(worktree_path) -> None  write any agent-specific IDE config
+    AGENT_LABEL__{agent}: str                          e.g. "Claude Code"
+    AGENT_NOT_FOUND_HINT__{agent}: str                  install hint if the binary is missing
+    interactive_command__{agent}(prompt) -> list[str]   argv to launch an interactive session
+    streaming_command__{agent}(prompt) -> list[str]     argv to launch a non-interactive session
+    write_ide_settings__{agent}(worktree_path) -> None  write any agent-specific IDE config
 
-There's deliberately no `import` between this file and its adapter: the served
+_activate_adapter() (below) reads config.toml's "agent" key (default "claude") at the
+top of main() and aliases the bare names (AGENT_LABEL, interactive_command, etc.) —
+which is what every other function in this file actually calls — to whichever
+suffix was selected. Everything below this point that touches AGENT_LABEL,
+interactive_command, streaming_command, write_ide_settings, or AGENT_NOT_FOUND_HINT
+is referring to those bare, runtime-aliased names, not any one adapter's directly.
+
+There's deliberately no `import` between this file and any adapter: the served
 artifact must stay a single flat file the installer copies verbatim to
 ~/.local/bin/qtask-bridge, with no companion files on the target machine. At
-serve time (see backend/bridge/render.py) the adapter and core sources are
-textually concatenated into one module — THIS file goes first (its shebang
-must be the served script's literal first line, or the installed, chmod +x'd
-binary has no interpreter directive to execute with). Definition order
-otherwise doesn't matter for these five names, since they're only
-*referenced* inside function bodies below, never at definition time --
-EXCEPT for the `if __name__ == "__main__": main()` entrypoint trigger, which
-executes immediately at module-exec time. That guard is deliberately NOT
-included in this file (see the comment at the bottom, after main()) --
-render.py appends it once, after both files are concatenated, so it can
-never fire before the adapter's definitions have actually run. Getting this
-wrong once already shipped a real `NameError: name 'write_ide_settings' is
-not defined` to a live machine. To try a different coding agent, write a new
-adapter file implementing the same five names and point render.py at it
-instead.
+serve time (see backend/bridge/render.py) every source file is textually
+concatenated into one module — THIS file goes first (its shebang must be the
+served script's literal first line, or the installed, chmod +x'd binary has no
+interpreter directive to execute with). Definition order otherwise doesn't matter
+for the suffixed names, since _activate_adapter() only *reads* them via
+globals() at call time (inside main(), after every concatenated file has already
+finished executing), never at definition time -- EXCEPT for the
+`if __name__ == "__main__": main()` entrypoint trigger, which executes
+immediately at module-exec time. That guard is deliberately NOT included in this
+file (see the comment at the bottom, after main()) -- render.py appends it once,
+after every file is concatenated, so it can never fire before every adapter's
+definitions have actually run. Getting this wrong once already shipped a real
+`NameError: name 'write_ide_settings' is not defined` to a live machine. To add a
+different coding agent, write a new adapter file implementing the same five names
+(suffixed with the new agent's name) and add it to render.py's _ADAPTER_FILES.
 """
 import argparse
 import json
@@ -98,11 +109,42 @@ COLOR_RESET = "\033[0m"
 # top-level key -- almost always a typo.
 _TOML_SCALAR_FALLBACK_KEYS = {
     "name", "setup_cmd", "test_cmd", "verify_acceptance", "env_files", "run_cmd", "open_url",
+    "agent",
 }
 _TOML_TOP_LEVEL_KEYS = _TOML_SCALAR_FALLBACK_KEYS | {"repos", "repo_roots"}
 _TOML_REPO_TABLE_KEYS = {
     "path", "setup_cmd", "test_cmd", "verify_acceptance", "run_cmd", "env_files", "open_url",
 }
+
+# See the "Coding-agent adapter contract" section of this file's module docstring.
+_ADAPTER_CONTRACT_NAMES = (
+    "AGENT_LABEL", "AGENT_NOT_FOUND_HINT",
+    "interactive_command", "streaming_command", "write_ide_settings",
+)
+_DEFAULT_AGENT = "claude"  # config.toml's "agent" key, when unset
+
+
+def _activate_adapter(agent_name):
+    """Alias the bare adapter-contract names (AGENT_LABEL, interactive_command, etc. -- what
+    every other function in this file actually calls) to the `__{agent_name}`-suffixed
+    definitions whichever adapter source was concatenated in under, per config.toml's "agent"
+    key. Called once, at the very top of main(), before any subcommand dispatch -- including
+    subcommands (--list, --cleanup, --switch, --run, --unlock-push) that never end up touching
+    these names, so a bad agent config can't block those from working.
+
+    Falls back to _DEFAULT_AGENT with a warning if the configured agent has no adapter
+    compiled into this build of the served script (e.g. config.toml says "aider" but this
+    qtask-bridge binary predates aider support) -- silently using an unrelated agent would be
+    worse than a loud warning plus a known-safe default."""
+    g = globals()
+    if any(f"{name}__{agent_name}" not in g for name in _ADAPTER_CONTRACT_NAMES):
+        print(f"[bridge] Warning: no adapter for coding agent '{agent_name}' in this build "
+              f"of qtask-bridge (config.toml's \"agent\" key) -- falling back to "
+              f"'{_DEFAULT_AGENT}'. Re-run the installer if you expected {agent_name} support.",
+              file=sys.stderr)
+        agent_name = _DEFAULT_AGENT
+    for name in _ADAPTER_CONTRACT_NAMES:
+        g[name] = g[f"{name}__{agent_name}"]
 
 
 def _validate_toml_structure(toml):
@@ -121,7 +163,7 @@ def _validate_toml_structure(toml):
     if unknown_top:
         problems.append(f"unrecognized top-level key(s): {', '.join(sorted(unknown_top))}")
 
-    for key in ("name", "setup_cmd", "test_cmd", "run_cmd", "open_url"):
+    for key in ("name", "setup_cmd", "test_cmd", "run_cmd", "open_url", "agent"):
         if key in toml and toml[key] is not None and not isinstance(toml[key], str):
             problems.append(f'"{key}": expected a string, got {type(toml[key]).__name__}')
     if "verify_acceptance" in toml and toml["verify_acceptance"] is not None and not isinstance(toml["verify_acceptance"], bool):
@@ -174,6 +216,7 @@ def load_config():
     cfg.setdefault("name", None)
     cfg.setdefault("repos", {})
     cfg.setdefault("repo_roots", [])
+    cfg.setdefault("agent", _DEFAULT_AGENT)
     if tomllib and os.path.exists(TOML_FILE):
         try:
             with open(TOML_FILE, "rb") as f:
@@ -329,7 +372,7 @@ def _make_prompt(branch, worktree_path):
         f"databases you start instead of framework defaults, so this session can't "
         f"collide with anything else already running on this machine."
     )
-    # If the repo has a Procfile.dev/Procfile, tell Claude about it directly --
+    # If the repo has a Procfile.dev/Procfile, tell the agent about it directly --
     # otherwise it has to rediscover "this app has a separate frontend/backend,
     # here's how to start each" on its own mid-session. Same file _run_procfile
     # already knows how to read for `qtask-bridge --run`.
@@ -1705,6 +1748,7 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config()
+    _activate_adapter(cfg.get("agent") or _DEFAULT_AGENT)
     if args.watch:
         cmd_watch(cfg)
     elif args.tag:

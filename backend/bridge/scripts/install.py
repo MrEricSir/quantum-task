@@ -30,6 +30,13 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # Defaults to your hostname if left empty.
     name = ""
 
+    # Which coding agent to launch. Defaults to "claude" if unset. Every served
+    # qtask-bridge binary carries every adapter it was built with, so switching
+    # here takes effect on your next run -- no reinstall needed, as long as this
+    # binary was built with the agent you're switching to.
+    #
+    # agent = "claude"
+
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
     # "verify_acceptance" / "run_cmd" / "env_files" keys. setup_cmd is a
