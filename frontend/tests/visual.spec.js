@@ -2764,6 +2764,11 @@ test.describe('card detail panel — github and spec', () => {
       state: 'open', body: 'When user clicks login nothing happens.',
       comments: [
         { id: 1, author: 'alice', body: 'We should use PKCE flow.', created_at: '2026-06-01T10:00:00Z' },
+        {
+          id: 2, author: 'coderabbitai[bot]', body: 'Consider using a set for O(1) lookups.',
+          created_at: '2026-06-01T11:00:00Z', comment_type: 'pr_review_comment',
+          diff_path: 'src/auth.js', diff_line: 42,
+        },
       ],
     },
   ]
@@ -2801,6 +2806,18 @@ test.describe('card detail panel — github and spec', () => {
     const link = page.locator('.cdp-gh-link')
     await expect(link).toBeVisible()
     await expect(link).toHaveAttribute('href', /github\.com/)
+  })
+
+  test('CodeRabbit PR review comment shows a badge and diff position', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await expect(comment.locator('.cdp-gh-comment-badge')).toHaveText('CodeRabbit')
+    await expect(comment.locator('.cdp-gh-comment-position')).toHaveText('src/auth.js:42')
+  })
+
+  test('regular issue comment shows no CodeRabbit badge or diff position', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'We should use PKCE flow' })
+    await expect(comment.locator('.cdp-gh-comment-badge')).toHaveCount(0)
+    await expect(comment.locator('.cdp-gh-comment-position')).toHaveCount(0)
   })
 
   test('Code tab in Assistant shows spec', async ({ page }) => {

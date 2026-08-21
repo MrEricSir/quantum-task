@@ -46,15 +46,16 @@ EARLIER = NOW - timedelta(hours=2)
 LATER = NOW + timedelta(hours=1)
 
 
-def _make_eng_item(external_id="github:owner/repo/issues/1", body=None, body_updated_at=None):
+def _make_eng_item(external_id="github:owner/repo/issues/1", body=None, body_updated_at=None,
+                    item_type="issue"):
     with TestSession() as db:
         item = models.EngineeringItem(
             external_id=external_id,
             title="Test issue",
-            item_type="issue",
+            item_type=item_type,
             repo="owner/repo",
             number=1,
-            url="https://github.com/owner/repo/issues/1",
+            url=f"https://github.com/owner/repo/{'pull' if item_type == 'pr' else 'issues'}/1",
             state="open",
             body=body,
             body_updated_at=body_updated_at,
@@ -71,6 +72,14 @@ def _gh_comment(comment_id, body, author="alice", created_at=None, updated_at=No
     u = (updated_at or NOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"id": comment_id, "body": body, "user": {"login": author},
             "created_at": t, "updated_at": u}
+
+
+def _gh_review_comment(comment_id, body, author="coderabbitai[bot]", path="src/foo.py", line=42,
+                        created_at=None, updated_at=None):
+    t = (created_at or NOW).strftime("%Y-%m-%dT%H:%M:%SZ")
+    u = (updated_at or NOW).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"id": comment_id, "body": body, "user": {"login": author},
+            "path": path, "line": line, "created_at": t, "updated_at": u}
 
 
 # ── _sync_comments ─────────────────────────────────────────────────────────────
@@ -185,6 +194,129 @@ class TestSyncComments:
             c = db.query(models.EngineeringItemComment).filter_by(github_id=401).first()
             assert c is not None
             assert c.author is None
+
+
+# ── PR review comments (CodeRabbit feedback integration) ─────────────────────
+
+class TestPrReviewComments:
+
+    def test_issue_never_fetches_review_comments(self):
+        """Only PRs have inline review comments -- calling the endpoint for an issue
+        number would 404, so _sync_comments must gate on item_type == 'pr'."""
+        item_id = _make_eng_item(item_type="issue")
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments") as mock_fetch_review:
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+        mock_fetch_review.assert_not_called()
+
+    def test_pr_fetches_review_comments(self):
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=[]) as mock_fetch_review:
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+        mock_fetch_review.assert_called_once()
+
+    def test_stores_coderabbit_review_comment_with_diff_position(self):
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        review_comments = [_gh_review_comment(601, "Consider using a set here.")]
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=review_comments):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestSession() as db:
+            c = db.query(models.EngineeringItemComment).filter_by(github_id=601).first()
+            assert c is not None
+            assert c.comment_type == "pr_review_comment"
+            assert c.diff_path == "src/foo.py"
+            assert c.diff_line == 42
+            assert c.author == "coderabbitai[bot]"
+
+    def test_filters_out_non_coderabbit_review_comments(self):
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        review_comments = [
+            _gh_review_comment(701, "Nice catch!", author="a-human-reviewer"),
+            _gh_review_comment(702, "Real CodeRabbit feedback", author="coderabbitai[bot]"),
+        ]
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=review_comments):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestSession() as db:
+            comments = db.query(models.EngineeringItemComment).filter_by(item_id=item_id).all()
+            assert len(comments) == 1
+            assert comments[0].github_id == 702
+
+    def test_falls_back_to_original_line_when_line_is_null(self):
+        """A comment on an outdated diff position has line=None but original_line set."""
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        comment = _gh_review_comment(801, "stale comment")
+        comment["line"] = None
+        comment["original_line"] = 17
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=[comment]):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestSession() as db:
+            c = db.query(models.EngineeringItemComment).filter_by(github_id=801).first()
+            assert c.diff_line == 17
+
+    def test_deletes_removed_review_comments_without_touching_issue_comments(self):
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        with TestSession() as db:
+            db.add(models.EngineeringItemComment(
+                item_id=item_id, github_id=901, comment_type="issue_comment",
+                author="alice", body="conversation comment", created_at=NOW, updated_at=NOW,
+            ))
+            db.add(models.EngineeringItemComment(
+                item_id=item_id, github_id=902, comment_type="pr_review_comment",
+                author="coderabbitai[bot]", body="stale suggestion",
+                diff_path="a.py", diff_line=1, created_at=NOW, updated_at=NOW,
+            ))
+            db.commit()
+
+        # GitHub no longer returns comment 902; issue comment 901 isn't touched by this fetch.
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", side_effect=Exception("transient")), \
+                 patch("github_sync._fetch_review_comments", return_value=[]):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestSession() as db:
+            comments = db.query(models.EngineeringItemComment).filter_by(item_id=item_id).all()
+            assert len(comments) == 1
+            assert comments[0].github_id == 901, \
+                "issue comment must survive a transient issue-comment fetch failure"
+
+    def test_review_comment_fetch_failure_does_not_affect_issue_comments(self):
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        issue_comments = [_gh_comment(1001, "a normal conversation comment")]
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=issue_comments), \
+                 patch("github_sync._fetch_review_comments", side_effect=Exception("API down")):
+                github_sync._sync_comments(db, item, token="fake")  # should not raise
+            db.commit()
+
+        with TestSession() as db:
+            comments = db.query(models.EngineeringItemComment).filter_by(item_id=item_id).all()
+            assert len(comments) == 1
+            assert comments[0].github_id == 1001
 
 
 # ── Conditional comment sync in github_sync.sync ─────────────────────────────

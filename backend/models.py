@@ -403,7 +403,17 @@ class EngineeringItem(Base):
 
 
 class EngineeringItemComment(Base):
-    """A GitHub issue comment synced from the GitHub API."""
+    """A GitHub issue comment or PR review comment synced from the GitHub API.
+
+    github_id stays column-level unique=True even though issue comments and PR review
+    comments are technically independent GitHub ID sequences -- a real collision across the
+    two would be a near-zero-probability event given GitHub's ID space, and if it ever did
+    happen this constraint fails loudly (an IntegrityError on sync) rather than silently
+    corrupting data, which is an acceptable tradeoff against the real complexity of migrating
+    a composite unique constraint on SQLite. All lookups are scoped by (github_id,
+    comment_type) at the application level regardless (see github_sync.py's
+    _upsert_and_prune_comments), so this is belt-and-suspenders, not the only safeguard.
+    """
     __tablename__ = "engineering_item_comments"
 
     id         = Column(Integer, primary_key=True, index=True)
@@ -413,6 +423,12 @@ class EngineeringItemComment(Base):
     body       = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+    # 'issue_comment' | 'pr_review_comment'. The latter carries a diff position (below) the
+    # former never has, and is fetched from a different GitHub API than issue comments --
+    # see github_sync.py's _sync_comments.
+    comment_type = Column(String, nullable=False, default="issue_comment")
+    diff_path    = Column(String, nullable=True)   # file path; pr_review_comment only
+    diff_line    = Column(Integer, nullable=True)  # line number; pr_review_comment only
 
     item = relationship("EngineeringItem", back_populates="comments")
 

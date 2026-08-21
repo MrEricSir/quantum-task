@@ -72,7 +72,7 @@ def _repo_full_name(html_url: str) -> str:
 
 
 def _fetch_comments(token: str, owner: str, repo: str, number: int) -> list[dict]:
-    """Fetch all comments for a single issue (up to 100)."""
+    """Fetch all issue/conversation-tab comments for a single issue or PR (up to 100)."""
     h = _headers(token)
     r = requests.get(
         f"{GITHUB_API}/repos/{owner}/{repo}/issues/{number}/comments",
@@ -83,8 +83,82 @@ def _fetch_comments(token: str, owner: str, repo: str, number: int) -> list[dict
     return r.json()
 
 
+# GitHub's own convention for a bot account's login. Hardcoded rather than configurable --
+# see CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" open questions for why
+# this was left as a simple default rather than a config.toml/Settings key for now.
+CODERABBIT_LOGIN = "coderabbitai[bot]"
+
+
+def _fetch_review_comments(token: str, owner: str, repo: str, number: int) -> list[dict]:
+    """Fetch all PR review (inline diff) comments for a single PR (up to 100). Only PRs have
+    these -- calling this for an issue number would 404."""
+    h = _headers(token)
+    r = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}/comments",
+        params={"per_page": 100},
+        headers=h, timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _upsert_and_prune_comments(
+    db: Session, item_id: int, gh_comments: list[dict], comment_type: str
+) -> None:
+    """Upsert every comment in gh_comments as the given comment_type, then delete any
+    existing DB row of that SAME comment_type for this item no longer present in
+    gh_comments. Scoping both the upsert lookup and the prune to comment_type means
+    completing one type's sync never touches the other type's rows -- see _sync_comments."""
+    gh_ids = {c["id"] for c in gh_comments}
+
+    for c in gh_comments:
+        existing = db.query(models.EngineeringItemComment).filter_by(
+            github_id=c["id"], comment_type=comment_type,
+        ).first()
+        created_at = datetime.fromisoformat(c["created_at"].replace("Z", "+00:00"))
+        updated_at = datetime.fromisoformat(c["updated_at"].replace("Z", "+00:00"))
+        diff_path = c.get("path") if comment_type == "pr_review_comment" else None
+        diff_line = (c.get("line") or c.get("original_line")) if comment_type == "pr_review_comment" else None
+        if existing:
+            existing.author = (c.get("user") or {}).get("login")
+            existing.body = c["body"] or ""
+            existing.updated_at = updated_at
+            existing.diff_path = diff_path
+            existing.diff_line = diff_line
+        else:
+            db.add(models.EngineeringItemComment(
+                item_id=item_id,
+                github_id=c["id"],
+                comment_type=comment_type,
+                author=(c.get("user") or {}).get("login"),
+                body=c["body"] or "",
+                created_at=created_at,
+                updated_at=updated_at,
+                diff_path=diff_path,
+                diff_line=diff_line,
+            ))
+
+    db.query(models.EngineeringItemComment).filter(
+        models.EngineeringItemComment.item_id == item_id,
+        models.EngineeringItemComment.comment_type == comment_type,
+        models.EngineeringItemComment.github_id.notin_(gh_ids),
+    ).delete(synchronize_session=False)
+
+
 def _sync_comments(db: Session, eng_item: models.EngineeringItem, token: str) -> None:
-    """Upsert comments for one engineering item, deleting any removed from GitHub."""
+    """Upsert comments for one engineering item, deleting any removed from GitHub.
+
+    Issue comments sync for both issues and PRs (GitHub's issue-comments endpoint covers a
+    PR's Conversation-tab comments too). PR review (inline diff) comments only exist for
+    PRs, and are filtered to CodeRabbit's bot account -- this app wants CodeRabbit's
+    feedback specifically (see CLAUDE_CODE_INTEGRATION.md), not a general PR-review-comment
+    feed from every human reviewer too.
+
+    The two comment types' fetch/upsert/prune are independent, each with its own try/except:
+    one type's fetch failing (a transient GitHub API error) never touches the other type's
+    rows, and never wipes its OWN type's existing rows either -- see
+    _upsert_and_prune_comments, only reached on a successful fetch.
+    """
     parsed = _parse_external_id(eng_item.external_id)
     if not parsed:
         return
@@ -94,34 +168,21 @@ def _sync_comments(db: Session, eng_item: models.EngineeringItem, token: str) ->
         gh_comments = _fetch_comments(token, owner, repo, number)
     except Exception as e:
         log.warning("Failed to fetch comments for %s: %s", eng_item.external_id, e)
+    else:
+        _upsert_and_prune_comments(db, eng_item.id, gh_comments, "issue_comment")
+
+    if eng_item.item_type != "pr":
         return
 
-    gh_ids = {c["id"] for c in gh_comments}
-
-    # Upsert each returned comment
-    for c in gh_comments:
-        existing = db.query(models.EngineeringItemComment).filter_by(github_id=c["id"]).first()
-        created_at = datetime.fromisoformat(c["created_at"].replace("Z", "+00:00"))
-        updated_at = datetime.fromisoformat(c["updated_at"].replace("Z", "+00:00"))
-        if existing:
-            existing.author = (c.get("user") or {}).get("login")
-            existing.body = c["body"] or ""
-            existing.updated_at = updated_at
-        else:
-            db.add(models.EngineeringItemComment(
-                item_id=eng_item.id,
-                github_id=c["id"],
-                author=(c.get("user") or {}).get("login"),
-                body=c["body"] or "",
-                created_at=created_at,
-                updated_at=updated_at,
-            ))
-
-    # Delete comments removed from GitHub
-    db.query(models.EngineeringItemComment).filter(
-        models.EngineeringItemComment.item_id == eng_item.id,
-        models.EngineeringItemComment.github_id.notin_(gh_ids),
-    ).delete(synchronize_session=False)
+    try:
+        gh_review_comments = [
+            c for c in _fetch_review_comments(token, owner, repo, number)
+            if (c.get("user") or {}).get("login") == CODERABBIT_LOGIN
+        ]
+    except Exception as e:
+        log.warning("Failed to fetch review comments for %s: %s", eng_item.external_id, e)
+    else:
+        _upsert_and_prune_comments(db, eng_item.id, gh_review_comments, "pr_review_comment")
 
 
 def _fetch_items(token: str, repos: list[str]) -> list[dict]:

@@ -12,6 +12,9 @@ class EngineeringItemComment(BaseModel):
     body: str
     created_at: datetime
     updated_at: datetime
+    comment_type: str = "issue_comment"
+    diff_path: Optional[str] = None
+    diff_line: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

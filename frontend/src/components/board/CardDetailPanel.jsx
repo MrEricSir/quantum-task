@@ -261,6 +261,9 @@ export default function CardDetailPanel({
                           {(engItem.comments ?? []).map(c => (
                             <div key={c.id} className="cdp-gh-comment">
                               <div className="cdp-gh-comment-meta">
+                                {c.comment_type === 'pr_review_comment' && (
+                                  <span className="cdp-gh-comment-badge">CodeRabbit</span>
+                                )}
                                 <span className="cdp-gh-comment-author">{c.author}</span>
                                 <span className="cdp-gh-comment-date">
                                   {new Date(c.created_at).toLocaleDateString(undefined, {
@@ -268,6 +271,11 @@ export default function CardDetailPanel({
                                   })}
                                 </span>
                               </div>
+                              {c.diff_path && (
+                                <span className="cdp-gh-comment-position">
+                                  {c.diff_path}{c.diff_line != null ? `:${c.diff_line}` : ''}
+                                </span>
+                              )}
                               <div
                                 className="cdp-gh-markdown"
                                 dangerouslySetInnerHTML={{ __html: renderMarkdown(c.body) }}
