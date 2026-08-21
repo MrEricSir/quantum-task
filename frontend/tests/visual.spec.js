@@ -2769,6 +2769,11 @@ test.describe('card detail panel — github and spec', () => {
           created_at: '2026-06-01T11:00:00Z', comment_type: 'pr_review_comment',
           diff_path: 'src/auth.js', diff_line: 42,
         },
+        {
+          id: 3, author: 'bob', body: 'Should this handle the empty-token case too?',
+          created_at: '2026-06-01T12:00:00Z', comment_type: 'pr_review_comment',
+          diff_path: 'src/auth.js', diff_line: 58,
+        },
       ],
     },
   ]
@@ -2818,6 +2823,12 @@ test.describe('card detail panel — github and spec', () => {
     const comment = page.locator('.cdp-gh-comment', { hasText: 'We should use PKCE flow' })
     await expect(comment.locator('.cdp-gh-comment-badge')).toHaveCount(0)
     await expect(comment.locator('.cdp-gh-comment-position')).toHaveCount(0)
+  })
+
+  test('human reviewer PR comment shows diff position but no CodeRabbit badge', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'empty-token case' })
+    await expect(comment.locator('.cdp-gh-comment-badge')).toHaveCount(0)
+    await expect(comment.locator('.cdp-gh-comment-position')).toHaveText('src/auth.js:58')
   })
 
   test('Code tab in Assistant shows spec', async ({ page }) => {

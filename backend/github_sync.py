@@ -83,10 +83,24 @@ def _fetch_comments(token: str, owner: str, repo: str, number: int) -> list[dict
     return r.json()
 
 
-# GitHub's own convention for a bot account's login. Hardcoded rather than configurable --
-# see CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" open questions for why
-# this was left as a simple default rather than a config.toml/Settings key for now.
+# CodeRabbit's bot account login (GitHub's own "[bot]" suffix convention). Hardcoded rather
+# than configurable -- see CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration"
+# open questions for why this was left as a simple default rather than a config.toml/Settings
+# key for now.
 CODERABBIT_LOGIN = "coderabbitai[bot]"
+
+
+def _wants_review_comment(login: str | None) -> bool:
+    """True for CodeRabbit and any human reviewer; False for every other bot/app account
+    (dependabot[bot], github-actions[bot], etc). Human co-workers' inline PR suggestions are
+    exactly as much "helpful feedback worth surfacing" as CodeRabbit's -- the original filter
+    only wanted CodeRabbit specifically because that was the concrete pain point raised, not
+    because other humans' comments are unwanted. Other *bots* stay excluded: their comments
+    are typically automated status noise (a CI bot, a dependency bot), not the kind of
+    reviewer suggestion this feature exists to surface."""
+    if not login:
+        return False
+    return login == CODERABBIT_LOGIN or not login.endswith("[bot]")
 
 
 def _fetch_review_comments(token: str, owner: str, repo: str, number: int) -> list[dict]:
@@ -150,9 +164,8 @@ def _sync_comments(db: Session, eng_item: models.EngineeringItem, token: str) ->
 
     Issue comments sync for both issues and PRs (GitHub's issue-comments endpoint covers a
     PR's Conversation-tab comments too). PR review (inline diff) comments only exist for
-    PRs, and are filtered to CodeRabbit's bot account -- this app wants CodeRabbit's
-    feedback specifically (see CLAUDE_CODE_INTEGRATION.md), not a general PR-review-comment
-    feed from every human reviewer too.
+    PRs, and are filtered via _wants_review_comment -- CodeRabbit plus human reviewers,
+    excluding other bot/app accounts (see CLAUDE_CODE_INTEGRATION.md).
 
     The two comment types' fetch/upsert/prune are independent, each with its own try/except:
     one type's fetch failing (a transient GitHub API error) never touches the other type's
@@ -177,7 +190,7 @@ def _sync_comments(db: Session, eng_item: models.EngineeringItem, token: str) ->
     try:
         gh_review_comments = [
             c for c in _fetch_review_comments(token, owner, repo, number)
-            if (c.get("user") or {}).get("login") == CODERABBIT_LOGIN
+            if _wants_review_comment((c.get("user") or {}).get("login"))
         ]
     except Exception as e:
         log.warning("Failed to fetch review comments for %s: %s", eng_item.external_id, e)

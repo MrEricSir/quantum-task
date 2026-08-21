@@ -261,7 +261,7 @@ export default function CardDetailPanel({
                           {(engItem.comments ?? []).map(c => (
                             <div key={c.id} className="cdp-gh-comment">
                               <div className="cdp-gh-comment-meta">
-                                {c.comment_type === 'pr_review_comment' && (
+                                {c.author === 'coderabbitai[bot]' && (
                                   <span className="cdp-gh-comment-badge">CodeRabbit</span>
                                 )}
                                 <span className="cdp-gh-comment-author">{c.author}</span>

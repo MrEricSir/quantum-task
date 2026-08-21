@@ -196,6 +196,27 @@ class TestSyncComments:
             assert c.author is None
 
 
+# ── _wants_review_comment ──────────────────────────────────────────────────────
+
+class TestWantsReviewComment:
+
+    def test_wants_coderabbit(self):
+        assert github_sync._wants_review_comment("coderabbitai[bot]") is True
+
+    def test_wants_human_logins(self):
+        assert github_sync._wants_review_comment("a-human-reviewer") is True
+        assert github_sync._wants_review_comment("octocat") is True
+
+    def test_rejects_other_bot_accounts(self):
+        assert github_sync._wants_review_comment("dependabot[bot]") is False
+        assert github_sync._wants_review_comment("github-actions[bot]") is False
+        assert github_sync._wants_review_comment("vercel[bot]") is False
+
+    def test_rejects_none_or_empty(self):
+        assert github_sync._wants_review_comment(None) is False
+        assert github_sync._wants_review_comment("") is False
+
+
 # ── PR review comments (CodeRabbit feedback integration) ─────────────────────
 
 class TestPrReviewComments:
@@ -240,7 +261,10 @@ class TestPrReviewComments:
             assert c.diff_line == 42
             assert c.author == "coderabbitai[bot]"
 
-    def test_filters_out_non_coderabbit_review_comments(self):
+    def test_includes_human_reviewer_comments_alongside_coderabbit(self):
+        """Human co-workers' inline suggestions are exactly as much "helpful feedback" as
+        CodeRabbit's -- only other bot/app accounts get filtered out (see
+        test_filters_out_other_bot_accounts below)."""
         item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
         review_comments = [
             _gh_review_comment(701, "Nice catch!", author="a-human-reviewer"),
@@ -255,8 +279,44 @@ class TestPrReviewComments:
 
         with TestSession() as db:
             comments = db.query(models.EngineeringItemComment).filter_by(item_id=item_id).all()
+            ids = {c.github_id for c in comments}
+            assert ids == {701, 702}
+
+    def test_filters_out_other_bot_accounts(self):
+        """Other bot/app accounts (CI status bots, dependency bots, etc) are automated noise,
+        not reviewer feedback -- excluded even though CodeRabbit (also a bot) is wanted."""
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        review_comments = [
+            _gh_review_comment(801, "Deploy preview ready", author="vercel[bot]"),
+            _gh_review_comment(802, "Bump lodash to 4.17.21", author="dependabot[bot]"),
+            _gh_review_comment(803, "Real CodeRabbit feedback", author="coderabbitai[bot]"),
+        ]
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=review_comments):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestSession() as db:
+            comments = db.query(models.EngineeringItemComment).filter_by(item_id=item_id).all()
             assert len(comments) == 1
-            assert comments[0].github_id == 702
+            assert comments[0].github_id == 803
+
+    def test_ignores_comment_with_no_user(self):
+        item_id = _make_eng_item(external_id="github:owner/repo/pull/1", item_type="pr")
+        comment = _gh_review_comment(804, "orphaned comment")
+        comment["user"] = None
+        with TestSession() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=[comment]):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestSession() as db:
+            comments = db.query(models.EngineeringItemComment).filter_by(item_id=item_id).all()
+            assert len(comments) == 0
 
     def test_falls_back_to_original_line_when_line_is_null(self):
         """A comment on an outdated diff position has line=None but original_line set."""
