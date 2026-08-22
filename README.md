@@ -197,7 +197,7 @@ You never have to go hunting for where a job's code landed — see [Finding your
 
 Push is disabled by temporarily repointing `remote.origin.pushurl` for the whole repo (shared config, not per-worktree) while a job runs, then restoring it once the session ends normally. If a job is ever killed or crashes before that restore happens, the next job run against the same repo detects and clears the stale lock automatically — but if you want to push right now, mid "thorny git situation", without waiting on that: `qtask-bridge --unlock-push` clears it on demand from wherever you're standing (main checkout or any worktree). It only ever touches the exact value this tool itself sets — a real custom `pushurl` you've configured for an unrelated reason is left alone.
 
-**If the agent process dies mid-session** (crash, network drop, laptop sleeps), the job would otherwise sit at "running" forever with no way to tell it apart from one that's actually still working. The bridge pings a heartbeat every 5 minutes while a session is active; if a job goes 20+ minutes without one, it's automatically marked **stalled** (shown in the Code tab, distinct from an outright error) and — if Telegram is configured — you get a notification. Re-running the card queues a fresh job.
+**If the agent process dies mid-session** (crash, network drop, laptop sleeps), the job would otherwise sit at "running" forever with no way to tell it apart from one that's actually still working. The bridge pings a heartbeat every 5 minutes while a session is active; if a job goes 20+ minutes without one, it's automatically marked **stalled** (shown in the Code tab, distinct from an outright error) and — if Telegram is configured — you get a notification. Re-running the card queues a fresh job. Whatever the session had already done isn't lost either way: the bridge auto-commits any uncommitted changes in the worktree the moment a session ends (however it ends), so a crash mid-edit still leaves real, inspectable progress on the branch instead of silently discarding it.
 
 #### Install the bridge agent
 
@@ -249,15 +249,18 @@ qtask-bridge --cleanup        # list finished qtask worktrees and remove the one
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
 qtask-bridge --review [branch] # lead-engineer-style review of a worktree's changes, offers to apply fixes after
 qtask-bridge --unlock-push    # clear a stuck no_push sentinel left by an interrupted job
+qtask-bridge --card 84 --agent aider   # --agent is a modifier, combinable with any command above
 ```
 
-The agent writes the spec to `BRIDGE_SPEC.md`, runs `claude` in an isolated git worktree on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The worktree is left in place locally for your review — the bridge never pushes.
+The agent writes the spec to `BRIDGE_SPEC.md`, runs the coding agent in an isolated git worktree on a fresh `qtask/<id>-<slug>` branch, and marks the job complete when the session ends. The worktree is left in place locally for your review — the bridge never pushes.
 
 **`--watch` mode** runs interactively: you can participate in the Claude session, ask questions, or provide direction. When Claude finishes and you exit the session, the job is marked complete and the bridge immediately polls for the next one — no intervention needed between jobs.
 
 **`--card` mode** is the same but prompts you for an optional note to attach to the job before moving on, useful for one-off runs where you want to record context.
 
 **`--tag` mode** is for batching: tag several cards (each with a spec already generated) the same way, then run `qtask-bridge --tag <name>` to work through all of them sequentially, unattended — no interactive prompts, each card gets its own worktree. Since it's unattended, it runs Claude Code with `--dangerously-skip-permissions`; only use it on cards you trust to run without a human approving each action.
+
+**More than one coding agent is supported** — Claude Code (default) and Aider. Switch permanently with `agent = "aider"` in `config.toml`, or override for a single run with `--agent aider` (works with any command above, e.g. `qtask-bridge --watch --agent aider`). Whichever agent is active, the worktree/branch/push-safety/port-collision machinery above behaves identically — only the actual coding session command changes.
 
 #### Finding your worktree
 
@@ -379,6 +382,12 @@ Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining le
 | **⎘ Copy** | Copies the full prompt (requirements + GitHub body + comments + notes) to clipboard for manual paste into Claude Code |
 | **▶ Run** | Queues a job for the local bridge agent |
 | **Edit** (footer) | Opens an inline textarea to manually write or adjust the requirements |
+
+#### Applying review feedback
+
+For any card linked to a GitHub PR, review comments — both CodeRabbit's and human co-workers' inline suggestions (anything that isn't itself a bot account) — are pulled in alongside the regular issue conversation and shown in their own **Review Feedback** section, each with its file/line position and a CodeRabbit badge where it applies. A ✕ dismisses a comment you've already handled or don't want to act on (↺ brings it back); dismissed ones collapse behind a "Show N dismissed" toggle so the list stays focused on what's still open.
+
+Check the box next to one or more comments and a **Fix N selected** button appears. Clicking it resumes the card's most recent bridge job — same worktree, same branch, not a fresh one — with a prompt scoped to just the comments you picked ("apply these specific fixes, not a general invitation to refactor") and switches you into the Code tab to watch it run. This needs a prior job to resume, so it's only available once you've run the card at least once; if there's nothing to resume yet, it'll tell you so instead of silently failing.
 
 #### Telegram `/build`
 

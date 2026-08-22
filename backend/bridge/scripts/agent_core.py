@@ -990,7 +990,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
     return True
 
 
-def run_job(cfg, job, streaming=False, prompt_note=True):
+def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     job_id      = job["id"]
     card_id     = job["card_id"]
     prompt      = job.get("prompt", "")
@@ -1128,7 +1128,15 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
             except OSError:
                 pass
 
-    print(f"[bridge] Job {job_id} done. Worktree left at {worktree_path} for review.\n")
+    print(f"[bridge] Job {job_id} done. Worktree left at {worktree_path} for review.")
+    if suggest_next:
+        # Skipped for a --tag batch (cmd_tag passes suggest_next=False) -- unattended runs
+        # would otherwise print this once per job in a row, which is exactly the case where
+        # nobody's watching in real time for it to be useful; cmd_tag prints one summary hint
+        # after the whole batch instead.
+        print("[bridge] Next: qtask-bridge --review to check the code, or --run to try it, before you push.\n")
+    else:
+        print()
 
 
 def cmd_card(cfg, card_id):
@@ -1180,9 +1188,11 @@ def cmd_tag(cfg, tag_name):
                   file=sys.stderr)
             break
         print(f"[bridge] ({i + 1}/{len(queued)}) Job {job['id']} — card #{job['card_id']}")
-        run_job(cfg, job, streaming=True, prompt_note=False)
+        run_job(cfg, job, streaming=True, prompt_note=False, suggest_next=False)
 
     print("[bridge] Tag run complete.")
+    print("[bridge] Next: qtask-bridge --list to see the resulting worktrees, "
+          "--review each branch before pushing.")
 
 
 def cmd_watch(cfg):
