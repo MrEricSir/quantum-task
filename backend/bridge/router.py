@@ -30,6 +30,7 @@ from bridge.jobs import (
     _job_response,
     _queue_fix_job,
     _queue_job_for_card,
+    _queue_resume_job,
 )
 from bridge.render import render_agent_script, render_install_script
 from bridge.stale import check_stale_bridge_jobs
@@ -177,6 +178,32 @@ def queue_fix_job(job_id: int, body: _JobFix, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Comment(s) not found: {sorted(missing)}")
 
     job = _queue_fix_job(db, original_job, comments)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/{job_id}/resume")
+def queue_resume_job(job_id: int, db: Session = Depends(get_db)):
+    """Queue a "resume" job that continues job_id's worktree/branch after an interrupted
+    session (crash, timeout, disconnect), instead of creating a fresh worktree -- shares
+    the exact same resume mechanism as /fix (see agent_core.py's run_job()), just without a
+    specific set of comments to address. See CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan.
+
+    Same worktree_path validation as /fix -- can't validate the worktree still exists ON DISK
+    from here, only the bridge (running locally) can do that."""
+    original_job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not original_job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not original_job.worktree_path:
+        raise HTTPException(
+            status_code=400,
+            detail="This job has no recorded worktree to resume -- it may not have run yet, "
+                   "or predates worktree tracking.",
+        )
+
+    job = _queue_resume_job(db, original_job)
     db.add(job)
     db.commit()
     db.refresh(job)

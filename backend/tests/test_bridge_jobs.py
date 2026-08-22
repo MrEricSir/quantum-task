@@ -543,6 +543,80 @@ class TestQueueFixJob:
         assert "a-human-reviewer" in pending["prompt"]
 
 
+# ── POST /api/bridge/jobs/{id}/resume ────────────────────────────────────────
+
+class TestQueueResumeJob:
+
+    def _make_started_job(self, client, card_id=None, external_id=None, status="error"):
+        """A job that ran and recorded a resumable worktree, then ended abnormally --
+        status "error"/"stalled", not "pending", so it doesn't shadow a later resume job in
+        next/pending's query."""
+        card_id = card_id or _make_card(spec="s", external_id=external_id)
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/9-oauth-login", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-9-oauth-login",
+        })
+        if status == "error":
+            client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "claude exited with code 1"})
+        elif status == "stalled":
+            # No API path sets this directly -- it's a server-side heartbeat-timeout sweep
+            # (bridge/stale.py) in real usage. Write it directly for the test.
+            with TestSession() as db:
+                job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+                job.status = "stalled"
+                db.commit()
+        else:
+            client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+        return job_id
+
+    def test_queues_a_resume_job_resuming_the_original_worktree(self, client):
+        job_id = self._make_started_job(client)
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/resume")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["fix_of_job_id"] == job_id
+        assert data["fix_comment_ids"] is None
+        assert data["status"] == "pending"
+        assert data["branch_name"] == "qtask/9-oauth-login"
+        assert data["worktree_path"] == \
+            "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-9-oauth-login"
+
+    def test_resume_prompt_includes_original_spec_and_continuation_framing(self, client):
+        card_id = _make_card(spec="## Problem Statement\nImplement OAuth login.")
+        job_id = self._make_started_job(client, card_id=card_id)
+
+        resume_job_id = client.post(f"/api/bridge/jobs/{job_id}/resume").json()["id"]
+        pending = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert pending["id"] == resume_job_id
+        assert "Resuming an interrupted session" in pending["prompt"]
+        assert "git log" in pending["prompt"]
+        assert "Implement OAuth login." in pending["prompt"]
+
+    def test_resume_job_has_no_fix_comment_ids(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/resume")
+        assert res.json()["fix_comment_ids"] is None
+
+    def test_404_for_missing_original_job(self, client):
+        res = client.post("/api/bridge/jobs/99999/resume")
+        assert res.status_code == 404
+
+    def test_400_when_original_job_has_no_worktree(self, client):
+        """A job that never ran (still pending, no /start call) has nothing to resume."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/resume")
+        assert res.status_code == 400
+
+    def test_resumable_after_stalled_status_too(self, client):
+        job_id = self._make_started_job(client, status="stalled")
+        res = client.post(f"/api/bridge/jobs/{job_id}/resume")
+        assert res.status_code == 200
+
+
 # ── POST /api/bridge/jobs/{id}/output ────────────────────────────────────────
 
 class TestJobOutput:

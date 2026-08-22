@@ -409,6 +409,24 @@ def _make_fix_prompt(branch, worktree_path):
     )
 
 
+def _make_resume_prompt(branch, worktree_path):
+    """Wrapper prompt for a resume job (run_job's fix_of_job_id branch, no fix_comment_ids) --
+    picking up an interrupted session in an existing worktree rather than starting fresh. The
+    actual task content lives in SPEC_FILENAME same as any other job -- built server-side by
+    bridge.jobs._build_resume_prompt, which already tells the agent to check git log/diff
+    before continuing. See CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan."""
+    return _make_agent_prompt(
+        branch, worktree_path,
+        action=(
+            f"Please continue the task described in {SPEC_FILENAME} "
+            f"(already written to your working directory) -- a previous session on this "
+            f"exact branch was interrupted before finishing. Check `git log` and `git diff` "
+            f"against the base branch first to see what's already been done, then pick up "
+            f"from there instead of starting over."
+        ),
+    )
+
+
 def _make_agent_prompt(branch, worktree_path, action):
     """Shared tail (branch/push/env-file/Procfile instructions) between _make_prompt and
     _make_fix_prompt -- only the opening action line differs between "implement a feature"
@@ -569,6 +587,36 @@ def _create_worktree(cfg, job, work_dir):
         f.write(worktree_path + "\n")
 
     return worktree_path, branch, push_url_info
+
+
+def _commit_if_dirty(worktree_path, job_id, reason):
+    """Safety net: if worktree_path has uncommitted changes, commit them with an
+    auto-generated message rather than risk losing them. Nothing enforces the prompt's "commit
+    as you go" instruction (_make_agent_prompt, above) -- agent_claude.py has no equivalent to
+    Aider's --auto-commits -- so an interrupted session (crash, Ctrl-C, network loss) can
+    otherwise leave real progress sitting uncommitted and invisible to anything that inspects
+    the branch afterward (git log, a resume/fix job, --adopt, a --review diff). Called both at
+    the end of every session (the common case: a stray uncommitted edit) and at the start of a
+    resume-type session (the crash-recovery case: the PREVIOUS session never got to run its
+    own end-of-session cleanup at all). See CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan.
+
+    Returns True if a commit was made, False if the worktree was already clean or the commit
+    itself failed (logged, not raised -- this is best-effort insurance, not something that
+    should crash the job over)."""
+    r = subprocess.run(["git", "status", "--porcelain"],
+                       cwd=worktree_path, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return False
+    print(f"[bridge] Uncommitted changes found ({reason}) -- auto-committing to avoid losing them...")
+    subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True)
+    message = f"Auto-captured: uncommitted changes ({reason}) -- job #{job_id}"
+    r = subprocess.run(["git", "commit", "-m", message],
+                       cwd=worktree_path, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[bridge] WARNING: auto-commit failed: {r.stderr.strip()}", file=sys.stderr)
+        return False
+    print("[bridge] Auto-committed.")
+    return True
 
 
 def _git_teardown(work_dir, push_url_info):
@@ -830,11 +878,13 @@ def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text):
 
 
 def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
-                      test_cmd=None, verify_acceptance=False, spec_text=None, fix=False):
+                      test_cmd=None, verify_acceptance=False, spec_text=None,
+                      prompt_kind="normal"):
     """Launch the coding agent as an interactive session the user can engage with.
 
-    fix=True selects _make_fix_prompt's wrapper wording (a fix job resuming an existing
-    worktree) instead of _make_prompt's (a normal feature job) -- see run_job's
+    prompt_kind selects the wrapper wording: "fix" for _make_fix_prompt (resuming an existing
+    worktree to address specific comments), "resume" for _make_resume_prompt (resuming after
+    an interrupted session), "normal" for _make_prompt (a fresh feature job) -- see run_job's
     fix_of_job_id branch."""
     print(f"[bridge] Launching {AGENT_LABEL} interactively...")
     print("[bridge] You can interact with the agent in the session below.")
@@ -842,7 +892,8 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
     _set_terminal_title(branch)
     stop_heartbeat = _start_heartbeat(cfg, job_id)
     verification = ""
-    make_prompt = _make_fix_prompt if fix else _make_prompt
+    make_prompt = {"fix": _make_fix_prompt, "resume": _make_resume_prompt}.get(
+        prompt_kind, _make_prompt)
     try:
         try:
             subprocess.run(interactive_command(make_prompt(branch, cwd)), cwd=cwd, check=False)
@@ -859,6 +910,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
         stop_heartbeat.set()
 
     print("\n[bridge] Session ended.")
+    _commit_if_dirty(cwd, job_id, "session ended")
     result_text = ""
     if prompt_note:
         try:
@@ -872,13 +924,14 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
 
 
 def _run_streaming(cfg, job_id, branch, cwd,
-                    test_cmd=None, verify_acceptance=False, spec_text=None, fix=False):
+                    test_cmd=None, verify_acceptance=False, spec_text=None,
+                    prompt_kind="normal"):
     """Launch the coding agent non-interactively and stream stdout back to the app.
 
-    fix=True selects _make_fix_prompt's wrapper wording -- see _run_interactive's
-    docstring."""
+    prompt_kind selects the wrapper wording -- see _run_interactive's docstring."""
     print(f"[bridge] Launching {AGENT_LABEL} (streaming mode)...")
-    make_prompt = _make_fix_prompt if fix else _make_prompt
+    make_prompt = {"fix": _make_fix_prompt, "resume": _make_resume_prompt}.get(
+        prompt_kind, _make_prompt)
     try:
         proc = subprocess.Popen(
             streaming_command(make_prompt(branch, cwd)),
@@ -928,6 +981,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
         stop_heartbeat.set()
 
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
+    _commit_if_dirty(cwd, job_id, "session ended")
     if proc.returncode == 0:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": verification})
     else:
@@ -943,6 +997,16 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
     spec_text   = job.get("spec")
     target_repo = job.get("target_repo")
     fix_of_job_id = job.get("fix_of_job_id")
+    # A resume-type job (fix_of_job_id set) is either a targeted "fix" (specific comments
+    # to address, fix_comment_ids set by _queue_fix_job) or a general "resume" (continuing
+    # after an interrupted session, fix_comment_ids left unset by _queue_resume_job) -- see
+    # CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan.
+    if fix_of_job_id and job.get("fix_comment_ids"):
+        prompt_kind = "fix"
+    elif fix_of_job_id:
+        prompt_kind = "resume"
+    else:
+        prompt_kind = "normal"
 
     print(f"\n[bridge] Job {job_id} — card #{card_id}")
 
@@ -982,6 +1046,11 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
             print(f"\n[bridge] ERROR: {msg}", file=sys.stderr)
             return
+        # Safety net for the case this resume exists to handle in the first place: the
+        # ORIGINAL session may have ended uncleanly (crash, Ctrl-C, network loss) and never
+        # reached its own end-of-session _commit_if_dirty call at all -- catch it here,
+        # before a fresh agent process starts working on top of it.
+        _commit_if_dirty(worktree_path, job_id, "resuming a previous session")
         push_url_info = _disable_remote_push(work_dir)
         agent = cfg.get("name") or socket.gethostname().split(".")[0]
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/start",
@@ -1036,11 +1105,11 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
         if streaming:
             _run_streaming(cfg, job_id, branch, worktree_path,
                             test_cmd=test_cmd, verify_acceptance=verify_acceptance,
-                            spec_text=spec_text, fix=bool(fix_of_job_id))
+                            spec_text=spec_text, prompt_kind=prompt_kind)
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
                               test_cmd=test_cmd, verify_acceptance=verify_acceptance,
-                              spec_text=spec_text, fix=bool(fix_of_job_id))
+                              spec_text=spec_text, prompt_kind=prompt_kind)
     except Exception as e:
         # Best-effort: run_streaming/run_interactive already report their
         # own outcome (claude not found, non-zero exit, etc.) via /complete

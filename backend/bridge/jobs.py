@@ -96,6 +96,24 @@ def _build_fix_prompt(card: models.Card, comments: list["models.EngineeringItemC
     return "\n".join(lines)
 
 
+def _build_resume_prompt(card: models.Card, eng_item: models.EngineeringItem | None) -> str:
+    """Compile a resume-job prompt for continuing an interrupted session -- same underlying
+    spec/GitHub context as a normal job's _build_prompt, with a prepended note that this is a
+    fresh agent process picking up EXISTING progress in the worktree, not a fresh start. Paired
+    with agent_core.py's _make_resume_prompt, which wraps this same written content with
+    "check git log/diff before continuing" instructions at launch time. See
+    CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan."""
+    preamble = (
+        "# Resuming an interrupted session\n\n"
+        "You previously started this task in this exact worktree and branch, and the prior "
+        "session ended before finishing it (crash, timeout, or disconnect) -- this is a fresh "
+        "agent process, but the worktree already has whatever progress was made. Run `git "
+        "log` and review `git diff` against the base branch first to see what's already "
+        "committed, then continue toward the goal below rather than starting over.\n\n---\n"
+    )
+    return preamble + _build_prompt(card, eng_item)
+
+
 _OUTPUT_MAX_LINES = 200
 
 
@@ -145,6 +163,39 @@ def _queue_fix_job(
         prompt_snapshot=prompt,
         fix_of_job_id=original_job.id,
         fix_comment_ids=json.dumps([c.id for c in comments]),
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.BridgeJob:
+    """Build (but don't commit) a pending "resume" BridgeJob that continues original_job's
+    worktree/branch after an interrupted session, instead of creating a fresh one -- shares
+    the exact same fix_of_job_id-driven resume mechanism in agent_core.py's run_job() that
+    _queue_fix_job uses, distinguished from a fix job by fix_comment_ids being left unset (no
+    specific comments to address, just "keep going"). See CLAUDE_CODE_INTEGRATION.md's
+    "Phase 0" plan. Caller (bridge.router) must have already verified original_job.worktree_path
+    is set.
+
+    branch_name/worktree_path copied from original_job at creation time, same reasoning as
+    _queue_fix_job."""
+    card = db.query(models.Card).filter_by(id=original_job.card_id).first()
+    eng_item = None
+    if card.external_id:
+        eng_item = (
+            db.query(models.EngineeringItem)
+            .options(selectinload(models.EngineeringItem.comments))
+            .filter_by(external_id=card.external_id)
+            .first()
+        )
+    prompt = _build_resume_prompt(card, eng_item)
+    return models.BridgeJob(
+        card_id=original_job.card_id,
+        status="pending",
+        target_repo=original_job.target_repo,
+        branch_name=original_job.branch_name,
+        worktree_path=original_job.worktree_path,
+        prompt_snapshot=prompt,
+        fix_of_job_id=original_job.id,
         created_at=datetime.now(timezone.utc),
     )
 

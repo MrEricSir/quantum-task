@@ -1592,6 +1592,80 @@ class TestMakeFixPrompt:
         assert "web: npm run dev" in prompt
 
 
+class TestMakeResumePrompt:
+    """_make_resume_prompt shares _make_agent_prompt's tail with _make_prompt/_make_fix_prompt
+    -- only the opening action line differs. Mirrors TestMakeFixPrompt's structure."""
+
+    def test_opening_line_is_resume_framed_not_feature_or_fix_framed(self, tmp_path):
+        prompt = agent_core._make_resume_prompt("qtask/1-foo", str(tmp_path))
+        assert "Please continue the task described in" in prompt
+        assert "previous session on this exact branch was interrupted" in prompt
+        assert "Please implement the feature described in" not in prompt
+        assert "Please apply the specific fixes described in" not in prompt
+
+    def test_shares_the_same_tail_as_make_prompt(self, tmp_path):
+        prompt = agent_core._make_resume_prompt("qtask/1-foo", str(tmp_path))
+        assert "Do NOT push to the remote repository" in prompt
+        assert "collide with anything else already running on this machine." in prompt
+
+    def test_still_mentions_procfile_when_present(self, tmp_path):
+        (tmp_path / "Procfile.dev").write_text("web: npm run dev\n")
+        prompt = agent_core._make_resume_prompt("qtask/1-foo", str(tmp_path))
+        assert "Procfile.dev" in prompt
+        assert "web: npm run dev" in prompt
+
+
+class TestCommitIfDirty:
+    """Safety net that auto-commits uncommitted changes rather than risk losing them --
+    called at end of every session and at the start of a resume-type session. See
+    CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan."""
+
+    def _init_repo(self, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path)
+        (tmp_path / "README.md").write_text("hello\n")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path)
+        subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=tmp_path)
+        return tmp_path
+
+    def test_clean_worktree_commits_nothing(self, tmp_path):
+        repo = self._init_repo(tmp_path)
+        assert agent_core._commit_if_dirty(str(repo), 42, "session ended") is False
+
+        log = subprocess.run(["git", "log", "--oneline"], cwd=repo, capture_output=True, text=True)
+        assert len(log.stdout.strip().splitlines()) == 1
+
+    def test_dirty_worktree_auto_commits_with_a_clear_message(self, tmp_path, capsys):
+        repo = self._init_repo(tmp_path)
+        (repo / "new_file.py").write_text("x = 1\n")
+
+        assert agent_core._commit_if_dirty(str(repo), 42, "session ended") is True
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=repo, capture_output=True, text=True)
+        assert "Auto-captured" in log.stdout
+        assert "job #42" in log.stdout
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True)
+        assert status.stdout.strip() == ""
+        assert "auto-committing to avoid losing them" in capsys.readouterr().out
+
+    def test_modified_tracked_file_also_gets_committed(self, tmp_path):
+        repo = self._init_repo(tmp_path)
+        (repo / "README.md").write_text("changed\n")
+
+        assert agent_core._commit_if_dirty(str(repo), 7, "resuming a previous session") is True
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True)
+        assert status.stdout.strip() == ""
+
+    def test_reason_appears_in_the_commit_message(self, tmp_path):
+        repo = self._init_repo(tmp_path)
+        (repo / "new_file.py").write_text("x = 1\n")
+
+        agent_core._commit_if_dirty(str(repo), 7, "resuming a previous session")
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=repo, capture_output=True, text=True)
+        assert "resuming a previous session" in log.stdout
+
+
 class TestDisableRemotePush:
     """Extracted out of _create_worktree so a fix job (agent_core.py's run_job,
     fix_of_job_id branch) gets the exact same push-safety property without going through
@@ -2626,7 +2700,8 @@ class TestAgentScriptFullFlow:
         job = {
             "id": 2, "card_id": 84, "card_title": "Fix review feedback",
             "prompt": "Address these comments...", "target_repo": None,
-            "fix_of_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-fix-login",
+            "fix_of_job_id": 1, "fix_comment_ids": [501],
+            "worktree_path": str(scratch_repo), "branch_name": "qtask/1-fix-login",
         }
 
         cwd_before = os.getcwd()
@@ -2650,6 +2725,156 @@ class TestAgentScriptFullFlow:
 
         assert any(c[1] == "/api/bridge/jobs/2/complete" for c in api_calls), \
             "job never reached /complete"
+
+    def test_run_job_resumes_existing_worktree_for_a_resume_job(self, scratch_repo, monkeypatch):
+        """A resume job (fix_of_job_id set, no fix_comment_ids) must resume the existing
+        worktree/branch exactly like a fix job does -- proves it goes through the same
+        _create_worktree-skipping branch -- but with _make_resume_prompt's "continue"
+        framing on the wrapper prompt sent to the CLI, not _make_fix_prompt's or
+        _make_prompt's."""
+        ns = self._load_rendered_agent_module()
+
+        def _must_not_be_called(*a, **k):
+            raise AssertionError("_create_worktree must not be called for a resume job")
+        monkeypatch.setitem(ns, "_create_worktree", _must_not_be_called)
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        captured_argv = {}
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                captured_argv["argv"] = cmd
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {
+            "id": 2, "card_id": 84, "card_title": "OAuth login feature",
+            "prompt": "Continue implementing...", "target_repo": None,
+            "fix_of_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-oauth",
+        }
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        start_calls = [c for c in api_calls if c[1] == "/api/bridge/jobs/2/start"]
+        assert start_calls, "job never reached the /start call"
+        assert start_calls[0][2]["branch"] == "qtask/1-oauth"
+
+        assert not os.path.exists(os.path.join(scratch_repo, ".claude", "settings.local.json")), \
+            "write_ide_settings should be skipped for a resume job -- it already ran for the original job"
+
+        assert captured_argv.get("argv"), "claude was never invoked"
+        assert "Please continue the task described in" in captured_argv["argv"][1]
+        assert "implement the feature" not in captured_argv["argv"][1]
+        assert "apply the specific fixes" not in captured_argv["argv"][1]
+
+        assert any(c[1] == "/api/bridge/jobs/2/complete" for c in api_calls), \
+            "job never reached /complete"
+
+    def test_run_job_resume_job_auto_commits_leftover_dirty_state_before_starting_agent(
+        self, scratch_repo, monkeypatch,
+    ):
+        """The crash-recovery case a resume job exists for: the ORIGINAL session ended
+        uncleanly (crash/Ctrl-C/network loss) and never reached its own end-of-session
+        _commit_if_dirty call -- so whatever it left uncommitted is still sitting in the
+        worktree when the resume job picks it up. run_job's fix_of_job_id branch must catch
+        this BEFORE a fresh agent process starts working on top of it."""
+        ns = self._load_rendered_agent_module()
+
+        (scratch_repo / "half_done.py").write_text("x = 1  # left uncommitted by the crashed session\n")
+        status_before = subprocess.run(["git", "status", "--porcelain"], cwd=scratch_repo,
+                                       capture_output=True, text=True)
+        assert status_before.stdout.strip(), "test setup: expected a dirty worktree before run_job"
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {
+            "id": 3, "card_id": 84, "card_title": "OAuth login feature",
+            "prompt": "Continue implementing...", "target_repo": None,
+            "fix_of_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-oauth",
+        }
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=scratch_repo,
+                             capture_output=True, text=True)
+        assert "Auto-captured" in log.stdout
+        status_after = subprocess.run(["git", "status", "--porcelain"], cwd=scratch_repo,
+                                      capture_output=True, text=True)
+        assert status_after.stdout.strip() == "", "worktree should be clean before the agent resumes"
+
+    def test_run_job_normal_session_auto_commits_leftover_changes_at_session_end(
+        self, scratch_repo, monkeypatch,
+    ):
+        """End-of-session safety net for the common case: nothing enforces the prompt's
+        "commit as you go" instruction, so a session can end (however it ends) having left a
+        stray uncommitted edit -- run_job must catch that too, not just the resume-job
+        crash-recovery case."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                # Simulate the agent leaving an uncommitted edit when the session ends, in
+                # whatever real worktree _create_worktree actually made for this job (NOT
+                # scratch_repo itself -- a normal job creates a fresh worktree elsewhere).
+                with open(os.path.join(k["cwd"], "stray_edit.py"), "w") as f:
+                    f.write("y = 2\n")
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {
+            "id": 4, "card_id": 84, "card_title": "OAuth login feature",
+            "prompt": "Implement...", "target_repo": None,
+        }
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        worktree_path = next(c[2]["worktree_path"] for c in api_calls if c[1].endswith("/start"))
+        try:
+            log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=worktree_path,
+                                 capture_output=True, text=True)
+            assert "Auto-captured" in log.stdout
+            status_after = subprocess.run(["git", "status", "--porcelain"], cwd=worktree_path,
+                                          capture_output=True, text=True)
+            assert status_after.stdout.strip() == ""
+        finally:
+            # Clean up the real worktree this test created outside tmp_path.
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
+                           cwd=scratch_repo, capture_output=True)
 
     def test_run_job_fix_job_errors_cleanly_if_worktree_was_already_cleaned_up(self, tmp_path, monkeypatch):
         """Per the resolved design question in CLAUDE_CODE_INTEGRATION.md: if --cleanup
