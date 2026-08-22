@@ -2984,6 +2984,83 @@ test.describe('card detail panel — github and spec', () => {
     await expect(copyBtn).toBeVisible()
   })
 
+  test('Resume button appears for an errored job with a resumable worktree', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
+      json: { job: {
+        id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
+        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+        worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
+        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+      } },
+    }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await expect(page.locator('.cdp-bridge-resume-btn')).toBeVisible()
+  })
+
+  test('Resume button appears for a stalled job too', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
+      json: { job: {
+        id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
+        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+        worktree_path: '/tmp/worktrees/99', result: null, output: null,
+        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+      } },
+    }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await expect(page.locator('.cdp-bridge-resume-btn')).toBeVisible()
+  })
+
+  test('Resume button is absent for a done job', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
+      json: { job: {
+        id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+        worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+      } },
+    }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await expect(page.locator('.cdp-bridge-resume-btn')).toHaveCount(0)
+  })
+
+  test('clicking Resume queues a resume job and updates the status label', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
+      json: { job: {
+        id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
+        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+        worktree_path: '/tmp/worktrees/99', result: null, output: null,
+        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+      } },
+    }))
+    let resumeCalled = false
+    await page.route('**/api/bridge/jobs/5/resume', async r => {
+      resumeCalled = true
+      return r.fulfill({
+        json: {
+          id: 6, card_id: 99, status: 'pending', target_repo: 'owner/repo',
+          branch_name: 'qtask/99-oauth-login', agent_name: null,
+          worktree_path: '/tmp/worktrees/99', result: null, output: null,
+          spec_snapshot: null, fix_of_job_id: 5, fix_comment_ids: null,
+          created_at: '2026-06-03T10:00:00Z', updated_at: null,
+        },
+      })
+    })
+
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.locator('.cdp-bridge-resume-btn').click()
+
+    await expect(page.locator('.cdp-bridge-label')).toContainText(/waiting for agent to resume/i)
+    expect(resumeCalled).toBe(true)
+  })
+
   test('refresh button is shown in GitHub header', async ({ page }) => {
     // Refresh button is within the GitHub actions area
     const actions = page.locator('.cdp-gh-actions')

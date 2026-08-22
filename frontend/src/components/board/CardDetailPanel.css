@@ -831,6 +831,11 @@
   height: 11px;
 }
 
+.cdp-bridge-resume-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
 .cdp-bridge-status--running .cdp-bridge-dot {
   animation: cdp-pulse 1.4s ease-in-out infinite;
 }

@@ -732,6 +732,15 @@ export async function getBridgeJob(jobId) {
   return res.json()
 }
 
+export async function queueResumeJob(jobId) {
+  const res = await apiFetch(`/api/bridge/jobs/${jobId}/resume`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to queue resume job')
+  }
+  return res.json()
+}
+
 export async function getLatestBridgeJob(cardId) {
   const res = await apiFetch(`/api/bridge/jobs/card/${cardId}/latest`)
   if (!res.ok) throw new Error('Failed to fetch bridge job')

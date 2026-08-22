@@ -7,7 +7,7 @@ import {
   breakdownCard, commitBreakdown,
   fetchCardThread, sendThreadMessage, saveThreadOutput,
   updateThreadContext, clearCardThread, fetchContextFrom,
-  generateSpec, queueBridgeJob, getBridgeJob, getLatestBridgeJob,
+  generateSpec, queueBridgeJob, getBridgeJob, getLatestBridgeJob, queueResumeJob,
 } from '../../api'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './AssistModal.css'
@@ -63,6 +63,7 @@ export default function AssistModal({
   const [bridgeQueuing,  setBridgeQueuing]  = useState(false)
   const [bridgeError,    setBridgeError]    = useState('')
   const [copiedWorktree, setCopiedWorktree] = useState(false)
+  const [resumeQueuing,  setResumeQueuing]  = useState(false)
 
   const abortRef    = useRef(null)
   const scrollRef   = useRef(null)
@@ -78,7 +79,7 @@ export default function AssistModal({
     setShowDesc(false); setShowContext(false); setSavingOutput(null); setCopied(null)
     setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
     setSpecText(task.spec ?? null); setSpecEditing(false); setSpecError(''); setCopiedSpec(false)
-    setBridgeJob(null); setBridgeError('')
+    setBridgeJob(null); setBridgeError(''); setResumeQueuing(false)
 
     fetchCardThread(task.id)
       .then(data => {
@@ -375,6 +376,19 @@ export default function AssistModal({
       setBridgeError(e.message || 'Failed to queue bridge job')
     } finally {
       setBridgeQueuing(false)
+    }
+  }
+
+  const handleResumeJob = async () => {
+    if (!bridgeJob || resumeQueuing) return
+    setResumeQueuing(true); setBridgeError('')
+    try {
+      const job = await queueResumeJob(bridgeJob.id)
+      setBridgeJob(job)
+    } catch (e) {
+      setBridgeError(e.message || 'Failed to queue resume job')
+    } finally {
+      setResumeQueuing(false)
     }
   }
 
@@ -676,8 +690,16 @@ export default function AssistModal({
                   <span className="cdp-bridge-dot" />
                   <div className="cdp-bridge-status-body">
                     <span className="cdp-bridge-label">
-                      {bridgeJob.status === 'pending'  && (bridgeJob.fix_of_job_id ? 'Queued — waiting for agent to apply fixes…' : 'Queued — waiting for agent…')}
-                      {bridgeJob.status === 'running'  && (bridgeJob.fix_of_job_id ? 'Applying fixes…' : 'Claude Code running…')}
+                      {bridgeJob.status === 'pending'  && (
+                        bridgeJob.fix_comment_ids ? 'Queued — waiting for agent to apply fixes…'
+                        : bridgeJob.fix_of_job_id  ? 'Queued — waiting for agent to resume…'
+                        : 'Queued — waiting for agent…'
+                      )}
+                      {bridgeJob.status === 'running'  && (
+                        bridgeJob.fix_comment_ids ? 'Applying fixes…'
+                        : bridgeJob.fix_of_job_id  ? 'Resuming previous session…'
+                        : 'Claude Code running…'
+                      )}
                       {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
                       {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
                       {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
@@ -702,6 +724,17 @@ export default function AssistModal({
                           {copiedWorktree ? <CheckIcon /> : <CopyIcon />}
                         </button>
                       </div>
+                    )}
+                    {(bridgeJob.status === 'error' || bridgeJob.status === 'stalled') && bridgeJob.worktree_path && (
+                      <button
+                        type="button"
+                        className="cdp-gh-btn cdp-bridge-resume-btn"
+                        onClick={handleResumeJob}
+                        disabled={resumeQueuing}
+                        title="Resume in the same worktree, picking up where the session left off"
+                      >
+                        {resumeQueuing ? 'Queuing…' : '↻ Resume'}
+                      </button>
                     )}
                   </div>
                 </div>
