@@ -464,6 +464,12 @@ class BridgeJob(Base):
     # the original job shouldn't cascade-delete a fix job that already ran against it.
     fix_of_job_id   = Column(Integer, ForeignKey("bridge_jobs.id", ondelete="SET NULL"), nullable=True)
     fix_comment_ids = Column(Text, nullable=True)  # JSON list of EngineeringItemComment.id
+    # User-supplied override for the branch name the bridge would otherwise auto-generate
+    # (qtask/<card_id>-<slug>) -- set at queue time from the Code tab, read by
+    # _create_worktree via next/pending's payload. branch_name (above) stays "what the
+    # bridge actually reports back via /start" -- intent and fact don't collide in one
+    # column. Null means "use the auto-generated default," same as before this existed.
+    requested_branch_name = Column(String, nullable=True)
 
     card = relationship("Card")
 

@@ -516,6 +516,7 @@ def _create_worktree(cfg, job, work_dir):
     1. git fetch origin (touches no local branch or working tree)
     2. Detect the primary branch from the remote-tracking ref
     3. git worktree add <path> -b qtask/<card_id>-<slug> origin/<primary>
+       (or the user-supplied requested_branch_name verbatim, if the job has one)
     4. Disable remote push for the session (shared repo config)
     5. Register branch + agent name with the app
     Returns (worktree_path, branch_name, push_url_info) or None on
@@ -524,6 +525,7 @@ def _create_worktree(cfg, job, work_dir):
     job_id  = job["id"]
     card_id = job["card_id"]
     title   = job.get("card_title", "")
+    requested_branch = job.get("requested_branch_name")
 
     # 1. Fetch — safe regardless of what's checked out or modified in work_dir
     print("[bridge] Fetching latest from origin...")
@@ -543,9 +545,13 @@ def _create_worktree(cfg, job, work_dir):
         print(f"\n[bridge] ERROR: {msg}", file=sys.stderr)
         return None
 
-    # 3. Create worktree off origin/<primary>
-    slug = _slugify(title)
-    branch = f"qtask/{card_id}-{slug}" if slug else f"qtask/{card_id}"
+    # 3. Create worktree off origin/<primary> -- the requested name verbatim if the user
+    # supplied one at queue time, else the auto-generated qtask/<card_id>-<slug> default.
+    if requested_branch:
+        branch = requested_branch
+    else:
+        slug = _slugify(title)
+        branch = f"qtask/{card_id}-{slug}" if slug else f"qtask/{card_id}"
 
     r = subprocess.run(["git", "rev-parse", "--verify", branch],
                        cwd=work_dir, capture_output=True)

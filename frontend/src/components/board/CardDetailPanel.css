@@ -592,6 +592,48 @@
   border-color: #58a6ff;
 }
 
+.cdp-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cdp-branch-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+
+.cdp-branch-input {
+  flex: 1;
+  min-width: 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.cdp-branch-input::placeholder {
+  color: #6e7681;
+}
+
+.cdp-branch-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.cdp-branch-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .cdp-spec-empty {
   font-size: 12px;
   color: var(--text-muted);

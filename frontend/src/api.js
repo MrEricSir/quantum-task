@@ -713,11 +713,13 @@ export async function clearCardThread(cardId) {
   if (!res.ok) throw new Error('Failed to clear thread')
 }
 
-export async function queueBridgeJob(cardId) {
+export async function queueBridgeJob(cardId, branchName) {
+  const body = { card_id: cardId }
+  if (branchName) body.branch_name = branchName
   const res = await apiFetch('/api/bridge/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ card_id: cardId }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))

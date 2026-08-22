@@ -2984,6 +2984,60 @@ test.describe('card detail panel — github and spec', () => {
     await expect(copyBtn).toBeVisible()
   })
 
+  test('branch name field shows the auto-generated default as a placeholder', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    const input = page.locator('.cdp-branch-input')
+    await expect(input).toBeVisible()
+    await expect(input).toHaveValue('')
+    await expect(input).toHaveAttribute('placeholder', 'qtask/99-oauth-login-feature')
+  })
+
+  test('queuing without touching the branch field omits branch_name from the request', async ({ page }) => {
+    let requestBody = null
+    await page.route('**/api/bridge/jobs', async r => {
+      requestBody = r.request().postDataJSON()
+      return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
+                                 created_at: '2026-06-03T10:00:00Z', updated_at: null } })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.locator('.cdp-spec-bridge-btn').click()
+
+    expect(requestBody).toEqual({ card_id: 99 })
+  })
+
+  test('typing a custom branch name sends it in the queue request', async ({ page }) => {
+    let requestBody = null
+    await page.route('**/api/bridge/jobs', async r => {
+      requestBody = r.request().postDataJSON()
+      return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
+                                 created_at: '2026-06-03T10:00:00Z', updated_at: null } })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.locator('.cdp-branch-input').fill('my-custom-branch')
+    await page.locator('.cdp-spec-bridge-btn').click()
+
+    expect(requestBody).toEqual({ card_id: 99, branch_name: 'my-custom-branch' })
+  })
+
+  test('a branch name with whitespace shows an inline error and does not queue', async ({ page }) => {
+    let requestFired = false
+    await page.route('**/api/bridge/jobs', async r => {
+      requestFired = true
+      return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
+                                 created_at: '2026-06-03T10:00:00Z', updated_at: null } })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.locator('.cdp-branch-input').fill('has a space')
+    await page.locator('.cdp-spec-bridge-btn').click()
+
+    await expect(page.locator('.cdp-spec-error')).toContainText(/whitespace/i)
+    expect(requestFired).toBe(false)
+  })
+
   test('Resume button appears for an errored job with a resumable worktree', async ({ page }) => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
       json: { job: {

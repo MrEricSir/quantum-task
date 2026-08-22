@@ -383,6 +383,8 @@ Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining le
 | **▶ Run** | Queues a job for the local bridge agent |
 | **Edit** (footer) | Opens an inline textarea to manually write or adjust the requirements |
 
+Next to **▶ Run**, a **Branch** field shows the branch name the bridge would auto-generate (`qtask/<card id>-<slug of the title>`) as grayed-out placeholder text — type your own name to use it instead, or leave it blank to keep the default. Left blank, the name is still decided fresh when the bridge actually picks up the job (from whatever the card's title is *then*), not locked in at the moment you click Run.
+
 #### Applying review feedback
 
 For any card linked to a GitHub PR, review comments — both CodeRabbit's and human co-workers' inline suggestions (anything that isn't itself a bot account) — are pulled in alongside the regular issue conversation and shown in their own **Review Feedback** section, each with its file/line position and a CodeRabbit badge where it applies. A ✕ dismisses a comment you've already handled or don't want to act on (↺ brings it back); dismissed ones collapse behind a "Show N dismissed" toggle so the list stays focused on what's still open.

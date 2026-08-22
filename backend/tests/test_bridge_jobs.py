@@ -189,6 +189,33 @@ class TestCreateBridgeJob:
         res = client.post("/api/bridge/jobs", json={"card_id": card_id})
         assert res.json()["target_repo"] is None
 
+    def test_requested_branch_name_is_stored_and_returned(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "my-custom-branch"})
+        assert res.status_code == 200
+        assert res.json()["requested_branch_name"] == "my-custom-branch"
+
+    def test_requested_branch_name_is_null_when_not_given(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert res.json()["requested_branch_name"] is None
+
+    def test_requested_branch_name_is_whitespace_trimmed(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "  my-branch  "})
+        assert res.json()["requested_branch_name"] == "my-branch"
+
+    def test_400_for_branch_name_containing_whitespace(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "has a space"})
+        assert res.status_code == 400
+
+    def test_requested_branch_name_appears_in_next_pending_payload(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "custom/name"})
+        pending = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert pending["requested_branch_name"] == "custom/name"
+
 
 # ── POST /api/bridge/jobs/queue-by-tag ────────────────────────────────────────
 

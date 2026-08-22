@@ -47,6 +47,7 @@ _OUTPUT_MAX_LINES = 200
 
 class _JobCreate(BaseModel):
     card_id: int
+    branch_name: str | None = None     # override for the auto-generated qtask/<id>-<slug> name
 
 
 class _QueueByTag(BaseModel):
@@ -80,7 +81,11 @@ def create_job(body: _JobCreate, db: Session = Depends(get_db)):
     if not card.spec:
         raise HTTPException(status_code=400, detail="Card has no spec — generate one first")
 
-    job = _queue_job_for_card(db, card)
+    branch_name = body.branch_name.strip() if body.branch_name else None
+    if branch_name and any(c.isspace() for c in branch_name):
+        raise HTTPException(status_code=400, detail="Branch name can't contain whitespace")
+
+    job = _queue_job_for_card(db, card, requested_branch_name=branch_name)
     db.add(job)
     db.commit()
     db.refresh(job)

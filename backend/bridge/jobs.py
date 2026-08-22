@@ -133,6 +133,7 @@ def _job_response(job: models.BridgeJob) -> dict:
         "updated_at":    job.updated_at.isoformat() if job.updated_at else None,
         "fix_of_job_id": job.fix_of_job_id,
         "fix_comment_ids": json.loads(job.fix_comment_ids) if job.fix_comment_ids else None,
+        "requested_branch_name": job.requested_branch_name,
     }
 
 
@@ -200,9 +201,13 @@ def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.Bri
     )
 
 
-def _queue_job_for_card(db: Session, card: models.Card) -> models.BridgeJob:
+def _queue_job_for_card(
+    db: Session, card: models.Card, requested_branch_name: str | None = None
+) -> models.BridgeJob:
     """Build (but don't commit) a pending BridgeJob for a card. Caller must
-    have already verified card.spec is set."""
+    have already verified card.spec is set (and, if requested_branch_name is given, that
+    it's already been sanity-checked -- this function trusts its caller, same as everywhere
+    else in this module)."""
     eng_item = None
     if card.external_id:
         eng_item = (
@@ -218,5 +223,6 @@ def _queue_job_for_card(db: Session, card: models.Card) -> models.BridgeJob:
         target_repo=_repo_from_external_id(card.external_id),
         spec_snapshot=card.spec,
         prompt_snapshot=prompt,
+        requested_branch_name=requested_branch_name,
         created_at=datetime.now(timezone.utc),
     )

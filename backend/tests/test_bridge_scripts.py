@@ -1856,6 +1856,60 @@ class TestResolveWorktreeTarget:
         assert "No qtask worktrees found" in capsys.readouterr().out
 
 
+class TestCreateWorktreeBranchOverride:
+    """_create_worktree uses job['requested_branch_name'] verbatim instead of the
+    auto-generated qtask/<card_id>-<slug> default when the job has one -- see
+    CLAUDE_CODE_INTEGRATION.md's "Phase 1" plan."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def test_uses_the_requested_branch_name_verbatim(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 1, "card_id": 1, "card_title": "Some Feature With A Long Title",
+               "requested_branch_name": "my-custom-branch"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        assert branch == "my-custom-branch"
+        r = subprocess.run(["git", "branch", "--list", "my-custom-branch"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert "my-custom-branch" in r.stdout
+
+    def test_falls_back_to_auto_generated_slug_when_no_override_given(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 2, "card_id": 2, "card_title": "Some Feature"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        assert branch == "qtask/2-some-feature"
+
+    def test_falls_back_when_override_is_an_empty_string(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 3, "card_id": 3, "card_title": "Another Feature", "requested_branch_name": ""}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        assert branch == "qtask/3-another-feature"
+
+    def test_collision_check_still_applies_to_a_requested_name(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        subprocess.run(["git", "branch", "taken-name"], cwd=scratch_repo, capture_output=True)
+        job = {"id": 4, "card_id": 4, "card_title": "Whatever", "requested_branch_name": "taken-name"}
+
+        result = agent_core._create_worktree(cfg, job, str(scratch_repo))
+
+        assert result is None
+        assert "already exists" in capsys.readouterr().err
+
+
 class TestCurrentRepoName:
     """_current_repo_name resolves the [repos] entry cwd belongs to, whether
     cwd is the main checkout or one of its worktrees -- both share the same

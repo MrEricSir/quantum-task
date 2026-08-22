@@ -17,6 +17,14 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text, { breaks: true }), { ADD_ATTR: ['target', 'rel'] })
 }
 
+// Mirrors bridge/scripts/agent_core.py's _slugify -- only used for the branch-name field's
+// live preview of what the bridge would auto-generate; doesn't need to be byte-identical
+// since it's a preview, not the value actually sent (an empty override still lets the
+// bridge compute the real default itself, at pickup time, from the card's title then).
+function slugifyPreview(text) {
+  return (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+}
+
 export default function AssistModal({
   open, onClose, task, allTags = [], onBreakdown, onOutputSaved,
   inline = false, onSpecSaved, initialTab = 'assist',
@@ -64,6 +72,7 @@ export default function AssistModal({
   const [bridgeError,    setBridgeError]    = useState('')
   const [copiedWorktree, setCopiedWorktree] = useState(false)
   const [resumeQueuing,  setResumeQueuing]  = useState(false)
+  const [branchOverride, setBranchOverride] = useState('')
 
   const abortRef    = useRef(null)
   const scrollRef   = useRef(null)
@@ -79,7 +88,7 @@ export default function AssistModal({
     setShowDesc(false); setShowContext(false); setSavingOutput(null); setCopied(null)
     setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
     setSpecText(task.spec ?? null); setSpecEditing(false); setSpecError(''); setCopiedSpec(false)
-    setBridgeJob(null); setBridgeError(''); setResumeQueuing(false)
+    setBridgeJob(null); setBridgeError(''); setResumeQueuing(false); setBranchOverride('')
 
     fetchCardThread(task.id)
       .then(data => {
@@ -368,9 +377,14 @@ export default function AssistModal({
 
   const handleSendToBridge = async () => {
     if (!task || bridgeQueuing) return
+    const branchName = branchOverride.trim()
+    if (branchName && /\s/.test(branchName)) {
+      setBridgeError("Branch name can't contain whitespace")
+      return
+    }
     setBridgeQueuing(true); setBridgeError('')
     try {
-      const job = await queueBridgeJob(task.id)
+      const job = await queueBridgeJob(task.id, branchName || undefined)
       setBridgeJob(job)
     } catch (e) {
       setBridgeError(e.message || 'Failed to queue bridge job')
@@ -681,6 +695,22 @@ export default function AssistModal({
                   )}
                 </div>
               </div>
+
+              {specText && !specEditing && (
+                <div className="cdp-branch-row">
+                  <label className="cdp-branch-label" htmlFor="cdp-branch-input">Branch</label>
+                  <input
+                    id="cdp-branch-input"
+                    type="text"
+                    className="cdp-branch-input"
+                    value={branchOverride}
+                    onChange={e => setBranchOverride(e.target.value)}
+                    placeholder={`qtask/${task.id}${slugifyPreview(task.title) ? '-' + slugifyPreview(task.title) : ''}`}
+                    disabled={bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'}
+                    title="Leave blank to use the auto-generated name shown as a placeholder"
+                  />
+                </div>
+              )}
 
               {specError && <div className="cdp-spec-error">{specError}</div>}
               {bridgeError && <div className="cdp-spec-error">{bridgeError}</div>}
