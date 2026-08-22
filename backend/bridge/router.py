@@ -28,6 +28,7 @@ from bridge.jobs import (
     _build_prompt,
     _get_bridge_install_token,
     _job_response,
+    _queue_fix_job,
     _queue_job_for_card,
 )
 from bridge.render import render_agent_script, render_install_script
@@ -61,6 +62,10 @@ class _JobStart(BaseModel):
     branch: str                        # local branch name created by the bridge
     agent: str                         # hostname of the machine running the job
     worktree_path: str | None = None   # local filesystem path to the job's git worktree
+
+
+class _JobFix(BaseModel):
+    comment_ids: list[int]             # EngineeringItemComment ids to address
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -137,6 +142,45 @@ def queue_jobs_by_tag(body: _QueueByTag, db: Session = Depends(get_db)):
         "skipped_no_spec": skipped_no_spec,
         "skipped_already_queued": skipped_already_queued,
     }
+
+
+@router.post("/api/bridge/jobs/{job_id}/fix")
+def queue_fix_job(job_id: int, body: _JobFix, db: Session = Depends(get_db)):
+    """Queue a "fix" job that resumes job_id's worktree/branch to address specific review
+    comments, instead of creating a fresh worktree -- see agent_core.py's run_job() and
+    CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan.
+
+    Validates job_id previously ran and recorded a worktree to resume (worktree_path set) --
+    can't validate the worktree still exists ON DISK from here, only the bridge (running
+    locally) can do that; see run_job's own error path for what happens if it's since been
+    removed via --cleanup."""
+    original_job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not original_job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not original_job.worktree_path:
+        raise HTTPException(
+            status_code=400,
+            detail="This job has no recorded worktree to resume -- it may not have run yet, "
+                   "or predates worktree tracking.",
+        )
+    if not body.comment_ids:
+        raise HTTPException(status_code=400, detail="comment_ids must not be empty")
+
+    comments = (
+        db.query(models.EngineeringItemComment)
+        .filter(models.EngineeringItemComment.id.in_(body.comment_ids))
+        .all()
+    )
+    found_ids = {c.id for c in comments}
+    missing = set(body.comment_ids) - found_ids
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Comment(s) not found: {sorted(missing)}")
+
+    job = _queue_fix_job(db, original_job, comments)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return _job_response(job)
 
 
 @router.get("/api/bridge/jobs/{job_id}")

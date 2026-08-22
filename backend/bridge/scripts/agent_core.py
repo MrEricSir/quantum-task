@@ -383,9 +383,38 @@ def _resolve_work_dir(cfg, target_repo):
 
 
 def _make_prompt(branch, worktree_path):
+    return _make_agent_prompt(
+        branch, worktree_path,
+        action=(
+            f"Please implement the feature described in {SPEC_FILENAME} "
+            f"(already written to your working directory)."
+        ),
+    )
+
+
+def _make_fix_prompt(branch, worktree_path):
+    """Wrapper prompt for a fix job (run_job's fix_of_job_id branch) -- deliberately framed
+    as "apply these specific fixes," not a general invitation to refactor, per
+    CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan. The actual fix
+    content (which comments, file/line, suggested diffs) lives in SPEC_FILENAME, same as a
+    normal job's feature spec -- built server-side by bridge.jobs._build_fix_prompt."""
+    return _make_agent_prompt(
+        branch, worktree_path,
+        action=(
+            f"Please apply the specific fixes described in {SPEC_FILENAME} "
+            f"(already written to your working directory) -- these are targeted review "
+            f"comments (file, line, and a suggested change where one was given), not a "
+            f"general invitation to refactor. Only address what's listed there."
+        ),
+    )
+
+
+def _make_agent_prompt(branch, worktree_path, action):
+    """Shared tail (branch/push/env-file/Procfile instructions) between _make_prompt and
+    _make_fix_prompt -- only the opening action line differs between "implement a feature"
+    and "apply specific fixes."""
     prompt = (
-        f"Please implement the feature described in {SPEC_FILENAME} "
-        f"(already written to your working directory). "
+        f"{action} "
         f"You are working on branch {branch} — commit your changes locally as you go. "
         f"Do NOT push to the remote repository; the developer will review and push. "
         f"A reserved port range and database name are provided in {ENV_FILENAME} "
@@ -429,6 +458,33 @@ def _detect_primary_branch(work_dir):
         if r2.returncode == 0:
             return name
     return None
+
+
+def _disable_remote_push(work_dir):
+    """Disable remote push for the session on the base repo clone (safety — the coding
+    agent must never push, the developer reviews and pushes). Shared repo-level config, not
+    per-worktree. Returns push_url_info for _git_teardown to restore afterward.
+
+    Extracted out of _create_worktree so a fix job (which resumes an existing worktree
+    instead of creating one, see run_job's fix_of_job_id branch) gets the exact same safety
+    property without going through worktree creation at all."""
+    r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                       cwd=work_dir, capture_output=True, text=True)
+    had_push_url = r.returncode == 0
+    orig_push_url = r.stdout.strip() if had_push_url else None
+    if orig_push_url == PUSH_DISABLED_SENTINEL:
+        # A previous run left this stuck -- e.g. it crashed somewhere between here and
+        # _git_teardown running, before teardown ever had a chance to restore it (see
+        # run_job's try/finally). Without this check, every future run would keep
+        # "restoring" pushurl right back to the broken value forever, since it looks like
+        # the original. Treat it as if there was never a real pushurl, so teardown unsets
+        # it this time instead of perpetuating the bad value.
+        had_push_url = False
+        orig_push_url = None
+        print("[bridge] Found a stale push-disable from an interrupted previous run — clearing it.")
+    subprocess.run(["git", "config", "remote.origin.pushurl", PUSH_DISABLED_SENTINEL], cwd=work_dir)
+    print("[bridge] Remote push disabled for this session.")
+    return (had_push_url, orig_push_url)
 
 
 def _create_worktree(cfg, job, work_dir):
@@ -497,26 +553,8 @@ def _create_worktree(cfg, job, work_dir):
         return None
     print(f"[bridge] Created branch: {branch}")
 
-    # 4. Disable remote push (safety — the coding agent must not push). This is a
-    # shared repo-level config, not per-worktree, so only one job should be
-    # active per base repo at a time (true today: jobs run sequentially).
-    r = subprocess.run(["git", "config", "remote.origin.pushurl"],
-                       cwd=work_dir, capture_output=True, text=True)
-    had_push_url = r.returncode == 0
-    orig_push_url = r.stdout.strip() if had_push_url else None
-    if orig_push_url == PUSH_DISABLED_SENTINEL:
-        # A previous run left this stuck -- e.g. it crashed somewhere
-        # between here and _git_teardown running, before teardown ever had
-        # a chance to restore it (see run_job's try/finally). Without this
-        # check, every future run would keep "restoring" pushurl right back
-        # to the broken value forever, since it looks like the original.
-        # Treat it as if there was never a real pushurl, so teardown unsets
-        # it this time instead of perpetuating the bad value.
-        had_push_url = False
-        orig_push_url = None
-        print("[bridge] Found a stale push-disable from an interrupted previous run — clearing it.")
-    subprocess.run(["git", "config", "remote.origin.pushurl", PUSH_DISABLED_SENTINEL], cwd=work_dir)
-    print("[bridge] Remote push disabled for this session.")
+    # 4. Disable remote push (safety — the coding agent must not push).
+    push_url_info = _disable_remote_push(work_dir)
 
     # 5. Register branch + agent + worktree path with the app
     agent = cfg.get("name") or socket.gethostname().split(".")[0]
@@ -530,7 +568,7 @@ def _create_worktree(cfg, job, work_dir):
     with open(LAST_WORKTREE_FILE, "w") as f:
         f.write(worktree_path + "\n")
 
-    return worktree_path, branch, (had_push_url, orig_push_url)
+    return worktree_path, branch, push_url_info
 
 
 def _git_teardown(work_dir, push_url_info):
@@ -792,17 +830,22 @@ def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text):
 
 
 def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
-                      test_cmd=None, verify_acceptance=False, spec_text=None):
-    """Launch the coding agent as an interactive session the user can engage with."""
+                      test_cmd=None, verify_acceptance=False, spec_text=None, fix=False):
+    """Launch the coding agent as an interactive session the user can engage with.
+
+    fix=True selects _make_fix_prompt's wrapper wording (a fix job resuming an existing
+    worktree) instead of _make_prompt's (a normal feature job) -- see run_job's
+    fix_of_job_id branch."""
     print(f"[bridge] Launching {AGENT_LABEL} interactively...")
     print("[bridge] You can interact with the agent in the session below.")
     print("[bridge] When done, type 'exit' or press Ctrl-D.\n")
     _set_terminal_title(branch)
     stop_heartbeat = _start_heartbeat(cfg, job_id)
     verification = ""
+    make_prompt = _make_fix_prompt if fix else _make_prompt
     try:
         try:
-            subprocess.run(interactive_command(_make_prompt(branch, cwd)), cwd=cwd, check=False)
+            subprocess.run(interactive_command(make_prompt(branch, cwd)), cwd=cwd, check=False)
         except FileNotFoundError:
             print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
             print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
@@ -829,12 +872,16 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
 
 
 def _run_streaming(cfg, job_id, branch, cwd,
-                    test_cmd=None, verify_acceptance=False, spec_text=None):
-    """Launch the coding agent non-interactively and stream stdout back to the app."""
+                    test_cmd=None, verify_acceptance=False, spec_text=None, fix=False):
+    """Launch the coding agent non-interactively and stream stdout back to the app.
+
+    fix=True selects _make_fix_prompt's wrapper wording -- see _run_interactive's
+    docstring."""
     print(f"[bridge] Launching {AGENT_LABEL} (streaming mode)...")
+    make_prompt = _make_fix_prompt if fix else _make_prompt
     try:
         proc = subprocess.Popen(
-            streaming_command(_make_prompt(branch, cwd)),
+            streaming_command(make_prompt(branch, cwd)),
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -895,6 +942,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
     prompt      = job.get("prompt", "")
     spec_text   = job.get("spec")
     target_repo = job.get("target_repo")
+    fix_of_job_id = job.get("fix_of_job_id")
 
     print(f"\n[bridge] Job {job_id} — card #{card_id}")
 
@@ -916,12 +964,48 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
     if target_repo:
         print(f"[bridge] Repo: {target_repo} → {work_dir}")
 
-    # Isolated worktree off a freshly fetched primary branch — work_dir itself
-    # is never touched, so this doesn't require a clean working tree there.
-    result = _create_worktree(cfg, job, work_dir)
-    if result is None:
-        return  # error already posted to the app
-    worktree_path, branch, push_url_info = result
+    if fix_of_job_id:
+        # Resume the worktree/branch this fix targets instead of creating a fresh one --
+        # bridge.jobs._queue_fix_job already copied branch_name/worktree_path from the
+        # original job onto this one at creation time. See CLAUDE_CODE_INTEGRATION.md's
+        # "CodeRabbit feedback integration" plan for why this doesn't try to auto-recreate
+        # a worktree/branch that --cleanup already removed -- it errors out instead, loudly,
+        # with a message telling the user to resolve it manually.
+        worktree_path = job.get("worktree_path")
+        branch = job.get("branch_name")
+        if not worktree_path or not os.path.isdir(worktree_path):
+            msg = (
+                f"No resumable worktree found for job {fix_of_job_id} "
+                f"(expected at {worktree_path or '<unknown>'}). It may already have been "
+                f"removed via --cleanup -- resolve manually or re-run the original job."
+            )
+            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+            print(f"\n[bridge] ERROR: {msg}", file=sys.stderr)
+            return
+        push_url_info = _disable_remote_push(work_dir)
+        agent = cfg.get("name") or socket.gethostname().split(".")[0]
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/start",
+            {"branch": branch, "agent": agent, "worktree_path": worktree_path})
+        print(f"[bridge] Resuming worktree at {worktree_path} (branch {branch})")
+    else:
+        # Isolated worktree off a freshly fetched primary branch — work_dir itself
+        # is never touched, so this doesn't require a clean working tree there.
+        result = _create_worktree(cfg, job, work_dir)
+        if result is None:
+            return  # error already posted to the app
+        worktree_path, branch, push_url_info = result
+
+    # Computed either way (a fix job still runs test_cmd/verify_acceptance the same as any
+    # other job) -- only the one-time setup steps below (_write_qtask_env/_link_env_files/
+    # _run_setup_cmd) are skipped for a fix job, since the worktree they'd prepare already
+    # exists from the original job that created it.
+    entry = _repo_entry(cfg, target_repo) if target_repo else _EMPTY_REPO_ENTRY
+    setup_cmd = entry.setup_cmd or cfg.get("setup_cmd")
+    test_cmd = entry.test_cmd or cfg.get("test_cmd")
+    verify_acceptance = entry.verify_acceptance
+    if verify_acceptance is None:
+        verify_acceptance = cfg.get("verify_acceptance", False)
+    env_files = entry.env_files or cfg.get("env_files")
 
     # Everything from here on runs with the base repo's remote push disabled
     # (push_url_info holds what to restore). ALL of it -- not just the
@@ -934,33 +1018,29 @@ def run_job(cfg, job, streaming=False, prompt_note=True):
     # run_interactive call.
     spec_path = None
     try:
-        # Written before setup_cmd runs, in case it wants to reference the
-        # reserved port range / db name too (e.g. to pre-seed a database).
-        _write_qtask_env(worktree_path, job_id)
-
-        entry = _repo_entry(cfg, target_repo) if target_repo else _EMPTY_REPO_ENTRY
-        setup_cmd = entry.setup_cmd or cfg.get("setup_cmd")
-        test_cmd = entry.test_cmd or cfg.get("test_cmd")
-        verify_acceptance = entry.verify_acceptance
-        if verify_acceptance is None:
-            verify_acceptance = cfg.get("verify_acceptance", False)
-        env_files = entry.env_files or cfg.get("env_files")
-        _link_env_files(worktree_path, work_dir, env_files)
-        _run_setup_cmd(worktree_path, setup_cmd)
+        if not fix_of_job_id:
+            # Written before setup_cmd runs, in case it wants to reference the
+            # reserved port range / db name too (e.g. to pre-seed a database).
+            _write_qtask_env(worktree_path, job_id)
+            _link_env_files(worktree_path, work_dir, env_files)
+            _run_setup_cmd(worktree_path, setup_cmd)
 
         print(f"[bridge] Writing {SPEC_FILENAME}...")
         spec_path = os.path.join(worktree_path, SPEC_FILENAME)
         with open(spec_path, "w") as f:
             f.write(prompt)
 
-        write_ide_settings(worktree_path)
+        if not fix_of_job_id:
+            write_ide_settings(worktree_path)
 
         if streaming:
             _run_streaming(cfg, job_id, branch, worktree_path,
-                            test_cmd=test_cmd, verify_acceptance=verify_acceptance, spec_text=spec_text)
+                            test_cmd=test_cmd, verify_acceptance=verify_acceptance,
+                            spec_text=spec_text, fix=bool(fix_of_job_id))
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
-                              test_cmd=test_cmd, verify_acceptance=verify_acceptance, spec_text=spec_text)
+                              test_cmd=test_cmd, verify_acceptance=verify_acceptance,
+                              spec_text=spec_text, fix=bool(fix_of_job_id))
     except Exception as e:
         # Best-effort: run_streaming/run_interactive already report their
         # own outcome (claude not found, non-zero exit, etc.) via /complete

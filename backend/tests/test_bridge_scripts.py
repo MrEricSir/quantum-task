@@ -1567,6 +1567,68 @@ class TestMakePromptProcfileAwareness:
         assert "collide with anything else already running on this machine." in prompt
 
 
+class TestMakeFixPrompt:
+    """_make_fix_prompt shares _make_agent_prompt's tail (branch/push/env-file/Procfile
+    instructions) with _make_prompt -- only the opening action line differs. These tests
+    focus on that difference; the shared-tail behavior is already covered by
+    TestMakePromptProcfileAwareness for _make_prompt, and _make_agent_prompt is the same
+    function underneath both."""
+
+    def test_opening_line_is_fix_framed_not_feature_framed(self, tmp_path):
+        prompt = agent_core._make_fix_prompt("qtask/1-foo", str(tmp_path))
+        assert "Please apply the specific fixes described in" in prompt
+        assert "not a general invitation to refactor" in prompt
+        assert "Please implement the feature described in" not in prompt
+
+    def test_shares_the_same_tail_as_make_prompt(self, tmp_path):
+        prompt = agent_core._make_fix_prompt("qtask/1-foo", str(tmp_path))
+        assert "Do NOT push to the remote repository" in prompt
+        assert "collide with anything else already running on this machine." in prompt
+
+    def test_still_mentions_procfile_when_present(self, tmp_path):
+        (tmp_path / "Procfile.dev").write_text("web: npm run dev\n")
+        prompt = agent_core._make_fix_prompt("qtask/1-foo", str(tmp_path))
+        assert "Procfile.dev" in prompt
+        assert "web: npm run dev" in prompt
+
+
+class TestDisableRemotePush:
+    """Extracted out of _create_worktree so a fix job (agent_core.py's run_job,
+    fix_of_job_id branch) gets the exact same push-safety property without going through
+    worktree creation. _create_worktree's own existing tests already cover this indirectly;
+    these test the extracted function directly."""
+
+    def _init_repo(self, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+        return tmp_path
+
+    def test_sets_the_sentinel_and_returns_restore_info_for_a_repo_with_no_prior_pushurl(self, tmp_path):
+        repo = self._init_repo(tmp_path)
+        push_url_info = agent_core._disable_remote_push(str(repo))
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"], cwd=repo, capture_output=True, text=True)
+        assert r.stdout.strip() == agent_core.PUSH_DISABLED_SENTINEL
+        assert push_url_info == (False, None)
+
+    def test_preserves_and_restores_an_existing_pushurl(self, tmp_path):
+        repo = self._init_repo(tmp_path)
+        subprocess.run(["git", "config", "remote.origin.pushurl", "git@example.com:real/repo.git"], cwd=repo)
+
+        push_url_info = agent_core._disable_remote_push(str(repo))
+        assert push_url_info == (True, "git@example.com:real/repo.git")
+
+        agent_core._git_teardown(str(repo), push_url_info)
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"], cwd=repo, capture_output=True, text=True)
+        assert r.stdout.strip() == "git@example.com:real/repo.git"
+
+    def test_clears_a_stale_sentinel_from_an_interrupted_previous_run(self, tmp_path, capsys):
+        repo = self._init_repo(tmp_path)
+        subprocess.run(["git", "config", "remote.origin.pushurl", agent_core.PUSH_DISABLED_SENTINEL], cwd=repo)
+
+        push_url_info = agent_core._disable_remote_push(str(repo))
+        assert push_url_info == (False, None)
+        assert "stale push-disable" in capsys.readouterr().out
+
+
 class TestRunProcfile:
     """Real subprocess tests -- matching the rest of this file's "only real
     execution catches real bugs" discipline. Both processes below sleep far
@@ -2532,6 +2594,87 @@ class TestAgentScriptFullFlow:
         worktree_dir = os.path.dirname(os.path.dirname(settings_path))
         subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
                        cwd=scratch_repo, capture_output=True)
+
+    def test_run_job_resumes_existing_worktree_for_a_fix_job(self, scratch_repo, monkeypatch):
+        """A fix job (job["fix_of_job_id"] set) must resume the worktree/branch already on
+        the job payload instead of creating a fresh one -- proves run_job's branch actually
+        takes this path (by making _create_worktree raise if it's called at all, not just
+        trusting the code compiles), that /start is called with the pre-known branch/
+        worktree_path rather than freshly-created ones, that write_ide_settings is skipped
+        (already ran for the original job), and that the wrapper prompt sent to the CLI uses
+        _make_fix_prompt's framing, not _make_prompt's."""
+        ns = self._load_rendered_agent_module()
+
+        def _must_not_be_called(*a, **k):
+            raise AssertionError("_create_worktree must not be called for a fix job")
+        monkeypatch.setitem(ns, "_create_worktree", _must_not_be_called)
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        captured_argv = {}
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                captured_argv["argv"] = cmd
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {
+            "id": 2, "card_id": 84, "card_title": "Fix review feedback",
+            "prompt": "Address these comments...", "target_repo": None,
+            "fix_of_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-fix-login",
+        }
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        start_calls = [c for c in api_calls if c[1] == "/api/bridge/jobs/2/start"]
+        assert start_calls, "job never reached the /start call"
+        assert start_calls[0][2]["branch"] == "qtask/1-fix-login"
+        assert start_calls[0][2]["worktree_path"] == str(scratch_repo)
+
+        assert not os.path.exists(os.path.join(scratch_repo, ".claude", "settings.local.json")), \
+            "write_ide_settings should be skipped for a fix job -- it already ran for the original job"
+
+        assert captured_argv.get("argv"), "claude was never invoked"
+        assert "apply the specific fixes" in captured_argv["argv"][1]
+        assert "implement the feature" not in captured_argv["argv"][1]
+
+        assert any(c[1] == "/api/bridge/jobs/2/complete" for c in api_calls), \
+            "job never reached /complete"
+
+    def test_run_job_fix_job_errors_cleanly_if_worktree_was_already_cleaned_up(self, tmp_path, monkeypatch):
+        """Per the resolved design question in CLAUDE_CODE_INTEGRATION.md: if --cleanup
+        already removed the worktree, error out with a clear message rather than trying to
+        auto-recreate one."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        missing_path = str(tmp_path / "does-not-exist")
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {
+            "id": 2, "card_id": 84, "card_title": "Fix review feedback",
+            "prompt": "Address these comments...", "target_repo": None,
+            "fix_of_job_id": 1, "worktree_path": missing_path, "branch_name": "qtask/1-fix-login",
+        }
+
+        ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+
+        error_calls = [c for c in api_calls if c[1] == "/api/bridge/jobs/2/error"]
+        assert error_calls, "job never reached /error"
+        assert "already have been removed via --cleanup" in error_calls[0][2]["result"]
+        assert not any(c[1] == "/api/bridge/jobs/2/start" for c in api_calls), \
+            "must not call /start for a worktree that was never actually resumed"
 
     def test_run_job_streaming_with_aider_selected_passes_the_expected_flags(self, scratch_repo, monkeypatch):
         """streaming_command__aider is what --watch/--tag/--review actually launch --

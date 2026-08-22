@@ -488,6 +488,43 @@
   text-decoration: underline;
 }
 
+.cdp-gh-review-feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cdp-gh-review-feedback-fix {
+  background: rgba(63, 185, 80, 0.12);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+  color: #3fb950;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cdp-gh-review-feedback-fix:hover:not(:disabled) {
+  background: rgba(63, 185, 80, 0.2);
+}
+
+.cdp-gh-review-feedback-fix:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cdp-gh-review-feedback-error {
+  font-size: 11px;
+  color: #f85149;
+}
+
+.cdp-gh-comment-select {
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
 .cdp-gh-comment--dismissed {
   opacity: 0.5;
 }

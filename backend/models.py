@@ -457,6 +457,13 @@ class BridgeJob(Base):
     output          = Column(Text, nullable=True)   # rolling last ~200 lines of Claude Code stdout
     created_at      = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at      = Column(DateTime, nullable=True)
+    # Set only for a "fix" job (CodeRabbit/review-comment feedback applied to an existing
+    # worktree, see CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan) --
+    # points at the original job whose branch_name/worktree_path this one resumes rather
+    # than creating fresh, per agent_core.py's run_job(). SET NULL (not CASCADE): deleting
+    # the original job shouldn't cascade-delete a fix job that already ran against it.
+    fix_of_job_id   = Column(Integer, ForeignKey("bridge_jobs.id", ondelete="SET NULL"), nullable=True)
+    fix_comment_ids = Column(Text, nullable=True)  # JSON list of EngineeringItemComment.id
 
     card = relationship("Card")
 

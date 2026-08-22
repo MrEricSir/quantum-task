@@ -2881,6 +2881,82 @@ test.describe('card detail panel — github and spec', () => {
       .not.toHaveClass(/cdp-gh-comment--dismissed/)
   })
 
+  test('checkboxes appear only on non-dismissed review comments', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await expect(comment.locator('.cdp-gh-comment-select')).toBeVisible()
+
+    await comment.locator('.cdp-gh-comment-dismiss').click()
+    await page.getByRole('button', { name: /show 1 dismissed/i }).click()
+    const dismissedComment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await expect(dismissedComment).toHaveClass(/cdp-gh-comment--dismissed/)
+    await expect(dismissedComment.locator('.cdp-gh-comment-select')).toHaveCount(0)
+  })
+
+  test('selecting review comments shows a Fix N selected button that updates with the count', async ({ page }) => {
+    await expect(page.locator('.cdp-gh-review-feedback-fix')).toHaveCount(0)
+
+    const first = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await first.locator('.cdp-gh-comment-select').check()
+    await expect(page.locator('.cdp-gh-review-feedback-fix')).toContainText('Fix 1 selected')
+
+    const second = page.locator('.cdp-gh-comment', { hasText: 'empty-token case' })
+    await second.locator('.cdp-gh-comment-select').check()
+    await expect(page.locator('.cdp-gh-review-feedback-fix')).toContainText('Fix 2 selected')
+
+    await first.locator('.cdp-gh-comment-select').uncheck()
+    await expect(page.locator('.cdp-gh-review-feedback-fix')).toContainText('Fix 1 selected')
+  })
+
+  test('dismissing a selected comment removes it from the fix selection', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await comment.locator('.cdp-gh-comment-select').check()
+    await expect(page.locator('.cdp-gh-review-feedback-fix')).toContainText('Fix 1 selected')
+
+    await comment.locator('.cdp-gh-comment-dismiss').click()
+    await expect(page.locator('.cdp-gh-review-feedback-fix')).toHaveCount(0)
+  })
+
+  test('requesting a fix with no resumable bridge job shows an inline error', async ({ page }) => {
+    // beforeEach already mocks the latest bridge job as null
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await comment.locator('.cdp-gh-comment-select').check()
+    await page.locator('.cdp-gh-review-feedback-fix').click()
+    await expect(page.locator('.cdp-gh-review-feedback-error')).toContainText(/run the assistant/i)
+  })
+
+  test('requesting a fix with a resumable job queues it and opens the Code tab with status', async ({ page }) => {
+    // Stateful: the "latest job" route reflects the fix job once queued, mirroring the
+    // real fetch -> queue -> refetch loop that drives AssistModal's Code tab into view.
+    let latestJob = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job: latestJob } }))
+    let fixRequestBody = null
+    await page.route('**/api/bridge/jobs/5/fix', async r => {
+      fixRequestBody = r.request().postDataJSON()
+      latestJob = {
+        id: 6, card_id: 99, status: 'pending', target_repo: 'owner/repo',
+        branch_name: 'qtask/99-oauth-login', agent_name: null,
+        worktree_path: '/tmp/worktrees/99', result: null, output: null,
+        spec_snapshot: null, fix_of_job_id: 5, fix_comment_ids: [2],
+        created_at: '2026-06-03T10:00:00Z', updated_at: null,
+      }
+      return r.fulfill({ json: latestJob })
+    })
+
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await comment.locator('.cdp-gh-comment-select').check()
+    await page.locator('.cdp-gh-review-feedback-fix').click()
+
+    await expect(page.locator('.assist-spec-tab')).toBeVisible()
+    await expect(page.locator('.cdp-bridge-label')).toContainText(/waiting for agent to apply fixes/i)
+    expect(fixRequestBody).toEqual({ comment_ids: [2] })
+  })
+
   test('Code tab in Assistant shows spec', async ({ page }) => {
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()

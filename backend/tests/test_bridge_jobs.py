@@ -111,6 +111,20 @@ def _make_eng_item(external_id, title="Issue", body="Issue body", number=1, repo
         return item.id
 
 
+def _make_comment(item_id, github_id, author="coderabbitai[bot]", body="Consider a set here.",
+                   comment_type="pr_review_comment", diff_path="src/a.py", diff_line=10):
+    with TestSession() as db:
+        comment = models.EngineeringItemComment(
+            item_id=item_id, github_id=github_id, author=author, body=body,
+            comment_type=comment_type, diff_path=diff_path, diff_line=diff_line,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        )
+        db.add(comment)
+        db.commit()
+        db.refresh(comment)
+        return comment.id
+
+
 # ── POST /api/bridge/jobs ─────────────────────────────────────────────────────
 
 class TestCreateBridgeJob:
@@ -435,6 +449,98 @@ class TestStartJob:
         res = client.post("/api/bridge/jobs/9999/start",
                           json={"branch": "qtask/1-foo", "agent": "x"})
         assert res.status_code == 404
+
+
+# ── POST /api/bridge/jobs/{id}/fix ───────────────────────────────────────────
+
+class TestQueueFixJob:
+
+    def _make_started_job(self, client, card_id=None, external_id=None):
+        """A job that's already run to completion and recorded a resumable worktree -- status
+        "done", not "pending", so it doesn't shadow a later fix job in next/pending's query
+        (oldest pending job wins there, and this one was created first)."""
+        card_id = card_id or _make_card(spec="s", external_id=external_id)
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/7-fix-login", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-fix-login",
+        })
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+        return job_id
+
+    def test_queues_a_fix_job_resuming_the_original_worktree(self, client):
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(item_id, github_id=501)
+        job_id = self._make_started_job(client, external_id="github:owner/repo/pull/7")
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["fix_of_job_id"] == job_id
+        assert data["fix_comment_ids"] == [comment_id]
+        assert data["status"] == "pending"
+        # Copied from the original job at creation time, not left null for /start to fill in.
+        assert data["branch_name"] == "qtask/7-fix-login"
+        assert data["worktree_path"] == "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-fix-login"
+
+    def test_fix_prompt_includes_comment_body_and_diff_position(self, client):
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(
+            item_id, github_id=502, author="coderabbitai[bot]",
+            body="Use a set for O(1) lookups.", diff_path="src/auth.js", diff_line=42,
+        )
+        job_id = self._make_started_job(client, external_id="github:owner/repo/pull/7")
+
+        fix_job_id = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]}).json()["id"]
+        # prompt_snapshot isn't exposed on the plain job response -- fetch the next pending
+        # job instead, matching how the bridge itself receives the actual prompt content.
+        pending = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert pending["id"] == fix_job_id
+        assert "Use a set for O(1) lookups." in pending["prompt"]
+        assert "src/auth.js:42" in pending["prompt"]
+        assert "coderabbitai[bot]" in pending["prompt"]
+        assert "not a general invitation to refactor" in pending["prompt"]
+
+    def test_404_for_missing_original_job(self, client):
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(item_id, github_id=503)
+        res = client.post("/api/bridge/jobs/99999/fix", json={"comment_ids": [comment_id]})
+        assert res.status_code == 404
+
+    def test_400_when_original_job_has_no_worktree(self, client):
+        """A job that never ran (still pending, no /start call) has nothing to resume."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(item_id, github_id=504)
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]})
+        assert res.status_code == 400
+
+    def test_400_for_empty_comment_ids(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": []})
+        assert res.status_code == 400
+
+    def test_404_for_unknown_comment_id(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [999999]})
+        assert res.status_code == 404
+
+    def test_multiple_comments_all_included_in_prompt(self, client):
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        c1 = _make_comment(item_id, github_id=505, body="First fix needed.", diff_path="a.py", diff_line=1)
+        c2 = _make_comment(item_id, github_id=506, author="a-human-reviewer",
+                            body="Second fix needed.", diff_path="b.py", diff_line=2)
+        job_id = self._make_started_job(client, external_id="github:owner/repo/pull/7")
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [c1, c2]})
+        assert res.json()["fix_comment_ids"] == [c1, c2]
+
+        pending = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert "First fix needed." in pending["prompt"]
+        assert "Second fix needed." in pending["prompt"]
+        assert "a-human-reviewer" in pending["prompt"]
 
 
 # ── POST /api/bridge/jobs/{id}/output ────────────────────────────────────────

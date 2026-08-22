@@ -19,9 +19,9 @@ function renderMarkdown(text) {
 
 export default function AssistModal({
   open, onClose, task, allTags = [], onBreakdown, onOutputSaved,
-  inline = false, onSpecSaved,
+  inline = false, onSpecSaved, initialTab = 'assist',
 }) {
-  const [mode, setMode] = useState('assist')  // 'assist' | 'breakdown' | 'code'
+  const [mode, setMode] = useState(initialTab)  // 'assist' | 'breakdown' | 'code'
 
   // Thread state
   const [messages,  setMessages]  = useState([])   // [{role, content, ts}]
@@ -73,7 +73,7 @@ export default function AssistModal({
 
   useEffect(() => {
     if (!open || !task?.id) return
-    setMode('assist')
+    setMode(initialTab)
     setInput(''); setThreadErr(''); setSearching(false); setSending(false); setStreaming(false)
     setShowDesc(false); setShowContext(false); setSavingOutput(null); setCopied(null)
     setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
@@ -94,7 +94,7 @@ export default function AssistModal({
     if (task.spec) {
       getLatestBridgeJob(task.id).then(({ job }) => setBridgeJob(job)).catch(() => {})
     }
-  }, [open, task?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, task?.id, initialTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -676,8 +676,8 @@ export default function AssistModal({
                   <span className="cdp-bridge-dot" />
                   <div className="cdp-bridge-status-body">
                     <span className="cdp-bridge-label">
-                      {bridgeJob.status === 'pending'  && 'Queued — waiting for agent…'}
-                      {bridgeJob.status === 'running'  && 'Claude Code running…'}
+                      {bridgeJob.status === 'pending'  && (bridgeJob.fix_of_job_id ? 'Queued — waiting for agent to apply fixes…' : 'Queued — waiting for agent…')}
+                      {bridgeJob.status === 'running'  && (bridgeJob.fix_of_job_id ? 'Applying fixes…' : 'Claude Code running…')}
                       {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
                       {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
                       {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}

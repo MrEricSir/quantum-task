@@ -7,6 +7,7 @@ import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import { parseGitHubUrl } from '../../lib/github'
+import { getLatestBridgeJob, queueFixJob } from '../../api'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -58,6 +59,10 @@ export default function CardDetailPanel({
   const [ghRefreshing, setGhRefreshing] = useState(false)
   const [showDismissedFeedback, setShowDismissedFeedback] = useState(false)
   const [dismissingId, setDismissingId] = useState(null)
+  const [selectedFixIds, setSelectedFixIds] = useState(() => new Set())
+  const [fixQueuing, setFixQueuing] = useState(false)
+  const [fixError, setFixError] = useState('')
+  const [assistInitialTab, setAssistInitialTab] = useState('assist')
 
   // ── Reset when a different card is opened or initialMode changes ──────────
   useEffect(() => {
@@ -68,6 +73,10 @@ export default function CardDetailPanel({
     setGhRefreshing(false)
     setShowDismissedFeedback(false)
     setEditError('')
+    setSelectedFixIds(new Set())
+    setFixQueuing(false)
+    setFixError('')
+    setAssistInitialTab('assist')
   }, [card?.id, initialMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Populate edit form fields whenever entering edit/new mode
@@ -165,8 +174,45 @@ export default function CardDetailPanel({
     setDismissingId(commentId)
     try {
       await onDismissComment?.(commentId, dismissed)
+      if (dismissed) {
+        setSelectedFixIds(prev => {
+          if (!prev.has(commentId)) return prev
+          const next = new Set(prev)
+          next.delete(commentId)
+          return next
+        })
+      }
     } finally {
       setDismissingId(null)
+    }
+  }
+
+  const handleToggleFixSelect = (commentId) => {
+    setSelectedFixIds(prev => {
+      const next = new Set(prev)
+      if (next.has(commentId)) next.delete(commentId)
+      else next.add(commentId)
+      return next
+    })
+  }
+
+  const handleQueueFix = async () => {
+    if (!card?.id || selectedFixIds.size === 0 || fixQueuing) return
+    setFixQueuing(true); setFixError('')
+    try {
+      const { job: latestJob } = await getLatestBridgeJob(card.id)
+      if (!latestJob || !latestJob.worktree_path) {
+        setFixError('Run the assistant once before requesting fixes.')
+        return
+      }
+      await queueFixJob(latestJob.id, Array.from(selectedFixIds))
+      setSelectedFixIds(new Set())
+      setAssistInitialTab('code')
+      setMode('assist')
+    } catch (e) {
+      setFixError(e.message || 'Failed to queue fix job')
+    } finally {
+      setFixQueuing(false)
     }
   }
 
@@ -280,22 +326,44 @@ export default function CardDetailPanel({
                         <div className="cdp-gh-review-feedback">
                           <div className="cdp-gh-review-feedback-header">
                             <span className="cdp-gh-review-feedback-title">Review Feedback</span>
-                            {dismissedReviewCount > 0 && (
-                              <button
-                                type="button"
-                                className="cdp-gh-review-feedback-toggle"
-                                onClick={() => setShowDismissedFeedback(v => !v)}
-                              >
-                                {showDismissedFeedback ? 'Hide dismissed' : `Show ${dismissedReviewCount} dismissed`}
-                              </button>
-                            )}
+                            <div className="cdp-gh-review-feedback-actions">
+                              {selectedFixIds.size > 0 && (
+                                <button
+                                  type="button"
+                                  className="cdp-gh-review-feedback-fix"
+                                  onClick={handleQueueFix}
+                                  disabled={fixQueuing}
+                                >
+                                  {fixQueuing ? 'Queuing…' : `Fix ${selectedFixIds.size} selected`}
+                                </button>
+                              )}
+                              {dismissedReviewCount > 0 && (
+                                <button
+                                  type="button"
+                                  className="cdp-gh-review-feedback-toggle"
+                                  onClick={() => setShowDismissedFeedback(v => !v)}
+                                >
+                                  {showDismissedFeedback ? 'Hide dismissed' : `Show ${dismissedReviewCount} dismissed`}
+                                </button>
+                              )}
+                            </div>
                           </div>
+                          {fixError && <div className="cdp-gh-review-feedback-error">{fixError}</div>}
                           {visibleReviewComments.map(c => (
                             <div
                               key={c.id}
                               className={`cdp-gh-comment${c.dismissed ? ' cdp-gh-comment--dismissed' : ''}`}
                             >
                               <div className="cdp-gh-comment-meta">
+                                {!c.dismissed && (
+                                  <input
+                                    type="checkbox"
+                                    className="cdp-gh-comment-select"
+                                    checked={selectedFixIds.has(c.id)}
+                                    onChange={() => handleToggleFixSelect(c.id)}
+                                    aria-label="Select for fix"
+                                  />
+                                )}
                                 {c.author === 'coderabbitai[bot]' && (
                                   <span className="cdp-gh-comment-badge">CodeRabbit</span>
                                 )}
@@ -442,7 +510,7 @@ export default function CardDetailPanel({
                   Archive
                 </button>
               )}
-              <button className="cdp-btn cdp-btn--assist-footer" onClick={() => setMode('assist')}>
+              <button className="cdp-btn cdp-btn--assist-footer" onClick={() => { setAssistInitialTab('assist'); setMode('assist') }}>
                 ✦ {savedOutput ? 'Assistant' : 'Assist'}
               </button>
               <button className="cdp-btn cdp-btn--edit" onClick={() => setMode('edit')}>
@@ -502,6 +570,7 @@ export default function CardDetailPanel({
             onOutputSaved={(output) => setSavedOutput(output)}
             onSpecSaved={(spec) => onSave?.(card.id, { spec })}
             inline
+            initialTab={assistInitialTab}
           />
         )}
       </aside>

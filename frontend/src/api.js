@@ -772,6 +772,19 @@ export async function dismissEngineeringComment(commentId, dismissed) {
   return res.json()
 }
 
+export async function queueFixJob(jobId, commentIds) {
+  const res = await apiFetch(`/api/bridge/jobs/${jobId}/fix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment_ids: commentIds }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to queue fix job')
+  }
+  return res.json()
+}
+
 export async function fetchContextFrom(cardId, source, { section, tagId } = {}) {
   const res = await apiFetch(`/api/cards/${cardId}/thread/context-from`, {
     method: 'POST',
