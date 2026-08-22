@@ -762,6 +762,16 @@ export async function refreshEngineeringItem(itemId) {
   return res.json()
 }
 
+export async function dismissEngineeringComment(commentId, dismissed) {
+  const res = await apiFetch(`/api/engineering/comments/${commentId}/dismiss`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dismissed }),
+  })
+  if (!res.ok) throw new Error('Failed to update comment')
+  return res.json()
+}
+
 export async function fetchContextFrom(cardId, source, { section, tagId } = {}) {
   const res = await apiFetch(`/api/cards/${cardId}/thread/context-from`, {
     method: 'POST',

@@ -57,6 +57,7 @@ import {
   createWorkoutEntry,
   logMood,
   refreshEngineeringItem,
+  dismissEngineeringComment,
   fetchNavPreferences,
 } from './api'
 import './App.css'
@@ -992,6 +993,10 @@ export default function App() {
           onBreakdown={handleBreakdownCommit}
           onRefreshGithubItem={async (itemId) => {
             await refreshEngineeringItem(itemId)
+            await refreshEngineeringItems()
+          }}
+          onDismissComment={async (commentId, dismissed) => {
+            await dismissEngineeringComment(commentId, dismissed)
             await refreshEngineeringItems()
           }}
         />

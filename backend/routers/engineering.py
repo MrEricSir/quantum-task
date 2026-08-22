@@ -19,6 +19,10 @@ class _EngineeringConfig(BaseModel):
     repos: List[str] = []
 
 
+class _CommentDismiss(BaseModel):
+    dismissed: bool
+
+
 @router.get("/api/engineering/config")
 def get_engineering_config(db: Session = Depends(get_db)):
     token, repos = github_sync.get_config(db)
@@ -138,3 +142,18 @@ def refresh_engineering_item(item_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(item)
     return schemas.EngineeringItem.model_validate(item)
+
+
+@router.patch("/api/engineering/comments/{comment_id}/dismiss", response_model=schemas.EngineeringItemComment)
+def set_comment_dismissed(comment_id: int, body: _CommentDismiss, db: Session = Depends(get_db)):
+    """Mark a PR review comment as seen/handled (or clear that) so it stops resurfacing in
+    the curation list on every poll -- purely local state, never sent to GitHub. See
+    models.EngineeringItemComment.dismissed's docstring for why re-syncing never resets it."""
+    comment = db.query(models.EngineeringItemComment).filter_by(id=comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    comment.dismissed = body.dismissed
+    comment.dismissed_at = datetime.now(timezone.utc) if body.dismissed else None
+    db.commit()
+    db.refresh(comment)
+    return comment

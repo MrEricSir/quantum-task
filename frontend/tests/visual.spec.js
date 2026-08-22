@@ -2781,7 +2781,23 @@ test.describe('card detail panel — github and spec', () => {
   test.beforeEach(async ({ page }) => {
     // Override cards and engineering items for these tests
     await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, GH_CARD] }))
-    await page.route('**/api/engineering/items', r => r.fulfill({ json: GH_ENG_ITEMS }))
+    // Stateful: a dismiss PATCH flips this set, and the items route reflects it on the
+    // next refetch -- lets tests exercise the real dismiss -> refetch -> re-render loop
+    // instead of just asserting the PATCH request shape.
+    const dismissedIds = new Set()
+    await page.route('**/api/engineering/items', r => r.fulfill({
+      json: GH_ENG_ITEMS.map(item => ({
+        ...item,
+        comments: item.comments.map(c => ({ ...c, dismissed: dismissedIds.has(c.id) })),
+      })),
+    }))
+    await page.route('**/api/engineering/comments/*/dismiss', async r => {
+      const id = Number(r.request().url().match(/comments\/(\d+)\/dismiss/)[1])
+      const { dismissed } = r.request().postDataJSON()
+      if (dismissed) dismissedIds.add(id)
+      else dismissedIds.delete(id)
+      return r.fulfill({ json: { id, dismissed, dismissed_at: dismissed ? '2026-06-01T12:00:00Z' : null } })
+    })
     await page.route('**/api/cards/*/spec/generate', r =>
       r.fulfill({ json: { spec: '## Problem Statement\nGenerated spec content.' } }))
     await page.route('**/api/bridge/jobs', r =>
@@ -2829,6 +2845,40 @@ test.describe('card detail panel — github and spec', () => {
     const comment = page.locator('.cdp-gh-comment', { hasText: 'empty-token case' })
     await expect(comment.locator('.cdp-gh-comment-badge')).toHaveCount(0)
     await expect(comment.locator('.cdp-gh-comment-position')).toHaveText('src/auth.js:58')
+  })
+
+  test('review feedback and conversation comments render in separate sections', async ({ page }) => {
+    await expect(page.locator('.cdp-gh-review-feedback-title')).toHaveText('Review Feedback')
+    await expect(page.locator('.cdp-gh-review-feedback .cdp-gh-comment')).toHaveCount(2)
+    await expect(page.locator('.cdp-gh-comments .cdp-gh-comment')).toHaveCount(1)
+    await expect(page.locator('.cdp-gh-comments .cdp-gh-comment')).toContainText('PKCE flow')
+  })
+
+  test('dismissing a review comment hides it and shows a restore toggle', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await comment.locator('.cdp-gh-comment-dismiss').click()
+
+    await expect(page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })).toHaveCount(0)
+    const toggle = page.getByRole('button', { name: /show 1 dismissed/i })
+    await expect(toggle).toBeVisible()
+
+    await toggle.click()
+    const restored = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await expect(restored).toBeVisible()
+    await expect(restored).toHaveClass(/cdp-gh-comment--dismissed/)
+  })
+
+  test('restoring a dismissed comment removes the dismissed styling', async ({ page }) => {
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await comment.locator('.cdp-gh-comment-dismiss').click()
+    await page.getByRole('button', { name: /show 1 dismissed/i }).click()
+
+    const dismissedComment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await dismissedComment.locator('.cdp-gh-comment-dismiss').click()
+
+    await expect(page.locator('.cdp-gh-review-feedback-toggle')).toHaveCount(0)
+    await expect(page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' }))
+      .not.toHaveClass(/cdp-gh-comment--dismissed/)
   })
 
   test('Code tab in Assistant shows spec', async ({ page }) => {

@@ -15,6 +15,8 @@ class EngineeringItemComment(BaseModel):
     comment_type: str = "issue_comment"
     diff_path: Optional[str] = None
     diff_line: Optional[int] = None
+    dismissed: bool = False
+    dismissed_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

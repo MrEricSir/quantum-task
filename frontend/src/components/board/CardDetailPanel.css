@@ -451,6 +451,74 @@
   color: #8b949e;
 }
 
+/* Review feedback (CodeRabbit + human PR review comments, dismissible) */
+.cdp-gh-review-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid #21262d;
+  padding-top: 10px;
+}
+
+.cdp-gh-review-feedback-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cdp-gh-review-feedback-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8b949e;
+}
+
+.cdp-gh-review-feedback-toggle {
+  background: none;
+  border: none;
+  color: #58a6ff;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cdp-gh-review-feedback-toggle:hover {
+  text-decoration: underline;
+}
+
+.cdp-gh-comment--dismissed {
+  opacity: 0.5;
+}
+
+.cdp-gh-comment-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #8b949e;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.cdp-gh-comment-dismiss:hover:not(:disabled) {
+  background: #21262d;
+  color: #e6edf3;
+}
+
+.cdp-gh-comment-dismiss:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ── Spec panel ── */
 .cdp-spec-header {
   display: flex;

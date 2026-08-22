@@ -28,7 +28,7 @@ from schemas.jobs import (
 )
 from schemas.withings import WithingsStatus, WithingsMeasurementOut, WithingsHealthData
 from schemas.health import HealthMeasurementCreate
-from schemas.engineering import EngineeringItem
+from schemas.engineering import EngineeringItem, EngineeringItemComment
 
 # Legacy Note schemas — kept for any lingering imports
 from pydantic import BaseModel
@@ -82,7 +82,7 @@ __all__ = [
     # health
     "HealthMeasurementCreate",
     # engineering
-    "EngineeringItem",
+    "EngineeringItem", "EngineeringItemComment",
     # legacy
     "NoteCreate", "NoteUpdate", "Note",
 ]

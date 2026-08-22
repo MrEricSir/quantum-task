@@ -122,3 +122,84 @@ class TestRefreshEngineeringItem:
 
         assert res.status_code == 200
         assert res.json()["title"] == "New title"
+
+
+def _make_comment(item_id, github_id=1, comment_type="pr_review_comment", **overrides):
+    with TestingSessionLocal() as db:
+        comment = models.EngineeringItemComment(
+            item_id=item_id, github_id=github_id, author="coderabbitai[bot]",
+            body="Consider using a set here.", comment_type=comment_type,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            **overrides,
+        )
+        db.add(comment)
+        db.commit()
+        db.refresh(comment)
+        return comment.id
+
+
+class TestDismissComment:
+
+    def test_dismisses_a_comment(self, client):
+        item_id = _make_item()
+        comment_id = _make_comment(item_id)
+
+        res = client.patch(f"/api/engineering/comments/{comment_id}/dismiss", json={"dismissed": True})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["dismissed"] is True
+        assert body["dismissed_at"] is not None
+
+        with TestingSessionLocal() as db:
+            c = db.query(models.EngineeringItemComment).filter_by(id=comment_id).first()
+            assert c.dismissed is True
+            assert c.dismissed_at is not None
+
+    def test_undismisses_a_comment(self, client):
+        item_id = _make_item()
+        comment_id = _make_comment(item_id, dismissed=True, dismissed_at=datetime.now(timezone.utc))
+
+        res = client.patch(f"/api/engineering/comments/{comment_id}/dismiss", json={"dismissed": False})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["dismissed"] is False
+        assert body["dismissed_at"] is None
+
+        with TestingSessionLocal() as db:
+            c = db.query(models.EngineeringItemComment).filter_by(id=comment_id).first()
+            assert c.dismissed is False
+            assert c.dismissed_at is None
+
+    def test_404_for_missing_comment(self, client):
+        res = client.patch("/api/engineering/comments/999999/dismiss", json={"dismissed": True})
+        assert res.status_code == 404
+
+    def test_resync_does_not_undismiss(self, client):
+        """github_sync.py's upsert must never touch dismissed/dismissed_at on an existing
+        row -- re-fetching an already-dismissed comment (even with an edited body) must
+        leave it dismissed."""
+        import github_sync
+        item_id = _make_item(external_id="github:owner/repo/pull/1")
+        comment_id = _make_comment(item_id, github_id=55)
+
+        client.patch(f"/api/engineering/comments/{comment_id}/dismiss", json={"dismissed": True})
+
+        with TestingSessionLocal() as db:
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            item.item_type = "pr"
+            db.commit()
+            item = db.query(models.EngineeringItem).filter_by(id=item_id).first()
+            edited = [{
+                "id": 55, "body": "Edited on GitHub", "user": {"login": "coderabbitai[bot]"},
+                "path": "a.py", "line": 1,
+                "created_at": "2026-06-20T10:00:00Z", "updated_at": "2026-06-20T11:00:00Z",
+            }]
+            with patch("github_sync._fetch_comments", return_value=[]), \
+                 patch("github_sync._fetch_review_comments", return_value=edited):
+                github_sync._sync_comments(db, item, token="fake")
+            db.commit()
+
+        with TestingSessionLocal() as db:
+            c = db.query(models.EngineeringItemComment).filter_by(id=comment_id).first()
+            assert c.body == "Edited on GitHub"
+            assert c.dismissed is True, "re-syncing must not silently undismiss a comment"

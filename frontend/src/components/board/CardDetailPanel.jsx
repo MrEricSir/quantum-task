@@ -32,6 +32,7 @@ export default function CardDetailPanel({
   onEdit,    // kept for external callers (e.g. Archive)
   onBreakdown,
   onRefreshGithubItem,
+  onDismissComment,
 }) {
   const [mode, setMode] = useState(initialMode)
 
@@ -55,6 +56,8 @@ export default function CardDetailPanel({
   // ── GitHub context panel ──────────────────────────────────────────────────
   const [ghExpanded,  setGhExpanded]  = useState(true)
   const [ghRefreshing, setGhRefreshing] = useState(false)
+  const [showDismissedFeedback, setShowDismissedFeedback] = useState(false)
+  const [dismissingId, setDismissingId] = useState(null)
 
   // ── Reset when a different card is opened or initialMode changes ──────────
   useEffect(() => {
@@ -63,6 +66,7 @@ export default function CardDetailPanel({
     setShowFullDesc(false)
     setGhExpanded(true)
     setGhRefreshing(false)
+    setShowDismissedFeedback(false)
     setEditError('')
   }, [card?.id, initialMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -155,6 +159,22 @@ export default function CardDetailPanel({
       setGhRefreshing(false)
     }
   }
+
+  const handleDismissComment = async (commentId, dismissed) => {
+    if (dismissingId) return
+    setDismissingId(commentId)
+    try {
+      await onDismissComment?.(commentId, dismissed)
+    } finally {
+      setDismissingId(null)
+    }
+  }
+
+  const allComments = engItem?.comments ?? []
+  const issueComments = allComments.filter(c => c.comment_type !== 'pr_review_comment')
+  const reviewComments = allComments.filter(c => c.comment_type === 'pr_review_comment')
+  const dismissedReviewCount = reviewComments.filter(c => c.dismissed).length
+  const visibleReviewComments = reviewComments.filter(c => showDismissedFeedback || !c.dismissed)
 
   // ── Header ────────────────────────────────────────────────────────────────
   const headerTitle =
@@ -256,10 +276,25 @@ export default function CardDetailPanel({
                         <div className="cdp-gh-empty">No description.</div>
                       )}
 
-                      {(engItem.comments ?? []).length > 0 && (
-                        <div className="cdp-gh-comments">
-                          {(engItem.comments ?? []).map(c => (
-                            <div key={c.id} className="cdp-gh-comment">
+                      {reviewComments.length > 0 && (
+                        <div className="cdp-gh-review-feedback">
+                          <div className="cdp-gh-review-feedback-header">
+                            <span className="cdp-gh-review-feedback-title">Review Feedback</span>
+                            {dismissedReviewCount > 0 && (
+                              <button
+                                type="button"
+                                className="cdp-gh-review-feedback-toggle"
+                                onClick={() => setShowDismissedFeedback(v => !v)}
+                              >
+                                {showDismissedFeedback ? 'Hide dismissed' : `Show ${dismissedReviewCount} dismissed`}
+                              </button>
+                            )}
+                          </div>
+                          {visibleReviewComments.map(c => (
+                            <div
+                              key={c.id}
+                              className={`cdp-gh-comment${c.dismissed ? ' cdp-gh-comment--dismissed' : ''}`}
+                            >
                               <div className="cdp-gh-comment-meta">
                                 {c.author === 'coderabbitai[bot]' && (
                                   <span className="cdp-gh-comment-badge">CodeRabbit</span>
@@ -270,12 +305,43 @@ export default function CardDetailPanel({
                                     month: 'short', day: 'numeric', year: 'numeric',
                                   })}
                                 </span>
+                                <button
+                                  type="button"
+                                  className="cdp-gh-comment-dismiss"
+                                  onClick={() => handleDismissComment(c.id, !c.dismissed)}
+                                  disabled={dismissingId === c.id}
+                                  title={c.dismissed ? 'Restore' : 'Dismiss'}
+                                  aria-label={c.dismissed ? 'Restore comment' : 'Dismiss comment'}
+                                >
+                                  {c.dismissed ? '↺' : '✕'}
+                                </button>
                               </div>
                               {c.diff_path && (
                                 <span className="cdp-gh-comment-position">
                                   {c.diff_path}{c.diff_line != null ? `:${c.diff_line}` : ''}
                                 </span>
                               )}
+                              <div
+                                className="cdp-gh-markdown"
+                                dangerouslySetInnerHTML={{ __html: renderMarkdown(c.body) }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {issueComments.length > 0 && (
+                        <div className="cdp-gh-comments">
+                          {issueComments.map(c => (
+                            <div key={c.id} className="cdp-gh-comment">
+                              <div className="cdp-gh-comment-meta">
+                                <span className="cdp-gh-comment-author">{c.author}</span>
+                                <span className="cdp-gh-comment-date">
+                                  {new Date(c.created_at).toLocaleDateString(undefined, {
+                                    month: 'short', day: 'numeric', year: 'numeric',
+                                  })}
+                                </span>
+                              </div>
                               <div
                                 className="cdp-gh-markdown"
                                 dangerouslySetInnerHTML={{ __html: renderMarkdown(c.body) }}

@@ -429,6 +429,13 @@ class EngineeringItemComment(Base):
     comment_type = Column(String, nullable=False, default="issue_comment")
     diff_path    = Column(String, nullable=True)   # file path; pr_review_comment only
     diff_line    = Column(Integer, nullable=True)  # line number; pr_review_comment only
+    # A user-local "I've seen/handled this, stop showing it" flag -- purely local state,
+    # never synced to or affected by GitHub. github_sync.py's upsert only ever updates
+    # author/body/updated_at/diff_path/diff_line on an existing row, never these two, so
+    # re-syncing an already-dismissed comment (unchanged or edited on GitHub) never
+    # un-dismisses it.
+    dismissed    = Column(Boolean, nullable=False, default=False)
+    dismissed_at = Column(DateTime, nullable=True)
 
     item = relationship("EngineeringItem", back_populates="comments")
 
