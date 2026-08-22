@@ -1845,7 +1845,18 @@ def cmd_review(cfg, target):
     session (same worktree) with the review's own findings handed back as
     context, so applying them doesn't require the user to re-explain what
     was just found in a separate, context-free session. Still opt-in --
-    declining leaves the worktree untouched, same as today."""
+    declining leaves the worktree untouched, same as today.
+
+    Disables remote push for the duration (review pass AND the apply
+    follow-up), same as run_job -- by the time you run --review, the
+    ORIGINAL job's own _git_teardown has almost always already restored
+    push (that's the normal "job finished, now go check it" sequence this
+    command exists for), so without this the apply-changes follow-up would
+    launch a real, file-writing coding agent session with push fully
+    enabled. Covers the review pass too, not just the follow-up -- same
+    "don't just trust the prompt" reasoning _disable_remote_push exists for
+    everywhere else, even though the review prompt itself already says
+    read-only."""
     resolved = _resolve_worktree_target(cfg, target)
     if resolved is None:
         return
@@ -1855,46 +1866,50 @@ def cmd_review(cfg, target):
     spec_text, verification_text = _fetch_job_context_for_branch(cfg, branch)
     prompt = _make_review_prompt(spec_text, verification_text)
 
-    print("[bridge] Reviewing (read-only)...\n")
+    push_url_info = _disable_remote_push(work_dir)
     try:
-        proc = subprocess.Popen(
-            streaming_command(prompt), cwd=worktree_path,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-        )
-    except FileNotFoundError:
-        print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
-        print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
-        return
+        print("[bridge] Reviewing (read-only)...\n")
+        try:
+            proc = subprocess.Popen(
+                streaming_command(prompt), cwd=worktree_path,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+            )
+        except FileNotFoundError:
+            print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
+            print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
+            return
 
-    output_lines = []
-    for line in proc.stdout:
-        print(line.rstrip("\n"))
-        output_lines.append(line.rstrip("\n"))
-    proc.wait()
-    print(f"\n[bridge] Review finished (exit {proc.returncode}).")
+        output_lines = []
+        for line in proc.stdout:
+            print(line.rstrip("\n"))
+            output_lines.append(line.rstrip("\n"))
+        proc.wait()
+        print(f"\n[bridge] Review finished (exit {proc.returncode}).")
 
-    if proc.returncode != 0:
-        return
+        if proc.returncode != 0:
+            return
 
-    try:
-        answer = input("[bridge] Apply these changes now? [y/N]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt, OSError):
-        # OSError covers non-interactive stdin (e.g. piped/redirected input,
-        # or a test harness capturing stdin) -- same "can't ask, so don't
-        # apply" outcome as an explicit decline.
-        print()
-        return
-    if answer not in ("y", "yes"):
-        print("[bridge] No changes applied. Worktree left as-is.")
-        return
+        try:
+            answer = input("[bridge] Apply these changes now? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt, OSError):
+            # OSError covers non-interactive stdin (e.g. piped/redirected input,
+            # or a test harness capturing stdin) -- same "can't ask, so don't
+            # apply" outcome as an explicit decline.
+            print()
+            return
+        if answer not in ("y", "yes"):
+            print("[bridge] No changes applied. Worktree left as-is.")
+            return
 
-    followup_prompt = _make_review_followup_prompt("\n".join(output_lines))
-    print(f"\n[bridge] Launching {AGENT_LABEL} interactively to apply the review...\n")
-    try:
-        subprocess.run(interactive_command(followup_prompt), cwd=worktree_path, check=False)
-    except FileNotFoundError:
-        print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
-        print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
+        followup_prompt = _make_review_followup_prompt("\n".join(output_lines))
+        print(f"\n[bridge] Launching {AGENT_LABEL} interactively to apply the review...\n")
+        try:
+            subprocess.run(interactive_command(followup_prompt), cwd=worktree_path, check=False)
+        except FileNotFoundError:
+            print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
+            print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
+    finally:
+        _git_teardown(work_dir, push_url_info)
 
 
 def main():

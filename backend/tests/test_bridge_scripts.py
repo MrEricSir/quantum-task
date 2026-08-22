@@ -2514,6 +2514,68 @@ class TestCmdReview:
         assert "found a bug in foo.py" in cmd[1]
         assert kwargs["cwd"] == wt
 
+    def test_push_is_disabled_during_the_review_pass_and_restored_after(self, scratch_repo, monkeypatch, capsys):
+        """The gap this closes: by the time you run --review, the ORIGINAL job that created
+        the worktree has almost always already torn down its own push-disable (_create's
+        helper here does exactly that, matching real usage) -- so without cmd_review
+        disabling push itself, the review pass (and worse, the apply follow-up below) would
+        run with push fully enabled."""
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 10, "Push Safety Case")
+
+        pushurl_during_review = {}
+        def fake_streaming_command(prompt):
+            r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                               cwd=scratch_repo, capture_output=True, text=True)
+            pushurl_during_review["value"] = r.stdout.strip()
+            return ["python3", "-c", "print('line one')"]
+        monkeypatch.setattr(agent_core, "streaming_command", fake_streaming_command, raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+
+        agent_core.cmd_review(cfg, branch)
+
+        assert pushurl_during_review["value"] == agent_core.PUSH_DISABLED_SENTINEL
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert r.returncode != 0 or r.stdout.strip() != agent_core.PUSH_DISABLED_SENTINEL, \
+            "push should be restored after cmd_review returns, not left locked"
+
+    def test_push_stays_disabled_through_the_apply_followup(self, scratch_repo, monkeypatch, capsys):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 11, "Push Safety Followup Case")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "print('found a bug')"], raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        monkeypatch.setattr(agent_core, "interactive_command", lambda prompt: ["claude", prompt], raising=False)
+        monkeypatch.setattr(agent_core, "AGENT_LABEL", "Claude Code", raising=False)
+
+        pushurl_during_followup = {}
+        real_run = agent_core.subprocess.run
+        def fake_run(cmd, **kw):
+            if cmd and cmd[0] == "claude":
+                r = real_run(["git", "config", "remote.origin.pushurl"],
+                             cwd=scratch_repo, capture_output=True, text=True)
+                pushurl_during_followup["value"] = r.stdout.strip()
+                return None
+            return real_run(cmd, **kw)
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+
+        agent_core.cmd_review(cfg, branch)
+
+        assert pushurl_during_followup["value"] == agent_core.PUSH_DISABLED_SENTINEL
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert r.returncode != 0 or r.stdout.strip() != agent_core.PUSH_DISABLED_SENTINEL, \
+            "push should be restored after the apply follow-up ends, not left locked"
+
     def test_failed_review_skips_the_followup_prompt(self, scratch_repo, monkeypatch, capsys):
         cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
                "repos": {"scratch/repo": str(scratch_repo)}}
