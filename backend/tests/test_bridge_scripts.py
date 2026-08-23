@@ -2838,6 +2838,95 @@ class TestCmdReview:
         assert "found a bug in foo.py" in cmd[1]
         assert kwargs["cwd"] == wt
 
+    def test_apply_followup_auto_commits_leftover_dirty_state(self, scratch_repo, monkeypatch):
+        """Phase C (CLAUDE_CODE_INTEGRATION.md): the apply follow-up shares run_job's commit
+        safety net -- an interrupted or sloppy apply session shouldn't lose work any more
+        than a fix/resume job would. job_id is None here (no BridgeJob backs this session),
+        so the commit message shouldn't claim one."""
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 10, "Apply Commit Case")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "print('found a bug')"], raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        real_run = agent_core.subprocess.run
+        def fake_run(cmd, **kw):
+            if cmd and cmd[0] == "claude":
+                with open(os.path.join(wt, "left_uncommitted.py"), "w") as f:
+                    f.write("z = 1\n")
+                return None
+            return real_run(cmd, **kw)
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        monkeypatch.setattr(agent_core, "interactive_command", lambda prompt: ["claude", prompt], raising=False)
+        monkeypatch.setattr(agent_core, "AGENT_LABEL", "Claude Code", raising=False)
+
+        agent_core.cmd_review(cfg, branch)
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=wt, capture_output=True, text=True)
+        assert "Auto-captured" in log.stdout
+        assert "review apply" in log.stdout
+        assert "job #" not in log.stdout
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True)
+        assert status.stdout.strip() == ""
+
+    def test_apply_followup_commits_even_when_interrupted(self, scratch_repo, monkeypatch):
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 11, "Apply Interrupt Case")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "print('found a bug')"], raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        real_run = agent_core.subprocess.run
+        def fake_run(cmd, **kw):
+            if cmd and cmd[0] == "claude":
+                with open(os.path.join(wt, "left_uncommitted.py"), "w") as f:
+                    f.write("z = 1\n")
+                raise KeyboardInterrupt()
+            return real_run(cmd, **kw)
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        monkeypatch.setattr(agent_core, "interactive_command", lambda prompt: ["claude", prompt], raising=False)
+        monkeypatch.setattr(agent_core, "AGENT_LABEL", "Claude Code", raising=False)
+
+        with pytest.raises(KeyboardInterrupt):
+            agent_core.cmd_review(cfg, branch)
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=wt, capture_output=True, text=True)
+        assert "Auto-captured" in log.stdout
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True)
+        assert status.stdout.strip() == ""
+        # Push should still be restored despite the interrupt (_git_teardown's own finally).
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"], cwd=scratch_repo,
+                           capture_output=True, text=True)
+        assert r.returncode != 0 or r.stdout.strip() != agent_core.PUSH_DISABLED_SENTINEL
+
+    def test_declining_the_followup_never_triggers_an_auto_commit(self, scratch_repo, monkeypatch):
+        """The safety net is scoped to the apply step only -- declining must still leave the
+        worktree genuinely untouched, per cmd_review's own docstring."""
+        cfg = {"app_url": "http://fake", "token": "x", "repo_roots": [], "name": "test-agent",
+               "repos": {"scratch/repo": str(scratch_repo)}}
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"branch_name": None, "spec_snapshot": None, "result": None}
+        })
+        wt, branch = self._create(cfg, scratch_repo, 12, "Decline Commit Case")
+        with open(os.path.join(wt, "pre_existing_dirty.py"), "w") as f:
+            f.write("z = 1\n")
+        monkeypatch.setattr(agent_core, "streaming_command",
+                             lambda prompt: ["python3", "-c", "print('found a bug')"], raising=False)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+
+        agent_core.cmd_review(cfg, branch)
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=wt, capture_output=True, text=True)
+        assert "Auto-captured" not in log.stdout
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True)
+        assert "pre_existing_dirty.py" in status.stdout, "worktree should remain exactly as left"
+
     def test_push_is_disabled_during_the_review_pass_and_restored_after(self, scratch_repo, monkeypatch, capsys):
         """The gap this closes: by the time you run --review, the ORIGINAL job that created
         the worktree has almost always already torn down its own push-disable (_create's

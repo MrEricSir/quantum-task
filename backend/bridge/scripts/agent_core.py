@@ -641,6 +641,12 @@ def _commit_if_dirty(worktree_path, job_id, reason):
     resume-type session (the crash-recovery case: the PREVIOUS session never got to run its
     own end-of-session cleanup at all). See CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan.
 
+    job_id may be None -- cmd_review's apply-flow (CLAUDE_CODE_INTEGRATION.md's "Phase C")
+    shares this same safety net but has no BridgeJob of its own (deliberately: reusing just
+    the safety net, not the full job-queue mechanism, so this works even for a worktree whose
+    branch can't be traced back to a card at all). The commit message just omits "job #N" in
+    that case rather than printing a misleading "job #None".
+
     Returns True if a commit was made, False if the worktree was already clean or the commit
     itself failed (logged, not raised -- this is best-effort insurance, not something that
     should crash the job over)."""
@@ -650,7 +656,9 @@ def _commit_if_dirty(worktree_path, job_id, reason):
         return False
     print(f"[bridge] Uncommitted changes found ({reason}) -- auto-committing to avoid losing them...")
     subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True)
-    message = f"Auto-captured: uncommitted changes ({reason}) -- job #{job_id}"
+    message = f"Auto-captured: uncommitted changes ({reason})"
+    if job_id is not None:
+        message += f" -- job #{job_id}"
     r = subprocess.run(["git", "commit", "-m", message],
                        cwd=worktree_path, capture_output=True, text=True)
     if r.returncode != 0:
@@ -2096,10 +2104,22 @@ def cmd_review(cfg, target):
         followup_prompt = _make_review_followup_prompt("\n".join(output_lines))
         print(f"\n[bridge] Launching {AGENT_LABEL} interactively to apply the review...\n")
         try:
-            subprocess.run(interactive_command(followup_prompt), cwd=worktree_path, check=False)
-        except FileNotFoundError:
-            print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
-            print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
+            try:
+                subprocess.run(interactive_command(followup_prompt), cwd=worktree_path, check=False)
+            except FileNotFoundError:
+                print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
+                print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
+        finally:
+            # Phase C (CLAUDE_CODE_INTEGRATION.md): shares run_job's commit safety net, not
+            # the full job-queue mechanism -- this apply session has no BridgeJob of its own
+            # (job_id=None), deliberately, so it works even for a worktree whose branch can't
+            # be traced back to a card at all (e.g. a Phase 1 custom name with no matching
+            # job). In the finally so an interrupt during the apply session doesn't skip it,
+            # same reasoning as _run_interactive/_run_streaming's own end-of-session call.
+            # Scoped to just the apply step, not the whole function -- the read-only review
+            # pass and an explicit decline should still leave the worktree genuinely
+            # untouched, per this function's own docstring.
+            _commit_if_dirty(worktree_path, None, "review apply")
     finally:
         _git_teardown(work_dir, push_url_info)
 
