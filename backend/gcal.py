@@ -181,7 +181,11 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
     Each dict: id, title, description, start (datetime), end (datetime|None), all_day (bool)
     """
     ical_url = normalize_ical_url(ical_url)
-    response = requests.get(ical_url, timeout=(10, 45), headers=_FETCH_HEADERS)
+    # (connect, read) -- most real iCal servers respond in a few seconds; this still gives a
+    # genuinely slow feed real headroom without letting one pathological feed hold up an
+    # entire request for the better part of a minute (was (10, 45) -- see
+    # DISCOVERY_IMPROVEMENTS.md's "slow to load" Phase 1 for why this got tightened).
+    response = requests.get(ical_url, timeout=(5, 15), headers=_FETCH_HEADERS)
     response.raise_for_status()
 
     # Detect when the server redirected to a login/auth page instead of returning iCal data.

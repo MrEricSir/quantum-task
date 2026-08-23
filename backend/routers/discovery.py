@@ -1,5 +1,6 @@
 """Event discovery: public iCal feeds + LLM-based ranking against user interests."""
 
+import concurrent.futures
 import hashlib
 import html
 import json
@@ -24,10 +25,28 @@ router = APIRouter()
 # iCal feeds are re-fetched at most every 3 hours (stale cache served on error).
 _ICAL_CACHE_TTL_SECONDS = 3 * 3600
 
+# A timed event ending within this window of "now" is excluded from discovery results even
+# though it hasn't technically ended yet -- it's no longer meaningfully attendable/
+# discoverable. See DISCOVERY_IMPROVEMENTS.md's "shows events nearly over" Phase 2.
+_NEARLY_OVER_THRESHOLD = timedelta(minutes=60)
+
+# Two events with the same normalized title starting within this window of each other are
+# treated as the same real-world event listed by two different feeds (e.g. a city calendar
+# and a local "things to do" aggregator both carrying the same farmers market) -- the
+# uid-based dedup above only catches literal re-appearances of the same source event, not
+# this cross-feed case. See DISCOVERY_IMPROVEMENTS.md's "duplicates" Phase 4.
+_DUPLICATE_TIME_WINDOW = timedelta(hours=3)
+
 # LLM ranking results are keyed on a hash of (interests + feedback + event ids).
 # No TTL — entries are auto-invalidated when any input changes.
 _ranking_cache: dict[str, list] = {}
 _RANKING_CACHE_MAX = 64  # evict oldest when over limit
+
+# Max events shown to the user, whether ranked or (no interests configured) plain
+# chronological. Raised from 10 -- with Phase 3's batch selection now actually giving
+# farther-out events a chance to be scored, a 10-cap was throwing away more of the newly
+# fair candidate pool than it needed to. See DISCOVERY_IMPROVEMENTS.md Phase 6.
+_DISPLAY_RESULT_CAP = 20
 
 # rkeys with a background ranking task currently running — prevents duplicate
 # LLM calls when e.g. React StrictMode double-fires an effect in dev, or the
@@ -37,6 +56,19 @@ _ranking_inflight: set[str] = set()
 # Events sent to the LLM for scoring — kept small so the local model returns
 # quickly rather than churning through a large batch.
 _RANK_BATCH_SIZE = 12
+
+# Horizon buckets used to select which events make it into the scoring batch, as
+# (start_offset_days_inclusive, end_offset_days_exclusive) from "today". Splitting the batch
+# across these instead of taking the chronologically-first N events fixes "same-day only"
+# discovery at its root: a busy today/tomorrow can no longer crowd out every event further
+# out before the LLM ever sees them. See DISCOVERY_IMPROVEMENTS.md Phase 3. A starting
+# guess, not a principled answer -- easy to retune once live.
+_RANK_HORIZON_BUCKETS = [
+    (0, 3),    # next 3 days
+    (3, 7),    # rest of this week
+    (7, 14),   # next week
+    (14, 28),  # weeks 3-4
+]
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -81,6 +113,92 @@ def _ranking_key(interests: str, liked_uids: list, disliked_uids: list, event_id
         "e": sorted(event_ids),
     })
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _select_ranking_batch(events: list[dict], today: date_type, batch_size: int) -> list[dict]:
+    """Pick up to `batch_size` events for LLM scoring, sampled across horizon buckets instead
+    of taking the chronologically-first N -- see DISCOVERY_IMPROVEMENTS.md Phase 3.
+
+    `events` must already be sorted chronologically. Each bucket gets an equal base quota;
+    if a bucket has fewer events than its quota, the unused slots roll forward into later
+    buckets rather than going to waste, so a busy near-term day can't fill the whole batch
+    and starve every farther-out event of ever being scored.
+    """
+    n = len(_RANK_HORIZON_BUCKETS)
+    base_quota = batch_size // n
+    remainder = batch_size % n
+    quotas = [base_quota + (1 if i < remainder else 0) for i in range(n)]
+
+    buckets: list[list[dict]] = [[] for _ in range(n)]
+    for e in events:
+        offset_days = (e["start"].date() - today).days
+        for i, (lo, hi) in enumerate(_RANK_HORIZON_BUCKETS):
+            if lo <= offset_days < hi:
+                buckets[i].append(e)
+                break
+        else:
+            if offset_days >= _RANK_HORIZON_BUCKETS[-1][1]:
+                buckets[-1].append(e)
+
+    selected: list[dict] = []
+    leftover = 0
+    for i in range(n):
+        take = buckets[i][:quotas[i] + leftover]
+        selected.extend(take)
+        leftover = quotas[i] + leftover - len(take)
+
+    # Every bucket ran dry before the full batch_size was used -- backfill from whatever's
+    # left, in chronological order, so the batch stays as full as the event pool allows.
+    if leftover > 0:
+        selected_ids = {id(e) for e in selected}
+        for e in events:
+            if len(selected) >= batch_size:
+                break
+            if id(e) not in selected_ids:
+                selected.append(e)
+
+    selected.sort(key=lambda e: e["start"])
+    return selected
+
+
+_TITLE_PUNCT_RE = re.compile(r"[^\w\s]")
+
+
+def _normalize_title(title: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace -- for cross-feed duplicate
+    matching, not for display."""
+    return " ".join(_TITLE_PUNCT_RE.sub("", title.lower()).split())
+
+
+def _event_richness(e: dict) -> tuple:
+    """Sort key for picking which copy of a detected duplicate to keep -- prefers whichever
+    has a URL and, failing a tiebreak there, the longer description."""
+    return (1 if e.get("url") else 0, len(e.get("description") or ""))
+
+
+def _merge_cross_feed_duplicates(events: list[dict]) -> list[dict]:
+    """Collapse events that are almost certainly the same real-world listing from two
+    different feeds -- same normalized title, starting within _DUPLICATE_TIME_WINDOW of each
+    other -- keeping the richer copy. `events` must already be sorted chronologically; the
+    window check only needs to look at recently-kept events since anything further back is
+    already outside the window. See DISCOVERY_IMPROVEMENTS.md Phase 4."""
+    merged: list[dict] = []
+    for ev in events:
+        norm_title = _normalize_title(ev["title"])
+        match_idx = None
+        for i in range(len(merged) - 1, -1, -1):
+            existing = merged[i]
+            if ev["start"] - existing["start"] > _DUPLICATE_TIME_WINDOW:
+                break
+            if _normalize_title(existing["title"]) == norm_title:
+                match_idx = i
+                break
+        if match_idx is None:
+            merged.append(ev)
+        elif _event_richness(ev) > _event_richness(merged[match_idx]):
+            merged[match_idx] = ev
+    return merged
+
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _MULTI_NEWLINE_RE = re.compile(r"\n{2,}")
@@ -147,6 +265,54 @@ def _refine_interests_bg(liked_titles: list[str], disliked_titles: list[str],
         print(f"[discovery] interest refinement error: {e}")
 
 
+def _load_persisted_ranking(db: Session, rkey: str) -> list[dict] | None:
+    """Look up a previously-computed ranking from the DB -- populated by _persist_ranking
+    below, this is what lets a fresh Cloud Run instance skip re-running the LLM for a rkey
+    (same interests + feedback + event ids) some earlier, now-dead instance already scored.
+    See DISCOVERY_IMPROVEMENTS.md Phase 5."""
+    row = db.query(models.DiscoveryRankingCache).filter_by(rkey=rkey).first()
+    if row is None:
+        return None
+    try:
+        return _deserialize_gcal_events(row.results_json)
+    except Exception:
+        return None
+
+
+def _persist_ranking(rkey: str, results: list[dict]) -> None:
+    """Write a freshly-computed ranking to the DB so it survives a cold start. Uses its own
+    session -- called from the background task, same as _refine_interests_bg, so there's no
+    request-scoped session available."""
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        payload = _serialize_gcal_events(results)
+        row = db.query(models.DiscoveryRankingCache).filter_by(rkey=rkey).first()
+        if row:
+            row.results_json = payload
+            row.created_at = datetime.now(timezone.utc)
+        else:
+            db.add(models.DiscoveryRankingCache(rkey=rkey, results_json=payload))
+        db.commit()
+
+        # Cap table size the same way the in-memory cache is capped -- rkeys change often
+        # (the scoring batch's event ids shift as the window rolls forward day to day), so
+        # without a cap this would grow indefinitely.
+        count = db.query(models.DiscoveryRankingCache).count()
+        if count > _RANKING_CACHE_MAX:
+            stale = (
+                db.query(models.DiscoveryRankingCache)
+                .order_by(models.DiscoveryRankingCache.created_at.asc())
+                .limit(count - _RANKING_CACHE_MAX)
+                .all()
+            )
+            for r in stale:
+                db.delete(r)
+            db.commit()
+    finally:
+        db.close()
+
+
 _RANK_SYSTEM = """\
 You are a personal event recommender. Given a user's interest description and a list of \
 upcoming community events, score each event 1–10 for how well it matches their interests \
@@ -202,7 +368,7 @@ def _rank_events_bg(rkey: str, interests: str, feedback_context: str,
                 ev["reason"] = entry.get("reason")
 
         # Score picks which events make the cut — highest first, then pad
-        # with upcoming unscored events so we always return ~10 results —
+        # with upcoming unscored events so we always return a full cap's worth —
         # but the final list is displayed in chronological order so same-day
         # events don't jump around relative to each other.
         scored_ids = {id(e) for e in ranked_events if e.get("score") is not None}
@@ -211,17 +377,22 @@ def _rank_events_bg(rkey: str, interests: str, feedback_context: str,
             key=lambda e: (-(e["score"] or 0), e["start"]),
         )
         unscored = [e for e in events if id(e) not in scored_ids]
-        selected = (scored_by_rank + unscored)[:10]
+        selected = (scored_by_rank + unscored)[:_DISPLAY_RESULT_CAP]
         results = sorted(selected, key=lambda e: e["start"])
     except Exception as e:
         print(f"[discovery] LLM ranking error: {e}")
-        results = events[:10]
+        results = events[:_DISPLAY_RESULT_CAP]
 
     _ranking_cache[rkey] = results
     if len(_ranking_cache) > _RANKING_CACHE_MAX:
         oldest_key = next(iter(_ranking_cache))
         del _ranking_cache[oldest_key]
     _ranking_inflight.discard(rkey)
+
+    try:
+        _persist_ranking(rkey, results)
+    except Exception as e:
+        print(f"[discovery] ranking cache persist error: {e}")
 
 
 def _to_dt(v) -> datetime | None:
@@ -330,40 +501,91 @@ def get_discovery_events(
 
     seen: dict[str, dict] = {}
 
+    # Split into "cache still fresh" (no network call needed) vs. "needs a fetch" up front,
+    # then fetch the stale ones CONCURRENTLY -- see DISCOVERY_IMPROVEMENTS.md's "slow to
+    # load" Phase 1. This used to be a serial for-loop, so N stale feeds could each block up
+    # to the old 45s read timeout one after another; worst case was effectively N × timeout,
+    # not just one wait. gcal_lib.fetch_events is pure network I/O with no DB access, so it's
+    # safe to run in worker threads -- SQLAlchemy sessions aren't thread-safe, so every DB
+    # write (feed.last_fetched/cached_events) still happens back on the main thread, after
+    # every fetch has finished, in one batch commit instead of one commit per feed.
+    feed_raw_events: dict[int, list] = {}
+    feeds_needing_fetch = []
     for feed in feeds:
-        # Use DB-cached events if they're still fresh (< 3h old).
         if (
             feed.last_fetched is not None
             and feed.cached_events
             and feed.last_fetched > cache_cutoff
         ):
-            raw_events = _deserialize_gcal_events(feed.cached_events)
+            feed_raw_events[feed.id] = _deserialize_gcal_events(feed.cached_events)
         else:
-            try:
-                raw_events = gcal_lib.fetch_events(feed.ical_url, today, window_end)
-                feed.last_fetched = now_naive
-                feed.cached_events = _serialize_gcal_events(raw_events)
-                db.add(feed)
-                db.commit()
-            except Exception as e:
-                print(f"[discovery] feed {feed.id} fetch error: {e}")
-                # Serve stale cache rather than returning nothing
-                if feed.cached_events:
-                    raw_events = _deserialize_gcal_events(feed.cached_events)
-                else:
-                    continue
+            feeds_needing_fetch.append(feed)
+
+    if feeds_needing_fetch:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(8, len(feeds_needing_fetch))
+        ) as pool:
+            future_to_feed = {
+                pool.submit(gcal_lib.fetch_events, feed.ical_url, today, window_end): feed
+                for feed in feeds_needing_fetch
+            }
+            for future in concurrent.futures.as_completed(future_to_feed):
+                feed = future_to_feed[future]
+                try:
+                    raw_events = future.result()
+                    feed.last_fetched = now_naive
+                    feed.cached_events = _serialize_gcal_events(raw_events)
+                    db.add(feed)
+                    feed_raw_events[feed.id] = raw_events
+                except Exception as e:
+                    print(f"[discovery] feed {feed.id} fetch error: {e}")
+                    # Serve stale cache rather than returning nothing for this feed;
+                    # if there's no cache at all yet, feed_raw_events just has no entry
+                    # for it and the loop below skips it entirely.
+                    if feed.cached_events:
+                        feed_raw_events[feed.id] = _deserialize_gcal_events(feed.cached_events)
+        db.commit()
+
+    for feed in feeds:
+        raw_events = feed_raw_events.get(feed.id)
+        if raw_events is None:
+            continue
 
         for ev in raw_events:
             start = ev["start"]
             end = ev.get("end")
 
-            # Skip past events
+            # Skip past events -- and, for timed events, ones that are still technically
+            # "upcoming" but about to end (DISCOVERY_IMPROVEMENTS.md's "shows events nearly
+            # over" Phase 2).
             if ev["all_day"]:
+                # DTEND is exclusive per the iCal spec (a 1-day event on Jan 5 has
+                # DTEND=Jan6), so a bare `end` date already points at the day AFTER the
+                # event's last day. Uses END, not start, deliberately -- a multi-day all-day
+                # event that started before today (a 3-day festival, a week-long exhibit)
+                # must stay visible until it's actually over, not disappear the moment its
+                # start date passes. A feed that omits DTEND entirely means a single-day
+                # all-day event, so fall back to start+1 day for that case.
                 start_date = start.date() if isinstance(start, datetime) else start
-                if (start_date - today).days < 0:
+                end_date = (
+                    (end.date() if isinstance(end, datetime) else end)
+                    if end else start_date + timedelta(days=1)
+                )
+                if (end_date - today).days <= 0:
+                    continue
+            elif end:
+                # "Nearly over" as well as fully over -- an event ending within the next
+                # hour isn't meaningfully attendable/discoverable anymore. Only applies when
+                # there's a real end time: extending this same buffer to a start-only event
+                # below would risk excluding one that hasn't even started yet, since we have
+                # no principled way to know how long an event with no stated end actually
+                # lasts. Doesn't penalize a long/multi-day timed event that merely started a
+                # while ago, since this only looks at how much time is left before it ends.
+                cutoff = _to_dt(end)
+                if cutoff and cutoff < now + _NEARLY_OVER_THRESHOLD:
                     continue
             else:
-                cutoff = _to_dt(end if end else start)
+                cutoff = _to_dt(start)
                 if cutoff and cutoff < now:
                     continue
 
@@ -402,14 +624,18 @@ def get_discovery_events(
         (e for e in seen.values() if not (e["uid"] and e["uid"] in disliked_uids)),
         key=lambda e: e["start"],
     )
+    # Collapse the same real-world event listed by two different feeds under different
+    # uids (the sort above only catches literal re-appearances of the same source event) --
+    # see DISCOVERY_IMPROVEMENTS.md Phase 4.
+    events = _merge_cross_feed_duplicates(events)
 
     # Load interests
     row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
     interests = (row.value or "").strip() if row else ""
 
     if not interests or not events:
-        # No filtering — return chronologically, cap at 10
-        results = events[:10]
+        # No filtering — return chronologically, cap at _DISPLAY_RESULT_CAP
+        results = events[:_DISPLAY_RESULT_CAP]
     else:
         # Load feedback for ranking context + cache key
         liked_rows = (
@@ -425,12 +651,23 @@ def get_discovery_events(
             .limit(20).all()
         )
 
+        ranking_batch = _select_ranking_batch(events, today, _RANK_BATCH_SIZE)
+
         rkey = _ranking_key(
             interests,
             [r.event_uid for r in liked_rows],
             [r.event_uid for r in disliked_rows],
-            [e["id"] for e in events[:_RANK_BATCH_SIZE]],
+            [e["id"] for e in ranking_batch],
         )
+
+        if not force and rkey not in _ranking_cache:
+            # In-memory miss doesn't necessarily mean this exact ranking has never been
+            # computed -- a Cloud Run cold start wipes _ranking_cache but not the DB, so an
+            # earlier (now-dead) instance may already have scored this exact rkey. See
+            # DISCOVERY_IMPROVEMENTS.md Phase 5.
+            persisted = _load_persisted_ranking(db, rkey)
+            if persisted is not None:
+                _ranking_cache[rkey] = persisted
 
         if not force and rkey in _ranking_cache:
             results = _ranking_cache[rkey]
@@ -440,7 +677,7 @@ def get_discovery_events(
             # if we have one (force refresh), otherwise plain chronological
             # order — while the LLM re-ranks in the background. The client
             # re-fetches shortly after to pick up the ranked result.
-            results = _ranking_cache.get(rkey, events[:10])
+            results = _ranking_cache.get(rkey, events[:_DISPLAY_RESULT_CAP])
             response.headers["X-Ranking-Status"] = "pending"
 
             if rkey not in _ranking_inflight:
@@ -458,9 +695,11 @@ def get_discovery_events(
                 # Send a small batch of events using short numeric ids to
                 # prevent the model from hallucinating opaque composite id
                 # strings, and to keep the local model's response quick.
+                # The batch itself is sampled across horizon buckets, not just the
+                # chronologically-first N -- see _select_ranking_batch.
                 background_tasks.add_task(
                     _rank_events_bg, rkey, interests, feedback_context,
-                    events[:_RANK_BATCH_SIZE], events,
+                    ranking_batch, events,
                 )
 
     return [

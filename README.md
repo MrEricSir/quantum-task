@@ -546,10 +546,12 @@ Configured in **Settings → Telegram** — set a send time for each:
 
 ### Event Discovery
 - Add public iCal feeds (local events, conferences, sports schedules) as discovery sources
-- AI ranks upcoming events against your stated interests and past feedback
+- AI ranks upcoming events against your stated interests and past feedback, sampled across the whole 28-day window (not just what's happening today) so a great match further out isn't crowded out by a busy near-term day
+- Events that have ended, or are ending within the hour, are filtered out; the same real-world event listed by two different feeds under different IDs is merged into one card
 - Thumbs-up / thumbs-down per event trains the ranker; dismissed events are hidden on next load with an in-session undo option
-- iCal feeds are cached for ~3 hours; LLM rankings are cached until interests or feedback change
+- iCal feeds are cached for ~3 hours; LLM rankings are cached until interests or feedback change, and persist across server restarts so a fresh instance doesn't have to re-rank from scratch
 - Ranking runs in the background so the panel shows events immediately (a "Ranking recommendations..." hint appears while it works) instead of blocking on the LLM call
+- Shows up to 20 events
 
 ### Tags
 - Create and manage color-coded tags

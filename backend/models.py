@@ -148,6 +148,19 @@ class DiscoveryFeedback(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class DiscoveryRankingCache(Base):
+    """Persisted LLM event-ranking results, keyed by a hash of (interests + feedback +
+    event ids) -- survives a Cloud Run cold start instead of forcing a full re-rank on
+    nearly every open, since the app runs min-instances=0 and the in-memory ranking cache
+    doesn't. See DISCOVERY_IMPROVEMENTS.md Phase 5."""
+    __tablename__ = "discovery_ranking_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rkey = Column(String, nullable=False, unique=True, index=True)
+    results_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 habit_tags = Table(
     "habit_tags",
     Base.metadata,
