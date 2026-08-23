@@ -84,6 +84,13 @@ def create_job(body: _JobCreate, db: Session = Depends(get_db)):
     branch_name = body.branch_name.strip() if body.branch_name else None
     if branch_name and any(c.isspace() for c in branch_name):
         raise HTTPException(status_code=400, detail="Branch name can't contain whitespace")
+    if branch_name and branch_name.startswith("-"):
+        # _create_worktree passes this straight into `git worktree add <path> -b <name> ...`
+        # as its own argv element (never through a shell, so no injection risk) -- but a
+        # leading "-" risks git's own arg parser treating it as a flag rather than -b's
+        # value. Simplest to just refuse it here rather than rely on exactly how git's
+        # getopt-style parsing happens to behave for every possible dash-prefixed string.
+        raise HTTPException(status_code=400, detail="Branch name can't start with '-'")
 
     job = _queue_job_for_card(db, card, requested_branch_name=branch_name)
     db.add(job)
@@ -150,16 +157,13 @@ def queue_jobs_by_tag(body: _QueueByTag, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/api/bridge/jobs/{job_id}/fix")
-def queue_fix_job(job_id: int, body: _JobFix, db: Session = Depends(get_db)):
-    """Queue a "fix" job that resumes job_id's worktree/branch to address specific review
-    comments, instead of creating a fresh worktree -- see agent_core.py's run_job() and
-    CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan.
-
-    Validates job_id previously ran and recorded a worktree to resume (worktree_path set) --
-    can't validate the worktree still exists ON DISK from here, only the bridge (running
-    locally) can do that; see run_job's own error path for what happens if it's since been
-    removed via --cleanup."""
+def _get_resumable_job(job_id: int, db: Session) -> models.BridgeJob:
+    """Shared validation for /fix and /resume: the job must exist, have a recorded worktree
+    to resume (can't validate it still exists ON DISK from here -- only the bridge, running
+    locally, can do that; see run_job's own error path for what happens if it's since been
+    removed via --cleanup), and not already be pending/running -- resuming a job that's
+    still queued or actively being worked would point a second live agent session at the
+    exact same worktree, a real git-corruption risk, not just a UX glitch."""
     original_job = db.query(models.BridgeJob).filter_by(id=job_id).first()
     if not original_job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -169,6 +173,21 @@ def queue_fix_job(job_id: int, body: _JobFix, db: Session = Depends(get_db)):
             detail="This job has no recorded worktree to resume -- it may not have run yet, "
                    "or predates worktree tracking.",
         )
+    if original_job.status in ("pending", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} is still {original_job.status} -- wait for it to finish "
+                   f"(or stall/error out) before resuming it.",
+        )
+    return original_job
+
+
+@router.post("/api/bridge/jobs/{job_id}/fix")
+def queue_fix_job(job_id: int, body: _JobFix, db: Session = Depends(get_db)):
+    """Queue a "fix" job that resumes job_id's worktree/branch to address specific review
+    comments, instead of creating a fresh worktree -- see agent_core.py's run_job() and
+    CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan."""
+    original_job = _get_resumable_job(job_id, db)
     if not body.comment_ids:
         raise HTTPException(status_code=400, detail="comment_ids must not be empty")
 
@@ -194,19 +213,8 @@ def queue_resume_job(job_id: int, db: Session = Depends(get_db)):
     """Queue a "resume" job that continues job_id's worktree/branch after an interrupted
     session (crash, timeout, disconnect), instead of creating a fresh worktree -- shares
     the exact same resume mechanism as /fix (see agent_core.py's run_job()), just without a
-    specific set of comments to address. See CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan.
-
-    Same worktree_path validation as /fix -- can't validate the worktree still exists ON DISK
-    from here, only the bridge (running locally) can do that."""
-    original_job = db.query(models.BridgeJob).filter_by(id=job_id).first()
-    if not original_job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if not original_job.worktree_path:
-        raise HTTPException(
-            status_code=400,
-            detail="This job has no recorded worktree to resume -- it may not have run yet, "
-                   "or predates worktree tracking.",
-        )
+    specific set of comments to address. See CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan."""
+    original_job = _get_resumable_job(job_id, db)
 
     job = _queue_resume_job(db, original_job)
     db.add(job)

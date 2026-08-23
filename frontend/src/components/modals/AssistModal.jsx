@@ -382,6 +382,10 @@ export default function AssistModal({
       setBridgeError("Branch name can't contain whitespace")
       return
     }
+    if (branchName.startsWith('-')) {
+      setBridgeError("Branch name can't start with '-'")
+      return
+    }
     setBridgeQueuing(true); setBridgeError('')
     try {
       const job = await queueBridgeJob(task.id, branchName || undefined)
@@ -414,6 +418,9 @@ export default function AssistModal({
 
   const validBdCount = bdSubtasks.filter(s => s.trim()).length
   const hasHistory   = messages.length > 0
+  const defaultBranch = `qtask/${task.id}${slugifyPreview(task.title) ? '-' + slugifyPreview(task.title) : ''}`
+  const branchFieldDisabled =
+    bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'
 
   const content = (
     <div
@@ -705,10 +712,19 @@ export default function AssistModal({
                     className="cdp-branch-input"
                     value={branchOverride}
                     onChange={e => setBranchOverride(e.target.value)}
-                    placeholder={`qtask/${task.id}${slugifyPreview(task.title) ? '-' + slugifyPreview(task.title) : ''}`}
-                    disabled={bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'}
+                    placeholder={defaultBranch}
+                    disabled={branchFieldDisabled}
                     title="Leave blank to use the auto-generated name shown as a placeholder"
                   />
+                  <button
+                    type="button"
+                    className="cdp-branch-use-default"
+                    onClick={() => setBranchOverride(defaultBranch)}
+                    disabled={branchFieldDisabled || branchOverride === defaultBranch}
+                    title="Copy the auto-generated name in so you can tweak it, instead of typing it from scratch"
+                  >
+                    Use this
+                  </button>
                 </div>
               )}
 
@@ -721,13 +737,13 @@ export default function AssistModal({
                   <div className="cdp-bridge-status-body">
                     <span className="cdp-bridge-label">
                       {bridgeJob.status === 'pending'  && (
-                        bridgeJob.fix_comment_ids ? 'Queued — waiting for agent to apply fixes…'
-                        : bridgeJob.fix_of_job_id  ? 'Queued — waiting for agent to resume…'
+                        bridgeJob.fix_comment_ids?.length > 0 ? 'Queued — waiting for agent to apply fixes…'
+                        : bridgeJob.resumes_job_id ? 'Queued — waiting for agent to resume…'
                         : 'Queued — waiting for agent…'
                       )}
                       {bridgeJob.status === 'running'  && (
-                        bridgeJob.fix_comment_ids ? 'Applying fixes…'
-                        : bridgeJob.fix_of_job_id  ? 'Resuming previous session…'
+                        bridgeJob.fix_comment_ids?.length > 0 ? 'Applying fixes…'
+                        : bridgeJob.resumes_job_id ? 'Resuming previous session…'
                         : 'Claude Code running…'
                       )}
                       {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}

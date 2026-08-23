@@ -108,6 +108,11 @@ HEARTBEAT_INTERVAL = 300  # seconds between heartbeat pings while the agent proc
 VERIFICATION_OUTPUT_MAX_LINES = 60  # tail of test_cmd output kept in the verification summary
 SPEC_FILENAME = "BRIDGE_SPEC.md"
 ENV_FILENAME = ".env.qtask"
+# Dropped into every worktree _create_worktree makes, empty content -- proof of provenance
+# for _scan_qtask_worktrees to key off instead of the branch name, so a Phase-1 custom branch
+# name (which may not start with "qtask/") doesn't make a worktree invisible to
+# --list/--switch/--cleanup. See CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan writeup.
+WORKTREE_MARKER_FILENAME = ".qtask-worktree"
 WORKTREES_ROOT = os.path.expanduser("~/.local/share/qtask-bridge/worktrees")
 LAST_WORKTREE_FILE = os.path.expanduser("~/.local/share/qtask-bridge/last-worktree")
 PUSH_DISABLED_SENTINEL = "no_push"  # remote.origin.pushurl value while a job holds the base repo
@@ -393,7 +398,7 @@ def _make_prompt(branch, worktree_path):
 
 
 def _make_fix_prompt(branch, worktree_path):
-    """Wrapper prompt for a fix job (run_job's fix_of_job_id branch) -- deliberately framed
+    """Wrapper prompt for a fix job (run_job's resumes_job_id branch) -- deliberately framed
     as "apply these specific fixes," not a general invitation to refactor, per
     CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan. The actual fix
     content (which comments, file/line, suggested diffs) lives in SPEC_FILENAME, same as a
@@ -410,7 +415,7 @@ def _make_fix_prompt(branch, worktree_path):
 
 
 def _make_resume_prompt(branch, worktree_path):
-    """Wrapper prompt for a resume job (run_job's fix_of_job_id branch, no fix_comment_ids) --
+    """Wrapper prompt for a resume job (run_job's resumes_job_id branch, no fix_comment_ids) --
     picking up an interrupted session in an existing worktree rather than starting fresh. The
     actual task content lives in SPEC_FILENAME same as any other job -- built server-side by
     bridge.jobs._build_resume_prompt, which already tells the agent to check git log/diff
@@ -484,7 +489,7 @@ def _disable_remote_push(work_dir):
     per-worktree. Returns push_url_info for _git_teardown to restore afterward.
 
     Extracted out of _create_worktree so a fix job (which resumes an existing worktree
-    instead of creating one, see run_job's fix_of_job_id branch) gets the exact same safety
+    instead of creating one, see run_job's resumes_job_id branch) gets the exact same safety
     property without going through worktree creation at all."""
     r = subprocess.run(["git", "config", "remote.origin.pushurl"],
                        cwd=work_dir, capture_output=True, text=True)
@@ -576,6 +581,10 @@ def _create_worktree(cfg, job, work_dir):
         print(f"\n[bridge] ERROR: {msg}", file=sys.stderr)
         return None
     print(f"[bridge] Created branch: {branch}")
+
+    # Marker of provenance -- see WORKTREE_MARKER_FILENAME's own comment above.
+    with open(os.path.join(worktree_path, WORKTREE_MARKER_FILENAME), "w"):
+        pass
 
     # 4. Disable remote push (safety — the coding agent must not push).
     push_url_info = _disable_remote_push(work_dir)
@@ -891,7 +900,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
     prompt_kind selects the wrapper wording: "fix" for _make_fix_prompt (resuming an existing
     worktree to address specific comments), "resume" for _make_resume_prompt (resuming after
     an interrupted session), "normal" for _make_prompt (a fresh feature job) -- see run_job's
-    fix_of_job_id branch."""
+    resumes_job_id branch."""
     print(f"[bridge] Launching {AGENT_LABEL} interactively...")
     print("[bridge] You can interact with the agent in the session below.")
     print("[bridge] When done, type 'exit' or press Ctrl-D.\n")
@@ -914,9 +923,14 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
         verification = _run_verification(cwd, test_cmd, verify_acceptance, spec_text)
     finally:
         stop_heartbeat.set()
+        # In the finally, not just the next line -- a KeyboardInterrupt (or anything else)
+        # during the subprocess.run/_run_verification above must not skip this. That's
+        # exactly the interruption scenario this safety net exists for in the first place;
+        # skipping it here would mean the only thing catching leftover dirty state is the
+        # NEXT resume attempt, if there ever is one. Matches _git_teardown's guarantee level.
+        _commit_if_dirty(cwd, job_id, "session ended")
 
     print("\n[bridge] Session ended.")
-    _commit_if_dirty(cwd, job_id, "session ended")
     result_text = ""
     if prompt_note:
         try:
@@ -985,9 +999,10 @@ def _run_streaming(cfg, job_id, branch, cwd,
             verification = _run_verification(cwd, test_cmd, verify_acceptance, spec_text)
     finally:
         stop_heartbeat.set()
+        # In the finally, not just the next line -- see _run_interactive's matching comment.
+        _commit_if_dirty(cwd, job_id, "session ended")
 
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
-    _commit_if_dirty(cwd, job_id, "session ended")
     if proc.returncode == 0:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": verification})
     else:
@@ -1002,14 +1017,14 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     prompt      = job.get("prompt", "")
     spec_text   = job.get("spec")
     target_repo = job.get("target_repo")
-    fix_of_job_id = job.get("fix_of_job_id")
-    # A resume-type job (fix_of_job_id set) is either a targeted "fix" (specific comments
+    resumes_job_id = job.get("resumes_job_id")
+    # A resume-type job (resumes_job_id set) is either a targeted "fix" (specific comments
     # to address, fix_comment_ids set by _queue_fix_job) or a general "resume" (continuing
     # after an interrupted session, fix_comment_ids left unset by _queue_resume_job) -- see
     # CLAUDE_CODE_INTEGRATION.md's "Phase 0" plan.
-    if fix_of_job_id and job.get("fix_comment_ids"):
+    if resumes_job_id and job.get("fix_comment_ids"):
         prompt_kind = "fix"
-    elif fix_of_job_id:
+    elif resumes_job_id:
         prompt_kind = "resume"
     else:
         prompt_kind = "normal"
@@ -1034,7 +1049,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     if target_repo:
         print(f"[bridge] Repo: {target_repo} → {work_dir}")
 
-    if fix_of_job_id:
+    if resumes_job_id:
         # Resume the worktree/branch this fix targets instead of creating a fresh one --
         # bridge.jobs._queue_fix_job already copied branch_name/worktree_path from the
         # original job onto this one at creation time. See CLAUDE_CODE_INTEGRATION.md's
@@ -1045,7 +1060,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
         branch = job.get("branch_name")
         if not worktree_path or not os.path.isdir(worktree_path):
             msg = (
-                f"No resumable worktree found for job {fix_of_job_id} "
+                f"No resumable worktree found for job {resumes_job_id} "
                 f"(expected at {worktree_path or '<unknown>'}). It may already have been "
                 f"removed via --cleanup -- resolve manually or re-run the original job."
             )
@@ -1093,7 +1108,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     # run_interactive call.
     spec_path = None
     try:
-        if not fix_of_job_id:
+        if not resumes_job_id:
             # Written before setup_cmd runs, in case it wants to reference the
             # reserved port range / db name too (e.g. to pre-seed a database).
             _write_qtask_env(worktree_path, job_id)
@@ -1105,7 +1120,7 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
         with open(spec_path, "w") as f:
             f.write(prompt)
 
-        if not fix_of_job_id:
+        if not resumes_job_id:
             write_ide_settings(worktree_path)
 
         if streaming:
@@ -1258,10 +1273,16 @@ def _is_branch_merged(work_dir, branch):
 
 
 def _scan_qtask_worktrees(cfg):
-    """Return (repo_name, work_dir, worktree_path, branch) for every
-    worktree, across every repo in [repos], on a branch under
-    refs/heads/qtask/ — never a worktree/branch you created yourself.
-    Shared by --list and --cleanup so they can't drift out of sync."""
+    """Return (repo_name, work_dir, worktree_path, branch) for every worktree, across every
+    repo in [repos], that qtask-bridge itself created -- never a worktree/branch you created
+    yourself. Shared by --list and --cleanup so they can't drift out of sync.
+
+    Detected via WORKTREE_MARKER_FILENAME's presence in the worktree, not the branch name --
+    Phase 1's branch-name override (a user can name their branch anything, not just
+    qtask/<id>-<slug>) would otherwise make an overridden worktree invisible here, since the
+    old check was purely "does the branch start with qtask/". Also still matches on the old
+    refs/heads/qtask/ prefix as a fallback, for worktrees created before this marker file
+    existed -- an older worktree without the marker shouldn't suddenly become untrackable."""
     found = []
     for repo_name in (cfg.get("repos") or {}):
         path, *_ = _repo_entry(cfg, repo_name)
@@ -1274,9 +1295,10 @@ def _scan_qtask_worktrees(cfg):
             continue
         for entry in _parse_worktree_porcelain(r.stdout):
             branch = entry.get("branch", "")
-            if branch.startswith("refs/heads/qtask/"):
+            has_marker = os.path.isfile(os.path.join(entry["worktree"], WORKTREE_MARKER_FILENAME))
+            if has_marker or branch.startswith("refs/heads/qtask/"):
                 found.append((repo_name, work_dir, entry["worktree"],
-                             branch[len("refs/heads/"):]))
+                             branch[len("refs/heads/"):] if branch else "(detached)"))
     return found
 
 
@@ -1404,8 +1426,8 @@ def cmd_list(cfg):
 def cmd_cleanup(cfg):
     """List qtask-created worktrees across every repo in [repos], and
     optionally remove some or all of them -- worktree AND branch. Doesn't
-    touch worktrees for branches you created yourself (only ones under
-    refs/heads/qtask/)."""
+    touch worktrees you created yourself -- see _scan_qtask_worktrees for how
+    "qtask-created" is actually detected."""
     if not (cfg.get("repos") or {}):
         print("[bridge] No repos configured in config.toml [repos] — nothing to scan.")
         return

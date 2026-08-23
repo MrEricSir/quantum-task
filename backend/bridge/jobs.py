@@ -131,7 +131,7 @@ def _job_response(job: models.BridgeJob) -> dict:
         "spec_snapshot": job.spec_snapshot,
         "created_at":    job.created_at.isoformat(),
         "updated_at":    job.updated_at.isoformat() if job.updated_at else None,
-        "fix_of_job_id": job.fix_of_job_id,
+        "resumes_job_id": job.resumes_job_id,
         "fix_comment_ids": json.loads(job.fix_comment_ids) if job.fix_comment_ids else None,
         "requested_branch_name": job.requested_branch_name,
     }
@@ -149,7 +149,7 @@ def _queue_fix_job(
     branch_name/worktree_path are copied from original_job now, at creation time, rather
     than left null for the bridge to fill in via /start the way a normal job's are -- we
     already know them, no reason to make the bridge re-derive or re-fetch them. /start still
-    gets called when the bridge actually picks this up (see run_job's fix_of_job_id branch),
+    gets called when the bridge actually picks this up (see run_job's resumes_job_id branch),
     to record which agent/machine ran it and refresh updated_at, same as every other job
     kind -- it just echoes back values that were already set instead of establishing them
     for the first time."""
@@ -162,7 +162,7 @@ def _queue_fix_job(
         branch_name=original_job.branch_name,
         worktree_path=original_job.worktree_path,
         prompt_snapshot=prompt,
-        fix_of_job_id=original_job.id,
+        resumes_job_id=original_job.id,
         fix_comment_ids=json.dumps([c.id for c in comments]),
         created_at=datetime.now(timezone.utc),
     )
@@ -171,7 +171,7 @@ def _queue_fix_job(
 def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.BridgeJob:
     """Build (but don't commit) a pending "resume" BridgeJob that continues original_job's
     worktree/branch after an interrupted session, instead of creating a fresh one -- shares
-    the exact same fix_of_job_id-driven resume mechanism in agent_core.py's run_job() that
+    the exact same resumes_job_id-driven resume mechanism in agent_core.py's run_job() that
     _queue_fix_job uses, distinguished from a fix job by fix_comment_ids being left unset (no
     specific comments to address, just "keep going"). See CLAUDE_CODE_INTEGRATION.md's
     "Phase 0" plan. Caller (bridge.router) must have already verified original_job.worktree_path
@@ -196,7 +196,7 @@ def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.Bri
         branch_name=original_job.branch_name,
         worktree_path=original_job.worktree_path,
         prompt_snapshot=prompt,
-        fix_of_job_id=original_job.id,
+        resumes_job_id=original_job.id,
         created_at=datetime.now(timezone.utc),
     )
 

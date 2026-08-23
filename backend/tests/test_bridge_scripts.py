@@ -1355,7 +1355,7 @@ class TestAdapterGitignoreEntriesStaySynced:
         """The reverse check: every non-fixed entry in BRIDGE_IGNORE_ENTRIES should be
         traceable to a currently-configured adapter -- catches a leftover entry from an
         adapter that was since removed from _ADAPTER_FILES."""
-        fixed = {"BRIDGE_SPEC.md", ".env.qtask"}
+        fixed = {"BRIDGE_SPEC.md", ".env.qtask", ".qtask-worktree"}
         expected = set(fixed)
         for agent_name, filename in bridge_render._ADAPTER_FILES.items():
             module = self._load_adapter_module(agent_name, filename)
@@ -1668,7 +1668,7 @@ class TestCommitIfDirty:
 
 class TestDisableRemotePush:
     """Extracted out of _create_worktree so a fix job (agent_core.py's run_job,
-    fix_of_job_id branch) gets the exact same push-safety property without going through
+    resumes_job_id branch) gets the exact same push-safety property without going through
     worktree creation. _create_worktree's own existing tests already cover this indirectly;
     these test the extracted function directly."""
 
@@ -1908,6 +1908,86 @@ class TestCreateWorktreeBranchOverride:
 
         assert result is None
         assert "already exists" in capsys.readouterr().err
+
+    def test_writes_a_provenance_marker_into_the_worktree(self, scratch_repo):
+        """WORKTREE_MARKER_FILENAME is what lets _scan_qtask_worktrees find a
+        custom-named branch (Phase 1) that doesn't start with qtask/."""
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 5, "card_id": 5, "card_title": "Whatever", "requested_branch_name": "totally-custom"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        assert os.path.isfile(os.path.join(wt, agent_core.WORKTREE_MARKER_FILENAME))
+
+
+class TestScanQtaskWorktrees:
+    """_scan_qtask_worktrees detects a bridge-created worktree via
+    WORKTREE_MARKER_FILENAME's presence, not the branch name -- see
+    CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan writeup on why the old
+    branch-prefix-only check made a Phase 1 custom branch name untrackable."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def test_finds_a_worktree_with_a_custom_branch_name(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 1, "card_id": 1, "card_title": "Whatever", "requested_branch_name": "fix-login"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        found = agent_core._scan_qtask_worktrees(cfg)
+        assert any(f[3] == "fix-login" for f in found)
+
+    def test_still_finds_a_default_named_worktree(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 2, "card_id": 2, "card_title": "Some Feature"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        found = agent_core._scan_qtask_worktrees(cfg)
+        assert any(f[3] == "qtask/2-some-feature" for f in found)
+
+    def test_finds_a_qtask_prefixed_worktree_even_without_the_marker_file(self, scratch_repo):
+        """Backward compatibility: a worktree created by an older bridge version, before
+        the marker file existed, must not suddenly become untrackable."""
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 3, "card_id": 3, "card_title": "Some Feature"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        os.remove(os.path.join(wt, agent_core.WORKTREE_MARKER_FILENAME))
+
+        found = agent_core._scan_qtask_worktrees(cfg)
+        assert any(f[3] == "qtask/3-some-feature" for f in found)
+
+    def test_ignores_a_worktree_the_user_created_themselves(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        manual_path = str(scratch_repo.parent / "manual-worktree")
+        subprocess.run(["git", "worktree", "add", "-b", "my-own-work", manual_path],
+                       cwd=scratch_repo, capture_output=True, text=True)
+
+        found = agent_core._scan_qtask_worktrees(cfg)
+        assert not any(f[3] == "my-own-work" for f in found)
+
+    def test_cleanup_removes_a_custom_named_branch_and_its_worktree(self, scratch_repo, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 4, "card_id": 4, "card_title": "Whatever", "requested_branch_name": "cleanup-me"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+        agent_core.cmd_cleanup(cfg)
+
+        assert not os.path.isdir(wt)
+        r = subprocess.run(["git", "branch", "--list", "cleanup-me"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert r.stdout.strip() == ""
 
 
 class TestCurrentRepoName:
@@ -2786,7 +2866,7 @@ class TestAgentScriptFullFlow:
                        cwd=scratch_repo, capture_output=True)
 
     def test_run_job_resumes_existing_worktree_for_a_fix_job(self, scratch_repo, monkeypatch):
-        """A fix job (job["fix_of_job_id"] set) must resume the worktree/branch already on
+        """A fix job (job["resumes_job_id"] set) must resume the worktree/branch already on
         the job payload instead of creating a fresh one -- proves run_job's branch actually
         takes this path (by making _create_worktree raise if it's called at all, not just
         trusting the code compiles), that /start is called with the pre-known branch/
@@ -2816,7 +2896,7 @@ class TestAgentScriptFullFlow:
         job = {
             "id": 2, "card_id": 84, "card_title": "Fix review feedback",
             "prompt": "Address these comments...", "target_repo": None,
-            "fix_of_job_id": 1, "fix_comment_ids": [501],
+            "resumes_job_id": 1, "fix_comment_ids": [501],
             "worktree_path": str(scratch_repo), "branch_name": "qtask/1-fix-login",
         }
 
@@ -2843,7 +2923,7 @@ class TestAgentScriptFullFlow:
             "job never reached /complete"
 
     def test_run_job_resumes_existing_worktree_for_a_resume_job(self, scratch_repo, monkeypatch):
-        """A resume job (fix_of_job_id set, no fix_comment_ids) must resume the existing
+        """A resume job (resumes_job_id set, no fix_comment_ids) must resume the existing
         worktree/branch exactly like a fix job does -- proves it goes through the same
         _create_worktree-skipping branch -- but with _make_resume_prompt's "continue"
         framing on the wrapper prompt sent to the CLI, not _make_fix_prompt's or
@@ -2871,7 +2951,7 @@ class TestAgentScriptFullFlow:
         job = {
             "id": 2, "card_id": 84, "card_title": "OAuth login feature",
             "prompt": "Continue implementing...", "target_repo": None,
-            "fix_of_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-oauth",
+            "resumes_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-oauth",
         }
 
         cwd_before = os.getcwd()
@@ -2902,7 +2982,7 @@ class TestAgentScriptFullFlow:
         """The crash-recovery case a resume job exists for: the ORIGINAL session ended
         uncleanly (crash/Ctrl-C/network loss) and never reached its own end-of-session
         _commit_if_dirty call -- so whatever it left uncommitted is still sitting in the
-        worktree when the resume job picks it up. run_job's fix_of_job_id branch must catch
+        worktree when the resume job picks it up. run_job's resumes_job_id branch must catch
         this BEFORE a fresh agent process starts working on top of it."""
         ns = self._load_rendered_agent_module()
 
@@ -2925,7 +3005,7 @@ class TestAgentScriptFullFlow:
         job = {
             "id": 3, "card_id": 84, "card_title": "OAuth login feature",
             "prompt": "Continue implementing...", "target_repo": None,
-            "fix_of_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-oauth",
+            "resumes_job_id": 1, "worktree_path": str(scratch_repo), "branch_name": "qtask/1-oauth",
         }
 
         cwd_before = os.getcwd()
@@ -2992,6 +3072,77 @@ class TestAgentScriptFullFlow:
             subprocess.run(["git", "worktree", "remove", "--force", worktree_path],
                            cwd=scratch_repo, capture_output=True)
 
+    def test_run_interactive_commits_dirty_state_even_when_interrupted(self, scratch_repo, monkeypatch):
+        """The commit safety net must fire even when something inside the session raises
+        (KeyboardInterrupt during an interactive session, or anything else) -- it lives in
+        the finally block specifically so this holds, matching _git_teardown's own guarantee
+        level. Closes a gap found during a lead-engineer-style review of Phase 0: the
+        end-of-session call used to sit as a plain line AFTER the try/finally, so an
+        interrupt during the agent subprocess itself would skip it entirely."""
+        ns = self._load_rendered_agent_module()
+
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                with open(os.path.join(scratch_repo, "left_uncommitted.py"), "w") as f:
+                    f.write("z = 1\n")
+                raise KeyboardInterrupt()
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        with pytest.raises(KeyboardInterrupt):
+            ns["_run_interactive"](
+                {"app_url": "http://fake", "token": "x"}, 1, "some-branch", str(scratch_repo),
+                prompt_note=False,
+            )
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=scratch_repo,
+                             capture_output=True, text=True)
+        assert "Auto-captured" in log.stdout
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=scratch_repo,
+                                capture_output=True, text=True)
+        assert status.stdout.strip() == ""
+        assert not any(c[1].endswith("/complete") for c in api_calls), \
+            "must not report complete after an interrupt -- only the commit should happen"
+
+    def test_run_streaming_commits_dirty_state_even_when_interrupted(self, scratch_repo, monkeypatch):
+        """Same guarantee as the interactive case above, for the streaming path."""
+        ns = self._load_rendered_agent_module()
+
+        real_popen = ns["subprocess"].Popen
+        def fake_popen(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                writer = (
+                    "open('left_uncommitted.py', 'w').write('z = 1\\n'); print('done')"
+                )
+                return real_popen(["python3", "-c", writer], *a, **k)
+            return real_popen(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "Popen", fake_popen)
+
+        def fake_verification(cwd, test_cmd, verify_acceptance, spec_text):
+            raise KeyboardInterrupt()
+        monkeypatch.setitem(ns, "_run_verification", fake_verification)
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        with pytest.raises(KeyboardInterrupt):
+            ns["_run_streaming"](
+                {"app_url": "http://fake", "token": "x"}, 1, "some-branch", str(scratch_repo),
+                test_cmd="anything", verify_acceptance=True,
+            )
+
+        log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=scratch_repo,
+                             capture_output=True, text=True)
+        assert "Auto-captured" in log.stdout
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=scratch_repo,
+                                capture_output=True, text=True)
+        assert status.stdout.strip() == ""
+        assert not any(c[1].endswith("/complete") for c in api_calls)
+
     def test_run_job_fix_job_errors_cleanly_if_worktree_was_already_cleaned_up(self, tmp_path, monkeypatch):
         """Per the resolved design question in CLAUDE_CODE_INTEGRATION.md: if --cleanup
         already removed the worktree, error out with a clear message rather than trying to
@@ -3006,7 +3157,7 @@ class TestAgentScriptFullFlow:
         job = {
             "id": 2, "card_id": 84, "card_title": "Fix review feedback",
             "prompt": "Address these comments...", "target_repo": None,
-            "fix_of_job_id": 1, "worktree_path": missing_path, "branch_name": "qtask/1-fix-login",
+            "resumes_job_id": 1, "worktree_path": missing_path, "branch_name": "qtask/1-fix-login",
         }
 
         ns["run_job"](cfg, job, streaming=False, prompt_note=False)

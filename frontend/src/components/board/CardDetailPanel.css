@@ -634,6 +634,27 @@
   cursor: default;
 }
 
+.cdp-branch-use-default {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+}
+
+.cdp-branch-use-default:hover:not(:disabled) {
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+
+.cdp-branch-use-default:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .cdp-spec-empty {
   font-size: 12px;
   color: var(--text-muted);

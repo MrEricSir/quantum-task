@@ -2931,7 +2931,7 @@ test.describe('card detail panel — github and spec', () => {
       id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
       branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
       worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
-      spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
       created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
     }
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job: latestJob } }))
@@ -2942,7 +2942,7 @@ test.describe('card detail panel — github and spec', () => {
         id: 6, card_id: 99, status: 'pending', target_repo: 'owner/repo',
         branch_name: 'qtask/99-oauth-login', agent_name: null,
         worktree_path: '/tmp/worktrees/99', result: null, output: null,
-        spec_snapshot: null, fix_of_job_id: 5, fix_comment_ids: [2],
+        spec_snapshot: null, resumes_job_id: 5, fix_comment_ids: [2],
         created_at: '2026-06-03T10:00:00Z', updated_at: null,
       }
       return r.fulfill({ json: latestJob })
@@ -3038,13 +3038,39 @@ test.describe('card detail panel — github and spec', () => {
     expect(requestFired).toBe(false)
   })
 
+  test('a branch name starting with a dash shows an inline error and does not queue', async ({ page }) => {
+    let requestFired = false
+    await page.route('**/api/bridge/jobs', async r => {
+      requestFired = true
+      return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
+                                 created_at: '2026-06-03T10:00:00Z', updated_at: null } })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.locator('.cdp-branch-input').fill('-not-a-flag')
+    await page.locator('.cdp-spec-bridge-btn').click()
+
+    await expect(page.locator('.cdp-spec-error')).toContainText(/can't start with/i)
+    expect(requestFired).toBe(false)
+  })
+
+  test('"Use this" seeds the branch field with the auto-generated default', async ({ page }) => {
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const input = page.locator('.cdp-branch-input')
+    await expect(input).toHaveValue('')
+    await page.locator('.cdp-branch-use-default').click()
+    await expect(input).toHaveValue('qtask/99-oauth-login-feature')
+  })
+
   test('Resume button appears for an errored job with a resumable worktree', async ({ page }) => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
       json: { job: {
         id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
         branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
         worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
-        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
         created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
       } },
     }))
@@ -3059,7 +3085,7 @@ test.describe('card detail panel — github and spec', () => {
         id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
         branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
         worktree_path: '/tmp/worktrees/99', result: null, output: null,
-        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
         created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
       } },
     }))
@@ -3074,7 +3100,7 @@ test.describe('card detail panel — github and spec', () => {
         id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
         branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
         worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
-        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
         created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
       } },
     }))
@@ -3089,7 +3115,7 @@ test.describe('card detail panel — github and spec', () => {
         id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
         branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
         worktree_path: '/tmp/worktrees/99', result: null, output: null,
-        spec_snapshot: GH_CARD.spec, fix_of_job_id: null, fix_comment_ids: null,
+        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
         created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
       } },
     }))
@@ -3101,7 +3127,7 @@ test.describe('card detail panel — github and spec', () => {
           id: 6, card_id: 99, status: 'pending', target_repo: 'owner/repo',
           branch_name: 'qtask/99-oauth-login', agent_name: null,
           worktree_path: '/tmp/worktrees/99', result: null, output: null,
-          spec_snapshot: null, fix_of_job_id: 5, fix_comment_ids: null,
+          spec_snapshot: null, resumes_job_id: 5, fix_comment_ids: null,
           created_at: '2026-06-03T10:00:00Z', updated_at: null,
         },
       })

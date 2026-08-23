@@ -383,7 +383,7 @@ Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining le
 | **▶ Run** | Queues a job for the local bridge agent |
 | **Edit** (footer) | Opens an inline textarea to manually write or adjust the requirements |
 
-Next to **▶ Run**, a **Branch** field shows the branch name the bridge would auto-generate (`qtask/<card id>-<slug of the title>`) as grayed-out placeholder text — type your own name to use it instead, or leave it blank to keep the default. Left blank, the name is still decided fresh when the bridge actually picks up the job (from whatever the card's title is *then*), not locked in at the moment you click Run.
+Next to **▶ Run**, a **Branch** field shows the branch name the bridge would auto-generate (`qtask/<card id>-<slug of the title>`) as grayed-out placeholder text — type your own name to use it instead, or leave it blank to keep the default. Left blank, the name is still decided fresh when the bridge actually picks up the job (from whatever the card's title is *then*), not locked in at the moment you click Run. **Use this** copies that placeholder into the field so you can tweak a couple of words instead of typing the whole name from scratch. Your own names don't need to start with `qtask/` — `--list`/`--switch`/`--cleanup` find the worktree either way.
 
 #### Applying review feedback
 

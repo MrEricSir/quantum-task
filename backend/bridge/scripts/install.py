@@ -116,14 +116,18 @@ TOML_TEMPLATE = textwrap.dedent("""\
 """)
 
 # Files qtask-bridge writes into every worktree it creates -- BRIDGE_SPEC.md
-# (agent_core.py's SPEC_FILENAME), .env.qtask (agent_core.py's ENV_FILENAME), plus one
+# (agent_core.py's SPEC_FILENAME), .env.qtask (agent_core.py's ENV_FILENAME),
+# .qtask-worktree (agent_core.py's WORKTREE_MARKER_FILENAME -- empty provenance marker so
+# _scan_qtask_worktrees can find a worktree regardless of its branch name), plus one
 # entry per adapter's IDE_SETTINGS_GITIGNORE_ENTRY__<name> for whatever IDE config
 # write_ide_settings() writes (.claude/settings.local.json is agent_claude.py's --
 # IDE_SETTINGS_GITIGNORE_ENTRY__claude). Kept in sync by hand, checked against every
 # adapter in render.py's _ADAPTER_FILES by
 # TestAdapterGitignoreEntriesStaySynced (tests/test_bridge_scripts.py) -- add a new
 # adapter's entry here (if not None) when adding it to _ADAPTER_FILES, or that test fails.
-BRIDGE_IGNORE_ENTRIES = ["BRIDGE_SPEC.md", ".env.qtask", ".claude/settings.local.json"]
+BRIDGE_IGNORE_ENTRIES = [
+    "BRIDGE_SPEC.md", ".env.qtask", ".qtask-worktree", ".claude/settings.local.json",
+]
 
 
 def setup_global_gitignore():

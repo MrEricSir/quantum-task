@@ -210,6 +210,11 @@ class TestCreateBridgeJob:
         res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "has a space"})
         assert res.status_code == 400
 
+    def test_400_for_branch_name_starting_with_a_dash(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "-not-a-flag"})
+        assert res.status_code == 400
+
     def test_requested_branch_name_appears_in_next_pending_payload(self, client):
         card_id = _make_card(spec="s")
         client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "custom/name"})
@@ -503,7 +508,7 @@ class TestQueueFixJob:
         res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]})
         assert res.status_code == 200
         data = res.json()
-        assert data["fix_of_job_id"] == job_id
+        assert data["resumes_job_id"] == job_id
         assert data["fix_comment_ids"] == [comment_id]
         assert data["status"] == "pending"
         # Copied from the original job at creation time, not left null for /start to fill in.
@@ -548,6 +553,35 @@ class TestQueueFixJob:
         job_id = self._make_started_job(client)
         res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": []})
         assert res.status_code == 400
+
+    def test_409_when_original_job_is_still_running(self, client):
+        """Fixing a job that's actively being worked would point a second live agent
+        session at the exact same worktree -- must be refused, not just discouraged."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.get("/api/bridge/jobs/next/pending")  # flips it to "running"
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/7-fix-login", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-7-fix-login",
+        })
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(item_id, github_id=505)
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]})
+        assert res.status_code == 409
+
+    def test_409_when_original_job_is_still_pending(self, client):
+        """A fix/resume job's worktree_path is copied from its parent at creation time, before
+        it's ever run -- so it's still "pending" but already has enough to (incorrectly) pass
+        the worktree_path check alone. Covers that case specifically."""
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(item_id, github_id=506)
+        job_id = self._make_started_job(client, external_id="github:owner/repo/pull/7")
+        fix_job_id = client.post(f"/api/bridge/jobs/{job_id}/fix",
+                                 json={"comment_ids": [comment_id]}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{fix_job_id}/fix", json={"comment_ids": [comment_id]})
+        assert res.status_code == 409
 
     def test_404_for_unknown_comment_id(self, client):
         job_id = self._make_started_job(client)
@@ -603,7 +637,7 @@ class TestQueueResumeJob:
         res = client.post(f"/api/bridge/jobs/{job_id}/resume")
         assert res.status_code == 200
         data = res.json()
-        assert data["fix_of_job_id"] == job_id
+        assert data["resumes_job_id"] == job_id
         assert data["fix_comment_ids"] is None
         assert data["status"] == "pending"
         assert data["branch_name"] == "qtask/9-oauth-login"
@@ -642,6 +676,25 @@ class TestQueueResumeJob:
         job_id = self._make_started_job(client, status="stalled")
         res = client.post(f"/api/bridge/jobs/{job_id}/resume")
         assert res.status_code == 200
+
+    def test_409_when_original_job_is_still_running(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.get("/api/bridge/jobs/next/pending")  # flips it to "running"
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/9-oauth-login", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-9-oauth-login",
+        })
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/resume")
+        assert res.status_code == 409
+
+    def test_409_when_original_job_is_still_pending(self, client):
+        job_id = self._make_started_job(client)
+        resume_job_id = client.post(f"/api/bridge/jobs/{job_id}/resume").json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{resume_job_id}/resume")
+        assert res.status_code == 409
 
 
 # ── POST /api/bridge/jobs/{id}/output ────────────────────────────────────────
