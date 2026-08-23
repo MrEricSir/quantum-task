@@ -815,6 +815,45 @@ class TestLatestCardJob:
         assert job["status"] == "pending"
 
 
+# ── GET /api/bridge/jobs/by-worktree ─────────────────────────────────────────
+
+class TestLatestWorktreeJob:
+
+    def test_returns_null_when_no_matching_worktree(self, client):
+        res = client.get("/api/bridge/jobs/by-worktree", params={"path": "/nowhere"})
+        assert res.status_code == 200
+        assert res.json()["job"] is None
+
+    def test_finds_the_job_by_worktree_path_even_with_a_custom_branch_name(self, client):
+        """The whole reason this is keyed by worktree_path rather than parsing the branch
+        name for a card id -- a Phase 1 custom branch name isn't reliably parseable."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "totally-custom-name", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/totally-custom-name",
+        })
+
+        res = client.get("/api/bridge/jobs/by-worktree", params={
+            "path": "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/totally-custom-name",
+        })
+        assert res.status_code == 200
+        assert res.json()["job"]["id"] == job_id
+
+    def test_returns_the_most_recent_job_for_that_worktree(self, client):
+        """A worktree gets reused across fix/resume jobs -- the latest one wins."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/1-foo", "agent": "work-mac", "worktree_path": "/wt/1-foo",
+        })
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+        resume_job_id = client.post(f"/api/bridge/jobs/{job_id}/resume").json()["id"]
+
+        res = client.get("/api/bridge/jobs/by-worktree", params={"path": "/wt/1-foo"})
+        assert res.json()["job"]["id"] == resume_job_id
+
+
 # ── GET /api/bridge/jobs/next/pending?repos= ─────────────────────────────────
 
 class TestReposFilter:

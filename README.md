@@ -246,6 +246,7 @@ qtask-bridge --tag work       # queue + run every "work"-tagged card with a spec
 qtask-bridge --list           # list qtask worktrees across configured repos (read-only)
 qtask-bridge --switch         # menu of worktrees for the current repo, most recent first
 qtask-bridge --cleanup        # list finished qtask worktrees and remove the ones you're done with
+qtask-bridge --adopt          # detach a worktree from its branch and check the branch out in your primary checkout instead
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
 qtask-bridge --review [branch] # lead-engineer-style review of a worktree's changes, offers to apply fixes after
 qtask-bridge --unlock-push    # clear a stuck no_push sentinel left by an interrupted job
@@ -275,7 +276,13 @@ running `git worktree list` to figure out where a job's code went:
 - **In your terminal tab** — interactive sessions (`--watch`/`--card`) set the tab/window title to the branch name, so multiple job tabs stay identifiable at a glance
 - **From any shell** — `qtask-bridge --list` prints every qtask worktree across your configured repos (read-only, no prompt, safe to run anytime). `qtask-bridge --switch` narrows that to worktrees for whichever repo you're currently in (main checkout or another worktree, either works), shows them most-recently-active first, and prints only the chosen path on stdout — everything else (the menu, the prompt) goes to stderr. A subprocess can never `cd` its own parent shell, though (an OS-level constraint, not something `--switch` itself can work around), so the installer automatically adds a `qcd` shell function to your `~/.bash_profile`/`~/.zshrc` that wraps it and does the actual `cd` — nothing to copy-paste, just run `qcd` after installing (or re-run the installer if you already had `qtask-bridge` from before `--switch` existed) and open a new terminal (or `source` your shell config).
 
-`--list`, `--switch`, and `--cleanup` only scan repos listed explicitly under `[repos]` in `config.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in any of them.
+`--list`, `--switch`, `--cleanup`, and `--adopt` only scan repos listed explicitly under `[repos]` in `config.toml` — a repo resolved via `repo_roots` auto-discovery won't show up in any of them. A custom branch name (see the **Branch** field above) doesn't need to start with `qtask/` for any of these to find it — worktrees are tracked by an internal marker file, not by name.
+
+#### Working on a branch in your primary checkout
+
+Sometimes the isolated worktree gets in the way — you'd rather keep working on the branch directly in your normal editor/checkout instead of a separate directory. `qtask-bridge --adopt` does that: pick a worktree from the numbered list, and it detaches that worktree from its branch (same commit, no file changes) and checks the branch out in your primary directory instead. The worktree itself is left in place, just no longer "on" that branch — anything tied to its path (a running dev server, `node_modules`) keeps working.
+
+This is reversible, not a one-way trip: if you later use the Fix/Resume flow on the same card, the bridge notices the branch is currently in your primary checkout, automatically checks primary back to its base branch, and re-attaches the branch to the worktree before continuing — printed as a step, not silent. `--adopt` refuses if the job is still running (stop it first), or if either the worktree or your primary checkout has uncommitted changes (commit or stash them first).
 
 #### Avoiding port and database collisions
 

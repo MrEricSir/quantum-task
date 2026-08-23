@@ -11,6 +11,9 @@ Usage:
   qtask-bridge --switch      Menu of qtask worktrees for the current repo; prints the
                               chosen path on stdout for a shell function to cd into
   qtask-bridge --cleanup     List and optionally remove finished qtask worktrees
+  qtask-bridge --adopt       Detach a qtask worktree from its branch and check the branch
+                              out in the primary checkout instead -- reversible via a
+                              later --fix/--resume on the same job
   qtask-bridge --run [NAME]  Run the app in a resolved qtask worktree (cwd, last one,
                               or a branch fragment) via its Procfile.dev/Procfile or
                               configured run_cmd
@@ -585,6 +588,29 @@ def _create_worktree(cfg, job, work_dir):
     # Marker of provenance -- see WORKTREE_MARKER_FILENAME's own comment above.
     with open(os.path.join(worktree_path, WORKTREE_MARKER_FILENAME), "w"):
         pass
+    # Belt-and-suspenders alongside install.py's global gitignore setup (BRIDGE_IGNORE_ENTRIES):
+    # that only takes effect once the installer has been (re-)run, so on a machine that
+    # created worktrees before this marker existed, the marker would otherwise show up as an
+    # untracked, uncommitted file forever -- silently swept into the very first
+    # _commit_if_dirty auto-commit any session makes. A LOCAL exclude (shared by every
+    # worktree of this repo, since they share .git via --git-common-dir) doesn't depend on
+    # install-time setup at all. Idempotent -- append-if-missing, same pattern as
+    # setup_global_gitignore's own check.
+    exclude_path = os.path.join(work_dir, ".git", "info", "exclude")
+    try:
+        existing = ""
+        if os.path.isfile(exclude_path):
+            with open(exclude_path) as f:
+                existing = f.read()
+        if WORKTREE_MARKER_FILENAME not in existing:
+            os.makedirs(os.path.dirname(exclude_path), exist_ok=True)
+            needs_leading_newline = existing and not existing.endswith("\n")
+            with open(exclude_path, "a") as f:
+                if needs_leading_newline:
+                    f.write("\n")
+                f.write(f"{WORKTREE_MARKER_FILENAME}\n")
+    except OSError as e:
+        print(f"[bridge] WARNING: could not update {exclude_path}: {e}", file=sys.stderr)
 
     # 4. Disable remote push (safety — the coding agent must not push).
     push_url_info = _disable_remote_push(work_dir)
@@ -631,6 +657,51 @@ def _commit_if_dirty(worktree_path, job_id, reason):
         print(f"[bridge] WARNING: auto-commit failed: {r.stderr.strip()}", file=sys.stderr)
         return False
     print("[bridge] Auto-committed.")
+    return True
+
+
+def _reverse_adoption_if_needed(work_dir, worktree_path, branch):
+    """If worktree_path was --adopt'ed (its branch is currently checked out in the PRIMARY
+    directory instead of the worktree itself), reverse it before resuming: check primary
+    back out to the base branch, then re-attach `branch` to the worktree. See
+    CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan for why this is reversible rather than a
+    one-way move, and cmd_adopt for the operation this undoes.
+
+    Detected via the worktree's own HEAD: --adopt leaves it on a detached HEAD (`git
+    checkout --detach`) specifically so the branch is free for primary to check out -- a
+    worktree that's still on its own branch has nothing to reverse. No state needs to be
+    remembered from adopt time (like what primary was on before): it always returns to the
+    same well-defined place, the repo's actual primary branch.
+
+    Returns True if nothing needed reversing or the reversal succeeded, False if the
+    reversal itself failed (e.g. primary has uncommitted changes blocking its own checkout)
+    -- caller should treat False as fatal for this job, not proceed against a worktree
+    that's still missing its branch."""
+    r = subprocess.run(["git", "branch", "--show-current"], cwd=worktree_path,
+                       capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        return True  # still on its own branch -- nothing was adopted
+
+    primary = _detect_primary_branch(work_dir)
+    if not primary:
+        print("[bridge] ERROR: worktree was adopted into primary, but could not detect the "
+              "primary branch to reverse it.", file=sys.stderr)
+        return False
+
+    print(f"[bridge] {worktree_path} was adopted into the primary checkout -- reversing "
+          f"before resuming (checking primary back to {primary}, re-attaching {branch} to "
+          f"the worktree)...")
+    r = subprocess.run(["git", "checkout", primary], cwd=work_dir, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[bridge] ERROR: could not check primary back out to {primary}: "
+              f"{r.stderr.strip()}", file=sys.stderr)
+        return False
+    r = subprocess.run(["git", "checkout", branch], cwd=worktree_path, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[bridge] ERROR: could not re-attach {branch} to the worktree: "
+              f"{r.stderr.strip()}", file=sys.stderr)
+        return False
+    print("[bridge] Reversed.")
     return True
 
 
@@ -1067,6 +1138,18 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
             api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
             print(f"\n[bridge] ERROR: {msg}", file=sys.stderr)
             return
+        # If this worktree was --adopt'ed since it last ran, its branch is currently
+        # checked out in primary instead of here -- reverse that before anything else, or
+        # everything below would proceed against a worktree still missing its own branch.
+        if not _reverse_adoption_if_needed(work_dir, worktree_path, branch):
+            msg = (
+                f"Could not resume job {resumes_job_id} -- its worktree was adopted into "
+                f"the primary checkout and reversing that failed (see bridge output above). "
+                f"Resolve manually, then re-run."
+            )
+            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error", {"result": msg})
+            print(f"\n[bridge] ERROR: {msg}", file=sys.stderr)
+            return
         # Safety net for the case this resume exists to handle in the first place: the
         # ORIGINAL session may have ended uncleanly (crash, Ctrl-C, network loss) and never
         # reached its own end-of-session _commit_if_dirty call at all -- catch it here,
@@ -1480,6 +1563,87 @@ def cmd_cleanup(cfg):
         if r.returncode != 0:
             print(f"[bridge] WARNING: could not delete branch {branch}: {r.stderr.strip()}",
                   file=sys.stderr)
+
+
+def cmd_adopt(cfg):
+    """Detach a qtask worktree from its branch and check the branch out in the primary
+    checkout instead, so you can keep working on it directly there -- reversible, not a
+    one-way move: a later --fix/--resume on the job that made this worktree automatically
+    reverses it (checks primary back to the base branch, re-attaches the branch to the
+    worktree) before resuming, see run_job's resumes_job_id branch and
+    _reverse_adoption_if_needed. See CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan for the
+    full reasoning, including why this isn't `git worktree remove` (that would permanently
+    foreclose --fix/--resume on the job, which depends on the worktree still existing)."""
+    if not (cfg.get("repos") or {}):
+        print("[bridge] No repos configured in config.toml [repos] — nothing to scan.")
+        return
+
+    found = _scan_qtask_worktrees(cfg)
+    if not found:
+        print("[bridge] No qtask worktrees found.")
+        return
+
+    print(f"[bridge] Found {len(found)} qtask worktree(s):\n")
+    for i, (repo_name, work_dir, wt_path, branch) in enumerate(found, 1):
+        print(f"  {i}. [{repo_name}] {branch}")
+        print(f"     {wt_path}")
+
+    print()
+    try:
+        choice = input("Adopt which one into its primary checkout? (number, Enter to cancel): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if not choice:
+        return
+    if not choice.isdigit() or not (1 <= int(choice) <= len(found)):
+        print("[bridge] Invalid selection.", file=sys.stderr)
+        return
+
+    repo_name, work_dir, wt_path, branch = found[int(choice) - 1]
+
+    # Refuse if the job currently using this worktree is still actively running -- pulling
+    # it out from under a live agent session would corrupt it. Keyed by worktree_path (not
+    # branch name/card id) since a Phase 1 custom branch name isn't reliably parseable back
+    # to a card id -- see the by-worktree endpoint's own docstring.
+    resp = api(cfg, "GET", f"/api/bridge/jobs/by-worktree?path={urllib.parse.quote(wt_path)}")
+    latest = resp.get("job") if resp else None
+    if latest and latest["status"] in ("pending", "running"):
+        print(f"[bridge] Job {latest['id']} for this worktree is still {latest['status']} -- "
+              f"wait for it to finish (or stall/error out) before adopting it.", file=sys.stderr)
+        return
+
+    r = subprocess.run(["git", "status", "--porcelain"], cwd=wt_path, capture_output=True, text=True)
+    if r.stdout.strip():
+        print(f"[bridge] {wt_path} has uncommitted changes -- commit or stash them before "
+              f"adopting.", file=sys.stderr)
+        return
+
+    r = subprocess.run(["git", "status", "--porcelain"], cwd=work_dir, capture_output=True, text=True)
+    if r.stdout.strip():
+        print(f"[bridge] {work_dir} (primary checkout) has uncommitted changes -- commit or "
+              f"stash them there before adopting.", file=sys.stderr)
+        return
+
+    print(f"[bridge] Detaching {wt_path} from {branch}...")
+    r = subprocess.run(["git", "checkout", "--detach"], cwd=wt_path, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[bridge] ERROR: could not detach worktree: {r.stderr.strip()}", file=sys.stderr)
+        return
+
+    print(f"[bridge] Checking out {branch} in {work_dir}...")
+    r = subprocess.run(["git", "checkout", branch], cwd=work_dir, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[bridge] ERROR: could not check out {branch} in the primary checkout: "
+              f"{r.stderr.strip()}", file=sys.stderr)
+        print(f"[bridge] Re-attaching {wt_path} to {branch} to avoid leaving it stranded...",
+              file=sys.stderr)
+        subprocess.run(["git", "checkout", branch], cwd=wt_path, capture_output=True)
+        return
+
+    print(f"[bridge] Adopted. {branch} is now checked out in {work_dir}.")
+    print(f"[bridge] {wt_path} is left in place (detached) -- a later --fix/--resume on this "
+          f"job automatically reverses this before resuming.")
 
 
 def _find_procfile(worktree_path):
@@ -1952,6 +2116,11 @@ def main():
                             "sequentially and unattended, each in its own git worktree")
     group.add_argument("--cleanup", action="store_true",
                        help="List qtask worktrees across configured repos and optionally remove them")
+    group.add_argument("--adopt", action="store_true",
+                       help="Detach a qtask worktree from its branch and check the branch "
+                            "out in the primary checkout instead, so you can keep working "
+                            "on it there directly -- reversible via a later --fix/--resume "
+                            "on the same job")
     group.add_argument("--list", action="store_true",
                        help="List qtask worktrees across configured repos (read-only, no prompt)")
     group.add_argument("--switch", action="store_true",
@@ -1982,6 +2151,8 @@ def main():
         cmd_tag(cfg, args.tag)
     elif args.cleanup:
         cmd_cleanup(cfg)
+    elif args.adopt:
+        cmd_adopt(cfg)
     elif args.list:
         cmd_list(cfg)
     elif args.switch:

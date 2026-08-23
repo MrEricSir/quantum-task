@@ -1990,6 +1990,196 @@ class TestScanQtaskWorktrees:
         assert r.stdout.strip() == ""
 
 
+class TestCmdAdopt:
+    """cmd_adopt (CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan): detach a qtask worktree from
+    its branch and check the branch out in the primary checkout instead."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        # Default: no job found for any worktree -- individual tests override this where
+        # they need a specific by-worktree response (e.g. a still-running job).
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def _make_worktree(self, cfg, scratch_repo, card_id, title="Some Feature"):
+        job = {"id": card_id, "card_id": card_id, "card_title": title}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        return wt, branch
+
+    def test_detaches_worktree_and_checks_out_branch_in_primary(self, scratch_repo, monkeypatch):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._make_worktree(cfg, scratch_repo, 1)
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+        agent_core.cmd_adopt(cfg)
+
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == "", "worktree should now be detached"
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=scratch_repo,
+                           capture_output=True, text=True)
+        assert r.stdout.strip() == branch, "primary should now be on the adopted branch"
+
+    def test_refuses_if_the_job_is_still_running(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._make_worktree(cfg, scratch_repo, 2)
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "job": {"id": 99, "status": "running"}
+        })
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+        agent_core.cmd_adopt(cfg)
+
+        assert "still running" in capsys.readouterr().err
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch, "worktree must remain attached"
+
+    def test_refuses_if_the_worktree_has_uncommitted_changes(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._make_worktree(cfg, scratch_repo, 3)
+        with open(os.path.join(wt, "dirty.py"), "w") as f:
+            f.write("x = 1\n")
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+        agent_core.cmd_adopt(cfg)
+
+        assert "uncommitted changes" in capsys.readouterr().err
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch
+
+    def test_refuses_if_primary_has_uncommitted_changes(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._make_worktree(cfg, scratch_repo, 4)
+        with open(os.path.join(scratch_repo, "dirty.py"), "w") as f:
+            f.write("x = 1\n")
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+        agent_core.cmd_adopt(cfg)
+
+        assert "uncommitted changes" in capsys.readouterr().err
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch, "worktree must remain attached"
+
+    def test_reattaches_the_worktree_if_the_primary_checkout_fails(self, scratch_repo, monkeypatch, capsys):
+        """Rollback path: if detaching succeeds but checking the branch out in primary
+        fails for any reason, don't leave the worktree stranded on a detached HEAD."""
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._make_worktree(cfg, scratch_repo, 5)
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+        real_run = agent_core.subprocess.run
+        def fake_run(cmd, *a, **k):
+            if cmd[:3] == ["git", "checkout", branch] and k.get("cwd") == str(scratch_repo):
+                class Result:
+                    returncode = 1
+                    stderr = "simulated checkout failure"
+                return Result()
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+
+        agent_core.cmd_adopt(cfg)
+
+        assert "ERROR" in capsys.readouterr().err
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch, "worktree should be re-attached after a failed adopt"
+
+    def test_no_worktrees_found(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        agent_core.cmd_adopt(cfg)
+        assert "No qtask worktrees found" in capsys.readouterr().out
+
+    def test_invalid_selection_does_nothing(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._make_worktree(cfg, scratch_repo, 6)
+        monkeypatch.setattr("builtins.input", lambda _: "99")
+
+        agent_core.cmd_adopt(cfg)
+
+        assert "Invalid selection" in capsys.readouterr().err
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch
+
+
+class TestReverseAdoption:
+    """_reverse_adoption_if_needed: run_job's counterpart to cmd_adopt -- auto-detects and
+    reverses an adopted worktree before a --fix/--resume proceeds."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def test_returns_true_and_does_nothing_when_not_adopted(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 1, "card_id": 1, "card_title": "Whatever"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        assert agent_core._reverse_adoption_if_needed(str(scratch_repo), wt, branch) is True
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch
+
+    def test_reverses_an_adopted_worktree(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 2, "card_id": 2, "card_title": "Whatever"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        primary = agent_core._detect_primary_branch(str(scratch_repo))
+        # Simulate what cmd_adopt does.
+        subprocess.run(["git", "checkout", "--detach"], cwd=wt, capture_output=True)
+        subprocess.run(["git", "checkout", branch], cwd=scratch_repo, capture_output=True)
+
+        result = agent_core._reverse_adoption_if_needed(str(scratch_repo), wt, branch)
+
+        assert result is True
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=scratch_repo,
+                           capture_output=True, text=True)
+        assert r.stdout.strip() == primary, "primary should be back on the base branch"
+        r = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+        assert r.stdout.strip() == branch, "worktree should have its branch back"
+        assert "Reversed" in capsys.readouterr().out
+
+    def test_returns_false_if_primarys_own_uncommitted_changes_block_the_reversal(self, scratch_repo):
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 3, "card_id": 3, "card_title": "Whatever"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        # Give the base branch a file that `branch` doesn't have, committed AFTER `branch`
+        # was cut from it -- then, once adopted, an untracked file of the same name in
+        # primary's working directory reliably blocks checking back out to base (git refuses
+        # to overwrite an untracked file), unlike a plain uncommitted edit to a file that's
+        # identical between the two branches (git happily carries that forward).
+        primary = agent_core._detect_primary_branch(str(scratch_repo))
+        subprocess.run(["git", "checkout", primary], cwd=scratch_repo, capture_output=True)
+        with open(os.path.join(scratch_repo, "new_file.txt"), "w") as f:
+            f.write("only on the base branch\n")
+        subprocess.run(["git", "add", "new_file.txt"], cwd=scratch_repo, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add new_file.txt"], cwd=scratch_repo, capture_output=True)
+        # Simulate cmd_adopt.
+        subprocess.run(["git", "checkout", "--detach"], cwd=wt, capture_output=True)
+        subprocess.run(["git", "checkout", branch], cwd=scratch_repo, capture_output=True)
+        # An untracked file blocking the reversal's checkout back to base.
+        with open(os.path.join(scratch_repo, "new_file.txt"), "w") as f:
+            f.write("untracked, would be overwritten\n")
+
+        result = agent_core._reverse_adoption_if_needed(str(scratch_repo), wt, branch)
+
+        assert result is False
+
+
 class TestCurrentRepoName:
     """_current_repo_name resolves the [repos] entry cwd belongs to, whether
     cwd is the main checkout or one of its worktrees -- both share the same
@@ -2975,6 +3165,61 @@ class TestAgentScriptFullFlow:
 
         assert any(c[1] == "/api/bridge/jobs/2/complete" for c in api_calls), \
             "job never reached /complete"
+
+    def test_run_job_resume_reverses_an_adopted_worktree_before_resuming(self, scratch_repo, monkeypatch):
+        """--adopt's counterpart: if the worktree was adopted (its branch checked out in
+        primary) since it last ran, a --resume must reverse that automatically before
+        proceeding -- see _reverse_adoption_if_needed and CLAUDE_CODE_INTEGRATION.md's
+        "Phase 2" plan."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        create_job = {"id": 1, "card_id": 84, "card_title": "OAuth login"}
+        wt, branch, push_info = ns["_create_worktree"](cfg, create_job, str(scratch_repo))
+        ns["_git_teardown"](str(scratch_repo), push_info)
+        primary = ns["_detect_primary_branch"](str(scratch_repo))
+
+        try:
+            # Simulate --adopt.
+            subprocess.run(["git", "checkout", "--detach"], cwd=wt, capture_output=True)
+            subprocess.run(["git", "checkout", branch], cwd=scratch_repo, capture_output=True)
+
+            real_run = ns["subprocess"].run
+            def fake_run(cmd, *a, **k):
+                if cmd[:1] == ["claude"]:
+                    import subprocess as _sp
+                    return _sp.CompletedProcess(cmd, 0)
+                return real_run(cmd, *a, **k)
+            monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+            resume_job = {
+                "id": 2, "card_id": 84, "card_title": "OAuth login",
+                "prompt": "Continue...", "target_repo": None,
+                "resumes_job_id": 1, "worktree_path": wt, "branch_name": branch,
+            }
+
+            cwd_before = os.getcwd()
+            os.chdir(scratch_repo)
+            try:
+                ns["run_job"](cfg, resume_job, streaming=False, prompt_note=False)
+            finally:
+                os.chdir(cwd_before)
+
+            r = subprocess.run(["git", "branch", "--show-current"], cwd=scratch_repo,
+                               capture_output=True, text=True)
+            assert r.stdout.strip() == primary, "primary should be back on the base branch"
+            r2 = subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True)
+            assert r2.stdout.strip() == branch, "worktree should have its branch back"
+            assert any(c[1] == "/api/bridge/jobs/2/complete" for c in api_calls), \
+                "job never reached /complete -- the resume should have proceeded normally after reversing"
+        finally:
+            # Clean up the real worktree this test created outside tmp_path (worktrees
+            # always live under ~/.local/share/qtask-bridge).
+            subprocess.run(["git", "worktree", "remove", "--force", wt],
+                           cwd=scratch_repo, capture_output=True)
 
     def test_run_job_resume_job_auto_commits_leftover_dirty_state_before_starting_agent(
         self, scratch_repo, monkeypatch,

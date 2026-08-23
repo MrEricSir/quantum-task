@@ -223,6 +223,31 @@ def queue_resume_job(job_id: int, db: Session = Depends(get_db)):
     return _job_response(job)
 
 
+@router.get("/api/bridge/jobs/by-worktree")
+def get_latest_worktree_job(path: str, db: Session = Depends(get_db)):
+    """Get the latest bridge job for a given worktree_path (for --adopt's running-job guard,
+    CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan).
+
+    Keyed by worktree_path rather than card_id/branch_name deliberately: a Phase 1 custom
+    branch name isn't reliably parseable back to a card id the way qtask/<id>-<slug> is (see
+    _extract_card_id_from_branch's existing degrade-to-None handling in --review), so this
+    avoids the same fragility for a check that's specifically meant to be a hard safety
+    guard, not best-effort enrichment.
+
+    Registered BEFORE /api/bridge/jobs/{job_id} below -- routes match in registration order,
+    and "by-worktree" would otherwise be captured as that route's {job_id} path param and
+    fail int conversion (a real 422 hit during this endpoint's own development)."""
+    job = (
+        db.query(models.BridgeJob)
+        .filter_by(worktree_path=path)
+        .order_by(models.BridgeJob.created_at.desc())
+        .first()
+    )
+    if not job:
+        return {"job": None}
+    return {"job": _job_response(job)}
+
+
 @router.get("/api/bridge/jobs/{job_id}")
 def get_job(job_id: int, db: Session = Depends(get_db)):
     """Get status of a single bridge job."""
