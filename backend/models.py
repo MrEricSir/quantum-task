@@ -459,7 +459,7 @@ class BridgeJob(Base):
 
     id              = Column(Integer, primary_key=True, index=True)
     card_id         = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
-    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error|stalled
+    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error|stalled|blocked
     target_repo     = Column(String, nullable=True)   # "owner/repo" — null means any bridge can claim
     branch_name     = Column(String, nullable=True)   # local branch created by bridge, e.g. qtask/42-fix-login
     agent_name      = Column(String, nullable=True)   # hostname of the machine that ran the job
@@ -485,6 +485,22 @@ class BridgeJob(Base):
     # bridge actually reports back via /start" -- intent and fact don't collide in one
     # column. Null means "use the auto-generated default," same as before this existed.
     requested_branch_name = Column(String, nullable=True)
+    # Set for a companion job that targets a DIFFERENT repo than the card's own GitHub link,
+    # queued to run only after another job (in a different repo) finishes -- see
+    # BRIDGE_CROSS_REPO_JOBS.md. Distinct from resumes_job_id above: that's same-repo
+    # continuation of one job; this is cross-repo sequencing between two independent jobs. A
+    # job with this set starts in "blocked" status (not "pending") and is unblocked by a
+    # scheduler tick once the referenced job reaches "done" -- see telegram/scheduler.py.
+    # SET NULL, not CASCADE: deleting the upstream job shouldn't cascade-delete a downstream
+    # job that's already unblocked/run.
+    depends_on_job_id = Column(Integer, ForeignKey("bridge_jobs.id", ondelete="SET NULL"), nullable=True)
+    # `git diff --stat` (file names + line counts, not the actual code) against the primary
+    # branch, captured client-side by the bridge CLI at completion time -- no GitHub PR or push
+    # required, just the worktree's own base ref. Kept separate from `result` (a short
+    # human-readable note, unchanged by this) so a single-repo job's Code tab/Telegram display
+    # doesn't get noisier for everyone; only pulled in by bridge/unblock.py when building a
+    # cross-repo companion job's prompt. See BRIDGE_CROSS_REPO_JOBS.md Phase 4.
+    diff_summary = Column(Text, nullable=True)
 
     card = relationship("Card")
 

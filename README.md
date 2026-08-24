@@ -398,6 +398,14 @@ For any card linked to a GitHub PR, review comments — both CodeRabbit's and hu
 
 Check the box next to one or more comments and a **Fix N selected** button appears. Clicking it resumes the card's most recent bridge job — same worktree, same branch, not a fresh one — with a prompt scoped to just the comments you picked ("apply these specific fixes, not a general invitation to refactor") and switches you into the Code tab to watch it run. This needs a prior job to resume, so it's only available once you've run the card at least once; if there's nothing to resume yet, it'll tell you so instead of silently failing.
 
+#### Cross-repo companion jobs
+
+Some features span two repos — an API change and the webapp that consumes it, say. Once a card's first job exists, a **+ Companion job in another repo** button appears in the Code tab; typing a repo (`owner/repo`, with autocomplete suggestions drawn from repos the server already knows about — synced GitHub issues/PRs and previously-used companion repos, not an exhaustive list) and clicking **Queue** creates a second job against the *same card's* spec, targeting that other repo.
+
+The companion job doesn't start right away — it sits **blocked** until the first job finishes, so it can be built with real knowledge of what the first job actually did rather than just the original plan's guess at it: its completion note *and* a `git diff --stat` of what actually changed (file names and line counts, captured locally from the worktree — no GitHub PR or push needed) both get appended to the companion's prompt. Each job also gets told which repo it's responsible for, since both share the same spec text: "you are working in the `{repo}` repo — only implement the part that belongs in THIS repo."
+
+The Code tab shows both jobs as separate status rows once a companion exists. **What this doesn't do**: verify the two repos actually work together. Each job only tests itself, in its own worktree — there's no live, running instance of the first job's build for the second job's session to check against. When both finish, the status area says so explicitly rather than implying more confidence than exists; check them out and run them together yourself before merging.
+
 #### Telegram `/build`
 
 You can also queue jobs from Telegram:

@@ -134,6 +134,8 @@ def _job_response(job: models.BridgeJob) -> dict:
         "resumes_job_id": job.resumes_job_id,
         "fix_comment_ids": json.loads(job.fix_comment_ids) if job.fix_comment_ids else None,
         "requested_branch_name": job.requested_branch_name,
+        "depends_on_job_id": job.depends_on_job_id,
+        "diff_summary": job.diff_summary,
     }
 
 
@@ -202,12 +204,18 @@ def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.Bri
 
 
 def _queue_job_for_card(
-    db: Session, card: models.Card, requested_branch_name: str | None = None
+    db: Session, card: models.Card, requested_branch_name: str | None = None,
+    target_repo: str | None = None, depends_on_job_id: int | None = None,
 ) -> models.BridgeJob:
-    """Build (but don't commit) a pending BridgeJob for a card. Caller must
-    have already verified card.spec is set (and, if requested_branch_name is given, that
-    it's already been sanity-checked -- this function trusts its caller, same as everywhere
-    else in this module)."""
+    """Build (but don't commit) a pending (or, if depends_on_job_id is given, blocked)
+    BridgeJob for a card. Caller must have already verified card.spec is set (and, if
+    requested_branch_name is given, that it's already been sanity-checked -- this function
+    trusts its caller, same as everywhere else in this module).
+
+    target_repo overrides the repo normally derived from the card's own GitHub link -- used
+    for a cross-repo companion job, which targets a different repo than the card's
+    external_id points at while still sharing the card's spec/GitHub context for overall
+    feature intent. See BRIDGE_CROSS_REPO_JOBS.md."""
     eng_item = None
     if card.external_id:
         eng_item = (
@@ -217,12 +225,23 @@ def _queue_job_for_card(
             .first()
         )
     prompt = _build_prompt(card, eng_item)
+    if target_repo:
+        # A companion job shares the card's spec verbatim (built above) with whatever other
+        # repo's job, so it needs to know it's only responsible for one slice of it -- without
+        # this, both jobs would just see the same "add an endpoint and wire up the UI" brief
+        # with no indication which half is theirs.
+        prompt = (
+            f"You are working in the {target_repo} repo. The brief below may describe "
+            f"changes spanning more than one repo -- only implement the part that belongs in "
+            f"THIS repo.\n\n---\n\n" + prompt
+        )
     return models.BridgeJob(
         card_id=card.id,
-        status="pending",
-        target_repo=_repo_from_external_id(card.external_id),
+        status="blocked" if depends_on_job_id else "pending",
+        target_repo=target_repo or _repo_from_external_id(card.external_id),
         spec_snapshot=card.spec,
         prompt_snapshot=prompt,
         requested_branch_name=requested_branch_name,
+        depends_on_job_id=depends_on_job_id,
         created_at=datetime.now(timezone.utc),
     )

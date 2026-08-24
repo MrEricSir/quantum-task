@@ -743,10 +743,29 @@ export async function queueResumeJob(jobId) {
   return res.json()
 }
 
-export async function getLatestBridgeJob(cardId) {
-  const res = await apiFetch(`/api/bridge/jobs/card/${cardId}/latest`)
-  if (!res.ok) throw new Error('Failed to fetch bridge job')
+export async function getBridgeJobChain(cardId) {
+  const res = await apiFetch(`/api/bridge/jobs/card/${cardId}/chain`)
+  if (!res.ok) throw new Error('Failed to fetch bridge job chain')
   return res.json()
+}
+
+export async function queueCompanionJob(cardId, targetRepo, dependsOnJobId) {
+  const res = await apiFetch('/api/bridge/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ card_id: cardId, target_repo: targetRepo, depends_on_job_id: dependsOnJobId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to queue companion job')
+  }
+  return res.json()
+}
+
+export async function getKnownBridgeRepos() {
+  const res = await apiFetch('/api/bridge/repos')
+  if (!res.ok) throw new Error('Failed to fetch known repos')
+  return res.json().then((d) => d.repos)
 }
 
 export async function fetchBridgeInstallToken() {

@@ -221,6 +221,214 @@ class TestCreateBridgeJob:
         pending = client.get("/api/bridge/jobs/next/pending").json()["job"]
         assert pending["requested_branch_name"] == "custom/name"
 
+    def test_depends_on_job_id_is_null_when_not_given(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert res.json()["depends_on_job_id"] is None
+
+    def test_target_repo_override_is_respected(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/api-repo/issues/1")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "target_repo": "owner/web-repo"})
+        assert res.status_code == 200
+        assert res.json()["target_repo"] == "owner/web-repo"
+
+    def test_target_repo_override_is_whitespace_trimmed(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "target_repo": "  owner/web-repo  "})
+        assert res.json()["target_repo"] == "owner/web-repo"
+
+    def test_no_target_repo_override_falls_back_to_derived_repo(self, client):
+        card_id = _make_card(spec="s", external_id="github:owner/api-repo/issues/1")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert res.json()["target_repo"] == "owner/api-repo"
+
+
+# ── Cross-repo companion jobs (depends_on_job_id / target_repo) ────────────────
+# See BRIDGE_CROSS_REPO_JOBS.md Phase 1.
+
+class TestCrossRepoCompanionJob:
+
+    def test_depends_on_job_id_starts_the_job_as_blocked(self, client):
+        card_id = _make_card(spec="s")
+        upstream = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": upstream["id"],
+        })
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "blocked"
+        assert data["depends_on_job_id"] == upstream["id"]
+        assert data["target_repo"] == "owner/web-repo"
+
+    def test_blocked_job_is_not_returned_by_next_pending(self, client):
+        card_id = _make_card(spec="s")
+        upstream = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": upstream["id"],
+        })
+
+        # Claim the upstream job -- the companion job must still not be claimable.
+        first_claim = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert first_claim["id"] == upstream["id"]
+
+        second_claim = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert second_claim is None
+
+    def test_404_when_depends_on_job_id_does_not_exist(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "depends_on_job_id": 9999})
+        assert res.status_code == 404
+
+    def test_400_when_depends_on_job_id_belongs_to_a_different_card(self, client):
+        card_a = _make_card(spec="s")
+        card_b = _make_card(spec="s")
+        job_on_b = client.post("/api/bridge/jobs", json={"card_id": card_b}).json()
+
+        res = client.post("/api/bridge/jobs", json={
+            "card_id": card_a, "depends_on_job_id": job_on_b["id"],
+        })
+        assert res.status_code == 400
+        assert "same card" in res.json()["detail"].lower()
+
+    def test_409_when_upstream_already_has_an_active_companion(self, client):
+        card_id = _make_card(spec="s")
+        upstream = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": upstream["id"],
+        })
+
+        res = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/other-repo", "depends_on_job_id": upstream["id"],
+        })
+        assert res.status_code == 409
+
+    def test_a_new_companion_is_allowed_once_the_old_one_reaches_a_terminal_state(self, client):
+        card_id = _make_card(spec="s")
+        upstream = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        first_companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": upstream["id"],
+        }).json()
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=first_companion["id"]).first()
+            job.status = "error"
+            db.commit()
+
+        res = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": upstream["id"],
+        })
+        assert res.status_code == 200
+
+    def test_depends_on_job_id_pointing_at_an_already_done_job_still_starts_blocked(self, client):
+        """Creating a companion job against an upstream that's already finished is a valid,
+        not-erroneous ordering -- it just means the Phase 2 unblock tick will pick it up on
+        its very next run instead of waiting. Not decided here whether that tick has landed
+        yet, only that job creation itself doesn't need to special-case it."""
+        card_id = _make_card(spec="s")
+        upstream = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        client.get("/api/bridge/jobs/next/pending")  # claim -> running
+        client.post(f"/api/bridge/jobs/{upstream['id']}/complete", json={"result": "done"})
+
+        res = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "depends_on_job_id": upstream["id"],
+        })
+        assert res.json()["status"] == "blocked"
+
+    def test_companion_job_prompt_is_framed_with_its_target_repo(self, client):
+        card_id = _make_card(spec="## Spec\nAdd export endpoint and wire up the UI")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "target_repo": "owner/web-repo"})
+        assert res.status_code == 200
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=res.json()["id"]).first()
+            assert "owner/web-repo" in job.prompt_snapshot
+            assert "only implement the part that belongs" in job.prompt_snapshot
+            assert "Add export endpoint" in job.prompt_snapshot
+
+    def test_job_without_target_repo_override_has_no_framing_note(self, client):
+        card_id = _make_card(spec="## Spec\ndo it")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id})
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=res.json()["id"]).first()
+            assert "only implement the part that belongs" not in job.prompt_snapshot
+
+
+# ── GET /api/bridge/jobs/card/{id}/chain ────────────────────────────────────────
+
+class TestJobChainEndpoint:
+
+    def test_no_jobs_returns_both_null(self, client):
+        card_id = _make_card(spec="s")
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain")
+        assert res.status_code == 200
+        assert res.json() == {"root": None, "companion": None}
+
+    def test_single_job_is_root_with_no_companion(self, client):
+        card_id = _make_card(spec="s")
+        job = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["root"]["id"] == job["id"]
+        assert res["companion"] is None
+
+    def test_companion_job_is_paired_with_its_root(self, client):
+        card_id = _make_card(spec="s")
+        root = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": root["id"],
+        }).json()
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["root"]["id"] == root["id"]
+        assert res["companion"]["id"] == companion["id"]
+
+    def test_only_the_newest_root_is_returned_when_a_card_has_job_history(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+        newest = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["root"]["id"] == newest["id"]
+
+    def test_unrelated_cards_dont_bleed_into_each_others_chain(self, client):
+        card_a = _make_card(spec="s")
+        card_b = _make_card(spec="s")
+        job_a = client.post("/api/bridge/jobs", json={"card_id": card_a}).json()
+        client.post("/api/bridge/jobs", json={"card_id": card_b})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_a}/chain").json()
+        assert res["root"]["id"] == job_a["id"]
+        assert res["companion"] is None
+
+
+# ── GET /api/bridge/repos ────────────────────────────────────────────────────
+
+class TestKnownReposEndpoint:
+
+    def test_no_repos_known_returns_empty_list(self, client):
+        res = client.get("/api/bridge/repos")
+        assert res.status_code == 200
+        assert res.json() == {"repos": []}
+
+    def test_includes_repos_from_synced_engineering_items(self, client):
+        _make_eng_item("github:owner/api-repo/issues/1", repo="owner/api-repo")
+        res = client.get("/api/bridge/repos")
+        assert res.json()["repos"] == ["owner/api-repo"]
+
+    def test_includes_repos_from_job_target_repo(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id, "target_repo": "owner/web-repo"})
+        res = client.get("/api/bridge/repos")
+        assert res.json()["repos"] == ["owner/web-repo"]
+
+    def test_dedupes_and_sorts_across_both_sources(self, client):
+        _make_eng_item("github:owner/b-repo/issues/1", repo="owner/b-repo")
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id, "target_repo": "owner/a-repo"})
+        client.post("/api/bridge/jobs", json={"card_id": card_id, "target_repo": "owner/b-repo"})
+
+        res = client.get("/api/bridge/repos")
+        assert res.json()["repos"] == ["owner/a-repo", "owner/b-repo"]
+
 
 # ── POST /api/bridge/jobs/queue-by-tag ────────────────────────────────────────
 
@@ -761,6 +969,23 @@ class TestCompleteJob:
     def test_404_for_missing_job(self, client):
         res = client.post("/api/bridge/jobs/9999/complete", json={})
         assert res.status_code == 404
+
+    def test_stores_diff_summary(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/complete", json={
+            "result": "done", "diff_summary": "api/routes.py | 42 ++++++++\n1 file changed",
+        })
+        assert res.status_code == 200
+        assert res.json()["diff_summary"] == "api/routes.py | 42 ++++++++\n1 file changed"
+
+    def test_diff_summary_defaults_to_empty_string(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+        assert res.json()["diff_summary"] == ""
 
 
 # ── POST /api/bridge/jobs/{id}/error ─────────────────────────────────────────

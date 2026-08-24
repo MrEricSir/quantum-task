@@ -2805,6 +2805,8 @@ test.describe('card detail panel — github and spec', () => {
                           created_at: '2026-06-03T10:00:00Z', updated_at: null } }))
     await page.route('**/api/bridge/jobs/card/*/latest', r =>
       r.fulfill({ json: { job: null } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: null, companion: null } }))
     await page.route('**/api/cards/*/thread', r =>
       r.fulfill({ json: { messages: [], context: '', output: null } }))
     await page.goto('/board')
@@ -2935,6 +2937,8 @@ test.describe('card detail panel — github and spec', () => {
       created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
     }
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job: latestJob } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: latestJob, companion: null } }))
     let fixRequestBody = null
     await page.route('**/api/bridge/jobs/5/fix', async r => {
       fixRequestBody = r.request().postDataJSON()
@@ -2954,6 +2958,45 @@ test.describe('card detail panel — github and spec', () => {
 
     await expect(page.locator('.assist-spec-tab')).toBeVisible()
     await expect(page.locator('.cdp-bridge-label')).toContainText(/waiting for agent to apply fixes/i)
+    expect(fixRequestBody).toEqual({ comment_ids: [2] })
+  })
+
+  test('requesting a fix targets the root job, not a newer companion job in another repo', async ({ page }) => {
+    // Regression test: review comments belong to the card's own linked repo (root's repo).
+    // A companion job targeting a different repo is always newer than root -- "Fix N
+    // selected" must not silently resume the companion's worktree just because it's the
+    // most recently created job for this card.
+    const root = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99-root', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    const companion = {
+      id: 9, card_id: 99, status: 'done', target_repo: 'owner/web-repo',
+      branch_name: 'qtask/99-web', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99-companion', result: 'Wired up the UI', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      depends_on_job_id: 5, created_at: '2026-06-02T09:00:00Z', updated_at: '2026-06-02T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job: companion } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root, companion } }))
+    let fixRequestBody = null
+    let fixedJobId = null
+    await page.route('**/api/bridge/jobs/*/fix', async r => {
+      fixedJobId = Number(r.request().url().match(/jobs\/(\d+)\/fix/)[1])
+      fixRequestBody = r.request().postDataJSON()
+      return r.fulfill({ json: { ...root, id: 6, status: 'pending', resumes_job_id: 5, fix_comment_ids: [2] } })
+    })
+
+    const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
+    await comment.locator('.cdp-gh-comment-select').check()
+    await page.locator('.cdp-gh-review-feedback-fix').click()
+
+    await expect(page.locator('.assist-spec-tab')).toBeVisible()
+    expect(fixedJobId).toBe(5)
     expect(fixRequestBody).toEqual({ comment_ids: [2] })
   })
 
@@ -3065,60 +3108,64 @@ test.describe('card detail panel — github and spec', () => {
   })
 
   test('Resume button appears for an errored job with a resumable worktree', async ({ page }) => {
-    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
-      json: { job: {
-        id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
-        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
-        worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
-        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
-        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
-      } },
-    }))
+    const job = {
+      id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-bridge-resume-btn')).toBeVisible()
   })
 
   test('Resume button appears for a stalled job too', async ({ page }) => {
-    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
-      json: { job: {
-        id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
-        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
-        worktree_path: '/tmp/worktrees/99', result: null, output: null,
-        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
-        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
-      } },
-    }))
+    const job = {
+      id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-bridge-resume-btn')).toBeVisible()
   })
 
   test('Resume button is absent for a done job', async ({ page }) => {
-    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
-      json: { job: {
-        id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
-        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
-        worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
-        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
-        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
-      } },
-    }))
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-bridge-resume-btn')).toHaveCount(0)
   })
 
   test('clicking Resume queues a resume job and updates the status label', async ({ page }) => {
-    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({
-      json: { job: {
-        id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
-        branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
-        worktree_path: '/tmp/worktrees/99', result: null, output: null,
-        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
-        created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
-      } },
-    }))
+    const job = {
+      id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
     let resumeCalled = false
     await page.route('**/api/bridge/jobs/5/resume', async r => {
       resumeCalled = true
@@ -3139,6 +3186,138 @@ test.describe('card detail panel — github and spec', () => {
 
     await expect(page.locator('.cdp-bridge-label')).toContainText(/waiting for agent to resume/i)
     expect(resumeCalled).toBe(true)
+  })
+
+  test('companion job button appears once a root job exists, and opens the repo form', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.route('**/api/bridge/repos', r => r.fulfill({ json: { repos: ['owner/web-repo'] } }))
+
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const addBtn = page.locator('.cdp-companion-add-btn')
+    await expect(addBtn).toBeVisible()
+    await addBtn.click()
+    await expect(page.locator('.cdp-companion-repo-input')).toBeVisible()
+  })
+
+  test('queuing a companion job shows its own status row alongside the root job', async ({ page }) => {
+    const rootJob = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: rootJob, companion: null } }))
+    await page.route('**/api/bridge/repos', r => r.fulfill({ json: { repos: [] } }))
+    let companionRequestBody = null
+    await page.route('**/api/bridge/jobs', async r => {
+      companionRequestBody = r.request().postDataJSON()
+      return r.fulfill({ json: {
+        id: 6, card_id: 99, status: 'blocked', target_repo: 'owner/web-repo',
+        branch_name: null, agent_name: null, worktree_path: null, result: null, output: null,
+        spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+        depends_on_job_id: 5, created_at: '2026-06-03T10:00:00Z', updated_at: null,
+      } })
+    })
+
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.locator('.cdp-companion-add-btn').click()
+    await page.locator('.cdp-companion-repo-input').fill('owner/web-repo')
+    await page.locator('.cdp-companion-add--open button', { hasText: 'Queue' }).click()
+
+    expect(companionRequestBody).toEqual({
+      card_id: 99, target_repo: 'owner/web-repo', depends_on_job_id: 5,
+    })
+    await expect(page.locator('.cdp-bridge-companion-repo')).toHaveText('owner/web-repo')
+    await expect(page.locator('.cdp-bridge-status--blocked .cdp-bridge-label'))
+      .toContainText(/waiting on owner\/repo to finish/i)
+  })
+
+  test('a stalled companion job gets its own Resume button', async ({ page }) => {
+    const rootJob = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    const companionJob = {
+      id: 6, card_id: 99, status: 'stalled', target_repo: 'owner/web-repo',
+      branch_name: 'qtask/99-web', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99-companion', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      depends_on_job_id: 5, created_at: '2026-06-02T09:00:00Z', updated_at: '2026-06-02T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: rootJob, companion: companionJob } }))
+    let resumeCalled = null
+    await page.route('**/api/bridge/jobs/6/resume', async r => {
+      resumeCalled = true
+      return r.fulfill({ json: { ...companionJob, id: 7, status: 'pending', resumes_job_id: 6 } })
+    })
+
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-status--stalled .cdp-bridge-resume-btn')).toBeVisible()
+    await page.locator('.cdp-bridge-status--stalled .cdp-bridge-resume-btn').click()
+
+    expect(resumeCalled).toBe(true)
+    await expect(page.locator('.cdp-bridge-status--stalled')).toHaveCount(0)
+  })
+
+  test('cannot start a companion job while the root job has failed', async ({ page }) => {
+    const rootJob = {
+      id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: rootJob, companion: null } }))
+
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-companion-add-btn')).toHaveCount(0)
+    await expect(page.locator('.cdp-companion-note')).toContainText(/fix or resume this job/i)
+  })
+
+  test('a companion blocked on a failed root reads as stuck, not still waiting', async ({ page }) => {
+    const rootJob = {
+      id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    const companionJob = {
+      id: 6, card_id: 99, status: 'blocked', target_repo: 'owner/web-repo',
+      branch_name: null, agent_name: null, worktree_path: null, result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      depends_on_job_id: 5, created_at: '2026-06-02T09:00:00Z', updated_at: null,
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: rootJob, companion: companionJob } }))
+
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-status--blocked .cdp-bridge-label'))
+      .toContainText(/failed and needs to be fixed or resumed/i)
   })
 
   test('refresh button is shown in GitHub header', async ({ page }) => {

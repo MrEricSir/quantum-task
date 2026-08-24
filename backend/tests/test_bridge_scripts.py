@@ -1666,6 +1666,51 @@ class TestCommitIfDirty:
         assert "resuming a previous session" in log.stdout
 
 
+class TestGitDiffStat:
+    """_git_diff_stat: `git diff --stat` against the primary branch's base ref, captured
+    client-side at job-completion time so a cross-repo companion job gets real information
+    about what changed -- no GitHub PR or push required. See BRIDGE_CROSS_REPO_JOBS.md
+    Phase 4."""
+
+    def test_no_changes_returns_empty_string(self, scratch_repo):
+        assert agent_core._git_diff_stat(str(scratch_repo)) == ""
+
+    def test_new_committed_file_appears_in_the_stat(self, scratch_repo):
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=scratch_repo, check=True)
+        (scratch_repo / "new_file.py").write_text("x = 1\ny = 2\n")
+        subprocess.run(["git", "add", "-A"], cwd=scratch_repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add new_file.py"], cwd=scratch_repo, check=True)
+
+        stat = agent_core._git_diff_stat(str(scratch_repo))
+
+        assert "new_file.py" in stat
+        assert "changed" in stat
+
+    def test_does_not_include_the_actual_code_content(self, scratch_repo):
+        """--stat, not a full diff -- file names and line counts only."""
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=scratch_repo, check=True)
+        (scratch_repo / "secret.py").write_text("SECRET_TOKEN = 'do-not-leak-this-literal'\n")
+        subprocess.run(["git", "add", "-A"], cwd=scratch_repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add secret.py"], cwd=scratch_repo, check=True)
+
+        stat = agent_core._git_diff_stat(str(scratch_repo))
+
+        assert "secret.py" in stat
+        assert "do-not-leak-this-literal" not in stat
+
+    def test_no_origin_remote_returns_empty_string_not_an_error(self, tmp_path):
+        repo = tmp_path / "no_origin"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("x\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+        assert agent_core._git_diff_stat(str(repo)) == ""
+
+
 class TestDisableRemotePush:
     """Extracted out of _create_worktree so a fix job (agent_core.py's run_job,
     resumes_job_id branch) gets the exact same push-safety property without going through

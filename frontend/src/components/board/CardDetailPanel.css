@@ -824,6 +824,12 @@
   color: #94a3b8;
 }
 
+.cdp-bridge-status--blocked {
+  background: rgba(148, 163, 184, 0.05);
+  border-color: rgba(148, 163, 184, 0.18);
+  color: #8b949e;
+}
+
 .cdp-bridge-dot {
   width: 7px;
   height: 7px;
@@ -906,6 +912,68 @@
 @keyframes cdp-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.3; }
+}
+
+/* ── Cross-repo companion job (BRIDGE_CROSS_REPO_JOBS.md Phase 3) ── */
+
+.cdp-companion-section {
+  margin-top: 6px;
+}
+
+.cdp-bridge-companion-repo {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.cdp-companion-add-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px dashed #30363d;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+}
+
+.cdp-companion-add-btn:hover {
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+
+.cdp-companion-add--open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cdp-companion-repo-input {
+  flex: 1;
+  min-width: 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.cdp-companion-repo-input::placeholder {
+  color: #6e7681;
+}
+
+.cdp-companion-repo-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.cdp-companion-note {
+  font-size: 11px;
+  color: #8b949e;
+  font-style: italic;
+  padding: 4px 0;
 }
 
 /* ── Bridge output log ── */

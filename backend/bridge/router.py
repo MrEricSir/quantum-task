@@ -34,6 +34,7 @@ from bridge.jobs import (
 )
 from bridge.render import render_agent_script, render_install_script
 from bridge.stale import check_stale_bridge_jobs
+from bridge.unblock import unblock_dependent_jobs
 from deps import get_db, AUTH_PASSWORD
 from settings import Settings
 
@@ -48,6 +49,8 @@ _OUTPUT_MAX_LINES = 200
 class _JobCreate(BaseModel):
     card_id: int
     branch_name: str | None = None     # override for the auto-generated qtask/<id>-<slug> name
+    target_repo: str | None = None     # override the repo derived from the card's own GitHub link -- for a cross-repo companion job
+    depends_on_job_id: int | None = None   # if set, job starts "blocked" until this job reaches "done"
 
 
 class _QueueByTag(BaseModel):
@@ -56,6 +59,7 @@ class _QueueByTag(BaseModel):
 
 class _JobComplete(BaseModel):
     result: str = ""   # PR link, summary, or empty
+    diff_summary: str = ""   # `git diff --stat` against the primary branch, complete_job only
 
 class _JobOutput(BaseModel):
     output: str        # chunk of stdout to append
@@ -92,7 +96,43 @@ def create_job(body: _JobCreate, db: Session = Depends(get_db)):
         # getopt-style parsing happens to behave for every possible dash-prefixed string.
         raise HTTPException(status_code=400, detail="Branch name can't start with '-'")
 
-    job = _queue_job_for_card(db, card, requested_branch_name=branch_name)
+    target_repo = body.target_repo.strip() if body.target_repo else None
+
+    if body.depends_on_job_id is not None:
+        upstream_job = db.query(models.BridgeJob).filter_by(id=body.depends_on_job_id).first()
+        if not upstream_job:
+            raise HTTPException(status_code=404, detail="Dependency job not found")
+        if upstream_job.card_id != body.card_id:
+            # Not reachable via the web UI today (it only ever passes the current card's own
+            # root job id), but a direct API call could otherwise link one card's companion
+            # to an unrelated card's job -- which /chain would then pair with the wrong root.
+            raise HTTPException(
+                status_code=400, detail="Dependency job must belong to the same card"
+            )
+        existing_companion = (
+            db.query(models.BridgeJob)
+            .filter(
+                models.BridgeJob.depends_on_job_id == body.depends_on_job_id,
+                models.BridgeJob.status.in_(["blocked", "pending", "running"]),
+            )
+            .first()
+        )
+        if existing_companion:
+            # The UI's own state already prevents this in normal single-session use (the
+            # "+ Companion job" button disappears once one exists) -- this guards the
+            # multi-tab/direct-API-call race, where /chain's "newest wins" would otherwise
+            # silently orphan whichever one loses. A companion that's already reached a
+            # terminal state (done/error/stalled) doesn't block a fresh one.
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {body.depends_on_job_id} already has an active companion job "
+                       f"(#{existing_companion.id})",
+            )
+
+    job = _queue_job_for_card(
+        db, card, requested_branch_name=branch_name,
+        target_repo=target_repo, depends_on_job_id=body.depends_on_job_id,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -314,8 +354,14 @@ def complete_job(job_id: int, body: _JobComplete, db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Job not found")
     job.status = "done"
     job.result = body.result or ""
+    job.diff_summary = body.diff_summary or ""
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
+    # Unblock any cross-repo companion job waiting on this one -- see
+    # BRIDGE_CROSS_REPO_JOBS.md Phase 2. Done inline here (not just on the periodic
+    # check-stale-adjacent sweep below) so the common case is instant: a companion job
+    # becomes claimable the moment its upstream finishes, not up to an hour later.
+    unblock_dependent_jobs(db)
     return _job_response(job)
 
 
@@ -385,8 +431,15 @@ def check_stale_jobs(db: Session = Depends(get_db)):
     notification sweep in telegram.scheduler.check_all(), which no-ops
     entirely when Telegram isn't configured. The DB transition here must
     happen either way, or the frontend status badge would never update
-    for a user who hasn't set up Telegram."""
+    for a user who hasn't set up Telegram.
+
+    Also sweeps for cross-repo companion jobs to unblock (BRIDGE_CROSS_REPO_JOBS.md Phase 2)
+    -- riding along on this same hourly tick rather than getting its own Cloud Scheduler job,
+    since the common case is already handled instantly by complete_job() above; this sweep
+    only exists to catch the edge case of a companion job created against an upstream that
+    was already done, or the inline hook failing transiently."""
     stalled = check_stale_bridge_jobs(db)
+    unblock_dependent_jobs(db)
     notified = 0
     s = Settings(db)
     if stalled and s.telegram_token and s.telegram_chat_id:
@@ -407,6 +460,56 @@ def get_latest_card_job(card_id: int, db: Session = Depends(get_db)):
     if not job:
         return {"job": None}
     return {"job": _job_response(job)}
+
+
+@router.get("/api/bridge/jobs/card/{card_id}/chain")
+def get_card_job_chain(card_id: int, db: Session = Depends(get_db)):
+    """Get a card's root job plus its cross-repo companion job, if any -- for the Code tab's
+    per-job status display (BRIDGE_CROSS_REPO_JOBS.md Phase 3).
+
+    "root" is the newest job for this card with no depends_on_job_id (the original job, or a
+    same-repo fix/resume of it -- resumes_job_id is a separate concept from depends_on_job_id,
+    so a fix/resume job still counts as "root" here). "companion" is the newest job that
+    depends on that root. Only designed for the 2-hop case -- a fix/resume applied to a
+    companion job itself (rather than to root) isn't specially represented here, since only
+    one companion slot is being designed for in the UI."""
+    root = (
+        db.query(models.BridgeJob)
+        .filter_by(card_id=card_id, depends_on_job_id=None)
+        .order_by(models.BridgeJob.created_at.desc())
+        .first()
+    )
+    companion = None
+    if root:
+        companion = (
+            db.query(models.BridgeJob)
+            .filter_by(card_id=card_id, depends_on_job_id=root.id)
+            .order_by(models.BridgeJob.created_at.desc())
+            .first()
+        )
+    return {
+        "root": _job_response(root) if root else None,
+        "companion": _job_response(companion) if companion else None,
+    }
+
+
+@router.get("/api/bridge/repos")
+def get_known_repos(db: Session = Depends(get_db)):
+    """Known "owner/repo" strings -- for the companion-job repo picker's autocomplete
+    (BRIDGE_CROSS_REPO_JOBS.md Phase 3). Not authoritative: config.toml's [repos] table lives
+    on the local bridge CLI, not the server, so there's no complete list available here. This
+    is a best-effort union of repos the server has actually seen -- from synced GitHub issues/
+    PRs, and from repos already used as a job's target_repo -- not a substitute for letting the
+    user type any repo string freely."""
+    from_items = db.query(models.EngineeringItem.repo).distinct().all()
+    from_jobs = (
+        db.query(models.BridgeJob.target_repo)
+        .filter(models.BridgeJob.target_repo.isnot(None))
+        .distinct()
+        .all()
+    )
+    repos = sorted({r for (r,) in from_items} | {r for (r,) in from_jobs})
+    return {"repos": repos}
 
 
 @router.get("/api/bridge/install-token")

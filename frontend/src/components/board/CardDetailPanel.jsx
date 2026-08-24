@@ -7,7 +7,7 @@ import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import { parseGitHubUrl } from '../../lib/github'
-import { getLatestBridgeJob, queueFixJob } from '../../api'
+import { getBridgeJobChain, queueFixJob } from '../../api'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -200,12 +200,15 @@ export default function CardDetailPanel({
     if (!card?.id || selectedFixIds.size === 0 || fixQueuing) return
     setFixQueuing(true); setFixError('')
     try {
-      const { job: latestJob } = await getLatestBridgeJob(card.id)
-      if (!latestJob || !latestJob.worktree_path) {
+      // Root, not "latest" -- review comments are scoped to the card's own linked repo, and
+      // a cross-repo companion job (which targets a different repo) is always newer than
+      // root, so "latest" would silently resume the wrong repo's worktree once one exists.
+      const { root } = await getBridgeJobChain(card.id)
+      if (!root || !root.worktree_path) {
         setFixError('Run the assistant once before requesting fixes.')
         return
       }
-      await queueFixJob(latestJob.id, Array.from(selectedFixIds))
+      await queueFixJob(root.id, Array.from(selectedFixIds))
       setSelectedFixIds(new Set())
       setAssistInitialTab('code')
       setMode('assist')

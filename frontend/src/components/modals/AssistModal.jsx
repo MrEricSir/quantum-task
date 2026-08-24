@@ -7,7 +7,8 @@ import {
   breakdownCard, commitBreakdown,
   fetchCardThread, sendThreadMessage, saveThreadOutput,
   updateThreadContext, clearCardThread, fetchContextFrom,
-  generateSpec, queueBridgeJob, getBridgeJob, getLatestBridgeJob, queueResumeJob,
+  generateSpec, queueBridgeJob, getBridgeJob, getBridgeJobChain, queueResumeJob,
+  queueCompanionJob, getKnownBridgeRepos,
 } from '../../api'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import './AssistModal.css'
@@ -74,6 +75,15 @@ export default function AssistModal({
   const [resumeQueuing,  setResumeQueuing]  = useState(false)
   const [branchOverride, setBranchOverride] = useState('')
 
+  // Cross-repo companion job (BRIDGE_CROSS_REPO_JOBS.md Phase 3)
+  const [companionJob,     setCompanionJob]     = useState(null)
+  const [companionOpen,    setCompanionOpen]    = useState(false)
+  const [companionRepo,    setCompanionRepo]    = useState('')
+  const [companionQueuing, setCompanionQueuing] = useState(false)
+  const [companionError,   setCompanionError]   = useState('')
+  const [knownRepos,       setKnownRepos]       = useState([])
+  const [companionResumeQueuing, setCompanionResumeQueuing] = useState(false)
+
   const abortRef    = useRef(null)
   const scrollRef   = useRef(null)
   const inputRef    = useRef(null)
@@ -89,6 +99,8 @@ export default function AssistModal({
     setBdStatus('idle'); setBdSubtasks([]); setBdTagName(''); setBdError('')
     setSpecText(task.spec ?? null); setSpecEditing(false); setSpecError(''); setCopiedSpec(false)
     setBridgeJob(null); setBridgeError(''); setResumeQueuing(false); setBranchOverride('')
+    setCompanionJob(null); setCompanionOpen(false); setCompanionRepo('')
+    setCompanionQueuing(false); setCompanionError(''); setCompanionResumeQueuing(false)
 
     fetchCardThread(task.id)
       .then(data => {
@@ -102,7 +114,9 @@ export default function AssistModal({
       })
 
     if (task.spec) {
-      getLatestBridgeJob(task.id).then(({ job }) => setBridgeJob(job)).catch(() => {})
+      getBridgeJobChain(task.id)
+        .then(({ root, companion }) => { setBridgeJob(root); setCompanionJob(companion) })
+        .catch(() => {})
     }
   }, [open, task?.id, initialTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -143,6 +157,20 @@ export default function AssistModal({
     }, 5000)
     return () => clearInterval(iv)
   }, [bridgeJob?.id, bridgeJob?.status]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll companion job while blocked / pending / running -- "blocked" included since it may
+  // flip to "pending" server-side (the moment the root job completes) with no action here.
+  useEffect(() => {
+    if (!companionJob || !['blocked', 'pending', 'running'].includes(companionJob.status)) return
+    const iv = setInterval(async () => {
+      try {
+        const updated = await getBridgeJob(companionJob.id)
+        setCompanionJob(updated)
+        if (!['blocked', 'pending', 'running'].includes(updated.status)) clearInterval(iv)
+      } catch { /* ignore */ }
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [companionJob?.id, companionJob?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send a message ────────────────────────────────────────────────────────
 
@@ -407,6 +435,42 @@ export default function AssistModal({
       setBridgeError(e.message || 'Failed to queue resume job')
     } finally {
       setResumeQueuing(false)
+    }
+  }
+
+  const handleResumeCompanionJob = async () => {
+    if (!companionJob || companionResumeQueuing) return
+    setCompanionResumeQueuing(true); setCompanionError('')
+    try {
+      const job = await queueResumeJob(companionJob.id)
+      setCompanionJob(job)
+    } catch (e) {
+      setCompanionError(e.message || 'Failed to queue resume job')
+    } finally {
+      setCompanionResumeQueuing(false)
+    }
+  }
+
+  const handleOpenCompanion = () => {
+    setCompanionOpen(true)
+    if (knownRepos.length === 0) {
+      getKnownBridgeRepos().then(setKnownRepos).catch(() => {})
+    }
+  }
+
+  const handleQueueCompanion = async () => {
+    if (!bridgeJob || companionQueuing) return
+    const repo = companionRepo.trim()
+    if (!repo) { setCompanionError('Enter a repo (owner/repo)'); return }
+    setCompanionQueuing(true); setCompanionError('')
+    try {
+      const job = await queueCompanionJob(task.id, repo, bridgeJob.id)
+      setCompanionJob(job)
+      setCompanionOpen(false)
+    } catch (e) {
+      setCompanionError(e.message || 'Failed to queue companion job')
+    } finally {
+      setCompanionQueuing(false)
     }
   }
 
@@ -749,6 +813,7 @@ export default function AssistModal({
                       {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
                       {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
                       {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
+                      {bridgeJob.status === 'blocked'  && 'Waiting on another job to finish…'}
                     </span>
                     {bridgeJob.branch_name && (
                       <span className="cdp-bridge-branch">
@@ -791,6 +856,108 @@ export default function AssistModal({
                   className="cdp-gh-markdown cdp-bridge-md-output"
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(bridgeJob.output) }}
                 />
+              )}
+
+              {bridgeJob && (
+                <div className="cdp-companion-section">
+                  {companionJob ? (
+                    <div className={`cdp-bridge-status cdp-bridge-status--${companionJob.status}`}>
+                      <span className="cdp-bridge-dot" />
+                      <div className="cdp-bridge-status-body">
+                        <span className="cdp-bridge-companion-repo">{companionJob.target_repo}</span>
+                        <span className="cdp-bridge-label">
+                          {companionJob.status === 'blocked' && (
+                            bridgeJob.status === 'error' || bridgeJob.status === 'stalled'
+                              ? `Blocked — ${bridgeJob.target_repo || 'the other job'} failed and needs to be fixed or resumed first`
+                              : `Waiting on ${bridgeJob.target_repo || 'the other job'} to finish…`
+                          )}
+                          {companionJob.status === 'pending'  && 'Queued — waiting for agent…'}
+                          {companionJob.status === 'running'  && 'Claude Code running…'}
+                          {companionJob.status === 'done'     && (companionJob.result || 'Complete')}
+                          {companionJob.status === 'error'    && `Error: ${companionJob.result}`}
+                          {companionJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
+                        </span>
+                        {companionJob.branch_name && (
+                          <span className="cdp-bridge-branch">
+                            {companionJob.branch_name}
+                            {companionJob.agent_name && <span className="cdp-bridge-agent"> · {companionJob.agent_name}</span>}
+                          </span>
+                        )}
+                        {companionJob.worktree_path && (
+                          <div className="cdp-bridge-worktree">
+                            <span className="cdp-bridge-worktree-path" title={companionJob.worktree_path}>
+                              {companionJob.worktree_path}
+                            </span>
+                          </div>
+                        )}
+                        {(companionJob.status === 'error' || companionJob.status === 'stalled') && companionJob.worktree_path && (
+                          <button
+                            type="button"
+                            className="cdp-gh-btn cdp-bridge-resume-btn"
+                            onClick={handleResumeCompanionJob}
+                            disabled={companionResumeQueuing}
+                            title="Resume in the same worktree, picking up where the session left off"
+                          >
+                            {companionResumeQueuing ? 'Queuing…' : '↻ Resume'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : companionOpen ? (
+                    <div className="cdp-companion-add cdp-companion-add--open">
+                      <input
+                        type="text"
+                        className="cdp-companion-repo-input"
+                        list="cdp-known-repos-list"
+                        value={companionRepo}
+                        onChange={e => setCompanionRepo(e.target.value)}
+                        placeholder="owner/repo"
+                        autoFocus
+                      />
+                      <datalist id="cdp-known-repos-list">
+                        {knownRepos.map(r => <option key={r} value={r} />)}
+                      </datalist>
+                      <button
+                        type="button"
+                        className="cdp-gh-btn"
+                        onClick={handleQueueCompanion}
+                        disabled={companionQueuing || !companionRepo.trim()}
+                      >
+                        {companionQueuing ? 'Queuing…' : 'Queue'}
+                      </button>
+                      <button
+                        type="button"
+                        className="cdp-btn cdp-btn--cancel"
+                        onClick={() => { setCompanionOpen(false); setCompanionError('') }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : bridgeJob.status === 'error' || bridgeJob.status === 'stalled' ? (
+                    <div className="cdp-companion-note">
+                      Fix or resume this job before adding a companion in another repo.
+                    </div>
+                  ) : (
+                    <button type="button" className="cdp-companion-add-btn" onClick={handleOpenCompanion}>
+                      + Companion job in another repo
+                    </button>
+                  )}
+                  {companionError && <div className="cdp-spec-error">{companionError}</div>}
+                </div>
+              )}
+
+              {companionJob?.output && (
+                <div
+                  className="cdp-gh-markdown cdp-bridge-md-output"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(companionJob.output) }}
+                />
+              )}
+
+              {bridgeJob?.status === 'done' && companionJob?.status === 'done' && (
+                <div className="cdp-companion-note">
+                  Both built separately — not verified to work together. Check them out and run
+                  them together before merging.
+                </div>
               )}
 
               <div className="assist-spec-content">

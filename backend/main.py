@@ -294,9 +294,11 @@ def _check_bridge_stale_jobs() -> None:
     still gets the transition without waiting for a manual request."""
     try:
         from bridge.stale import check_stale_bridge_jobs
+        from bridge.unblock import unblock_dependent_jobs
         from settings import Settings
         with SessionLocal() as db:
             stalled = check_stale_bridge_jobs(db)
+            unblock_dependent_jobs(db)
             if stalled:
                 s = Settings(db)
                 if s.telegram_token and s.telegram_chat_id:

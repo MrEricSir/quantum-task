@@ -895,6 +895,24 @@ def _extract_section(spec_text, heading):
     return body.strip() or None
 
 
+def _git_diff_stat(worktree_path):
+    """Return `git diff --stat` (file names + line counts, not the actual code) of this
+    branch's changes against the primary branch's base ref, or "" if it can't be computed
+    (detached primary branch, git error) -- best-effort context for a cross-repo companion
+    job, not something that should ever break the completion report. Captured client-side,
+    entirely local -- no GitHub PR or push required. See BRIDGE_CROSS_REPO_JOBS.md Phase 4."""
+    primary = _detect_primary_branch(worktree_path)
+    if not primary:
+        return ""
+    r = subprocess.run(
+        ["git", "diff", "--stat", f"origin/{primary}...HEAD"],
+        cwd=worktree_path, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return ""
+    return r.stdout.strip()
+
+
 def _run_test_cmd(worktree_path, test_cmd):
     """Run the configured test command in the worktree and summarize the
     result. Purely mechanical -- no LLM call, no judgment about whether a
@@ -1018,7 +1036,8 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
             pass
     if verification:
         result_text = f"{verification}\n\n{result_text}" if result_text else verification
-    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": result_text})
+    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete",
+        {"result": result_text, "diff_summary": _git_diff_stat(cwd)})
     return True
 
 
@@ -1083,7 +1102,8 @@ def _run_streaming(cfg, job_id, branch, cwd,
 
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
     if proc.returncode == 0:
-        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete", {"result": verification})
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete",
+            {"result": verification, "diff_summary": _git_diff_stat(cwd)})
     else:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
             {"result": f"{AGENT_LABEL} exited with code {proc.returncode}"})

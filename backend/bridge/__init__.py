@@ -5,6 +5,7 @@ Bridge package — job queue and served CLI for the qtask-bridge agent.
     from bridge.jobs import ...        # internal use
     from bridge.render import ...      # internal use
     from bridge.stale import ...       # internal use
+    from bridge.unblock import ...     # internal use
 """
 from bridge.router import router
 
