@@ -2179,7 +2179,7 @@ test.describe('health page', () => {
         workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
         workout_baseline_avg: 1.1, workout_experiment_avg: 2.0,
         workout_baseline_n: 10, workout_experiment_n: 5, workout_p: 0.01,
-        workout_baseline_avg_calories: 2000, workout_experiment_avg_calories: 2400,
+        confounds: { avg_calories: { baseline: 2000, experiment: 2400 } },
         created_at: '2026-07-13T00:00:00Z',
       },
     ]}))
@@ -2187,6 +2187,54 @@ test.describe('health page', () => {
     await waitForApp(page)
     const card = page.locator('.seg-card', { hasText: 'Row' })
     await expect(card.locator('.seg-caveat')).toContainText('Calories also rose ~20%')
+  })
+
+  test('workout experiment with a large steps shift shows a steps confound caveat too', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 49, week: '2026-W29', text: 'Row 2 mi/day instead of 1 mi/day',
+        hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
+        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: null,
+        workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
+        workout_baseline_avg: 1.1, workout_experiment_avg: 2.0,
+        workout_baseline_n: 10, workout_experiment_n: 5, workout_p: 0.01,
+        confounds: { avg_steps: { baseline: 6000, experiment: 18000 } },
+        created_at: '2026-07-20T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    const card = page.locator('.seg-card', { hasText: 'Row' })
+    await expect(card.locator('.seg-caveat')).toContainText('Steps also rose ~200%')
+  })
+
+  test('a habit experiment with a large steps shift shows a confound caveat in its history row', async ({ page }) => {
+    // Habit-backed experiments (e.g. "sleep 8 hours") previously had no way to show a
+    // confound caveat at all -- they never appeared in the routine-outcome card grid, and
+    // the plain history row had nothing to show. Now they get the same confound check via
+    // the generic all-other-weeks baseline, surfaced right in that history row.
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/experiments', r => r.fulfill({ json: [
+      {
+        id: 50, week: '2026-W30', text: 'Sleep 8 hours a night',
+        hypothesis: null, action: 'Sleep 8 hours a night', status: 'dismissed',
+        needs_habit: true, habit_id: 12, health_metric: null, health_goal: null,
+        weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
+        habit_completion_rate: 0.86,
+        confounds: { avg_steps: { baseline: 6000, experiment: 18000 } },
+        created_at: '2026-07-27T00:00:00Z',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+    await page.getByRole('button', { name: /show past experiments/i }).click()
+    const row = page.locator('.exp-history-row', { hasText: '2026-W30' })
+    await expect(row.locator('.seg-caveat')).toContainText('Steps also rose ~200%')
   })
 
   test('food-elimination experiment outcome shows a card with before vs during counts', async ({ page }) => {
@@ -2260,7 +2308,7 @@ test.describe('health page', () => {
         habit_completion_rate: null,
         food_name: 'coffee', food_target_frequency: 0,
         food_baseline_frequency: 4.5, food_experiment_count: 0, food_baseline_weeks_n: 3,
-        food_baseline_avg_calories: 2000, food_experiment_avg_calories: 1600,
+        confounds: { avg_calories: { baseline: 2000, experiment: 1600 } },
         created_at: '2026-06-22T00:00:00Z',
       },
     ]}))
@@ -2282,7 +2330,7 @@ test.describe('health page', () => {
         habit_completion_rate: null,
         food_name: 'coffee', food_target_frequency: 0,
         food_baseline_frequency: 4.5, food_experiment_count: 0, food_baseline_weeks_n: 3,
-        food_baseline_avg_calories: 2000, food_experiment_avg_calories: 1950,
+        confounds: { avg_calories: { baseline: 2000, experiment: 1950 } },
         created_at: '2026-06-29T00:00:00Z',
       },
     ]}))

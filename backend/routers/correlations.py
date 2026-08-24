@@ -922,15 +922,12 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
         "workout_experiment_n":    exp.workout_experiment_n,
         "workout_p":               exp.workout_p,
         "workout_baseline_weeks_n":       exp.workout_baseline_weeks_n,
-        "workout_baseline_avg_calories":  exp.workout_baseline_avg_calories,
-        "workout_experiment_avg_calories": exp.workout_experiment_avg_calories,
         "food_name":               exp.food_name,
         "food_baseline_frequency": exp.food_baseline_frequency,
         "food_target_frequency":   exp.food_target_frequency,
         "food_experiment_count":   exp.food_experiment_count,
         "food_baseline_weeks_n":   exp.food_baseline_weeks_n,
-        "food_baseline_avg_calories":   exp.food_baseline_avg_calories,
-        "food_experiment_avg_calories": exp.food_experiment_avg_calories,
+        "confounds":               json.loads(exp.confounds) if exp.confounds else None,
     }
 
 
@@ -975,36 +972,61 @@ def _workout_present_weeks(db: Session, workout_type: str, candidate_weeks: set[
 
 
 def _matched_baseline(weight_obs: list[dict], fat_obs: list[dict], present_weeks: set[str], exp_week: str):
-    """Weight/fat baseline (mean delta_per_day) computed from `present_weeks`
-    only, plus the one-variable calorie confound check (average daily
-    calories across those same weeks vs. the experiment week) -- the shared
-    "matched comparison instead of an unmatched all-other-weeks average"
-    logic behind both the food-elimination and workout-routine outcomes,
-    which only differ in how "present" is defined (food name vs. workout
-    type). Returns (weight_baseline, fat_baseline, weeks_n, baseline_avg_
-    calories, experiment_avg_calories) -- all None if fewer than 2 present
-    weeks exist (one week isn't a baseline, it's a single data point); the
-    caller keeps whatever generic baseline it already had in that case.
-    """
+    """Weight/fat baseline (mean delta_per_day) computed from `present_weeks` only -- the
+    shared "matched comparison instead of an unmatched all-other-weeks average" logic behind
+    both the food-elimination and workout-routine outcomes, which only differ in how
+    "present" is defined (food name vs. workout type). Returns (weight_baseline,
+    fat_baseline, weeks_n) -- all None if fewer than 2 present weeks exist (one week isn't a
+    baseline, it's a single data point); the caller keeps whatever generic baseline it
+    already had in that case.
+
+    The confound check that used to live in this function is now _confound_summary below --
+    pulled out because it applies the same way regardless of whether a matched baseline was
+    even found (habit experiments never have one, but still get a confound check against the
+    generic all-other-weeks set)."""
     if len(present_weeks) < 2:
-        return None, None, None, None, None
+        return None, None, None
 
     present_weight = [r["delta_per_day"] for r in weight_obs if r["date"] in present_weeks]
     present_fat = [r["delta_per_day"] for r in fat_obs if r["date"] in present_weeks]
     weight_baseline = round(sum(present_weight) / len(present_weight), 6) if present_weight else None
     fat_baseline = round(sum(present_fat) / len(present_fat), 6) if present_fat else None
 
-    cal_by_week = {
-        r["date"]: r["avg_calories"] for r in weight_obs + fat_obs
-        if r["avg_calories"] is not None
-    }
-    baseline_cals = [cal_by_week[wk] for wk in present_weeks if wk in cal_by_week]
-    baseline_avg_cal = experiment_avg_cal = None
-    if baseline_cals and exp_week in cal_by_week:
-        baseline_avg_cal = round(sum(baseline_cals) / len(baseline_cals), 1)
-        experiment_avg_cal = round(cal_by_week[exp_week], 1)
+    return weight_baseline, fat_baseline, len(present_weeks)
 
-    return weight_baseline, fat_baseline, len(present_weeks), baseline_avg_cal, experiment_avg_cal
+
+_CONFOUND_VARS = ("avg_calories", "avg_steps")
+
+
+def _confound_summary(weight_obs: list[dict], fat_obs: list[dict], baseline_weeks: set[str],
+                       exp_week: str) -> dict:
+    """One-variable-at-a-time confound check against every variable in _CONFOUND_VARS:
+    average value across baseline_weeks vs. the experiment week, for whichever variables
+    have data in both. Not a substitute for a real multivariate model -- the ~12-13 weeks of
+    paired data this app typically has doesn't support one (see PRODUCT_NOTES.md) -- this is
+    the cheap, honest middle step: surface the most obvious rival explanations rather than
+    silently crediting whatever the experiment was actually about.
+
+    baseline_weeks is whatever comparison set the caller already has -- the food/workout
+    matched present-weeks when one was found, or the same generic all-other-weeks set used
+    for weight_baseline/fat_baseline otherwise (the only option for a habit experiment, whose
+    tracking habit is always freshly created for that one week with no prior history of its
+    own). Returns {} if nothing is computable; a variable is only included when both a
+    baseline and an experiment-week value exist for it."""
+    result = {}
+    for var in _CONFOUND_VARS:
+        by_week = {
+            r["date"]: r[var] for r in weight_obs + fat_obs
+            if r.get(var) is not None
+        }
+        baseline_values = [by_week[wk] for wk in baseline_weeks if wk in by_week]
+        if not baseline_values or exp_week not in by_week:
+            continue
+        result[var] = {
+            "baseline": round(sum(baseline_values) / len(baseline_values), 1),
+            "experiment": round(by_week[exp_week], 1),
+        }
+    return result
 
 
 def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> None:
@@ -1022,10 +1044,19 @@ def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> N
     exp.fat_delta    = find_week(fat_obs,    exp.week)
 
     # Baseline: mean of all OTHER weeks
-    other_weight = [r["delta_per_day"] for r in weight_obs if r["date"] != exp.week]
-    other_fat    = [r["delta_per_day"] for r in fat_obs    if r["date"] != exp.week]
+    other_weeks = {r["date"] for r in weight_obs if r["date"] != exp.week} | \
+                  {r["date"] for r in fat_obs if r["date"] != exp.week}
+    other_weight = [r["delta_per_day"] for r in weight_obs if r["date"] in other_weeks]
+    other_fat    = [r["delta_per_day"] for r in fat_obs    if r["date"] in other_weeks]
     exp.weight_baseline = round(sum(other_weight) / len(other_weight), 6) if other_weight else None
     exp.fat_baseline    = round(sum(other_fat)    / len(other_fat),    6) if other_fat    else None
+
+    # Confound check (avg_calories, avg_steps): defaults to the generic all-other-weeks set
+    # above -- the only option for a habit experiment, whose tracking habit is always freshly
+    # created for that one week with no prior history to match against. Overridden below to
+    # the matched present-weeks set for food/workout experiments when one was found, same as
+    # weight_baseline/fat_baseline are.
+    confound_baseline_weeks = other_weeks
 
     # Habit completion rate during experiment week
     if exp.habit_id:
@@ -1081,23 +1112,19 @@ def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> N
             except Exception:
                 pass
 
-        # Matched weight/fat baseline + calorie confound check -- same
-        # concept as the food-elimination override below, applied to weeks
-        # this workout type was actually being logged instead of weeks this
-        # food was actually being eaten.
-        workout_other_weeks = {r["date"] for r in weight_obs if r["date"] != exp.week} | \
-                               {r["date"] for r in fat_obs if r["date"] != exp.week}
-        workout_present_weeks = _workout_present_weeks(db, exp.workout_type, workout_other_weeks)
-        w_base, f_base, weeks_n, cal_base, cal_exp = _matched_baseline(
-            weight_obs, fat_obs, workout_present_weeks, exp.week
-        )
+        # Matched weight/fat baseline -- same concept as the food-elimination override
+        # below, applied to weeks this workout type was actually being logged instead of
+        # weeks this food was actually being eaten. Also becomes the confound-check
+        # baseline (set below) when found, in place of the generic all-other-weeks set.
+        workout_present_weeks = _workout_present_weeks(db, exp.workout_type, other_weeks)
+        w_base, f_base, weeks_n = _matched_baseline(weight_obs, fat_obs, workout_present_weeks, exp.week)
         if w_base is not None:
             exp.weight_baseline = w_base
         if f_base is not None:
             exp.fat_baseline = f_base
         exp.workout_baseline_weeks_n = weeks_n
-        exp.workout_baseline_avg_calories = cal_base
-        exp.workout_experiment_avg_calories = cal_exp
+        if weeks_n:
+            confound_baseline_weeks = workout_present_weeks
 
     # Food-elimination outcome: adherence is a plain count, not a t-test --
     # there's no natural per-week sample the way individual WorkoutEntry
@@ -1125,19 +1152,19 @@ def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> N
         # of the pattern. Falls back to the generic baseline (already set)
         # when fewer than 2 such weeks exist -- one week isn't a baseline,
         # it's a single data point.
-        other_weeks = {r["date"] for r in weight_obs if r["date"] != exp.week} | \
-                      {r["date"] for r in fat_obs if r["date"] != exp.week}
         present_weeks = _food_present_weeks(db, exp.food_name, other_weeks)
-        w_base, f_base, weeks_n, cal_base, cal_exp = _matched_baseline(
-            weight_obs, fat_obs, present_weeks, exp.week
-        )
+        w_base, f_base, weeks_n = _matched_baseline(weight_obs, fat_obs, present_weeks, exp.week)
         if w_base is not None:
             exp.weight_baseline = w_base
         if f_base is not None:
             exp.fat_baseline = f_base
         exp.food_baseline_weeks_n = weeks_n
-        exp.food_baseline_avg_calories = cal_base
-        exp.food_experiment_avg_calories = cal_exp
+        if weeks_n:
+            confound_baseline_weeks = present_weeks
+
+    exp.confounds = json.dumps(confounds) if (confounds := _confound_summary(
+        weight_obs, fat_obs, confound_baseline_weeks, exp.week
+    )) else None
 
 
 # ── Migration: AppSetting → table ────────────────────────────────────────────
@@ -1290,3 +1317,25 @@ def get_health_experiments(db: Session = Depends(get_db)):
         .all()
     )
     return [_exp_to_dict(e) for e in exps]
+
+
+@router.post("/api/health/experiments/recompute")
+def recompute_experiment_outcomes(db: Session = Depends(get_db)):
+    """One-off maintenance: re-run _record_outcome for every already-completed experiment,
+    so analysis improvements (e.g. the habit-experiment + avg_steps confound check added
+    after some experiments already ran) apply retroactively instead of only to future ones.
+
+    Anchors each experiment's own 90-day lookback window to shortly after ITS OWN week, not
+    today -- _load_weekly_obs is a 90-day trailing window ending at whatever "today" it's
+    given, so recomputing an old experiment against date.today() would push its own week
+    outside that window and silently blank it out instead of fixing it."""
+    experiments = (
+        db.query(models.HealthExperiment)
+        .filter(models.HealthExperiment.status != "active")
+        .all()
+    )
+    for exp in experiments:
+        anchor = _week_start(exp.week) + timedelta(days=7)
+        _record_outcome(exp, db, anchor)
+    db.commit()
+    return {"recomputed": len(experiments)}

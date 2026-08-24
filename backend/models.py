@@ -272,15 +272,13 @@ class HealthExperiment(Base):
     workout_experiment_n   = Column(Integer, nullable=True)
     workout_p              = Column(Float, nullable=True)
 
-    # Matched weight/fat baseline + one-variable calorie confound check, same
-    # concept as the food_baseline_weeks_n/food_*_avg_calories group below --
-    # weeks this workout type was actually being logged, not an unmatched
+    # Matched weight/fat baseline, same concept as food_baseline_weeks_n below
+    # -- weeks this workout type was actually being logged, not an unmatched
     # average of all 90 days. Falls back to the generic all-other-weeks
     # baseline (workout_baseline_weeks_n stays null) when fewer than 2 such
-    # weeks exist.
+    # weeks exist. The confound check itself lives in `confounds` below, not
+    # here -- it's the same check regardless of experiment type.
     workout_baseline_weeks_n       = Column(Integer, nullable=True)
-    workout_baseline_avg_calories  = Column(Float, nullable=True)
-    workout_experiment_avg_calories = Column(Float, nullable=True)
 
     # Food-elimination/reduction experiments (e.g. "cut out coffee this
     # week") -- set at generation time when the experiment targets a
@@ -299,15 +297,19 @@ class HealthExperiment(Base):
     food_experiment_count   = Column(Integer, nullable=True)  # actual occurrences logged during the week
     food_baseline_weeks_n   = Column(Integer, nullable=True)  # weeks the food-specific baseline was averaged over
 
-    # One-variable confound check, filled alongside the baseline override
-    # above: average daily calories across those same food-present weeks vs.
-    # the experiment week. A full multivariate/confound-adjusted model isn't
-    # supportable with the ~12-13 weeks of paired data this app typically
-    # has (see PRODUCT_NOTES.md) -- this is the cheap, honest middle step:
-    # surface the single most obvious rival explanation (a broader calorie
-    # change) rather than silently crediting the specific food.
-    food_baseline_avg_calories   = Column(Float, nullable=True)
-    food_experiment_avg_calories = Column(Float, nullable=True)
+    # Confound check, computed for EVERY experiment type (food/workout/habit alike) at
+    # outcome time -- JSON dict of {variable: {"baseline": x, "experiment": y}}, currently
+    # avg_calories and avg_steps (see _confound_summary in correlations.py). Baseline weeks
+    # are the food/workout-matched present-weeks when available, else the same generic
+    # all-other-weeks set used for weight_baseline/fat_baseline above -- which is the only
+    # option a habit experiment ever has, since its tracking habit is always freshly created
+    # for that one week and has no prior history of its own to match against. A full
+    # multivariate/confound-adjusted model isn't supportable with the ~12-13 weeks of paired
+    # data this app typically has (see PRODUCT_NOTES.md) -- this is the cheap, honest middle
+    # step: surface the most obvious rival explanations rather than silently crediting
+    # whatever the experiment was actually about. Only present when there's data to compute
+    # it; missing/None otherwise, same as everything else here.
+    confounds = Column(Text, nullable=True)
 
 
 class WithingsMeasurement(Base):

@@ -600,22 +600,27 @@ function foodAdhered(exp) {
   return exp.food_experiment_count <= exp.food_baseline_frequency / 2
 }
 
-function caloriePctChange(baseline, experiment) {
-  // One-variable confound check: did overall intake also change, or did it
-  // stay roughly where it was on weeks this food/workout was part of the
-  // pattern? Not a substitute for a real multivariate model (see
-  // PRODUCT_NOTES.md) -- just the cheapest, most honest thing to surface
-  // with this little weekly data: the single most obvious rival explanation.
-  if (baseline == null || experiment == null || baseline === 0) return null
-  return (experiment - baseline) / baseline
-}
+const CONFOUND_LABELS = { avg_calories: 'Calories', avg_steps: 'Steps' }
 
-function foodCaloriePctChange(exp) {
-  return caloriePctChange(exp.food_baseline_avg_calories, exp.food_experiment_avg_calories)
-}
-
-function workoutCaloriePctChange(exp) {
-  return caloriePctChange(exp.workout_baseline_avg_calories, exp.workout_experiment_avg_calories)
+function confoundCaveats(exp) {
+  // Confound check: did some other variable (calories, steps) also shift, or did it stay
+  // roughly where it was on weeks this food/workout/habit was part of the normal pattern?
+  // Not a substitute for a real multivariate model (see PRODUCT_NOTES.md) -- just the
+  // cheapest, most honest thing to surface with this little weekly data: the most obvious
+  // rival explanations, checked one at a time. Runs for every experiment type, including
+  // habit-backed ones (e.g. "sleep 8 hours"), which previously got no confound check at all.
+  if (!exp.confounds) return []
+  const caveats = []
+  for (const [key, v] of Object.entries(exp.confounds)) {
+    if (!v || v.baseline == null || v.experiment == null || v.baseline === 0) continue
+    const pctChange = (v.experiment - v.baseline) / v.baseline
+    if (Math.abs(pctChange) <= 0.15) continue
+    const label = CONFOUND_LABELS[key] || key
+    caveats.push(
+      `${label} also ${pctChange < 0 ? 'dropped' : 'rose'} ~${Math.round(Math.abs(pctChange) * 100)}% this week`
+    )
+  }
+  return caveats
 }
 
 function workoutAdhered(exp) {
@@ -699,6 +704,9 @@ function ExperimentsHistory({ isImperial }) {
                   )}
                 </div>
                 <p className="exp-history-action">{exp.action ?? exp.text}</p>
+                {confoundCaveats(exp).map((c, i) => (
+                  <p key={i} className="seg-caveat">⚠ {c} — may reflect a broader change, not just this.</p>
+                ))}
               </div>
             )
           })}
@@ -758,16 +766,11 @@ function ExperimentOutcomeCard({ exp }) {
             <span className="seg-value">{exp.food_experiment_count ?? 0}x</span>
           </div>
         </div>
-        {(() => {
-          const pctChange = foodCaloriePctChange(exp)
-          if (pctChange == null || Math.abs(pctChange) <= 0.15) return null
-          return (
-            <p className="seg-caveat">
-              ⚠ Calories also {pctChange < 0 ? 'dropped' : 'rose'} ~{Math.round(Math.abs(pctChange) * 100)}%
-              this week — this result may reflect an overall intake change, not {exp.food_name} specifically.
-            </p>
-          )
-        })()}
+        {confoundCaveats(exp).map((c, i) => (
+          <p key={i} className="seg-caveat">
+            ⚠ {c} — this result may reflect a broader lifestyle change, not {exp.food_name} specifically.
+          </p>
+        ))}
       </div>
     )
   }
@@ -797,16 +800,11 @@ function ExperimentOutcomeCard({ exp }) {
           <span className="seg-n">n={exp.workout_experiment_n ?? 0}</span>
         </div>
       </div>
-      {(() => {
-        const pctChange = workoutCaloriePctChange(exp)
-        if (pctChange == null || Math.abs(pctChange) <= 0.15) return null
-        return (
-          <p className="seg-caveat">
-            ⚠ Calories also {pctChange < 0 ? 'dropped' : 'rose'} ~{Math.round(Math.abs(pctChange) * 100)}%
-            this week — this result may reflect an overall intake change, not {exp.workout_type} specifically.
-          </p>
-        )
-      })()}
+      {confoundCaveats(exp).map((c, i) => (
+        <p key={i} className="seg-caveat">
+          ⚠ {c} — this result may reflect a broader lifestyle change, not {exp.workout_type} specifically.
+        </p>
+      ))}
     </div>
   )
 }

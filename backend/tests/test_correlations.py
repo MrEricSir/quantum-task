@@ -531,8 +531,139 @@ class TestRecordOutcomeWorkout:
 
         _record_outcome(exp, db, base + timedelta(days=35))
 
-        assert exp.workout_baseline_avg_calories == 2100.0
-        assert exp.workout_experiment_avg_calories == 1500.0
+        confounds = json.loads(exp.confounds)
+        assert confounds["avg_calories"] == {"baseline": 2100.0, "experiment": 1500.0}
+
+    def test_confound_check_also_compares_average_steps(self, db):
+        """Steps was tracked all along but never checked as a confound for any experiment
+        type -- only calories was. Same matched-baseline weeks as the calorie test above,
+        just a different rival variable."""
+        base = date(2026, 3, 2)
+        for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
+            _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        exp_week = weight_obs[-1]["date"]
+
+        for offset, steps in ((7, 6000), (21, 6400)):
+            d = base + timedelta(days=offset)
+            db.add(models.WorkoutEntry(raw_input="row", type="row", value=1.5, unit="mi",
+                                        logged_at=datetime.combine(d, datetime.min.time())))
+            db.add(models.WithingsMeasurement(date=d.isoformat(), metric="steps", value=steps))
+        exp_day = base + timedelta(days=28)
+        db.add(models.WithingsMeasurement(date=exp_day.isoformat(), metric="steps", value=18000))
+        db.commit()
+
+        exp = models.HealthExperiment(
+            week=exp_week, text="t", workout_type="row",
+            workout_target_value=2.0, workout_unit="mi",
+        )
+        db.add(exp)
+        db.commit()
+
+        _record_outcome(exp, db, base + timedelta(days=35))
+
+        confounds = json.loads(exp.confounds)
+        assert confounds["avg_steps"] == {"baseline": 6200.0, "experiment": 18000.0}
+
+
+class TestRecordOutcomeHabit:
+    """Habit-backed experiments (e.g. "sleep 8 hours") previously got no confound check at
+    all -- no matched baseline (impossible anyway: the tracking habit is always freshly
+    created for that one week, with no prior history of its own to match against) AND no
+    confound check against the generic all-other-weeks baseline either. Now they get the
+    same confound check food/workout experiments do, just against that generic baseline."""
+
+    def test_confound_check_runs_against_the_generic_baseline(self, db):
+        base = date(2026, 3, 2)
+        for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
+            d = base + timedelta(days=7 * i)
+            _add_weight(db, d.isoformat(), w)
+            db.add(models.WithingsMeasurement(
+                date=d.isoformat(), metric="steps", value=6000.0 if i < 4 else 18000.0,
+            ))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        exp_week = weight_obs[-1]["date"]
+
+        exp = models.HealthExperiment(week=exp_week, text="t")
+        db.add(exp)
+        db.commit()
+
+        _record_outcome(exp, db, base + timedelta(days=35))
+
+        confounds = json.loads(exp.confounds)
+        assert confounds["avg_steps"] == {"baseline": 6000.0, "experiment": 18000.0}
+
+    def test_confounds_is_none_when_theres_no_data_to_compare(self, db):
+        exp = models.HealthExperiment(week="2026-W13", text="t")
+        db.add(exp)
+        db.commit()
+
+        _record_outcome(exp, db, date.today())
+
+        assert exp.confounds is None
+
+
+class TestRecomputeExperimentOutcomes:
+    """POST /api/health/experiments/recompute -- re-runs _record_outcome for every
+    already-completed experiment, so the habit/steps confound check (and any future analysis
+    improvement) applies retroactively instead of only to experiments that haven't run yet."""
+
+    def test_recomputes_every_non_active_experiment_and_returns_the_count(self, db):
+        db.add(models.HealthExperiment(week="2026-W05", text="t", status="dismissed"))
+        db.add(models.HealthExperiment(week="2026-W06", text="t", status="dismissed"))
+        db.add(models.HealthExperiment(week="2026-W07", text="t", status="active"))
+        db.commit()
+
+        from routers.correlations import recompute_experiment_outcomes
+        result = recompute_experiment_outcomes(db=db)
+
+        assert result == {"recomputed": 2}
+
+    def test_anchors_to_the_experiments_own_week_not_today(self, db):
+        """The bug this guards against: recomputing an old experiment against
+        date.today() would push its own week outside _load_weekly_obs's 90-day trailing
+        window and silently blank weight_delta/confounds instead of fixing them."""
+        old_base = date(2026, 1, 5)  # far enough back that date.today() in these tests
+                                       # (anchored around 2026-06-20 elsewhere in this file)
+                                       # would put it well outside a 90-day trailing window
+        for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
+            d = old_base + timedelta(days=7 * i)
+            _add_weight(db, d.isoformat(), w)
+            db.add(models.WithingsMeasurement(
+                date=d.isoformat(), metric="steps", value=6000.0 if i < 4 else 18000.0,
+            ))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, old_base + timedelta(days=35))
+        exp_week = weight_obs[-1]["date"]
+        exp = models.HealthExperiment(week=exp_week, text="t", status="dismissed")
+        db.add(exp)
+        db.commit()
+
+        from routers.correlations import recompute_experiment_outcomes
+        recompute_experiment_outcomes(db=db)
+        db.refresh(exp)
+
+        assert exp.weight_delta is not None
+        assert exp.confounds is not None
+        confounds = json.loads(exp.confounds)
+        assert confounds["avg_steps"] == {"baseline": 6000.0, "experiment": 18000.0}
+
+    def test_active_experiments_are_left_untouched(self, db):
+        exp = models.HealthExperiment(week="2026-W07", text="t", status="active")
+        db.add(exp)
+        db.commit()
+
+        from routers.correlations import recompute_experiment_outcomes
+        recompute_experiment_outcomes(db=db)
+        db.refresh(exp)
+
+        assert exp.weight_delta is None
+        assert exp.status == "active"
 
 
 class TestRecordOutcomeFood:
@@ -657,8 +788,8 @@ class TestRecordOutcomeFood:
 
         _record_outcome(exp, db, base + timedelta(days=35))
 
-        assert exp.food_baseline_avg_calories == 2100.0
-        assert exp.food_experiment_avg_calories == 1500.0
+        confounds = json.loads(exp.confounds)
+        assert confounds["avg_calories"] == {"baseline": 2100.0, "experiment": 1500.0}
 
     def test_confound_fields_stay_none_without_a_food_specific_baseline(self, db):
         exp = models.HealthExperiment(
@@ -670,8 +801,7 @@ class TestRecordOutcomeFood:
 
         _record_outcome(exp, db, date.today())
 
-        assert exp.food_baseline_avg_calories is None
-        assert exp.food_experiment_avg_calories is None
+        assert exp.confounds is None
 
     def test_falls_back_to_generic_baseline_with_fewer_than_2_present_weeks(self, db):
         base = date(2026, 3, 2)
