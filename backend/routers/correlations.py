@@ -337,6 +337,23 @@ def _established_foods(
     return results[:8]
 
 
+def _recent_avg_steps(db: Session, today: date, days: int = 28) -> float | None:
+    """Average daily step count over the trailing `days` window, queried straight from
+    WithingsMeasurement -- independent of _load_weekly_obs's weekly weight/fat-metric
+    binning, which only keeps a week's steps data if that week also had a weight (or fat)
+    measurement. _generate_experiment's step-goal fallback below needs the user's real
+    recent average regardless of whether weight was also logged, e.g. to compute what "10%
+    more than your average" actually means in steps."""
+    start = (today - timedelta(days=days)).isoformat()
+    values = [
+        m.value for m in db.query(models.WithingsMeasurement).filter(
+            models.WithingsMeasurement.metric == "steps",
+            models.WithingsMeasurement.date >= start,
+        ).all()
+    ]
+    return round(sum(values) / len(values), 1) if values else None
+
+
 def _recent_experiments(db: Session, limit: int = 4) -> list[models.HealthExperiment]:
     """Most recent experiments (any status), for duplicate-avoidance context."""
     return (
@@ -793,28 +810,63 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
             import re as _re
 
             def _extract_steps(text: str | None) -> float | None:
-                """Extract a plausible daily step count from text (100–50,000)."""
+                """Extract a plausible daily step count from text (100–50,000). Accepts
+                singular "step" too (e.g. "9,000 step target"), not just "steps" -- still
+                requires the number immediately before it, same tight adjacency as before,
+                just not hardcoded to the plural."""
                 if not text:
                     return None
-                m = _re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps', text, _re.I)
+                m = _re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps?\b', text, _re.I)
                 if m:
                     val = float(m.group(1).replace(",", ""))
                     return val if 100 <= val <= 50_000 else None
                 return None
 
-            if action and "steps" in action.lower():
+            def _extract_relative_step_increase(text: str | None) -> float | None:
+                """Extract a percentage-based relative step target, e.g. "increase your
+                daily step count by 10%" or "10% more steps than your recent average" --
+                returns the percentage as a fraction (10% -> 0.10). Despite the system
+                prompt's explicit "CRITICAL: always include a concrete number" instruction,
+                the LLM sometimes proposes a step goal this way instead -- rather than
+                discard the whole experiment, _resolve_step_goal below computes the actual
+                number from the user's own recent average, same as it should have."""
+                if not text:
+                    return None
+                m = _re.search(r'(\d+(?:\.\d+)?)\s*%', text)
+                if not m:
+                    return None
+                pct = float(m.group(1))
+                return pct / 100 if 0 < pct <= 100 else None
+
+            def _resolve_step_goal(action_text: str | None, hypothesis_text: str | None) -> float | None:
+                goal = _extract_steps(action_text) or _extract_steps(hypothesis_text)
+                if goal is not None:
+                    return goal
+                pct = (_extract_relative_step_increase(action_text)
+                       or _extract_relative_step_increase(hypothesis_text))
+                if not pct:
+                    return None
+                recent_avg = _recent_avg_steps(db, today)
+                return round(recent_avg * (1 + pct)) if recent_avg else None
+
+            def _mentions_steps(text: str | None) -> bool:
+                # Word-boundary match on "step"/"steps" -- a plain "steps" substring check
+                # missed phrasing like "increase your daily step count", which uses the
+                # singular.
+                return bool(text) and bool(_re.search(r'\bsteps?\b', text, _re.I))
+
+            if action and _mentions_steps(action):
                 # Action is explicitly about steps — metric must be "steps" regardless of
                 # what the LLM put in the JSON (catches fat_ratio/weight confusion).
                 health_metric = "steps"
-                # Prefer action text; fall back to hypothesis if action value is implausible
-                health_goal = _extract_steps(action) or _extract_steps(hypothesis)
+                health_goal = _resolve_step_goal(action, hypothesis)
             elif health_metric == "steps":
                 # LLM said steps but no "steps" in action — correct goal from hypothesis
                 if health_goal is None or health_goal > 50_000:
-                    health_goal = _extract_steps(hypothesis)
+                    health_goal = _resolve_step_goal(None, hypothesis)
             elif health_metric is None and action:
                 # Fallback: action didn't mention "steps" explicitly but hypothesis might
-                _hypo_steps = _extract_steps(hypothesis)
+                _hypo_steps = _resolve_step_goal(None, hypothesis)
                 if _hypo_steps:
                     health_metric = "steps"
                     health_goal = _hypo_steps

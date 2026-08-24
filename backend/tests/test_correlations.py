@@ -25,7 +25,7 @@ from routers.correlations import (
     _load_weekly_obs, _migrate_appsetting,
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
-    _week_start, _current_isoweek, check_habit_for_workout,
+    _week_start, _current_isoweek, check_habit_for_workout, _recent_avg_steps,
 )
 
 
@@ -1021,6 +1021,120 @@ class TestGenerateExperimentRoutines:
         sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         assert "Frequently eaten foods" in sent_content
         assert "coffee" in sent_content
+
+
+class TestRecentAvgSteps:
+
+    def test_averages_steps_over_the_trailing_window(self, db):
+        today = date(2026, 6, 20)
+        for i, v in enumerate([5000.0, 6000.0, 7000.0]):
+            db.add(models.WithingsMeasurement(
+                date=(today - timedelta(days=i)).isoformat(), metric="steps", value=v,
+            ))
+        db.commit()
+
+        assert _recent_avg_steps(db, today, days=28) == 6000.0
+
+    def test_ignores_measurements_outside_the_window(self, db):
+        today = date(2026, 6, 20)
+        db.add(models.WithingsMeasurement(date=(today - timedelta(days=5)).isoformat(), metric="steps", value=8000.0))
+        db.add(models.WithingsMeasurement(date=(today - timedelta(days=40)).isoformat(), metric="steps", value=1000.0))
+        db.commit()
+
+        assert _recent_avg_steps(db, today, days=28) == 8000.0
+
+    def test_ignores_other_metrics(self, db):
+        today = date(2026, 6, 20)
+        db.add(models.WithingsMeasurement(date=today.isoformat(), metric="weight", value=80.0))
+        db.commit()
+
+        assert _recent_avg_steps(db, today, days=28) is None
+
+    def test_returns_none_with_no_step_data(self, db):
+        assert _recent_avg_steps(db, date(2026, 6, 20), days=28) is None
+
+
+class TestGenerateExperimentStepGoalFallback:
+    """The LLM is instructed to always give a concrete step number, but sometimes proposes
+    a relative percentage instead (e.g. "increase your daily step count by 10% compared to
+    your recent average") with no number anywhere in action or hypothesis -- previously this
+    meant health_metric/health_goal both ended up null (no auto-tracked goal at all) even
+    though the intent -- and the data needed to compute a real number -- was right there."""
+
+    CORR = [{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}]
+
+    def test_percentage_only_action_computes_a_real_goal_from_recent_average(self, db):
+        for i in range(14):
+            db.add(models.WithingsMeasurement(
+                date=(date.today() - timedelta(days=i)).isoformat(), metric="steps", value=6000.0,
+            ))
+        db.commit()
+
+        payload = {
+            "text": "t",
+            "hypothesis": "More consistent movement should correlate with better weight outcomes.",
+            "action": "Try increasing your daily step count by 10% compared to your recent average.",
+            "needs_habit": True, "health_metric": "steps", "health_goal": None,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.health_metric == "steps"
+        assert exp.health_goal == 6600.0  # 6000 * 1.10
+
+    def test_singular_step_phrasing_is_still_recognized(self, db):
+        """Both the "steps" mention-detection and the number-extraction regex used to be
+        hardcoded to the plural -- "9,000 step target" (singular, number directly adjacent)
+        previously matched neither."""
+        payload = {
+            "text": "t", "hypothesis": "h",
+            "action": "Hit a 9,000 step target every day.",
+            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.health_metric == "steps"
+        assert exp.health_goal == 9000.0
+
+    def test_percentage_with_no_recent_step_data_leaves_goal_unset(self, db):
+        """No Withings step data at all to compute a relative target from -- must not crash,
+        and must not invent a number out of nothing."""
+        payload = {
+            "text": "t", "hypothesis": "No steps data on hand.",
+            "action": "Try increasing your daily step count by 10% compared to your recent average.",
+            "needs_habit": True, "health_metric": "steps", "health_goal": None,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.health_metric is None
+        assert exp.health_goal is None
+
+    def test_absolute_number_still_takes_priority_over_a_percentage_in_the_same_text(self, db):
+        for i in range(7):
+            db.add(models.WithingsMeasurement(
+                date=(date.today() - timedelta(days=i)).isoformat(), metric="steps", value=6000.0,
+            ))
+        db.commit()
+
+        payload = {
+            "text": "t", "hypothesis": "h",
+            "action": "Walk 8,000 steps every day (about 10% more than usual).",
+            "needs_habit": True, "health_metric": "steps", "health_goal": None,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.health_goal == 8000.0
 
 
 class TestCheckHabitForWorkout:
