@@ -201,6 +201,10 @@ def parse_card(request: Request, req: schemas.ParseRequest, db: Session = Depend
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": req.text},
             ],
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
+            # before the real JSON answer, truncating it.
+            reasoning_effort="low",
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=req.text)
@@ -245,6 +249,10 @@ def parse_bulk_text(db: Session, text: str, today) -> list[schemas.ParsedCard]:
             {"role": "system", "content": prompt},
             {"role": "user", "content": text},
         ],
+        # See correlations.py's _generate_experiment for the full story: on a reasoning
+        # model, an unbounded chain-of-thought can burn the whole max_tokens budget before
+        # the real JSON answer, truncating it.
+        reasoning_effort="low",
     )
     data = json.loads(response.choices[0].message.content)
     raw_items = data.get("items", [])
@@ -305,6 +313,10 @@ def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depe
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": req.text},
             ],
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
+            # before the real JSON answer, truncating it.
+            reasoning_effort="low",
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=req.text)
@@ -456,8 +468,12 @@ def breakdown_card(card_id: int, db: Session = Depends(get_db)):
                 {"role": "system", "content": _BREAKDOWN_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=400,
+            max_tokens=600,
             response_format={"type": "json_object"},
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
+            # before the real JSON answer, truncating it.
+            reasoning_effort="low",
         )
         raw = resp.choices[0].message.content.strip()
         parsed = json.loads(raw)

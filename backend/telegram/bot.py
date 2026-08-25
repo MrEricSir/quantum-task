@@ -273,6 +273,11 @@ def _parse_telegram_intent(text: str, tz_offset: int, chat_id: str = "") -> dict
             {"role": "user", "content": text},
         ],
         timeout=15,
+        # See correlations.py's _generate_experiment for the full story: on a reasoning
+        # model, an unbounded chain-of-thought (a separate field, not mixed into content)
+        # adds latency even with no max_tokens cap to truncate against here -- "low" keeps
+        # intent classification fast without sacrificing accuracy on a well-scoped task.
+        reasoning_effort="low",
     )
     return _json.loads(response.choices[0].message.content)
 
@@ -281,6 +286,7 @@ def _parse_telegram_intent(text: str, tz_offset: int, chat_id: str = "") -> dict
 
 def handle_update(update: dict) -> None:
     """Process a single Telegram update. Called synchronously from the webhook endpoint."""
+    token = chat_id = None
     try:
         msg = update.get("message") or update.get("edited_message")
         if not msg:
@@ -345,6 +351,12 @@ def handle_update(update: dict) -> None:
     except Exception as exc:
         print(f"[telegram] unhandled error in handle_update: {exc}")
         print(traceback.format_exc())
+        # Previously silent from the user's side -- the bot would just never reply, with
+        # nothing to distinguish "still thinking" from "broke and gave up." token/chat_id are
+        # only set once the DB lookup that provides them has actually succeeded, so this
+        # can't fire on an early setup failure before we even know who to reply to.
+        if token and chat_id:
+            send_message(token, chat_id, "Sorry, something went wrong processing that message. Please try again.")
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────
@@ -1480,6 +1492,10 @@ def _reply_priority(tz_offset: int) -> str:
             ],
             timeout=15,
             temperature=0.3,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought adds real latency to a reply that should
+            # feel instant, even with no max_tokens cap here to truncate against.
+            reasoning_effort="low",
         )
         suggestion = resp.choices[0].message.content.strip()
     except Exception as e:
@@ -1619,6 +1635,10 @@ def _reply_ask_schedule(intent: dict, tz_offset: int) -> str:
             ],
             timeout=15,
             temperature=0.2,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought adds real latency to a reply that should
+            # feel instant, even with no max_tokens cap here to truncate against.
+            reasoning_effort="low",
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
@@ -1826,6 +1846,10 @@ def _reply_avoiding(tz_offset: int) -> str:
             ],
             timeout=15,
             temperature=0.4,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought adds real latency to a reply that should
+            # feel instant, even with no max_tokens cap here to truncate against.
+            reasoning_effort="low",
         )
         insight = resp.choices[0].message.content.strip()
     except Exception as e:

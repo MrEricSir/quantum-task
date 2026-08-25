@@ -98,6 +98,11 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session 
                         messages=[{"role": "system", "content": _TODAY_SYSTEM},
                                   {"role": "user",   "content": today_ctx}],
                         stream=True, temperature=0.1,
+                        # See correlations.py's _generate_experiment for the full story: on a
+                        # reasoning model, chain-of-thought streams as a separate delta field
+                        # (never mixed into delta.content read below, so nothing leaks into
+                        # the visible briefing) but still adds real time-to-first-token delay.
+                        reasoning_effort="low",
                     )
                     for chunk in stream:
                         delta = chunk.choices[0].delta.content
@@ -122,6 +127,11 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session 
                         messages=[{"role": "system", "content": _WEEK_SYSTEM},
                                   {"role": "user",   "content": week_ctx}],
                         stream=True, temperature=0.1,
+                        # See correlations.py's _generate_experiment for the full story: on a
+                        # reasoning model, chain-of-thought streams as a separate delta field
+                        # (never mixed into delta.content read below, so nothing leaks into
+                        # the visible briefing) but still adds real time-to-first-token delay.
+                        reasoning_effort="low",
                     )
                     for chunk in stream:
                         delta = chunk.choices[0].delta.content

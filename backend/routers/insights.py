@@ -67,12 +67,22 @@ def _generate_texts(patterns: list[str]) -> list[str]:
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": "\n".join(numbered)},
             ],
-            max_tokens=400,
+            max_tokens=600,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought (a separate field, not mixed into content)
+            # can burn the whole max_tokens budget before the real JSON answer, truncating it.
+            reasoning_effort="low",
         )
         data = json.loads(response.choices[0].message.content)
         by_index = {item["index"]: item["text"] for item in data.get("insights", [])}
         texts = [by_index.get(i, "") for i in range(len(patterns))]
-    except Exception:
+    except Exception as e:
+        # Falls back to "" per pattern, not fabricated text -- callers already show an honest
+        # static template when text is empty (e.g. "In Today for N days — reschedule, snooze,
+        # or archive."), so a failure here degrades to a plainer but still true message, never
+        # a false one. Logged so a real, recurring failure is visible instead of just
+        # invisibly losing the personalized phrasing forever.
+        print(f"[insights] text generation error: {e}")
         texts = ["" for _ in patterns]
 
     _text_cache[ph] = (time.monotonic(), texts)

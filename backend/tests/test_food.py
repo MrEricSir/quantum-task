@@ -324,3 +324,57 @@ class TestFoodQualityTrend:
         dates = [d["date"] for d in r.json()]
         assert "2026-01-08" in dates
         assert "2025-12-31" not in dates
+
+
+class TestParseFoodEntriesInternals:
+    """Every other test in this file mocks parse_food_entries as a black box -- these test
+    its own LLM call and error handling directly, previously with zero coverage anywhere."""
+
+    def _mock_llm(self, content):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content=content))]
+        client = MagicMock()
+        client.chat.completions.create.return_value = resp
+        return client
+
+    def test_requests_reasoning_effort_low_and_json_mode(self):
+        """The reliability fix: on a reasoning model, an unbounded chain-of-thought can
+        burn the whole max_tokens budget before the real JSON answer, truncating it -- see
+        correlations.py's _generate_experiment for the full story."""
+        from unittest.mock import patch
+        import capabilities.food as food_mod
+        payload = '{"items": [{"name": "Coffee", "category": "drink", "source_text": "coffee", "notes": null, "quality": 7, "calories": 5}]}'
+        mock_client = self._mock_llm(payload)
+        with patch("deps.llm_client", return_value=mock_client):
+            food_mod.parse_food_entries("coffee")
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["response_format"] == {"type": "json_object"}
+
+    def test_llm_failure_falls_back_to_raw_text_and_is_logged(self, capsys):
+        """Previously a bare `except Exception:` with zero logging -- callers already get
+        an honest fallback (the verbatim raw text as the entry name, no fabricated
+        category/quality/calories), but a real recurring failure was invisible."""
+        from unittest.mock import patch, MagicMock
+        import capabilities.food as food_mod
+        broken_client = MagicMock()
+        broken_client.chat.completions.create.side_effect = RuntimeError("boom")
+        with patch("deps.llm_client", return_value=broken_client):
+            result = food_mod.parse_food_entries("grilled chicken and rice")
+
+        assert result == [{"name": "grilled chicken and rice", "category": "food",
+                            "source_text": None, "notes": None, "quality": None, "calories": None}]
+        assert "parse error" in capsys.readouterr().out
+
+    def test_malformed_json_falls_back_to_raw_text_and_is_logged(self, capsys):
+        from unittest.mock import patch
+        import capabilities.food as food_mod
+        mock_client = self._mock_llm('{"items": [truncated')  # malformed
+        with patch("deps.llm_client", return_value=mock_client):
+            result = food_mod.parse_food_entries("coffee")
+
+        assert result[0]["name"] == "coffee"
+        assert "parse error" in capsys.readouterr().out
+

@@ -171,6 +171,11 @@ def send_message(request: Request, card_id: int, req: schemas.ThreadMessageReque
                 messages=llm_messages,
                 stream=True,
                 temperature=0.3,
+                # See correlations.py's _generate_experiment for the full story: reasoning
+                # streams as its own delta field (never mixed into delta.content), so
+                # nothing leaks into the visible chat, but it still adds real
+                # time-to-first-token delay.
+                reasoning_effort="low",
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
@@ -265,6 +270,10 @@ def generate_spec(card_id: int, db: Session):
                 {"role": "user",   "content": user_msg},
             ],
             temperature=0.2,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought adds real latency here even with no
+            # max_tokens cap to truncate against.
+            reasoning_effort="low",
         )
         spec_text = resp.choices[0].message.content.strip()
     except Exception as e:
@@ -382,6 +391,11 @@ def stream_assist(req: schemas.AssistRequest):
                 ],
                 stream=True,
                 temperature=0.3,
+                # See correlations.py's _generate_experiment for the full story: reasoning
+                # streams as its own delta field (never mixed into delta.content), so
+                # nothing leaks into the visible chat, but it still adds real
+                # time-to-first-token delay.
+                reasoning_effort="low",
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
@@ -530,6 +544,11 @@ def global_assist(request: Request, req: schemas.GlobalAssistRequest):
                 ],
                 stream=True,
                 temperature=0.3,
+                # See correlations.py's _generate_experiment for the full story: reasoning
+                # streams as its own delta field (never mixed into delta.content), so
+                # nothing leaks into the visible chat, but it still adds real
+                # time-to-first-token delay.
+                reasoning_effort="low",
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content

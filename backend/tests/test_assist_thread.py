@@ -344,3 +344,79 @@ class TestGlobalAssist:
 
         events = _read_sse(res)
         assert any("error" in e for e in events)
+
+
+# ── _maybe_web_search internals ──────────────────────────────────────────────
+# Every other test in this file mocks _maybe_web_search as a black box -- these test its
+# own LLM call and error handling directly, previously with zero coverage anywhere.
+
+class TestMaybeWebSearch:
+
+    def _mock_decision(self, content):
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content=content))]
+        client = MagicMock()
+        client.chat.completions.create.return_value = resp
+        return client
+
+    def test_returns_empty_string_when_tavily_not_configured(self):
+        from assist.context import _maybe_web_search
+        with patch("assist.context._ASSIST_TAVILY_KEY", ""):
+            assert _maybe_web_search("find a hotel in Austin") == ""
+
+    def test_requests_reasoning_effort_low_and_json_mode(self):
+        """The reliability fix: on a reasoning model, an unbounded chain-of-thought can burn
+        the whole max_tokens budget before the real JSON decision, truncating it -- see
+        correlations.py's _generate_experiment for the full story."""
+        from assist.context import _maybe_web_search
+        mock_client = self._mock_decision('{"search": false}')
+        with patch("assist.context._ASSIST_TAVILY_KEY", "fake-key"), \
+             patch("assist.context.llm_client", return_value=mock_client):
+            _maybe_web_search("what's the weather like")
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["response_format"] == {"type": "json_object"}
+
+    def test_no_search_needed_returns_empty_string(self):
+        from assist.context import _maybe_web_search
+        mock_client = self._mock_decision('{"search": false}')
+        with patch("assist.context._ASSIST_TAVILY_KEY", "fake-key"), \
+             patch("assist.context.llm_client", return_value=mock_client):
+            assert _maybe_web_search("what's on my todo list") == ""
+
+    def test_search_needed_runs_tavily_and_formats_results(self):
+        from assist.context import _maybe_web_search
+        mock_client = self._mock_decision('{"search": true, "queries": ["sushi austin"]}')
+        fake_results = [{"title": "Best Sushi", "url": "http://x.com", "content": "Great rolls"}]
+        with patch("assist.context._ASSIST_TAVILY_KEY", "fake-key"), \
+             patch("assist.context.llm_client", return_value=mock_client), \
+             patch("assist.context._tavily_search", return_value=fake_results):
+            result = _maybe_web_search("best sushi in austin")
+
+        assert "Best Sushi" in result
+        assert "Great rolls" in result
+
+    def test_truncated_json_is_logged_not_silently_swallowed(self, capsys):
+        """Previously a bare `except Exception: pass` -- a truncated/malformed decision
+        response (exactly what an unbounded reasoning trace can cause) failed with zero
+        trace anywhere that web search silently never triggers."""
+        from assist.context import _maybe_web_search
+        mock_client = self._mock_decision('{"search": true, "queri')  # truncated mid-JSON
+        with patch("assist.context._ASSIST_TAVILY_KEY", "fake-key"), \
+             patch("assist.context.llm_client", return_value=mock_client):
+            result = _maybe_web_search("find a hotel")
+
+        assert result == ""
+        assert "web search decision error" in capsys.readouterr().out
+
+    def test_llm_exception_returns_empty_string_and_is_logged(self, capsys):
+        from assist.context import _maybe_web_search
+        broken_client = MagicMock()
+        broken_client.chat.completions.create.side_effect = RuntimeError("boom")
+        with patch("assist.context._ASSIST_TAVILY_KEY", "fake-key"), \
+             patch("assist.context.llm_client", return_value=broken_client):
+            result = _maybe_web_search("find a hotel")
+
+        assert result == ""
+        assert "boom" in capsys.readouterr().out

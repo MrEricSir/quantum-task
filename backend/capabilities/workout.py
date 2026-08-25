@@ -50,7 +50,13 @@ def parse_workout(raw: str) -> dict:
                 {"role": "system", "content": _PARSE_SYSTEM},
                 {"role": "user",   "content": raw},
             ],
-            max_tokens=150,
+            max_tokens=300,
+            response_format={"type": "json_object"},
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
+            # before the real JSON answer, truncating it -- max_tokens=150 here was tight
+            # enough to be a real risk.
+            reasoning_effort="low",
         )
         data = json.loads(resp.choices[0].message.content.strip())
         wtype = data.get("type", "other")
@@ -67,7 +73,13 @@ def parse_workout(raw: str) -> dict:
             unit = str(unit)[:20]
         notes = data.get("notes") or None
         return {"type": wtype, "value": value, "unit": unit, "notes": notes}
-    except Exception:
+    except Exception as e:
+        # Falls back to a bare "other" workout with no value/unit/notes -- not fabricated
+        # (raw_input, stored separately by every caller, still preserves exactly what the
+        # user typed), but a failure here is otherwise indistinguishable from someone
+        # genuinely logging a workout with no details to give. Logged so a real, recurring
+        # failure is visible instead of just invisibly losing every parsed detail.
+        print(f"[capabilities.workout] parse error: {e}")
         return {"type": "other", "value": None, "unit": None, "notes": None}
 
 

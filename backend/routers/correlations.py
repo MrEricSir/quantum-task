@@ -547,10 +547,18 @@ def _llm_summary(correlations: list[dict]) -> str:
                 {"role": "system", "content": _SUMMARY_SYSTEM},
                 {"role": "user",   "content": "\n".join(lines)},
             ],
-            max_tokens=200,
+            max_tokens=300,
+            # See _generate_experiment below for the full story: on a reasoning model, an
+            # unbounded chain-of-thought can burn the whole max_tokens budget before the
+            # real answer, truncating it.
+            reasoning_effort="low",
         )
         text = resp.choices[0].message.content.strip()
-    except Exception:
+    except Exception as e:
+        # Falls back to "" (an honestly empty summary, not fabricated text) -- the frontend
+        # already only renders this section when non-empty. Logged so a real, recurring
+        # failure is visible instead of just invisibly losing the summary forever.
+        print(f"[correlations] summary generation error: {e}")
         text = ""
     _SUMMARY_CACHE[key] = (time.monotonic(), text)
     return text
@@ -718,7 +726,19 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
                 {"role": "system", "content": _EXPERIMENT_SYSTEM},
                 {"role": "user",   "content": user_content},
             ],
-            max_tokens=350,
+            max_tokens=600,
+            # reasoning_effort is a Groq/gpt-oss-specific extension -- ignored harmlessly by
+            # backends that don't support it (e.g. local Ollama). Found the hard way: with a
+            # reasoning model and no cap, the model's internal chain-of-thought (a separate
+            # `reasoning` field, not mixed into `content`) burns most or all of max_tokens
+            # before it ever reaches the actual JSON answer, truncating `content` mid-string
+            # every single time -- deterministically, for any similar prompt. That's why this
+            # was silently falling back to the same canned experiment on every regeneration,
+            # not a step-goal-parsing issue as first suspected. "low" is plenty for a
+            # structured-JSON task like this one; response_format enforces valid JSON on top
+            # (matches discovery.py's _rank_events_bg, which already does this).
+            reasoning_effort="low",
+            response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content.strip()
         llm_data = json.loads(raw)
@@ -892,7 +912,13 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
             health_metric, health_goal, workout_type, workout_target_value,
             recent[0] if recent else None,
         )
-    except Exception:
+    except Exception as e:
+        # Was a silent `except Exception: <canned fallback>` with no logging at all -- meant
+        # a real, deterministically-repeating failure (see the reasoning_effort/max_tokens
+        # comment above) produced this exact canned text on every single regeneration with
+        # zero trace in the logs to explain why. Print, don't raise: a broken experiment
+        # generation shouldn't break the page.
+        print(f"[correlations] experiment generation error: {e}")
         text = "Try increasing your daily step count by 10% compared to your recent average."
         hypothesis = "More consistent movement should correlate with better weight outcomes."
         action = None

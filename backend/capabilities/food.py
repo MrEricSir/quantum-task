@@ -137,6 +137,11 @@ def parse_food_entries(raw: str) -> list[dict]:
                 {"role": "user",   "content": raw},
             ],
             max_tokens=600,
+            response_format={"type": "json_object"},
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
+            # before the real JSON answer, truncating it.
+            reasoning_effort="low",
         )
         data = json.loads(resp.choices[0].message.content.strip())
         raw_items = data.get("items")
@@ -144,5 +149,9 @@ def parse_food_entries(raw: str) -> list[dict]:
             # Tolerate a model that returns a single object instead of {"items": [...]}
             raw_items = [data]
         return [_normalize_item(item, raw) for item in raw_items]
-    except Exception:
+    except Exception as e:
+        # Falls back to the verbatim raw text as the entry name, with no fabricated
+        # category/quality/calories -- an honest degradation, not fake content. Logged so a
+        # real, recurring failure is visible instead of just invisibly losing all enrichment.
+        print(f"[capabilities.food] parse error: {e}")
         return [{"name": raw[:120], **_FALLBACK_ENTRY_TEMPLATE}]

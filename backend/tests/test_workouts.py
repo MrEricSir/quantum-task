@@ -311,3 +311,56 @@ class TestWorkoutHabitAutoCompletion:
         monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
         r = client.post("/api/workouts", json={"raw_input": "rowed 5000m"})
         assert r.status_code == 201
+
+
+class TestParseWorkoutInternals:
+    """Every other test in this file mocks parse_workout as a black box -- these test its
+    own LLM call and error handling directly, previously with zero coverage anywhere."""
+
+    def _mock_llm(self, content):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content=content))]
+        client = MagicMock()
+        client.chat.completions.create.return_value = resp
+        return client
+
+    def test_requests_reasoning_effort_low_and_json_mode(self):
+        """The reliability fix: on a reasoning model, an unbounded chain-of-thought can burn
+        the whole max_tokens budget before the real JSON answer, truncating it -- see
+        correlations.py's _generate_experiment for the full story. max_tokens=150 here was
+        tight enough to be a real risk."""
+        from unittest.mock import patch
+        import capabilities.workout as workout_mod
+        mock_client = self._mock_llm('{"type": "row", "value": 5000, "unit": "m", "notes": null}')
+        with patch("capabilities.workout.llm_client", return_value=mock_client):
+            workout_mod.parse_workout("rowed 5000m")
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["response_format"] == {"type": "json_object"}
+
+    def test_llm_failure_falls_back_to_other_and_is_logged(self, capsys):
+        """Previously a bare `except Exception:` with zero logging -- a failure here
+        silently produced a bare "other" workout entry with no value/unit/notes, with no
+        trace anywhere that the parse actually failed rather than the user just not giving
+        any details."""
+        from unittest.mock import patch, MagicMock
+        import capabilities.workout as workout_mod
+        broken_client = MagicMock()
+        broken_client.chat.completions.create.side_effect = RuntimeError("boom")
+        with patch("capabilities.workout.llm_client", return_value=broken_client):
+            result = workout_mod.parse_workout("rowed 5000m")
+
+        assert result == {"type": "other", "value": None, "unit": None, "notes": None}
+        assert "parse error" in capsys.readouterr().out
+
+    def test_malformed_json_falls_back_to_other_and_is_logged(self, capsys):
+        from unittest.mock import patch
+        import capabilities.workout as workout_mod
+        mock_client = self._mock_llm('{"type": "row", "val')  # truncated mid-JSON
+        with patch("capabilities.workout.llm_client", return_value=mock_client):
+            result = workout_mod.parse_workout("rowed 5000m")
+
+        assert result == {"type": "other", "value": None, "unit": None, "notes": None}
+        assert "parse error" in capsys.readouterr().out

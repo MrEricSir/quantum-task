@@ -2417,3 +2417,50 @@ class TestHandleUpdateDedup:
             handle_update(update)
             handle_update(update)
         assert mock_send.call_count == 2
+
+
+class TestHandleUpdateErrorReply:
+    """Previously a bare `except Exception: print(...)` with nothing sent back to the chat
+    -- from the user's side, the bot just silently never replied, with no way to tell "still
+    thinking" apart from "broke and gave up." Now sends a real, visible error reply whenever
+    we already know who to reply to."""
+
+    def _configure_bot(self, chat_id="12345"):
+        with BotTestSession() as db:
+            db.add(models.AppSetting(key=keys.TELEGRAM_BOT_TOKEN, value="test-token"))
+            db.add(models.AppSetting(key=keys.TELEGRAM_CHAT_ID, value=chat_id))
+            db.commit()
+
+    def _update(self, update_id, text="help", chat_id="12345"):
+        return {
+            "update_id": update_id,
+            "message": {"text": text, "chat": {"id": int(chat_id)}},
+        }
+
+    def test_sends_an_error_reply_when_routing_raises(self):
+        from telegram.bot import handle_update
+        self._configure_bot()
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._route_message", side_effect=RuntimeError("boom")), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(self._update(200))
+
+        assert mock_send.call_count == 1
+        args = mock_send.call_args[0]
+        assert args[0] == "test-token"
+        assert args[1] == "12345"
+        assert "went wrong" in args[2].lower()
+
+    def test_does_not_attempt_a_reply_when_the_failure_happens_before_we_know_who_to_reply_to(self):
+        # token/chat_id are initialized to None before the try block and only reassigned
+        # once the Settings lookup that provides them actually succeeds -- if something
+        # raises before that point, there's no known chat to reply to, and the except
+        # block's `if token and chat_id:` guard must not raise a NameError either.
+        from telegram.bot import handle_update
+        self._configure_bot()
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.Settings", side_effect=RuntimeError("db exploded")), \
+             patch("telegram.bot.send_message", return_value=True) as mock_send:
+            handle_update(self._update(202))
+
+        assert mock_send.call_count == 0

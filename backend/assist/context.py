@@ -92,9 +92,15 @@ def _maybe_web_search(user_msg: str) -> str:
                 {"role": "system", "content": _ASSIST_DECISION_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=150,
+            max_tokens=300,
             temperature=0,
             timeout=10,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought (a separate field, not mixed into content)
+            # can burn the whole max_tokens budget before the real JSON answer, truncating it.
+            # "low" is plenty for a one-line true/false decision like this.
+            reasoning_effort="low",
+            response_format={"type": "json_object"},
         )
         decision = json.loads(decision_resp.choices[0].message.content.strip())
         if not decision.get("search"):
@@ -105,8 +111,14 @@ def _maybe_web_search(user_msg: str) -> str:
         if all_results:
             parts = [f"[{r['title']}]({r['url']})\n{r['content']}" for r in all_results[:8]]
             return "\n\n---\n\n".join(parts)
-    except Exception:
-        pass
+    except Exception as e:
+        # Deliberately swallowed, not surfaced to the user -- this is a best-effort add-on to
+        # an otherwise-still-useful assist response, and the caller only shows a "searching"
+        # indicator once real results come back (never claims to search and silently fails to),
+        # so there's nothing false being displayed. Logged so a real, recurring failure here
+        # (as opposed to an occasional network hiccup) is at least visible in the logs instead
+        # of just invisibly never happening.
+        print(f"[assist] web search decision error: {e}")
     return ""
 
 

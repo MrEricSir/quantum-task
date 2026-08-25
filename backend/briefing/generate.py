@@ -378,6 +378,10 @@ def generate_today_briefing(today: date, tz_offset: int = 0) -> str | None:
             ],
             stream=False,
             temperature=0.1,
+            # See correlations.py's _generate_experiment for the full story: on a reasoning
+            # model, an unbounded chain-of-thought adds real latency to what should feel like
+            # a quick daily briefing, even with no max_tokens cap here to truncate against.
+            reasoning_effort="low",
         )
         text = resp.choices[0].message.content.strip()
         _cache_set("today", today_h, text)

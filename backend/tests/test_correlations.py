@@ -896,6 +896,42 @@ class TestGenerateExperimentRoutines:
         assert exp.routine_type is None
         assert exp.action is None
 
+    def test_llm_failure_is_logged_not_silently_swallowed(self, db, capsys):
+        """Used to be a bare `except Exception:` with zero logging -- a real,
+        deterministically-repeating failure (a reasoning model burning its whole token
+        budget on chain-of-thought before ever reaching the JSON answer, truncating it
+        every time) produced the same canned fallback experiment on every single
+        regeneration with no trace in the logs to explain why."""
+        broken_client = MagicMock()
+        broken_client.chat.completions.create.side_effect = RuntimeError("boom")
+        with patch("routers.correlations.llm_client", return_value=broken_client):
+            _generate_experiment(self.CORR, db)
+
+        output = capsys.readouterr().out
+        assert "experiment generation error" in output
+        assert "boom" in output
+
+    def test_llm_call_requests_json_mode_and_low_reasoning_effort(self, db):
+        """Both address the same root cause: a reasoning model (e.g. Groq's gpt-oss) can
+        burn the entire max_tokens budget on its internal chain-of-thought -- a separate
+        `reasoning` field, not mixed into `content` -- before ever writing the actual JSON
+        answer, truncating `content` mid-string every time for a similar prompt. json_object
+        mode also guards against stray prose/markdown fences around the JSON regardless."""
+        payload = {
+            "text": "t", "hypothesis": "h", "action": "Walk 8,000 steps every day",
+            "needs_habit": True, "health_metric": "steps", "health_goal": 8000,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        fake_client = _fake_llm_client(payload)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR, db)
+
+        call_kwargs = fake_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["response_format"] == {"type": "json_object"}
+        assert call_kwargs["max_tokens"] >= 600
+
     def test_habit_routine_clears_health_metric(self, db):
         payload = {
             "text": "t", "hypothesis": "h", "action": "Meditate 15 min",

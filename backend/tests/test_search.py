@@ -1,7 +1,7 @@
 """
 Tests for semantic search integration across:
   - telegram/bot.py _reply_search_cards — covers cards + GitHub items
-  - routers/assist.py global_assist — injects semantic context when no filter
+  - assist/router.py global_assist — injects semantic context when no filter
   - github_sync.py — calls upsert_eng_bg after sync
 """
 import json
