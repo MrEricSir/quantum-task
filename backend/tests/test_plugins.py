@@ -239,6 +239,52 @@ class TestBulkTimestampParsing:
             f"ISO date fragment in title for input {raw_title!r}: got {result.title!r}"
 
 
+class TestWeekdayOverridesLLMDate:
+    """Regression: user reported "arrange a call on Monday" (said on a Sunday)
+    getting a due date of the Monday that had already passed instead of the
+    upcoming one. The LLM had filled scheduled_at itself with the wrong date --
+    resolve_dates must recompute (next) weekday/today/tomorrow phrases from
+    `today` itself and override any scheduled_at the LLM already produced,
+    rather than trusting LLM date arithmetic."""
+
+    def test_weekday_overrides_a_wrong_past_date_from_the_llm(self):
+        # _TODAY (2026-06-07) is a Sunday; the correct "Monday" is tomorrow,
+        # 2026-06-08. The LLM incorrectly resolved last Monday, 2026-06-01.
+        result = _full_pipeline(
+            _task(title="Arrange a call", section="later",
+                  scheduled_at="2026-06-01T12:00:00"),
+            text="arrange a call on monday",
+        )
+        assert result.scheduled_at == datetime(2026, 6, 8, 12, 0, 0)
+
+    def test_today_overrides_a_wrong_date_from_the_llm(self):
+        result = _full_pipeline(
+            _task(title="Call Tom", section="later",
+                  scheduled_at="2026-06-08T12:00:00"),
+            text="call tom today",
+        )
+        assert result.scheduled_at == datetime(2026, 6, 7, 12, 0, 0)
+
+    def test_tomorrow_overrides_a_wrong_date_from_the_llm(self):
+        result = _full_pipeline(
+            _task(title="Call Tom", section="later",
+                  scheduled_at="2026-06-07T12:00:00"),
+            text="call tom tomorrow",
+        )
+        assert result.scheduled_at == datetime(2026, 6, 8, 12, 0, 0)
+
+    def test_bare_time_with_no_date_phrase_still_respects_llm_scheduled_at(self):
+        """No deterministic date phrase in the text -- our own resolution can't
+        know better than the LLM here, so its (possibly time-qualified) value
+        is left alone rather than being reset to "assume today"."""
+        result = _full_pipeline(
+            _task(title="Call Tom", section="today",
+                  scheduled_at="2026-06-20T18:00:00"),
+            text="call tom at 6pm",
+        )
+        assert result.scheduled_at == datetime(2026, 6, 20, 18, 0, 0)
+
+
 # ── Food type detection ────────────────────────────────────────────────────────
 
 _llama32 = Llama32Plugin()

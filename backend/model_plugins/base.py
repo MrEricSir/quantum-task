@@ -180,14 +180,22 @@ _WEIGHT_LB_RE = re.compile(r'\b(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\b', re.I)
 def resolve_dates(parsed: Any, *, text: str, today: date) -> Any:
     """
     Post-parse hook: resolve relative date phrases in `text` to concrete
-    dates in `parsed.scheduled_at`.  Only fills scheduled_at when it is
-    currently None (respects any time the LLM already resolved).
+    dates in `parsed.scheduled_at`.
 
     Handles:
       - "today"            → today at noon
       - "tomorrow"         → tomorrow at noon
       - "(next) <weekday>" → nearest future occurrence at noon
     When a time is mentioned alongside the phrase, uses that time instead of noon.
+
+    "today"/"tomorrow"/"(next) <weekday>" always override whatever scheduled_at
+    the LLM already produced, even if non-null -- these are deterministically
+    resolvable from `today`, and asking an LLM to do the weekday arithmetic itself
+    is unreliable (observed in production picking the weekday that had already
+    passed instead of the next upcoming one). A bare time phrase with no
+    accompanying date phrase (e.g. "at 6pm") still only fills scheduled_at when
+    the LLM left it null, since "assume today" there is a weaker fallback, not an
+    unambiguous resolution of something actually stated in the text.
     """
     lowered = text.strip().lower()
 
@@ -213,9 +221,6 @@ def resolve_dates(parsed: Any, *, text: str, today: date) -> Any:
             hour = 0
         return dt_time(hour, minute)
 
-    if parsed.scheduled_at is not None:
-        return parsed
-
     target_date: date | None = None
 
     if re.search(r'\btoday\b', lowered):
@@ -229,8 +234,8 @@ def resolve_dates(parsed: Any, *, text: str, today: date) -> Any:
             current_wd = today.weekday()
             days_ahead = (target_wd - current_wd) % 7 or 7  # always future
             target_date = today + timedelta(days=days_ahead)
-        elif _TIME_RE.search(lowered):
-            # Bare time phrase with no date → assume today
+        elif parsed.scheduled_at is None and _TIME_RE.search(lowered):
+            # Bare time phrase with no date, and the LLM didn't resolve one → assume today
             target_date = today
 
     if target_date is not None:
