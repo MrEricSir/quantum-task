@@ -251,6 +251,7 @@ qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, 
 qtask-bridge --review [branch] # lead-engineer-style review of a worktree's changes, offers to apply fixes after
 qtask-bridge --unlock-push    # clear a stuck no_push sentinel left by an interrupted job
 qtask-bridge --lock-push      # manually set that same no_push sentinel on demand
+qtask-bridge --rename-branch new-name  # rename the branch for a worktree (cwd or last one), syncs the app's record too
 qtask-bridge --card 84 --agent aider   # --agent is a modifier, combinable with any command above
 ```
 
@@ -392,6 +393,8 @@ Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining le
 | **Edit** (footer) | Opens an inline textarea to manually write or adjust the requirements |
 
 Next to **▶ Run**, a **Branch** field shows the branch name the bridge would auto-generate (`qtask/<card id>-<slug of the title>`) as grayed-out placeholder text — type your own name to use it instead, or leave it blank to keep the default. Left blank, the name is still decided fresh when the bridge actually picks up the job (from whatever the card's title is *then*), not locked in at the moment you click Run. **Use this** copies that placeholder into the field so you can tweak a couple of words instead of typing the whole name from scratch. Your own names don't need to start with `qtask/` — `--list`/`--switch`/`--cleanup` find the worktree either way.
+
+Forgot to set a name here, want a better one, or renamed the branch by hand via raw git and now the app's record is out of sync? Run `qtask-bridge --rename-branch new-name` from the worktree (or right after switching to it) — it renames the actual git branch and updates the app's record to match in one step, rather than the two staying out of sync until the next job touches that worktree.
 
 #### Applying review feedback
 

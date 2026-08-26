@@ -74,6 +74,10 @@ class _JobFix(BaseModel):
     comment_ids: list[int]             # EngineeringItemComment ids to address
 
 
+class _JobRenameBranch(BaseModel):
+    branch_name: str                   # the new name, already renamed git-side by the CLI
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/api/bridge/jobs")
@@ -404,6 +408,29 @@ def start_job(job_id: int, body: _JobStart, db: Session = Depends(get_db)):
     job.agent_name     = body.agent
     job.worktree_path  = body.worktree_path
     job.updated_at     = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/{job_id}/rename-branch")
+def rename_job_branch(job_id: int, body: _JobRenameBranch, db: Session = Depends(get_db)):
+    """Bridge calls this after `--rename-branch` has already renamed the actual git branch,
+    to correct the DB's record to match. branch_name is otherwise write-once-per-session --
+    only /start ever sets it, and only from whatever the CLI resolved at that moment -- so
+    nothing else keeps it in sync if the branch gets renamed afterward, whether deliberately
+    (forgot to set a name at queue time, or want a better one) or because the user renamed it
+    themselves via raw git without going through the CLI."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    branch_name = body.branch_name.strip()
+    if not branch_name:
+        raise HTTPException(status_code=400, detail="branch_name can't be empty")
+    if any(c.isspace() for c in branch_name):
+        raise HTTPException(status_code=400, detail="branch_name can't contain whitespace")
+    job.branch_name = branch_name
+    job.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(job)
     return _job_response(job)

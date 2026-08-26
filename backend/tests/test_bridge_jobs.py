@@ -691,6 +691,49 @@ class TestStartJob:
         assert res.status_code == 404
 
 
+# ── POST /api/bridge/jobs/{id}/rename-branch ─────────────────────────────────
+
+class TestRenameBranchJob:
+
+    def _make_started_job(self, client, branch="qtask/7-fix-login"):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start",
+                   json={"branch": branch, "agent": "work-mac"})
+        return job_id
+
+    def test_updates_branch_name(self, client):
+        job_id = self._make_started_job(client)
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/rename-branch",
+                          json={"branch_name": "qtask/7-better-name"})
+        assert res.status_code == 200
+        assert res.json()["branch_name"] == "qtask/7-better-name"
+
+    def test_new_name_visible_via_get(self, client):
+        job_id = self._make_started_job(client)
+        client.post(f"/api/bridge/jobs/{job_id}/rename-branch",
+                   json={"branch_name": "qtask/7-better-name"})
+
+        res = client.get(f"/api/bridge/jobs/{job_id}")
+        assert res.json()["branch_name"] == "qtask/7-better-name"
+
+    def test_404_for_missing_job(self, client):
+        res = client.post("/api/bridge/jobs/9999/rename-branch",
+                          json={"branch_name": "qtask/1-foo"})
+        assert res.status_code == 404
+
+    def test_400_for_empty_branch_name(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/rename-branch", json={"branch_name": "   "})
+        assert res.status_code == 400
+
+    def test_400_for_branch_name_with_whitespace(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/rename-branch", json={"branch_name": "bad name"})
+        assert res.status_code == 400
+
+
 # ── POST /api/bridge/jobs/{id}/fix ───────────────────────────────────────────
 
 class TestQueueFixJob:

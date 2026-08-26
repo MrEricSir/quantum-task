@@ -23,6 +23,8 @@ Usage:
                               remote.origin.pushurl, left behind by an interrupted job
   qtask-bridge --lock-push   Manually set the no_push sentinel on the current repo,
                               the same safety a job's session gets automatically
+  qtask-bridge --rename-branch NEW_NAME  Rename the git branch for a resolved qtask
+                              worktree (cwd or last one) and update the app's record
 
   --agent NAME  Modifier, combinable with any command above: use this coding agent for
                 just this run, overriding config.toml's "agent" key for one invocation
@@ -160,8 +162,8 @@ def _activate_adapter(agent_name):
     main() resolved -- the `--agent` CLI flag if given, else config.toml's "agent" key, else
     _DEFAULT_AGENT (this function itself doesn't care which source it came from). Called
     once, at the very top of main(), before any subcommand dispatch -- including subcommands
-    (--list, --cleanup, --switch, --run, --unlock-push, --lock-push) that never end up
-    touching these names, so a bad agent selection can't block those from working.
+    (--list, --cleanup, --switch, --run, --unlock-push, --lock-push, --rename-branch) that
+    never end up touching these names, so a bad agent selection can't block those from working.
 
     Falls back to _DEFAULT_AGENT with a warning if the configured agent has no adapter
     compiled into this build of the served script (e.g. config.toml says "aider" but this
@@ -2186,6 +2188,71 @@ def cmd_review(cfg, target):
         _git_teardown(work_dir, push_url_info)
 
 
+def cmd_rename_branch(cfg, new_name):
+    """Rename the git branch for the current (cwd) or last-used qtask worktree, and update
+    the app's recorded branch_name to match -- for when you forgot to set a branch name at
+    queue time, want to rename one later, or the two have drifted because the branch was
+    renamed via raw git without going through this command (branch_name is otherwise only
+    ever written once, by /start, at session-start time -- nothing else keeps it in sync).
+
+    Resolution is cwd-or-last only, same as --run/--review with no target given -- not
+    fragment-matching against an arbitrary worktree, since the new name is already this
+    command's one required argument and a second "which worktree" argument would be an
+    awkward CLI shape. cd (or `qcd`) to the worktree you mean first if it isn't already
+    cwd/last-used."""
+    new_name = new_name.strip()
+    if not new_name:
+        print("[bridge] New branch name can't be empty.", file=sys.stderr)
+        return
+    if any(c.isspace() for c in new_name):
+        print("[bridge] New branch name can't contain whitespace.", file=sys.stderr)
+        return
+    if new_name.startswith("-"):
+        # git branch -m passes this straight into its own argv -- see create_job's identical
+        # concern for the same reasoning.
+        print("[bridge] New branch name can't start with '-'.", file=sys.stderr)
+        return
+
+    resolved = _resolve_worktree_target(cfg, "")
+    if resolved is None:
+        return
+    repo_name, work_dir, worktree_path, old_branch = resolved
+
+    if new_name == old_branch:
+        print(f"[bridge] Already named {new_name!r} -- nothing to do.")
+        return
+
+    # Refuse if the job currently using this worktree is still actively running -- renaming
+    # the branch out from under a live agent session is asking for a confusing mid-session
+    # surprise, same reasoning as --adopt's identical guard.
+    resp = api(cfg, "GET", f"/api/bridge/jobs/by-worktree?path={urllib.parse.quote(worktree_path)}")
+    latest = resp.get("job") if resp else None
+    if latest and latest["status"] in ("pending", "running"):
+        print(f"[bridge] Job {latest['id']} for this worktree is still {latest['status']} -- "
+              f"wait for it to finish (or stall/error out) before renaming its branch.", file=sys.stderr)
+        return
+
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{new_name}"],
+                       cwd=worktree_path, capture_output=True)
+    if r.returncode == 0:
+        print(f"[bridge] A branch named {new_name!r} already exists in this repo.", file=sys.stderr)
+        return
+
+    r = subprocess.run(["git", "branch", "-m", old_branch, new_name],
+                       cwd=worktree_path, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[bridge] git branch rename failed: {r.stderr.strip()}", file=sys.stderr)
+        return
+    print(f"[bridge] [{repo_name}] Renamed branch {old_branch!r} -> {new_name!r}.")
+
+    if latest is None:
+        print("[bridge] Renamed locally, but no bridge job record found for this worktree "
+              "to update -- nothing more to do.")
+        return
+    api(cfg, "POST", f"/api/bridge/jobs/{latest['id']}/rename-branch", {"branch_name": new_name})
+    print(f"[bridge] Updated the app's record for job #{latest['id']}.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="qtask-bridge: coding-agent bridge")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -2223,6 +2290,9 @@ def main():
                        help="Manually set the no_push sentinel on the current repo's "
                             "remote.origin.pushurl, the same safety a job's session gets "
                             "automatically (operates on cwd's repo, not a specific worktree)")
+    group.add_argument("--rename-branch", metavar="NEW_NAME", default=None,
+                       help="Rename the git branch for the current (cwd) or last-used qtask "
+                            "worktree, and update the app's recorded branch_name to match")
     parser.add_argument("--agent", metavar="NAME", default=None,
                        help="Use this coding agent for just this run, overriding "
                             "config.toml's \"agent\" key (default: claude). Combine with "
@@ -2251,6 +2321,8 @@ def main():
         cmd_unlock_push()
     elif args.lock_push:
         cmd_lock_push()
+    elif args.rename_branch is not None:
+        cmd_rename_branch(cfg, args.rename_branch)
     else:
         cmd_card(cfg, args.card)
 

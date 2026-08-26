@@ -2587,6 +2587,124 @@ class TestCmdLockPush:
         assert r.stdout.strip() == agent_core.PUSH_DISABLED_SENTINEL
 
 
+class TestCmdRenameBranch:
+    """--rename-branch: renames the git branch for a resolved worktree (cwd or last one)
+    and syncs the app's branch_name record to match via the /rename-branch endpoint --
+    the two otherwise drift apart since branch_name is normally write-once, set only by
+    /start at session-start time, so nothing else keeps it in sync if the branch gets
+    renamed afterward."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_worktree_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+
+    def _cfg(self, scratch_repo):
+        return {"app_url": "http://fake", "token": "x",
+                "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+
+    def _create(self, cfg, scratch_repo, card_id, title):
+        job = {"id": card_id, "card_id": card_id, "card_title": title}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        return wt, branch
+
+    def _run_in(self, cfg, wt, new_name, capsys):
+        cwd_before = os.getcwd()
+        os.chdir(wt)
+        try:
+            capsys.readouterr()
+            agent_core.cmd_rename_branch(cfg, new_name)
+        finally:
+            os.chdir(cwd_before)
+        return capsys.readouterr()
+
+    def _branch_exists(self, wt, branch):
+        r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+                           cwd=wt, capture_output=True)
+        return r.returncode == 0
+
+    def test_renames_the_branch_and_syncs_the_app_record(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 1, "Feature A")
+        calls = []
+
+        def fake_api(cfg, method, path, body=None):
+            calls.append((method, path, body))
+            if method == "GET" and "/by-worktree" in path:
+                return {"job": {"id": 1, "status": "complete"}}
+            return {}
+        monkeypatch.setattr(agent_core, "api", fake_api)
+
+        captured = self._run_in(cfg, wt, "renamed-branch", capsys)
+
+        assert "Renamed branch" in captured.out
+        assert self._branch_exists(wt, "renamed-branch")
+        assert not self._branch_exists(wt, branch)
+
+        rename_calls = [c for c in calls if c[0] == "POST" and "rename-branch" in c[1]]
+        assert len(rename_calls) == 1
+        assert rename_calls[0][1] == "/api/bridge/jobs/1/rename-branch"
+        assert rename_calls[0][2] == {"branch_name": "renamed-branch"}
+
+    def test_noop_when_already_named_that(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 2, "Feature B")
+        captured = self._run_in(cfg, wt, branch, capsys)
+        assert "nothing to do" in captured.out.lower()
+
+    def test_refuses_empty_name(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 3, "Feature C")
+        captured = self._run_in(cfg, wt, "   ", capsys)
+        assert "can't be empty" in captured.err.lower()
+
+    def test_refuses_whitespace_in_name(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 4, "Feature D")
+        captured = self._run_in(cfg, wt, "bad name", capsys)
+        assert "whitespace" in captured.err.lower()
+
+    def test_refuses_dash_prefixed_name(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 5, "Feature E")
+        captured = self._run_in(cfg, wt, "-oops", capsys)
+        assert "can't start with" in captured.err.lower()
+
+    def test_refuses_when_target_name_already_exists(self, scratch_repo, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt1, branch1 = self._create(cfg, scratch_repo, 6, "Feature F")
+        wt2, branch2 = self._create(cfg, scratch_repo, 7, "Feature G")
+        captured = self._run_in(cfg, wt1, branch2, capsys)
+        assert "already exists" in captured.err.lower()
+        assert self._branch_exists(wt1, branch1)
+
+    def test_refuses_while_job_is_still_running(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 8, "Feature H")
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None:
+                             {"job": {"id": 8, "status": "running"}})
+        captured = self._run_in(cfg, wt, "renamed", capsys)
+        assert "still running" in captured.err.lower()
+        assert self._branch_exists(wt, branch)
+
+    def test_renames_locally_even_with_no_matching_job_record(self, scratch_repo, monkeypatch, capsys):
+        cfg = self._cfg(scratch_repo)
+        wt, branch = self._create(cfg, scratch_repo, 9, "Feature I")
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {"job": None})
+        captured = self._run_in(cfg, wt, "renamed-alone", capsys)
+        assert "renamed branch" in captured.out.lower()
+        assert "nothing more to do" in captured.out.lower()
+        assert self._branch_exists(wt, "renamed-alone")
+
+    def test_command_exists_and_is_wired_into_argparse(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "--rename-branch" in res.text
+        assert "def cmd_rename_branch" in res.text
+        assert "cmd_rename_branch(cfg, args.rename_branch)" in res.text
+
+
 class TestCmdRunDispatch:
     """Unit-level dispatch tests -- Procfile vs run_cmd vs neither -- with
     _run_procfile/_run_single_command monkeypatched out so these don't

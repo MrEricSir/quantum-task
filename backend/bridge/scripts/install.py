@@ -287,6 +287,7 @@ def main():
     print("  qtask-bridge --review [branch]  # read-only lead-engineer-style review of a worktree's changes")
     print("  qtask-bridge --unlock-push      # clear a stuck no_push sentinel left by an interrupted job")
     print("  qtask-bridge --lock-push        # manually set the no_push sentinel, same safety a job gets automatically")
+    print("  qtask-bridge --rename-branch <name>  # rename the branch for a worktree (cwd or last one) and sync the app's record")
     print()
     print("  qcd                             # menu-pick a worktree and actually cd into it")
     if qcd_installed or rc:
