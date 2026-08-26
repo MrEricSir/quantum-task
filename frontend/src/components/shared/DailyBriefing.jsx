@@ -1,13 +1,14 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
-import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon } from '@radix-ui/react-icons'
+import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon, ChevronRightIcon } from '@radix-ui/react-icons'
 import { localDate } from '../../api'
 import './DailyBriefing.css'
 
-export default function DailyBriefing({ tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0 }) {
+export default function DailyBriefing({ tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0, collapsedByDefault = false }) {
   const [sections, setSections] = useState({ today: '', week: '' })
-  // Initialize straight into 'loading' when already ready, so the very first
-  // render already reserves space instead of appearing a frame later.
-  const [status, setStatus] = useState(ready ? 'loading' : 'idle') // idle | loading | done | error
+  const [expanded, setExpanded] = useState(!collapsedByDefault)
+  // Initialize straight into 'loading' when already ready and expanded, so the
+  // very first render already reserves space instead of appearing a frame later.
+  const [status, setStatus] = useState(ready && expanded ? 'loading' : 'idle') // idle | loading | done | error
   const [showSpinner, setShowSpinner] = useState(false)
   const [error, setError] = useState('')
   const [speaking, setSpeaking] = useState(false)
@@ -129,18 +130,21 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
   }, [sections, status])
 
   useEffect(() => {
-    if (!ready) return
+    if (!ready || !expanded) return
     generate()
     return () => {
       abortRef.current?.abort()
       window.speechSynthesis.cancel()
     }
-  }, [tagId, ready]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tagId, ready, expanded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh with debounce when upstream data changes (new tasks, calendar
   // events, habit toggles). Skip the initial mount — generate() handles that.
+  // Skip entirely while collapsed -- expanding is what triggers the first
+  // generate() (via the effect above), not a background refresh nobody asked for.
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return }
+    if (!expanded) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       generateRef.current(false)
@@ -179,7 +183,15 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
     window.speechSynthesis.speak(utterance)
   }
 
-  if (status === 'idle') return null
+  if (status === 'idle') {
+    if (!expanded && ready) return (
+      <button type="button" className="briefing briefing--collapsed" onClick={() => setExpanded(true)}>
+        <span className="briefing-collapsed-text">Daily briefing</span>
+        <span className="briefing-icon"><ChevronRightIcon /></span>
+      </button>
+    )
+    return null
+  }
 
   if (status === 'error') return (
     <div className="briefing briefing--error">

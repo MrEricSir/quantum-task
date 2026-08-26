@@ -294,6 +294,36 @@ test.describe('today page', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Briefing collapse-by-default setting
+// ---------------------------------------------------------------------------
+test.describe('briefing collapse-by-default setting', () => {
+  test('collapsed by default renders a click-to-expand row instead of auto-fetching', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('briefing-collapsed', 'true'))
+    await page.goto('/today')
+    await page.waitForSelector('.app-header', { state: 'visible' })
+    await expect(page.locator('.briefing--collapsed')).toBeVisible()
+    await expect(page.locator('.briefing-text')).toHaveCount(0)
+  })
+
+  test('clicking the collapsed briefing expands it and fetches the content', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('briefing-collapsed', 'true'))
+    await page.goto('/today')
+    await page.waitForSelector('.app-header', { state: 'visible' })
+    await page.locator('.briefing--collapsed').click()
+    await expect(page.locator('.briefing-text')).toBeVisible()
+    await expect(page.getByText('A productive day ahead.')).toBeVisible()
+  })
+
+  test('toggling the setting in the settings menu persists to localStorage', async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /collapse briefing/i }).click()
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('briefing-collapsed'))).toBe('true')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Tasks board
 // ---------------------------------------------------------------------------
 test.describe('tasks board', () => {

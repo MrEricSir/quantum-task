@@ -203,6 +203,13 @@ export default function App() {
     return next
   })
 
+  const [briefingCollapsed, setBriefingCollapsed] = useState(() => localStorage.getItem('briefing-collapsed') === 'true')
+  const toggleBriefingCollapsed = () => setBriefingCollapsed(v => {
+    const next = !v
+    localStorage.setItem('briefing-collapsed', String(next))
+    return next
+  })
+
   // When a quick-add "steps goal" is detected, update or create a steps habit
   // rather than saving a standalone health goal (steps = streak-tracked habit only).
   const handleSaveStepGoal = async (stepGoal) => {
@@ -769,6 +776,13 @@ export default function App() {
                     <span>&#9878;&#65039; Units: {isImperial ? 'lbs' : 'kg'}</span>
                     <span className={`notif-toggle ${isImperial ? 'notif-toggle--on' : ''}`} />
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="settings-dropdown-item settings-dropdown-notif"
+                    onSelect={(e) => { e.preventDefault(); toggleBriefingCollapsed() }}
+                  >
+                    <span>&#128203; Collapse briefing by default</span>
+                    <span className={`notif-toggle ${briefingCollapsed ? 'notif-toggle--on' : ''}`} />
+                  </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
                     &#127991; Tags
                   </DropdownMenu.Item>
@@ -853,6 +867,7 @@ export default function App() {
             calendarReady={!calendarLoading}
             healthData={healthData}
             isImperial={isImperial}
+            briefingCollapsed={briefingCollapsed}
           />
         ) : isBoardPage ? (
           <>

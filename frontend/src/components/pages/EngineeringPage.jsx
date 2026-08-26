@@ -1,4 +1,5 @@
 import { UpdateIcon } from '@radix-ui/react-icons'
+import { useEffect } from 'react'
 import { useModalContext } from '../../context/ModalContext'
 import './EngineeringPage.css'
 
@@ -76,6 +77,11 @@ function ItemCard({ item, onAddToBoard, onOpenCard, addedCard }) {
 
 export default function EngineeringPage({ items, cards = [], lastSynced, syncing, onSync, onAddToBoard, onOpenCard }) {
   const { openGithubSettings } = useModalContext()
+
+  useEffect(() => {
+    onSync()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const prs    = items.filter((i) => i.item_type === 'pr')
   const issues = items.filter((i) => i.item_type === 'issue')
   const noConfig = items.length === 0 && !syncing

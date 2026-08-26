@@ -20,6 +20,25 @@
   gap: 10px;
 }
 
+.briefing--collapsed {
+  width: 100%;
+  padding: 10px 14px;
+  justify-content: space-between;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.briefing--collapsed:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.briefing-collapsed-text {
+  font-size: 13px;
+}
+
 /* ── Text sections ── */
 .briefing-sections {
   flex: 1;

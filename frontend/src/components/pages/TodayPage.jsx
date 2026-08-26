@@ -79,7 +79,7 @@ function MetricProgress({ habit, todayMetrics, isImperial }) {
   return null
 }
 
-export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onSelect, selectedCardId }) {
+export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onSelect, selectedCardId, briefingCollapsed = false }) {
   const activeCards = cards.filter((t) => !t.completed)
   const overdueCards = activeCards.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayCards   = activeCards.filter((t) => t.section === 'today')
@@ -200,6 +200,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
           todayOnly
           onWeather={onWeather}
           invalidationKey={briefingKey}
+          collapsedByDefault={briefingCollapsed}
         />
 
         <InsightsPanel
