@@ -969,6 +969,7 @@ export default function App() {
             onDeleteHabit={handleDeleteHabit}
             onArchiveHabit={handleArchiveHabit}
             onUnarchiveHabit={handleUnarchiveHabit}
+            onCreateTag={handleCreateTag}
             healthData={healthData}
             healthGoals={healthGoals}
             withingsConnected={withingsStatus?.connected ?? false}

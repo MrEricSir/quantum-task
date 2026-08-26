@@ -457,6 +457,31 @@ test.describe('habits page', () => {
     await expect(page.locator('.habits-archive')).toHaveCount(0)
   })
 
+  test('editing a habit shows a tag picker and saves the selected tags', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/habits/1', (r) => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ...HABITS[0], tags: [{ id: 1, name: 'work', color: '#3b82f6' }] } })
+      }
+      return r.continue()
+    })
+    await page.locator('.habit-card', { hasText: 'Morning meditation' })
+      .getByRole('button', { name: /edit habit/i }).click()
+    // Re-scope by the now-open edit form rather than the habit name text --
+    // that text is replaced by an <input> value (not textContent) once editing starts.
+    const editingCard = page.locator('.habit-card', { has: page.locator('.habit-card-edit-form') })
+    await expect(editingCard.locator('.tag-input')).toBeVisible()
+    await editingCard.locator('.tag-input-text').fill('work')
+    await editingCard.locator('.tag-input-option', { hasText: 'work' }).click()
+    await expect(editingCard.locator('.tag-chip', { hasText: 'work' })).toBeVisible()
+    await Promise.all([
+      page.waitForResponse('**/api/habits/1'),
+      editingCard.getByRole('button', { name: /save/i }).click(),
+    ])
+    expect(putBody.tag_ids).toEqual([1])
+  })
+
   test('"+ New" button is visible in the header', async ({ page }) => {
     await expect(page.locator('.habits-add-btn')).toBeVisible()
   })
@@ -532,6 +557,21 @@ test.describe('quick-add modal', () => {
     await page.locator('.quick-type-tab', { hasText: 'Habit' }).click()
     await expect(page.locator('.quick-type-tab--active')).toHaveText('Habit')
     await expect(page.getByRole('button', { name: /add habit/i })).toBeVisible()
+  })
+
+  test('confirm screen pre-selects suggested tags for a detected habit', async ({ page }) => {
+    await page.route('**/api/cards/parse-bulk', r =>
+      r.fulfill({ json: { items: [{
+        type: 'habit', title: 'Standup', description: null,
+        section: null, scheduled_at: null, suggested_tags: ['work'], recurrence_rule: null,
+      }]}}))
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button.btn-primary').first().click()
+    await page.getByRole('textbox').fill('daily standup')
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect(page.locator('.quick-type-tab--active')).toHaveText('Habit')
+    await expect(page.locator('.tag-chip', { hasText: 'work' })).toBeVisible()
   })
 
   test('confirm screen Back returns to input', async ({ page }) => {

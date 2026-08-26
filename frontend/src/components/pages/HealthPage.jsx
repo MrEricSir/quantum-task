@@ -862,8 +862,8 @@ function AnalysisSection({ isImperial, habitCompletions }) {
       </div>
 
       <div className="analysis-subsection">
-        <ExperimentCard key={expKey} onDismiss={() => setExpKey(k => k + 1)} habitCompletions={habitCompletions} />
-        <ExperimentsHistory key={expKey} isImperial={isImperial} />
+        <ExperimentCard key={`exp-card-${expKey}`} onDismiss={() => setExpKey(k => k + 1)} habitCompletions={habitCompletions} />
+        <ExperimentsHistory key={`exp-history-${expKey}`} isImperial={isImperial} />
       </div>
 
       <RoutineOutcomeCards expKey={expKey} />
@@ -1410,7 +1410,7 @@ function FoodLog({ range = 30, revision = 0 }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function HealthPage({ habits = [], archivedHabits = [], allTags = [], selectedTagIds, onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0, onAddMeasurement, onDeleteMeasurement }) {
+export default function HealthPage({ habits = [], archivedHabits = [], allTags = [], selectedTagIds, onToggleHabit, onAddHabit, onUpdateHabit, onDeleteHabit, onArchiveHabit, onUnarchiveHabit, onCreateTag, healthData, healthGoals, withingsConnected, isImperial = false, healthLogRevision = 0, onAddMeasurement, onDeleteMeasurement }) {
   const { openWithingsSettings } = useModalContext()
   const [range, setRange] = useState(30)
   const [moodToday, setMoodToday] = useState(null)
@@ -1495,6 +1495,7 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
         onDelete={onDeleteHabit}
         onArchive={onArchiveHabit}
         onUnarchive={onUnarchiveHabit}
+        onCreateTag={onCreateTag}
         isImperial={isImperial}
         moodToday={moodToday}
         onLogMood={handleLogMood}

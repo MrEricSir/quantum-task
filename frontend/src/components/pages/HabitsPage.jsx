@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Pencil1Icon, CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
 import Collapsible from '../layout/Collapsible'
 import HabitHeatmap from './HabitHeatmap'
+import TagInput from '../shared/TagInput'
 import './HabitsPage.css'
 
 const KG_TO_LBS = 2.20462
@@ -141,12 +142,13 @@ function metricBadgeText(metric, goal, isImperial) {
   return metric
 }
 
-export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagIds = new Set(), onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, isImperial = false, moodToday = null, onLogMood = null }) {
+export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagIds = new Set(), onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, onCreateTag, isImperial = false, moodToday = null, onLogMood = null }) {
   const navigate = useNavigate()
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [editMetric, setEditMetric] = useState('')
   const [editGoal, setEditGoal] = useState('')
+  const [editTags, setEditTags] = useState([])
   const [poppingId, setPoppingId] = useState(null)
   const [addingNew, setAddingNew] = useState(false)
   const [newName, setNewName] = useState('')
@@ -176,15 +178,31 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     setEditName(habit.name)
     setEditMetric(habit.health_metric || '')
     setEditGoal(habit.health_goal != null ? String(habit.health_goal) : '')
+    setEditTags(habit.tags ?? [])
+  }
+
+  const resolveEditTags = async () => {
+    const out = []
+    for (const tag of editTags) {
+      if (tag.id) {
+        out.push(tag)
+      } else if (onCreateTag) {
+        const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
+        if (created) out.push(created)
+      }
+    }
+    return out
   }
 
   const confirmEdit = async () => {
     const name = editName.trim()
     if (name) {
+      const resolvedTags = await resolveEditTags()
       await onUpdate(editingId, {
         name,
         health_metric: editMetric || null,
         health_goal: editMetric && editGoal !== '' ? parseFloat(editGoal) : null,
+        tag_ids: resolvedTags.map(t => t.id),
       })
     }
     setEditingId(null)
@@ -300,6 +318,11 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                         />
                       )}
                     </div>
+                    <TagInput
+                      allTags={allTags}
+                      value={editTags}
+                      onChange={setEditTags}
+                    />
                     <div className="habit-card-edit-actions">
                       <button className="habit-card-edit-save" onClick={confirmEdit}>Save</button>
                       <button className="habit-card-edit-cancel" onClick={() => setEditingId(null)}>Cancel</button>

@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { parseBulkCards, localDate, localDateTime, createCard } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
+import TagInput from '../shared/TagInput'
 import { scoreMatch, findBestMatch } from '../../lib/completion.js'
 import './QuickAddModal.css'
 
@@ -265,7 +266,8 @@ export default function QuickAddModal({
           await onCompleteTask(matchedItem.id)
         }
       } else if (detectedType === 'habit') {
-        await onSaveHabit({ name: title, tag_ids: [], health_metric: healthMetric || null, health_goal: healthGoal ?? null })
+        const resolvedTags = await resolveNewTags(selectedTags)
+        await onSaveHabit({ name: title, tag_ids: resolvedTags.map(t => t.id), health_metric: healthMetric || null, health_goal: healthGoal ?? null })
       } else if (detectedType === 'food') {
         await onSaveFood({ raw_input: text, consumed_at: localDateTime() })
       } else if (detectedType === 'workout') {
@@ -381,7 +383,8 @@ export default function QuickAddModal({
             await onCompleteTask(m.id)
           }
         } else if (item.type === 'habit') {
-          await onSaveHabit({ name: item.title, tag_ids: [], health_metric: item.health_metric || null, health_goal: item.health_goal ?? null })
+          const resolvedTags = await resolveNewTags(rawTags)
+          await onSaveHabit({ name: item.title, tag_ids: resolvedTags.map(t => t.id), health_metric: item.health_metric || null, health_goal: item.health_goal ?? null })
         } else if (item.type === 'food') {
           await onSaveFood({ raw_input: item.source_text || item.title || text, consumed_at: localDateTime() })
         } else if (item.type === 'workout') {
@@ -671,10 +674,16 @@ export default function QuickAddModal({
           {detectedType === 'task' && renderCardFields('qe')}
 
           {detectedType === 'habit' && (
-            <div className="form-group">
-              <label htmlFor="qe-habit">Habit name</label>
-              <input id="qe-habit" type="text" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-            </div>
+            <>
+              <div className="form-group">
+                <label htmlFor="qe-habit">Habit name</label>
+                <input id="qe-habit" type="text" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+              </div>
+              <div className="form-group">
+                <label>Tags</label>
+                <TagInput allTags={allTags} topTags={topTags} value={selectedTags} onChange={setSelectedTags} />
+              </div>
+            </>
           )}
 
           <div className="modal-footer">
@@ -751,16 +760,22 @@ export default function QuickAddModal({
           {detectedType === 'task' && renderCardFields('qa')}
 
           {detectedType === 'habit' && (
-            <div className="form-group">
-              <label htmlFor="qa-habit">Habit name</label>
-              <input
-                id="qa-habit"
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                autoFocus
-              />
-            </div>
+            <>
+              <div className="form-group">
+                <label htmlFor="qa-habit">Habit name</label>
+                <input
+                  id="qa-habit"
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label>Tags</label>
+                <TagInput allTags={allTags} topTags={topTags} value={selectedTags} onChange={setSelectedTags} />
+              </div>
+            </>
           )}
 
           {detectedType === 'goal' && (
