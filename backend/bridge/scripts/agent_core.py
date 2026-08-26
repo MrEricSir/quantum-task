@@ -21,6 +21,8 @@ Usage:
                               qtask worktree's changes
   qtask-bridge --unlock-push Clear a stuck no_push sentinel on the current repo's
                               remote.origin.pushurl, left behind by an interrupted job
+  qtask-bridge --lock-push   Manually set the no_push sentinel on the current repo,
+                              the same safety a job's session gets automatically
 
   --agent NAME  Modifier, combinable with any command above: use this coding agent for
                 just this run, overriding config.toml's "agent" key for one invocation
@@ -158,8 +160,8 @@ def _activate_adapter(agent_name):
     main() resolved -- the `--agent` CLI flag if given, else config.toml's "agent" key, else
     _DEFAULT_AGENT (this function itself doesn't care which source it came from). Called
     once, at the very top of main(), before any subcommand dispatch -- including subcommands
-    (--list, --cleanup, --switch, --run, --unlock-push) that never end up touching these
-    names, so a bad agent selection can't block those from working.
+    (--list, --cleanup, --switch, --run, --unlock-push, --lock-push) that never end up
+    touching these names, so a bad agent selection can't block those from working.
 
     Falls back to _DEFAULT_AGENT with a warning if the configured agent has no adapter
     compiled into this build of the served script (e.g. config.toml says "aider" but this
@@ -763,6 +765,46 @@ def cmd_unlock_push(cwd=None):
         print(f"[bridge] Could not unset remote.origin.pushurl in {repo_dir}.", file=sys.stderr)
         return
     print(f"[bridge] Push unlocked for {repo_dir}.")
+
+
+def cmd_lock_push(cwd=None):
+    """Manually set the no_push sentinel on the CURRENT repo's
+    remote.origin.pushurl -- the same safety property a job's session gets
+    automatically (see _disable_remote_push), for when you want it right
+    now on a repo you're about to poke around in by hand, without waiting
+    on a new job to start one. Mirrors cmd_unlock_push's shape exactly:
+    same cwd-resolves-the-repo behavior (pushurl is shared base-repo
+    config, not per-worktree, so there's no worktree target to
+    disambiguate), same refusal to touch a real custom pushurl that isn't
+    our sentinel.
+
+    Only ever sets the exact sentinel value this tool itself checks for --
+    a real custom pushurl configured for an unrelated reason is left
+    alone, with a message saying so, rather than silently clobbered."""
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                       cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print("[bridge] Not inside a git repo.", file=sys.stderr)
+        return
+    repo_dir = r.stdout.strip()
+
+    r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                       cwd=repo_dir, capture_output=True, text=True)
+    current = r.stdout.strip() if r.returncode == 0 else None
+
+    if current == PUSH_DISABLED_SENTINEL:
+        print("[bridge] Push is already locked here -- nothing to do.")
+        return
+    if current:
+        print(f"[bridge] remote.origin.pushurl is already set to something else "
+              f"({current!r}) -- leaving it alone, that's your own config, not ours.")
+        return
+
+    r = subprocess.run(["git", "config", "remote.origin.pushurl", PUSH_DISABLED_SENTINEL], cwd=repo_dir)
+    if r.returncode != 0:
+        print(f"[bridge] Could not set remote.origin.pushurl in {repo_dir}.", file=sys.stderr)
+        return
+    print(f"[bridge] Push locked for {repo_dir}.")
 
 
 def _run_setup_cmd(worktree_path, setup_cmd):
@@ -2177,6 +2219,10 @@ def main():
                        help="Clear a stuck no_push sentinel on the current repo's "
                             "remote.origin.pushurl, left behind by an interrupted job "
                             "(operates on cwd's repo, not a specific worktree)")
+    group.add_argument("--lock-push", action="store_true",
+                       help="Manually set the no_push sentinel on the current repo's "
+                            "remote.origin.pushurl, the same safety a job's session gets "
+                            "automatically (operates on cwd's repo, not a specific worktree)")
     parser.add_argument("--agent", metavar="NAME", default=None,
                        help="Use this coding agent for just this run, overriding "
                             "config.toml's \"agent\" key (default: claude). Combine with "
@@ -2203,6 +2249,8 @@ def main():
         cmd_review(cfg, args.review or None)
     elif args.unlock_push:
         cmd_unlock_push()
+    elif args.lock_push:
+        cmd_lock_push()
     else:
         cmd_card(cfg, args.card)
 

@@ -905,6 +905,12 @@ class TestAgentScript:
         assert "def cmd_unlock_push" in res.text
         assert "cmd_unlock_push()" in res.text
 
+    def test_lock_push_command_exists_and_is_wired_into_argparse(self, client):
+        res = client.get("/api/bridge/agent.py")
+        assert "--lock-push" in res.text
+        assert "def cmd_lock_push" in res.text
+        assert "cmd_lock_push()" in res.text
+
     def test_switch_only_prints_the_chosen_path_on_stdout(self, client):
         """The menu, the prompt, and every error message must go to stderr --
         only the final chosen path may reach stdout, or `cd "$(qtask-bridge
@@ -2508,6 +2514,77 @@ class TestCmdUnlockPush:
         r = subprocess.run(["git", "config", "remote.origin.pushurl"],
                            cwd=scratch_repo, capture_output=True, text=True)
         assert r.returncode != 0
+
+
+class TestCmdLockPush:
+    """--lock-push: the mirror of --unlock-push -- manually set the same no_push sentinel
+    a job's session gets automatically (_disable_remote_push), for working directly in a
+    bridge-managed repo without waiting on a new job to start one. Same cwd-resolves-the-repo
+    behavior and same refusal to touch a real custom pushurl, since pushurl is shared
+    base-repo config, not per-worktree."""
+
+    def _run_in(self, repo_dir, capsys):
+        cwd_before = os.getcwd()
+        os.chdir(str(repo_dir))
+        try:
+            capsys.readouterr()
+            agent_core.cmd_lock_push()
+        finally:
+            os.chdir(cwd_before)
+        return capsys.readouterr()
+
+    def test_sets_the_sentinel(self, scratch_repo, capsys):
+        captured = self._run_in(scratch_repo, capsys)
+        assert "locked" in captured.out.lower()
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert r.stdout.strip() == agent_core.PUSH_DISABLED_SENTINEL
+
+    def test_noop_when_push_is_already_locked(self, scratch_repo, capsys):
+        subprocess.run(["git", "config", "remote.origin.pushurl", agent_core.PUSH_DISABLED_SENTINEL],
+                       cwd=scratch_repo, check=True)
+        captured = self._run_in(scratch_repo, capsys)
+        assert "already locked" in captured.out.lower()
+
+    def test_never_touches_a_real_custom_pushurl(self, scratch_repo, capsys):
+        """The whole point of checking the current value first: a real pushurl someone
+        configured for an unrelated reason (a private fork, a different push protocol,
+        whatever) must never be silently overwritten just because you asked to lock push."""
+        real_url = "https://my-real-fork.example.com/repo.git"
+        subprocess.run(["git", "config", "remote.origin.pushurl", real_url],
+                       cwd=scratch_repo, check=True)
+        captured = self._run_in(scratch_repo, capsys)
+        assert "leaving it alone" in captured.out.lower()
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert r.stdout.strip() == real_url
+
+    def test_not_a_git_repo(self, tmp_path, capsys):
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        captured = self._run_in(outside, capsys)
+        assert "not inside a git repo" in captured.err.lower()
+
+    def test_works_from_a_worktree_not_just_the_main_checkout(self, scratch_repo, tmp_path, capsys, monkeypatch):
+        """pushurl is shared base-repo config -- confirms locking from inside a worktree
+        actually locks it for the whole repo, not just appearing to from the worktree's own
+        (nonexistent) local view."""
+        cfg = {"app_url": "http://fake", "token": "x",
+               "repos": {"scratch/repo": str(scratch_repo)}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": 1, "card_id": 1, "card_title": "Feature A"}
+        monkeypatch.setattr(agent_core, "WORKTREES_ROOT", str(tmp_path / "worktrees"))
+        monkeypatch.setattr(agent_core, "LAST_WORKTREE_FILE", str(tmp_path / "last-worktree"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {})
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        # _create_worktree already locks push as part of setting up the job -- unlock first
+        # so this test actually exercises --lock-push doing the locking, not a no-op.
+        subprocess.run(["git", "config", "--unset", "remote.origin.pushurl"], cwd=scratch_repo, check=True)
+
+        captured = self._run_in(wt, capsys)
+        assert "locked" in captured.out.lower()
+        r = subprocess.run(["git", "config", "remote.origin.pushurl"],
+                           cwd=scratch_repo, capture_output=True, text=True)
+        assert r.stdout.strip() == agent_core.PUSH_DISABLED_SENTINEL
 
 
 class TestCmdRunDispatch:
