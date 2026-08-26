@@ -127,7 +127,7 @@ def parse_food_entries(raw: str) -> list[dict]:
     logging multiple items splits and gets enriched the same way regardless
     of which surface it came from.
     """
-    from deps import llm_client, LLM_MODEL
+    from deps import llm_client, LLM_MODEL, reasoning_kwargs
     try:
         client = llm_client()
         resp = client.chat.completions.create(
@@ -138,10 +138,7 @@ def parse_food_entries(raw: str) -> list[dict]:
             ],
             max_tokens=600,
             response_format={"type": "json_object"},
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real JSON answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         data = json.loads(resp.choices[0].message.content.strip())
         raw_items = data.get("items")

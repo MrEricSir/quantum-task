@@ -346,7 +346,8 @@ class TestParseFoodEntriesInternals:
         import capabilities.food as food_mod
         payload = '{"items": [{"name": "Coffee", "category": "drink", "source_text": "coffee", "notes": null, "quality": 7, "calories": 5}]}'
         mock_client = self._mock_llm(payload)
-        with patch("deps.llm_client", return_value=mock_client):
+        with patch("deps.llm_client", return_value=mock_client), \
+             patch("deps.LLM_MODEL", "openai/gpt-oss-120b"):
             food_mod.parse_food_entries("coffee")
 
         call_kwargs = mock_client.chat.completions.create.call_args.kwargs

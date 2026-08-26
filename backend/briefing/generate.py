@@ -21,7 +21,7 @@ import schemas
 import app_setting_keys as setting_keys
 from briefing.context import build_today_context, compute_observations, event_local_date
 from database import SessionLocal
-from deps import llm_client, LLM_MODEL
+from deps import llm_client, LLM_MODEL, reasoning_kwargs
 from gcal import get_personal_events
 from health_context import build_health_context
 from weather import fetch_weather
@@ -378,10 +378,7 @@ def generate_today_briefing(today: date, tz_offset: int = 0) -> str | None:
             ],
             stream=False,
             temperature=0.1,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought adds real latency to what should feel like
-            # a quick daily briefing, even with no max_tokens cap here to truncate against.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         text = resp.choices[0].message.content.strip()
         _cache_set("today", today_h, text)

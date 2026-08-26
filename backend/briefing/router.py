@@ -18,7 +18,7 @@ from briefing.generate import (
     _cache_get, _cache_set,
     _TODAY_SYSTEM, _WEEK_SYSTEM,
 )
-from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes as _utc_offset
+from deps import get_db, llm_client, LLM_MODEL, local_date, utc_offset_minutes as _utc_offset, reasoning_kwargs
 from weather import fetch_weather
 
 router = APIRouter()
@@ -98,11 +98,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session 
                         messages=[{"role": "system", "content": _TODAY_SYSTEM},
                                   {"role": "user",   "content": today_ctx}],
                         stream=True, temperature=0.1,
-                        # See correlations.py's _generate_experiment for the full story: on a
-                        # reasoning model, chain-of-thought streams as a separate delta field
-                        # (never mixed into delta.content read below, so nothing leaks into
-                        # the visible briefing) but still adds real time-to-first-token delay.
-                        reasoning_effort="low",
+                        **reasoning_kwargs(),
                     )
                     for chunk in stream:
                         delta = chunk.choices[0].delta.content
@@ -127,11 +123,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session 
                         messages=[{"role": "system", "content": _WEEK_SYSTEM},
                                   {"role": "user",   "content": week_ctx}],
                         stream=True, temperature=0.1,
-                        # See correlations.py's _generate_experiment for the full story: on a
-                        # reasoning model, chain-of-thought streams as a separate delta field
-                        # (never mixed into delta.content read below, so nothing leaks into
-                        # the visible briefing) but still adds real time-to-first-token delay.
-                        reasoning_effort="low",
+                        **reasoning_kwargs(),
                     )
                     for chunk in stream:
                         delta = chunk.choices[0].delta.content

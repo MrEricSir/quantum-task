@@ -29,7 +29,7 @@ from scipy.stats import pearsonr, ttest_ind
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs
 from routers.habits import check_habit_row
 
 router = APIRouter()
@@ -548,10 +548,7 @@ def _llm_summary(correlations: list[dict]) -> str:
                 {"role": "user",   "content": "\n".join(lines)},
             ],
             max_tokens=300,
-            # See _generate_experiment below for the full story: on a reasoning model, an
-            # unbounded chain-of-thought can burn the whole max_tokens budget before the
-            # real answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         text = resp.choices[0].message.content.strip()
     except Exception as e:
@@ -727,17 +724,7 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
                 {"role": "user",   "content": user_content},
             ],
             max_tokens=600,
-            # reasoning_effort is a Groq/gpt-oss-specific extension -- ignored harmlessly by
-            # backends that don't support it (e.g. local Ollama). Found the hard way: with a
-            # reasoning model and no cap, the model's internal chain-of-thought (a separate
-            # `reasoning` field, not mixed into `content`) burns most or all of max_tokens
-            # before it ever reaches the actual JSON answer, truncating `content` mid-string
-            # every single time -- deterministically, for any similar prompt. That's why this
-            # was silently falling back to the same canned experiment on every regeneration,
-            # not a step-goal-parsing issue as first suspected. "low" is plenty for a
-            # structured-JSON task like this one; response_format enforces valid JSON on top
-            # (matches discovery.py's _rank_events_bg, which already does this).
-            reasoning_effort="low",
+            **reasoning_kwargs(),
             response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content.strip()

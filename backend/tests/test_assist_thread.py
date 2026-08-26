@@ -371,7 +371,8 @@ class TestMaybeWebSearch:
         from assist.context import _maybe_web_search
         mock_client = self._mock_decision('{"search": false}')
         with patch("assist.context._ASSIST_TAVILY_KEY", "fake-key"), \
-             patch("assist.context.llm_client", return_value=mock_client):
+             patch("assist.context.llm_client", return_value=mock_client), \
+             patch("deps.LLM_MODEL", "openai/gpt-oss-120b"):
             _maybe_web_search("what's the weather like")
 
         call_kwargs = mock_client.chat.completions.create.call_args.kwargs

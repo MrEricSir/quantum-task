@@ -924,7 +924,8 @@ class TestGenerateExperimentRoutines:
             "workout_target_value": None, "workout_unit": None,
         }
         fake_client = _fake_llm_client(payload)
-        with patch("routers.correlations.llm_client", return_value=fake_client):
+        with patch("routers.correlations.llm_client", return_value=fake_client), \
+             patch("deps.LLM_MODEL", "openai/gpt-oss-120b"):
             _generate_experiment(self.CORR, db)
 
         call_kwargs = fake_client.chat.completions.create.call_args.kwargs

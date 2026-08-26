@@ -16,7 +16,7 @@ import gcal as gcal_lib
 import models
 import schemas
 import app_setting_keys as setting_keys
-from deps import LLM_MODEL, get_db, llm_client, local_date
+from deps import LLM_MODEL, get_db, llm_client, local_date, reasoning_kwargs
 
 router = APIRouter()
 
@@ -240,10 +240,7 @@ def _refine_interests_bg(liked_titles: list[str], disliked_titles: list[str],
             ],
             max_tokens=400,
             temperature=0.4,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         refined = resp.choices[0].message.content.strip()
         # Strip common preamble labels the model may emit despite instructions.
@@ -360,10 +357,7 @@ def _rank_events_bg(rkey: str, interests: str, feedback_context: str,
             ],
             max_tokens=50 * len(ranked_events),
             temperature=0.3,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         scored_map = {
             r["id"]: r

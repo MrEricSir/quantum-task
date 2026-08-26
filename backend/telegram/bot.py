@@ -17,7 +17,7 @@ from capabilities.workout import parse_workout
 from capabilities.registry import REGISTRY, by_telegram_action, set_telegram_handler
 import models
 from database import SessionLocal
-from deps import llm_client, LLM_MODEL
+from deps import llm_client, LLM_MODEL, reasoning_kwargs
 from gcal import get_personal_events
 from settings import Settings
 from telegram.notify import send_message
@@ -273,11 +273,7 @@ def _parse_telegram_intent(text: str, tz_offset: int, chat_id: str = "") -> dict
             {"role": "user", "content": text},
         ],
         timeout=15,
-        # See correlations.py's _generate_experiment for the full story: on a reasoning
-        # model, an unbounded chain-of-thought (a separate field, not mixed into content)
-        # adds latency even with no max_tokens cap to truncate against here -- "low" keeps
-        # intent classification fast without sacrificing accuracy on a well-scoped task.
-        reasoning_effort="low",
+        **reasoning_kwargs(),
     )
     return _json.loads(response.choices[0].message.content)
 
@@ -1492,10 +1488,7 @@ def _reply_priority(tz_offset: int) -> str:
             ],
             timeout=15,
             temperature=0.3,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought adds real latency to a reply that should
-            # feel instant, even with no max_tokens cap here to truncate against.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         suggestion = resp.choices[0].message.content.strip()
     except Exception as e:
@@ -1635,10 +1628,7 @@ def _reply_ask_schedule(intent: dict, tz_offset: int) -> str:
             ],
             timeout=15,
             temperature=0.2,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought adds real latency to a reply that should
-            # feel instant, even with no max_tokens cap here to truncate against.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
@@ -1846,10 +1836,7 @@ def _reply_avoiding(tz_offset: int) -> str:
             ],
             timeout=15,
             temperature=0.4,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought adds real latency to a reply that should
-            # feel instant, even with no max_tokens cap here to truncate against.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         insight = resp.choices[0].message.content.strip()
     except Exception as e:

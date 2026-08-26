@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from deps import get_db, llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs
 
 router = APIRouter()
 
@@ -68,10 +68,7 @@ def _generate_texts(patterns: list[str]) -> list[str]:
                 {"role": "user", "content": "\n".join(numbered)},
             ],
             max_tokens=600,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought (a separate field, not mixed into content)
-            # can burn the whole max_tokens budget before the real JSON answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         data = json.loads(response.choices[0].message.content)
         by_index = {item["index"]: item["text"] for item in data.get("insights", [])}

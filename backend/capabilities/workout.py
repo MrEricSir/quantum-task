@@ -5,7 +5,7 @@
 
 import json
 
-from deps import llm_client, LLM_MODEL
+from deps import llm_client, LLM_MODEL, reasoning_kwargs
 
 WORKOUT_TYPES = {"run", "cycle", "row", "swim", "strength", "yoga", "sport", "other"}
 
@@ -52,11 +52,7 @@ def parse_workout(raw: str) -> dict:
             ],
             max_tokens=300,
             response_format={"type": "json_object"},
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real JSON answer, truncating it -- max_tokens=150 here was tight
-            # enough to be a real risk.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         data = json.loads(resp.choices[0].message.content.strip())
         wtype = data.get("type", "other")

@@ -177,7 +177,7 @@ def generate_weekly_review(today: date, tz_offset: int) -> str | None:
     exact same content logic. Returns None on failure so callers can tell
     "nothing to report" apart from "generation broke"."""
     from streak import get_current_streak
-    from deps import llm_client, LLM_MODEL
+    from deps import llm_client, LLM_MODEL, reasoning_kwargs
     from routers.correlations import _load_weekly_obs, _compute_correlations, _llm_summary
 
     week_start = today - timedelta(days=6)
@@ -264,10 +264,7 @@ def generate_weekly_review(today: date, tz_offset: int) -> str | None:
             ],
             timeout=20,
             temperature=0.4,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought adds real latency even with no max_tokens
-            # cap here to truncate against.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         body = resp.choices[0].message.content.strip()
         header = f"<b>📆 Weekly review — {week_start.strftime('%b %-d')} to {today.strftime('%b %-d')}</b>\n\n"

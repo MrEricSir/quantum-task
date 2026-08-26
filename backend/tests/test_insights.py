@@ -46,7 +46,8 @@ class TestGenerateTexts:
         the whole max_tokens budget before the real JSON answer, truncating it -- see
         correlations.py's _generate_experiment for the full story."""
         mock_client = _mock_llm({"insights": []})
-        with patch("routers.insights.llm_client", return_value=mock_client):
+        with patch("routers.insights.llm_client", return_value=mock_client), \
+             patch("deps.LLM_MODEL", "openai/gpt-oss-120b"):
             _generate_texts(["pattern A"])
 
         assert mock_client.chat.completions.create.call_args.kwargs["reasoning_effort"] == "low"

@@ -12,7 +12,7 @@ import requests as http_requests
 from sqlalchemy.orm import selectinload
 
 import models
-from deps import llm_client, LLM_MODEL
+from deps import llm_client, LLM_MODEL, reasoning_kwargs
 from gcal import get_personal_events
 
 _ASSIST_TAVILY_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -95,11 +95,7 @@ def _maybe_web_search(user_msg: str) -> str:
             max_tokens=300,
             temperature=0,
             timeout=10,
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought (a separate field, not mixed into content)
-            # can burn the whole max_tokens budget before the real JSON answer, truncating it.
-            # "low" is plenty for a one-line true/false decision like this.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
             response_format={"type": "json_object"},
         )
         decision = json.loads(decision_resp.choices[0].message.content.strip())

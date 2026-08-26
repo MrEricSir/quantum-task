@@ -26,6 +26,24 @@ def llm_client() -> OpenAI:
     return _llm_client
 
 
+def reasoning_kwargs() -> dict:
+    """Extra kwargs for chat.completions.create() calls, spread in as **reasoning_kwargs().
+
+    reasoning_effort="low" stops a reasoning-capable model (Groq's gpt-oss family is the one
+    actually in use) from burning its whole max_tokens budget on internal chain-of-thought
+    before ever writing the real answer -- see routers/correlations.py's _generate_experiment
+    docstring for the production incident that motivated this. Only included when LLM_MODEL is
+    actually a reasoning model: passing it to a backend/model with no concept of "thinking"
+    (e.g. local Ollama models like llama3.2) doesn't get silently ignored the way an unknown
+    kwarg normally would -- Ollama's OpenAI-compatible endpoint rejects the whole request with
+    a 400 ("does not support thinking"), which is what broke local dev LLM calls entirely once
+    reasoning_effort started getting passed unconditionally everywhere.
+    """
+    if "gpt-oss" in LLM_MODEL:
+        return {"reasoning_effort": "low"}
+    return {}
+
+
 # ── Auth config ───────────────────────────────────────────────────────────────
 
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")

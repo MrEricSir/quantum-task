@@ -333,7 +333,8 @@ class TestParseWorkoutInternals:
         from unittest.mock import patch
         import capabilities.workout as workout_mod
         mock_client = self._mock_llm('{"type": "row", "value": 5000, "unit": "m", "notes": null}')
-        with patch("capabilities.workout.llm_client", return_value=mock_client):
+        with patch("capabilities.workout.llm_client", return_value=mock_client), \
+             patch("deps.LLM_MODEL", "openai/gpt-oss-120b"):
             workout_mod.parse_workout("rowed 5000m")
 
         call_kwargs = mock_client.chat.completions.create.call_args.kwargs

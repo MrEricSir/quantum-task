@@ -14,7 +14,7 @@ import github_sync
 import models
 import schemas
 from card_sections import CardSection
-from deps import get_db, llm_client, LLM_MODEL, local_date
+from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
 from routers.insights import invalidate_insights_cache
@@ -201,10 +201,7 @@ def parse_card(request: Request, req: schemas.ParseRequest, db: Session = Depend
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": req.text},
             ],
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real JSON answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=req.text)
@@ -249,10 +246,7 @@ def parse_bulk_text(db: Session, text: str, today) -> list[schemas.ParsedCard]:
             {"role": "system", "content": prompt},
             {"role": "user", "content": text},
         ],
-        # See correlations.py's _generate_experiment for the full story: on a reasoning
-        # model, an unbounded chain-of-thought can burn the whole max_tokens budget before
-        # the real JSON answer, truncating it.
-        reasoning_effort="low",
+        **reasoning_kwargs(),
     )
     data = json.loads(response.choices[0].message.content)
     raw_items = data.get("items", [])
@@ -313,10 +307,7 @@ def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depe
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": req.text},
             ],
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real JSON answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         raw = plugin.normalize_raw(json.loads(response.choices[0].message.content))
         parsed = plugin.post_process(schemas.ParsedCard.model_validate(raw), text=req.text)
@@ -470,10 +461,7 @@ def breakdown_card(card_id: int, db: Session = Depends(get_db)):
             ],
             max_tokens=600,
             response_format={"type": "json_object"},
-            # See correlations.py's _generate_experiment for the full story: on a reasoning
-            # model, an unbounded chain-of-thought can burn the whole max_tokens budget
-            # before the real JSON answer, truncating it.
-            reasoning_effort="low",
+            **reasoning_kwargs(),
         )
         raw = resp.choices[0].message.content.strip()
         parsed = json.loads(raw)
