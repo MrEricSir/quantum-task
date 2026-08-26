@@ -757,17 +757,12 @@ export default function App() {
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="settings-dropdown" align="end" sideOffset={6}>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowCalendarSettings(true)}>
-                    &#128197; Calendar
+                  {/* General app settings */}
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowNavSettings(true)}>
+                    &#128393; Navigation
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowGithubSettings(true)}>
-                    &#128279; Engineering (GitHub)
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
-                    &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTelegramSettings(true)}>
-                    &#9992;&#65039; Telegram
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
+                    &#127991; Tags
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
@@ -775,19 +770,6 @@ export default function App() {
                   >
                     <span>&#9878;&#65039; Units: {isImperial ? 'lbs' : 'kg'}</span>
                     <span className={`notif-toggle ${isImperial ? 'notif-toggle--on' : ''}`} />
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    className="settings-dropdown-item settings-dropdown-notif"
-                    onSelect={(e) => { e.preventDefault(); toggleBriefingAutoShow() }}
-                  >
-                    <span>&#128203; Show briefing automatically</span>
-                    <span className={`notif-toggle ${briefingAutoShow ? 'notif-toggle--on' : ''}`} />
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
-                    &#127991; Tags
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowNavSettings(true)}>
-                    &#128393; Navigation
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
@@ -807,7 +789,44 @@ export default function App() {
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowShortcuts(true)}>
                     &#9000; Keyboard shortcuts
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTelegramSettings(true)}>
+                    &#9992;&#65039; Telegram
+                  </DropdownMenu.Item>
+
                   <DropdownMenu.Separator className="settings-dropdown-divider" />
+
+                  {/* Per-page settings, in the same order as the pages themselves */}
+                  {navOrder.map((pageId) => {
+                    if (pageId === 'today') return (
+                      <DropdownMenu.Item
+                        key="today-briefing"
+                        className="settings-dropdown-item settings-dropdown-notif"
+                        onSelect={(e) => { e.preventDefault(); toggleBriefingAutoShow() }}
+                      >
+                        <span>&#128203; Show briefing automatically</span>
+                        <span className={`notif-toggle ${briefingAutoShow ? 'notif-toggle--on' : ''}`} />
+                      </DropdownMenu.Item>
+                    )
+                    if (pageId === 'calendar') return (
+                      <DropdownMenu.Item key="calendar" className="settings-dropdown-item" onSelect={() => setShowCalendarSettings(true)}>
+                        &#128197; Calendar
+                      </DropdownMenu.Item>
+                    )
+                    if (pageId === 'health') return (
+                      <DropdownMenu.Item key="withings" className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
+                        &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
+                      </DropdownMenu.Item>
+                    )
+                    if (pageId === 'engineering') return (
+                      <DropdownMenu.Item key="github" className="settings-dropdown-item" onSelect={() => setShowGithubSettings(true)}>
+                        &#128279; Engineering (GitHub)
+                      </DropdownMenu.Item>
+                    )
+                    return null
+                  })}
+
+                  <DropdownMenu.Separator className="settings-dropdown-divider" />
+
                   <DropdownMenu.Item
                     className="settings-dropdown-item"
                     disabled={!authEnabled}

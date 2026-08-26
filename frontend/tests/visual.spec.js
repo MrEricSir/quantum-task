@@ -673,6 +673,26 @@ test.describe('settings modals', () => {
     await waitForApp(page)
   })
 
+  test('settings menu groups general settings before per-page settings, in nav order', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    const labels = await page.getByRole('menuitem').allTextContents()
+    const generalOrder = ['Navigation', 'Tags', 'Units', 'Notifications', 'Keyboard shortcuts', 'Telegram']
+    const perPageOrder = ['Show briefing automatically', 'Calendar', 'Withings', 'Engineering (GitHub)']
+    const indexOf = (needle) => labels.findIndex((l) => l.includes(needle))
+
+    const generalIndices = generalOrder.map(indexOf)
+    const perPageIndices = perPageOrder.map(indexOf)
+    expect(generalIndices.every((i) => i >= 0)).toBe(true)
+    expect(perPageIndices.every((i) => i >= 0)).toBe(true)
+    // Each group internally ordered as expected...
+    expect([...generalIndices]).toEqual([...generalIndices].sort((a, b) => a - b))
+    expect([...perPageIndices]).toEqual([...perPageIndices].sort((a, b) => a - b))
+    // ...and every general item precedes every per-page item.
+    expect(Math.max(...generalIndices)).toBeLessThan(Math.min(...perPageIndices))
+    // Sign out comes last, after both groups.
+    expect(indexOf('Sign out')).toBeGreaterThan(Math.max(...perPageIndices))
+  })
+
   test('tag manager opens with Manage Tags heading and Close footer button', async ({ page }) => {
     await page.getByRole('button', { name: /settings/i }).click()
     await page.getByRole('menuitem', { name: /tags/i }).click()
