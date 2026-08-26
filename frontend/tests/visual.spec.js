@@ -175,6 +175,11 @@ async function waitForApp(page) {
 test.beforeEach(async ({ page }) => {
   await page.clock.setSystemTime(new Date('2026-06-03T10:00:00'))
   await page.addInitScript(() => localStorage.clear())
+  // Briefing auto-show defaults to off (collapsed on load) -- opt every test into the old
+  // auto-generate behavior by default, since only the dedicated "briefing auto-show setting"
+  // tests below are actually about that default; everywhere else just wants the briefing
+  // content available without an 8s wait for a click that never happens.
+  await page.addInitScript(() => localStorage.setItem('briefing-auto-show', 'true'))
   await mockAPIs(page)
 })
 
@@ -294,11 +299,14 @@ test.describe('today page', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Briefing collapse-by-default setting
+// Briefing auto-show setting
 // ---------------------------------------------------------------------------
-test.describe('briefing collapse-by-default setting', () => {
-  test('collapsed by default renders a click-to-expand row instead of auto-fetching', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('briefing-collapsed', 'true'))
+test.describe('briefing auto-show setting', () => {
+  // The top-level beforeEach opts every test into auto-show=true for convenience (see its
+  // comment) -- these tests are specifically about the real default, so override back to the
+  // unset/off state before navigating.
+  test('collapsed by default (auto-show off) renders a click-to-expand row instead of auto-fetching', async ({ page }) => {
+    await page.addInitScript(() => localStorage.removeItem('briefing-auto-show'))
     await page.goto('/today')
     await page.waitForSelector('.app-header', { state: 'visible' })
     await expect(page.locator('.briefing--collapsed')).toBeVisible()
@@ -306,7 +314,7 @@ test.describe('briefing collapse-by-default setting', () => {
   })
 
   test('clicking the collapsed briefing expands it and fetches the content', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('briefing-collapsed', 'true'))
+    await page.addInitScript(() => localStorage.removeItem('briefing-auto-show'))
     await page.goto('/today')
     await page.waitForSelector('.app-header', { state: 'visible' })
     await page.locator('.briefing--collapsed').click()
@@ -314,12 +322,20 @@ test.describe('briefing collapse-by-default setting', () => {
     await expect(page.getByText('A productive day ahead.')).toBeVisible()
   })
 
-  test('toggling the setting in the settings menu persists to localStorage', async ({ page }) => {
+  test('auto-show on fetches the briefing immediately on load', async ({ page }) => {
+    // Already true via the top-level beforeEach -- confirms the enabled path explicitly.
     await page.goto('/today')
-    await waitForApp(page)
+    await page.waitForSelector('.app-header', { state: 'visible' })
+    await expect(page.locator('.briefing-text')).toBeVisible()
+    await expect(page.locator('.briefing--collapsed')).toHaveCount(0)
+  })
+
+  test('toggling the setting off in the settings menu persists to localStorage', async ({ page }) => {
+    await page.goto('/today')
+    await page.waitForSelector('.app-header', { state: 'visible' })
     await page.locator('button[title="Settings"]').click()
-    await page.locator('.settings-dropdown-item', { hasText: /collapse briefing/i }).click()
-    await expect.poll(() => page.evaluate(() => localStorage.getItem('briefing-collapsed'))).toBe('true')
+    await page.locator('.settings-dropdown-item', { hasText: /show briefing automatically/i }).click()
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('briefing-auto-show'))).toBe('false')
   })
 })
 

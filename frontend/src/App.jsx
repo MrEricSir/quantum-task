@@ -203,10 +203,10 @@ export default function App() {
     return next
   })
 
-  const [briefingCollapsed, setBriefingCollapsed] = useState(() => localStorage.getItem('briefing-collapsed') === 'true')
-  const toggleBriefingCollapsed = () => setBriefingCollapsed(v => {
+  const [briefingAutoShow, setBriefingAutoShow] = useState(() => localStorage.getItem('briefing-auto-show') === 'true')
+  const toggleBriefingAutoShow = () => setBriefingAutoShow(v => {
     const next = !v
-    localStorage.setItem('briefing-collapsed', String(next))
+    localStorage.setItem('briefing-auto-show', String(next))
     return next
   })
 
@@ -778,10 +778,10 @@ export default function App() {
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-dropdown-item settings-dropdown-notif"
-                    onSelect={(e) => { e.preventDefault(); toggleBriefingCollapsed() }}
+                    onSelect={(e) => { e.preventDefault(); toggleBriefingAutoShow() }}
                   >
-                    <span>&#128203; Collapse briefing by default</span>
-                    <span className={`notif-toggle ${briefingCollapsed ? 'notif-toggle--on' : ''}`} />
+                    <span>&#128203; Show briefing automatically</span>
+                    <span className={`notif-toggle ${briefingAutoShow ? 'notif-toggle--on' : ''}`} />
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="settings-dropdown-item" onSelect={() => setShowTagManager(true)}>
                     &#127991; Tags
@@ -867,7 +867,7 @@ export default function App() {
             calendarReady={!calendarLoading}
             healthData={healthData}
             isImperial={isImperial}
-            briefingCollapsed={briefingCollapsed}
+            briefingAutoShow={briefingAutoShow}
           />
         ) : isBoardPage ? (
           <>
