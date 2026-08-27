@@ -4,6 +4,7 @@ import { parseBulkCards, localDate, localDateTime, createCard } from '../../api'
 import Modal from './Modal'
 import CardForm, { isoToLocal } from './CardForm'
 import TagInput from '../shared/TagInput'
+import { resolveTags } from '../../lib/tags'
 import { scoreMatch, findBestMatch } from '../../lib/completion.js'
 import './QuickAddModal.css'
 
@@ -147,18 +148,7 @@ export default function QuickAddModal({
 
   // ── Add tab handlers ──
 
-  const resolveNewTags = async (tags) => {
-    const out = []
-    for (const tag of tags) {
-      if (tag.id) {
-        out.push(tag)
-      } else if (onCreateTag) {
-        const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
-        if (created) out.push(created)
-      }
-    }
-    return out
-  }
+  const resolveNewTags = (tags) => resolveTags(tags, onCreateTag)
 
   const handleMic = () => {
     if (listening) {

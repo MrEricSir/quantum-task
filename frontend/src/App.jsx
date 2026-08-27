@@ -59,6 +59,7 @@ import {
   refreshEngineeringItem,
   dismissEngineeringComment,
   fetchNavPreferences,
+  downloadExport,
 } from './api'
 import './App.css'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from './lib/sections'
@@ -824,6 +825,15 @@ export default function App() {
                     )
                     return null
                   })}
+
+                  <DropdownMenu.Separator className="settings-dropdown-divider" />
+
+                  <DropdownMenu.Item
+                    className="settings-dropdown-item"
+                    onSelect={() => { downloadExport().catch((e) => console.error(e)) }}
+                  >
+                    &#128190; Export data
+                  </DropdownMenu.Item>
 
                   <DropdownMenu.Separator className="settings-dropdown-divider" />
 

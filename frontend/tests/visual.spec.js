@@ -733,6 +733,20 @@ test.describe('settings modals', () => {
     expect(indexOf('Sign out')).toBeGreaterThan(Math.max(...perPageIndices))
   })
 
+  test('Export data menu item triggers a request to the export endpoint', async ({ page }) => {
+    await page.route('**/api/export', r => r.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'content-disposition': 'attachment; filename="quantum-task-export-20260603.json"' },
+      body: JSON.stringify({ cards: [] }),
+    }))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await Promise.all([
+      page.waitForRequest('**/api/export'),
+      page.getByRole('menuitem', { name: /export data/i }).click(),
+    ])
+  })
+
   test('tag manager opens with Manage Tags heading and Close footer button', async ({ page }) => {
     await page.getByRole('button', { name: /settings/i }).click()
     await page.getByRole('menuitem', { name: /tags/i }).click()

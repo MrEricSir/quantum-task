@@ -574,6 +574,12 @@ Configured in **Settings → Telegram** — set a send time for each:
 - Completed tasks collected in a collapsible section, sorted by completion time
 - Restore or permanently delete archived tasks
 
+### Data export
+- Settings menu → **Export data** downloads a JSON file of your own data: tags, cards, habits (+ completions), calendar mappings, mood logs, food/workout entries, health experiments, Withings measurements, and a safe subset of settings
+- `GET /api/export` — same auth as every other endpoint (session cookie or `Authorization: Bearer`, see [Auth](#auth))
+- Deliberately excludes credentials/tokens (GitHub PAT, Telegram bot token, Withings OAuth tokens, VAPID keys, etc.) and ephemeral bookkeeping (last-sent timestamps) — see the allowlist in `backend/export/registry.py` for exactly which settings keys are included
+- Adding a new exportable data domain (e.g. a new feature package) means adding one `ExportSection` entry to `backend/export/registry.py`'s registry, not touching a hand-maintained catch-all function
+
 ### Search
 - The header search bar searches cards (tasks + notes) by keyword; results are ranked by semantic similarity when embeddings are configured
 - The Telegram bot's search intent also searches GitHub engineering items by semantic similarity

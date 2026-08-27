@@ -4,6 +4,7 @@ import { Pencil1Icon, CheckIcon, Cross2Icon } from '@radix-ui/react-icons'
 import Collapsible from '../layout/Collapsible'
 import HabitHeatmap from './HabitHeatmap'
 import TagInput from '../shared/TagInput'
+import { resolveTags } from '../../lib/tags'
 import './HabitsPage.css'
 
 const KG_TO_LBS = 2.20462
@@ -181,31 +182,21 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     setEditTags(habit.tags ?? [])
   }
 
-  const resolveEditTags = async () => {
-    const out = []
-    for (const tag of editTags) {
-      if (tag.id) {
-        out.push(tag)
-      } else if (onCreateTag) {
-        const created = await onCreateTag({ name: tag.name, color: tag.color, is_project: false })
-        if (created) out.push(created)
-      }
-    }
-    return out
-  }
-
   const confirmEdit = async () => {
     const name = editName.trim()
-    if (name) {
-      const resolvedTags = await resolveEditTags()
+    if (!name) { setEditingId(null); return }
+    try {
+      const resolvedTags = await resolveTags(editTags, onCreateTag)
       await onUpdate(editingId, {
         name,
         health_metric: editMetric || null,
         health_goal: editMetric && editGoal !== '' ? parseFloat(editGoal) : null,
         tag_ids: resolvedTags.map(t => t.id),
       })
+      setEditingId(null)
+    } catch {
+      // keep the edit form open on failure so the user can retry
     }
-    setEditingId(null)
   }
 
   const visibleHabits = (selectedTagIds.size === 0

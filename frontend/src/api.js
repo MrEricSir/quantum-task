@@ -824,3 +824,23 @@ export async function fetchContextFrom(cardId, source, { section, tagId } = {}) 
   if (!res.ok) throw new Error('Failed to fetch context')
   return res.json()
 }
+
+// Triggers a browser download of the user's data export. Goes through
+// apiFetch (rather than a bare `window.location.href` navigation, which
+// can't carry custom headers) so this stays consistent with every other
+// API call here if the export endpoint ever needs them.
+export async function downloadExport() {
+  const res = await apiFetch('/api/export')
+  if (!res.ok) throw new Error('Export failed')
+  const blob = await res.blob()
+  const disposition = res.headers.get('Content-Disposition') || ''
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'export.json'
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
