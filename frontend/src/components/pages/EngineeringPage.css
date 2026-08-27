@@ -53,6 +53,37 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Repo filter ── */
+.eng-repo-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.eng-repo-pill {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.eng-repo-pill:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.eng-repo-pill--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
 /* ── Empty state ── */
 .eng-empty {
   text-align: center;
@@ -193,6 +224,20 @@
 
 .eng-item-status {
   grid-area: status;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eng-item-stale-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: #f59e0b22;
+  border: 1px solid #f59e0b55;
+  color: #f59e0b;
+  white-space: nowrap;
 }
 
 .eng-item-status-pill {

@@ -1,11 +1,17 @@
 import { UpdateIcon } from '@radix-ui/react-icons'
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useModalContext } from '../../context/ModalContext'
 import './EngineeringPage.css'
 
 // Cap tags shown per row so one item with several matching repo-tag rules
 // doesn't widen the tags column for every other row in the list.
 const MAX_VISIBLE_TAGS = 2
+
+// A PR with no GitHub activity (comments, commits, label changes -- anything
+// that bumps GitHub's own `updated_at`) in this many days is flagged stale.
+// Issues aren't flagged -- an assigned issue can legitimately sit untouched
+// far longer than an open PR waiting on review.
+const STALE_DAYS = 7
 
 function formatSynced(date) {
   if (!date) return null
@@ -15,11 +21,18 @@ function formatSynced(date) {
   return `${diffMin} min ago`
 }
 
+function staleDays(item) {
+  if (item.item_type !== 'pr' || !item.body_updated_at) return null
+  const days = Math.floor((Date.now() - new Date(item.body_updated_at).getTime()) / 86400000)
+  return days >= STALE_DAYS ? days : null
+}
+
 function ItemCard({ item, onAddToBoard, onOpenCard, addedCard }) {
   const isAdded = !!addedCard
   const tags = item.tags ?? []
   const visibleTags = tags.slice(0, MAX_VISIBLE_TAGS)
   const overflowTags = tags.slice(MAX_VISIBLE_TAGS)
+  const stale = staleDays(item)
 
   return (
     <div className="eng-item">
@@ -36,6 +49,11 @@ function ItemCard({ item, onAddToBoard, onOpenCard, addedCard }) {
         {/* Always rendered (even when empty) so the status column lines up
             across rows regardless of which items have a board status. */}
         <span className="eng-item-status">
+          {stale != null && (
+            <span className="eng-item-stale-badge" title={`No activity in ${stale} days`}>
+              Stale {stale}d
+            </span>
+          )}
           {item.project_status && (
             <span className="eng-item-status-pill" title={item.project_name || undefined}>
               {item.project_status}
@@ -77,13 +95,25 @@ function ItemCard({ item, onAddToBoard, onOpenCard, addedCard }) {
 
 export default function EngineeringPage({ items, cards = [], lastSynced, syncing, onSync, onAddToBoard, onOpenCard }) {
   const { openGithubSettings } = useModalContext()
+  const [selectedRepo, setSelectedRepo] = useState(null)
 
   useEffect(() => {
     onSync()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const prs    = items.filter((i) => i.item_type === 'pr')
-  const issues = items.filter((i) => i.item_type === 'issue')
+  const repos = useMemo(
+    () => [...new Set(items.map((i) => i.repo))].sort(),
+    [items]
+  )
+  // Reset a stale repo selection (e.g. that repo's items all closed/synced
+  // away) back to "All" rather than silently showing an empty list.
+  useEffect(() => {
+    if (selectedRepo && !repos.includes(selectedRepo)) setSelectedRepo(null)
+  }, [repos, selectedRepo])
+
+  const visibleItems = selectedRepo ? items.filter((i) => i.repo === selectedRepo) : items
+  const prs    = visibleItems.filter((i) => i.item_type === 'pr')
+  const issues = visibleItems.filter((i) => i.item_type === 'issue')
   const noConfig = items.length === 0 && !syncing
 
   const findAddedCard = (item) => cards.find(
@@ -108,6 +138,27 @@ export default function EngineeringPage({ items, cards = [], lastSynced, syncing
           <UpdateIcon />
         </button>
       </div>
+
+      {repos.length > 1 && (
+        <div className="eng-repo-filter">
+          <button
+            className={`eng-repo-pill${selectedRepo === null ? ' eng-repo-pill--active' : ''}`}
+            onClick={() => setSelectedRepo(null)}
+          >
+            All
+          </button>
+          {repos.map((repo) => (
+            <button
+              key={repo}
+              className={`eng-repo-pill${selectedRepo === repo ? ' eng-repo-pill--active' : ''}`}
+              onClick={() => setSelectedRepo(repo)}
+              title={repo}
+            >
+              {repo.split('/').pop()}
+            </button>
+          ))}
+        </div>
+      )}
 
       {noConfig && (
         <div className="eng-empty">

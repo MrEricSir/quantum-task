@@ -948,6 +948,60 @@ test.describe('engineering page', () => {
     expect(Math.abs(titleBox.y + titleBox.height / 2 - (actionBox.y + actionBox.height / 2))).toBeLessThan(4)
   })
 
+  test('a PR with no activity in over a week shows a Stale badge', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/pull/1', title: 'Old PR', item_type: 'pr',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        body_updated_at: '2026-05-24T10:00:00Z', tags: [] },
+      { id: 2, external_id: 'github:org/repo/pull/2', title: 'Fresh PR', item_type: 'pr',
+        repo: 'org/repo', number: 2, url: 'https://github.com/org/repo/pull/2', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(),
+        body_updated_at: '2026-06-02T10:00:00Z', tags: [] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    const stale = page.locator('.eng-item', { hasText: 'Old PR' })
+    await expect(stale.locator('.eng-item-stale-badge')).toBeVisible()
+    await expect(stale.locator('.eng-item-stale-badge')).toHaveText('Stale 10d')
+
+    const fresh = page.locator('.eng-item', { hasText: 'Fresh PR' })
+    await expect(fresh.locator('.eng-item-stale-badge')).toHaveCount(0)
+  })
+
+  test('repo filter is hidden with a single repo, shown and functional with multiple', async ({ page }) => {
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'Single repo item', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    await expect(page.locator('.eng-repo-filter')).toHaveCount(0)
+
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/issues/1', title: 'From repo one', item_type: 'issue',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/issues/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+      { id: 2, external_id: 'github:org/other/issues/2', title: 'From repo two', item_type: 'issue',
+        repo: 'org/other', number: 2, url: 'https://github.com/org/other/issues/2', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString(), tags: [] },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+    await expect(page.locator('.eng-repo-filter')).toBeVisible()
+    await expect(page.getByText('From repo one')).toBeVisible()
+    await expect(page.getByText('From repo two')).toBeVisible()
+
+    await page.locator('.eng-repo-pill', { hasText: 'repo' }).click()
+    await expect(page.getByText('From repo one')).toBeVisible()
+    await expect(page.getByText('From repo two')).toHaveCount(0)
+
+    await page.locator('.eng-repo-pill', { hasText: 'All' }).click()
+    await expect(page.getByText('From repo one')).toBeVisible()
+    await expect(page.getByText('From repo two')).toBeVisible()
+  })
+
   test('clicking the checkmark for an already-added item opens the board and that card', async ({ page }) => {
     await page.route('**/api/engineering/items', r => r.fulfill({ json: [
       { id: 1, external_id: 'github:org/repo/issues/1', title: 'Fix login bug', item_type: 'issue',
