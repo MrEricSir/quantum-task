@@ -22,6 +22,7 @@ import QuickAddModal from './components/modals/QuickAddModal'
 import SearchModal from './components/modals/SearchModal'
 import KeyboardShortcutsModal from './components/modals/KeyboardShortcutsModal'
 import TagManagerModal from './components/modals/TagManagerModal'
+import TagReportModal from './components/modals/TagReportModal'
 import CalendarSettings from './components/modals/CalendarSettings'
 import GithubSettings from './components/modals/GithubSettings'
 import TodayPage from './components/pages/TodayPage'
@@ -60,6 +61,7 @@ import {
   dismissEngineeringComment,
   fetchNavPreferences,
   downloadExport,
+  extractCardActions,
 } from './api'
 import './App.css'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from './lib/sections'
@@ -114,6 +116,7 @@ export default function App() {
     quickAddInitialText, setQuickAddInitialText,
     showSearch, setShowSearch,
     showTagManager, setShowTagManager,
+    reportTag, setReportTag,
     showCalendarSettings, setShowCalendarSettings,
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,
@@ -124,6 +127,7 @@ export default function App() {
     openNewCard: openNewCardSheet,
   } = useModals()
   const [quickAddStep, setQuickAddStep] = useState('input')
+  const [quickAddBulkItems, setQuickAddBulkItems] = useState([])
   const [undoAction, setUndoAction] = useState(null) // {label, onUndo}
   const undoTimerRef = useRef(null)
   const [activeCard, setActiveCard] = useState(null)
@@ -695,6 +699,13 @@ export default function App() {
     })
   }
 
+  const handleExtractActions = async (card) => {
+    const { items } = await extractCardActions(card.id)
+    setQuickAddBulkItems(items)
+    setQuickAddStep('bulk-confirm')
+    setShowQuickAdd(true)
+  }
+
   if (authed === null) return null
   if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />
 
@@ -889,6 +900,7 @@ export default function App() {
             onMove={handleMoveSection}
             allTags={visibleTags}
             onBreakdown={handleBreakdownCommit}
+            onExtractActions={handleExtractActions}
             onSelect={handleSelectCard}
             selectedCardId={selectedCardId}
             onWeather={handleSetWeather}
@@ -939,6 +951,7 @@ export default function App() {
                     onAdd={() => openNewCard(section)}
                     allTags={visibleTags}
                     onBreakdown={handleBreakdownCommit}
+                    onExtractActions={handleExtractActions}
                     onSelect={handleSelectCard}
                     selectedCardId={selectedCardId}
                   />
@@ -1044,6 +1057,7 @@ export default function App() {
             await dismissEngineeringComment(commentId, dismissed)
             await refreshEngineeringItems()
           }}
+          onExtractActions={handleExtractActions}
         />
       )}
 
@@ -1060,6 +1074,7 @@ export default function App() {
           onDelete={handleDeleteCard}
           onArchive={handleArchiveCard}
           onBreakdown={handleBreakdownCommit}
+          onExtractActions={handleExtractActions}
         />
       )}
       </div>{/* app-body */}
@@ -1127,6 +1142,14 @@ export default function App() {
           onUpdate={handleUpdateTag}
           onDelete={handleDeleteTag}
           onReplace={handleReplaceTag}
+          onReport={(tag) => setReportTag(tag)}
+        />
+      )}
+
+      {reportTag && (
+        <TagReportModal
+          tag={reportTag}
+          onClose={() => setReportTag(null)}
         />
       )}
 
@@ -1180,7 +1203,8 @@ export default function App() {
           habits={habits}
           cards={cards}
           initialStep={quickAddStep}
-          onClose={() => { setShowQuickAdd(false); setQuickAddInitialText('') }}
+          initialBulkItems={quickAddBulkItems}
+          onClose={() => { setShowQuickAdd(false); setQuickAddInitialText(''); setQuickAddBulkItems([]); setQuickAddStep('input') }}
           onSaveCard={async (data) => {
             const card = await handleAddCard(data)
             if (card) showUndo(card.title, () => handleDeleteCard(card.id))

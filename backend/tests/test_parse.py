@@ -416,3 +416,91 @@ class TestList:
         result = parse("shopping list: milk, eggs, bread")
         assert isinstance(result["title"], str) and result["title"].strip() != "", \
             f"List task must have a non-empty title, got: {result['title']!r}"
+
+
+# ── Card action-item extraction (POST /api/cards/{id}/extract-actions) ────────
+#
+# Prompt-quality tests, same skip-if-Ollama-unavailable contract as the rest
+# of this file. Assertions are deliberately loose (count ranges, keyword
+# presence) rather than exact titles -- the point is catching the realistic
+# failure mode (inventing tasks from non-actionable text, or missing an
+# explicit ask), not pinning the model's exact phrasing.
+
+def extract(text: str) -> list[dict]:
+    """Create a scratch card with `text` as its description, call the
+    extract-actions endpoint, and return the extracted items. Skips the test
+    if Ollama is unavailable, same contract as parse() above.
+
+    This file has no get_db override (unlike tests/test_extract_actions.py),
+    so TestClient(app) here hits the real configured database -- the scratch
+    card is always deleted again in `finally`, whether the assertion that
+    follows passes, fails, or the test is skipped."""
+    card_resp = client.post("/api/cards", json={
+        "title": "extraction test card", "description": text, "section": "later",
+    })
+    assert card_resp.status_code == 201, f"Failed to create scratch card: {card_resp.text}"
+    card_id = card_resp.json()["id"]
+    try:
+        resp = client.post(f"/api/cards/{card_id}/extract-actions")
+        if resp.status_code == 503:
+            pytest.skip("Ollama unavailable — run `ollama serve` and `ollama pull phi4-mini`")
+        assert resp.status_code == 200, f"Unexpected error extracting from {text!r}: {resp.text}"
+        return resp.json()["items"]
+    finally:
+        client.delete(f"/api/cards/{card_id}")
+
+
+class TestActionItemExtraction:
+
+    def test_meeting_notes_extract_only_real_action_items(self):
+        text = (
+            "We discussed the Q3 roadmap and reviewed last quarter's metrics. "
+            "Sarah will follow up with design about the new onboarding flow by Friday. "
+            "The team agreed the pricing page needs a refresh -- John will draft new "
+            "copy next week. Everyone enjoyed the offsite."
+        )
+        items = extract(text)
+        titles = " | ".join(i["title"].lower() for i in items)
+        assert 1 <= len(items) <= 3, \
+            f"Expected 1-3 action items (Sarah's follow-up, John's draft), got {len(items)}: {titles}"
+        assert "offsite" not in titles, \
+            f"Non-actionable context ('everyone enjoyed the offsite') should not become a task: {titles}"
+        assert "roadmap" not in titles or "discussed" not in titles, \
+            f"'Discussed the roadmap' is context, not an action item: {titles}"
+
+    def test_email_with_two_asks_extracts_two_items(self):
+        # The default local model (llama3.2, 3B) occasionally captures only
+        # the first numbered ask and drops the second -- observed ~1-in-4 to
+        # 1-in-5 after tightening the prompt's enumeration guidance (was
+        # ~3-in-4 before). A larger local model (mistral-nemo) hasn't shown
+        # this. Left as a hard assertion rather than loosened, since a flake
+        # here is a real prompt-quality signal worth seeing, not noise.
+        text = (
+            "Hi team, two things before Thursday: 1) please send me the updated budget "
+            "numbers, and 2) can someone confirm the venue for the conference? Thanks!"
+        )
+        items = extract(text)
+        assert len(items) >= 2, \
+            f"Expected at least 2 distinct asks (budget numbers, confirm venue), got {len(items)}: {items}"
+
+    def test_pure_status_update_extracts_nothing(self):
+        # The highest-value case: over-extraction (inventing a task from a
+        # sentence that's just informational) is the realistic failure mode
+        # a UI trigger for this feature would otherwise hide from casual use.
+        text = (
+            "Quick update: the migration finished successfully last night with zero "
+            "downtime. All services are healthy and metrics look normal. No action "
+            "needed on our end."
+        )
+        items = extract(text)
+        assert len(items) == 0, \
+            f"Pure status update with no asks should extract zero items, got: {items}"
+
+    def test_non_meeting_reference_text_extracts_nothing(self):
+        text = (
+            "Grandma's chocolate chip cookies: 2 cups flour, 1 cup butter, 1 cup sugar, "
+            "2 eggs, 1 bag chocolate chips. Bake at 350F for 12 minutes."
+        )
+        items = extract(text)
+        assert len(items) == 0, \
+            f"A recipe has no action items to extract, got: {items}"

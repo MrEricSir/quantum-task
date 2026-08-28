@@ -763,6 +763,66 @@ test.describe('settings modals', () => {
     await expect(modal.locator('.tag-mgr-name', { hasText: 'personal' })).toBeVisible()
   })
 
+  test('report icon button is visible on each tag row', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    const row = modal.locator('.tag-mgr-row', { hasText: 'work' })
+    await expect(row.locator('.tag-mgr-report')).toBeVisible()
+  })
+
+  test('clicking the report icon opens the report modal for that tag', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await expect(page.getByRole('heading', { name: 'Report: work' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^done$/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^to do$/i })).toBeVisible()
+  })
+
+  test('generating a report shows the returned markdown and item count', async ({ page }) => {
+    await page.route('**/api/reports/tag*', r => r.fulfill({ json: {
+      tag_name: 'work', mode: 'done', start: '2026-06-01', end: '2026-06-03',
+      items: [{ id: 1, title: 'Ship the fix', date: '2026-06-02' }], count: 1,
+      markdown: '### Done: work (2026-06-01 to 2026-06-03)\n\n- Ship the fix (2026-06-02)',
+    }}))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await page.getByRole('button', { name: /^generate$/i }).click()
+    await expect(page.getByText('1 item', { exact: true })).toBeVisible()
+    await expect(page.getByText('Ship the fix (2026-06-02)')).toBeVisible()
+    await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
+  })
+
+  test('an empty report shows the "nothing found" message from the server', async ({ page }) => {
+    await page.route('**/api/reports/tag*', r => r.fulfill({ json: {
+      tag_name: 'work', mode: 'todo', start: '2026-06-01', end: '2026-06-03',
+      items: [], count: 0,
+      markdown: '### To do: work (2026-06-01 to 2026-06-03)\n\n_Nothing found for this tag and period._',
+    }}))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await page.getByRole('button', { name: /^to do$/i }).click()
+    await page.getByRole('button', { name: /^generate$/i }).click()
+    await expect(page.getByText('Nothing found for this tag and period.')).toBeVisible()
+  })
+
+  test('switching to custom range shows date inputs instead of period pills', async ({ page }) => {
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await page.getByRole('button', { name: /custom range/i }).click()
+    await expect(page.getByLabel('Start date')).toBeVisible()
+    await expect(page.getByLabel('End date')).toBeVisible()
+    await expect(page.getByRole('button', { name: /this week/i })).toHaveCount(0)
+  })
+
   test('calendar settings opens with heading and Save/Cancel footer buttons', async ({ page }) => {
     await page.getByRole('button', { name: /settings/i }).click()
     await page.getByRole('menuitem', { name: /calendar/i }).click()
@@ -1329,6 +1389,89 @@ test.describe('assistant modal', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Card action-item extraction
+// ---------------------------------------------------------------------------
+test.describe('card action-item extraction', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+  })
+
+  test('"Extract action items" button is visible on a card with a description', async ({ page }) => {
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click()
+    const panel = page.locator('.card-detail-panel')
+    await expect(panel.getByRole('button', { name: /extract action items/i })).toBeVisible()
+  })
+
+  test('button is not shown on a card with no description', async ({ page }) => {
+    await page.locator('.event-card', { hasText: 'Call dentist' }).click()
+    const panel = page.locator('.card-detail-panel')
+    await expect(panel.getByRole('button', { name: /extract action items/i })).toHaveCount(0)
+  })
+
+  test('clicking the button opens the bulk-confirm review screen pre-populated with extracted items', async ({ page }) => {
+    await page.route('**/api/cards/7/extract-actions', r => r.fulfill({ json: { items: [
+      { type: 'task', title: 'Buy coffee', description: null, section: 'later', scheduled_at: null, suggested_tags: [] },
+      { type: 'task', title: 'Buy milk', description: null, section: 'later', scheduled_at: null, suggested_tags: [] },
+    ]}}))
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /extract action items/i }).click()
+    await expect(page.getByText('Add 2 Items')).toBeVisible()
+    await expect(page.getByText('Buy coffee')).toBeVisible()
+    await expect(page.getByText('Buy milk')).toBeVisible()
+  })
+
+  test('an extracted item can be removed before confirming', async ({ page }) => {
+    await page.route('**/api/cards/7/extract-actions', r => r.fulfill({ json: { items: [
+      { type: 'task', title: 'Buy coffee', description: null, section: 'later', scheduled_at: null, suggested_tags: [] },
+      { type: 'task', title: 'Buy milk', description: null, section: 'later', scheduled_at: null, suggested_tags: [] },
+    ]}}))
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click()
+    await page.locator('.card-detail-panel').getByRole('button', { name: /extract action items/i }).click()
+    await expect(page.getByText('Add 2 Items')).toBeVisible()
+    await page.locator('.quick-bulk-item', { hasText: 'Buy milk' }).getByRole('button', { name: /remove/i }).click()
+    await expect(page.getByText('Add 1 Item', { exact: true })).toBeVisible()
+    await expect(page.getByText('Buy milk')).toHaveCount(0)
+  })
+
+  test('no action items found shows an empty state instead of a blank list', async ({ page }) => {
+    await page.route('**/api/cards/7/extract-actions', r => r.fulfill({ json: { items: [] } }))
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click()
+    await page.locator('.card-detail-panel').getByRole('button', { name: /extract action items/i }).click()
+    await expect(page.getByText('No items found.')).toBeVisible()
+    await expect(page.getByRole('button', { name: /^add all$/i })).toBeDisabled()
+  })
+
+  test('a failed extraction shows an inline error and re-enables the button', async ({ page }) => {
+    await page.route('**/api/cards/7/extract-actions', r => r.fulfill({ status: 503, json: {} }))
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click()
+    const panel = page.locator('.card-detail-panel')
+    const btn = panel.getByRole('button', { name: /extract action items/i })
+    await btn.click()
+    await expect(panel.getByText(/failed to extract action items/i)).toBeVisible()
+    await expect(btn).toBeEnabled()
+  })
+
+  test('closing quick add after an extraction resets it to the input step next time', async ({ page }) => {
+    await page.route('**/api/cards/7/extract-actions', r => r.fulfill({ json: { items: [
+      { type: 'task', title: 'Buy coffee', description: null, section: 'later', scheduled_at: null, suggested_tags: [] },
+    ]}}))
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click()
+    await page.locator('.card-detail-panel').getByRole('button', { name: /extract action items/i }).click()
+    await expect(page.getByText('Add 1 Item', { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.quick-modal')).toHaveCount(0)
+
+    await page.locator('button.btn-primary').first().click()
+    await expect(page.locator('.quick-modal')).toBeVisible()
+    await expect(page.getByRole('textbox')).toBeVisible()
+    await expect(page.getByText('Add 1 Item', { exact: true })).toHaveCount(0)
+  })
+
+})
+
+// ---------------------------------------------------------------------------
 // Mobile card sheet
 // ---------------------------------------------------------------------------
 test.describe('mobile card sheet', () => {
@@ -1363,6 +1506,19 @@ test.describe('mobile card sheet', () => {
     const sheet = page.locator('.card-sheet')
     await expect(sheet).toBeVisible()
     await expect(sheet.getByText('Milk')).toBeVisible()
+  })
+
+  test('"Extract action items" opens the bulk-confirm screen from the sheet too', async ({ page }) => {
+    await page.route('**/api/cards/7/extract-actions', r => r.fulfill({ json: { items: [
+      { type: 'task', title: 'Buy coffee', description: null, section: 'later', scheduled_at: null, suggested_tags: [] },
+    ]}}))
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.mobile-tab', { hasText: 'Later' }).click()
+    await page.locator('.event-card', { hasText: 'Shopping list' }).click({ force: true })
+    await page.locator('.card-sheet').getByRole('button', { name: /extract action items/i }).click()
+    await expect(page.getByText('Add 1 Item', { exact: true })).toBeVisible()
+    await expect(page.getByText('Buy coffee')).toBeVisible()
   })
 
   test('close button dismisses the sheet', async ({ page }) => {

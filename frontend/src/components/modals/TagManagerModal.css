@@ -48,6 +48,28 @@
   font-weight: 500;
 }
 
+.tag-mgr-report {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+  opacity: 0;
+}
+
+.tag-mgr-row:hover .tag-mgr-report {
+  opacity: 1;
+}
+
+.tag-mgr-report:hover {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.1);
+}
+
 .tag-mgr-edit {
   background: none;
   border: none;

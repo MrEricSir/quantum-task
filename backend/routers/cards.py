@@ -13,11 +13,13 @@ from sqlalchemy.orm import Session
 import github_sync
 import models
 import schemas
+from action_items import extract_action_items
 from card_sections import CardSection
 from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs
 from model_plugins import get_plugin
 from model_plugins.base import resolve_dates
 from routers.insights import invalidate_insights_cache
+from tag_prompts import tags_prompt_section
 
 router = APIRouter()
 
@@ -179,12 +181,7 @@ def reorder_cards(updates: List[schemas.CardReorderItem], db: Session = Depends(
 def parse_card(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
     today = local_date(request)
     tomorrow = today + timedelta(days=1)
-    tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
-    tags_section = (
-        f"Available tags: {', '.join(tag_names)}"
-        if tag_names
-        else "No tags available."
-    )
+    tags_section = tags_prompt_section(db)
     plugin = get_plugin(LLM_MODEL)
     prompt = plugin.get_system_prompt(
         today=today.isoformat(),
@@ -225,12 +222,7 @@ def parse_bulk_text(db: Session, text: str, today) -> list[schemas.ParsedCard]:
     parsing.
     """
     tomorrow = today + timedelta(days=1)
-    tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
-    tags_section = (
-        f"Available tags: {', '.join(tag_names)}"
-        if tag_names
-        else "No tags available."
-    )
+    tags_section = tags_prompt_section(db)
     plugin = get_plugin(LLM_MODEL)
     prompt = plugin.get_bulk_system_prompt(
         today=today.isoformat(),
@@ -282,15 +274,36 @@ def parse_bulk(request: Request, req: schemas.ParseRequest, db: Session = Depend
         )
 
 
+@router.post("/api/cards/{card_id}/extract-actions", response_model=schemas.BulkParseResponse)
+def extract_card_actions(request: Request, card_id: int, db: Session = Depends(get_db)):
+    """Scan a card's description for action items and return them as
+    ParsedCard tasks, ready for the same bulk-confirm review screen Quick
+    Add's multi-item parse uses. Any card can have a body worth scanning --
+    section='none' "reference cards" were removed in migration 00013, so
+    there's no special card type left to gate this on."""
+    card = db.query(models.Card).filter(models.Card.id == card_id).first()
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+    text = (card.description or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Card has no description to extract from")
+    today = local_date(request)
+    try:
+        items = extract_action_items(db, text, today)
+        return schemas.BulkParseResponse(items=items)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"LLM request failed ({LLM_MODEL}): {e}",
+        )
+
+
 @router.post("/api/shortcut/add")
 def shortcut_add(request: Request, req: schemas.ParseRequest, db: Session = Depends(get_db)):
     """Parse free-text and create a card in one step. Designed for iOS Shortcuts."""
     today = local_date(request)
     tomorrow = today + timedelta(days=1)
-    tag_names = [t.name for t in db.query(models.Tag).order_by(models.Tag.name).all()]
-    tags_section = (
-        f"Available tags: {', '.join(tag_names)}" if tag_names else "No tags available."
-    )
+    tags_section = tags_prompt_section(db)
     plugin = get_plugin(LLM_MODEL)
     prompt = plugin.get_system_prompt(
         today=today.isoformat(),

@@ -79,7 +79,7 @@ function MetricProgress({ habit, todayMetrics, isImperial }) {
   return null
 }
 
-export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onSelect, selectedCardId, briefingAutoShow = false }) {
+export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onExtractActions, onSelect, selectedCardId, briefingAutoShow = false }) {
   const activeCards = cards.filter((t) => !t.completed)
   const overdueCards = activeCards.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayCards   = activeCards.filter((t) => t.section === 'today')
@@ -283,6 +283,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                       onMove={onMove}
                       allTags={allTags}
                       onBreakdown={onBreakdown}
+                      onExtractActions={onExtractActions}
                       onSelect={onSelect}
                       isSelected={selectedCardId === todo.id}
                       inOverdueGroup
@@ -309,6 +310,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     onMove={onMove}
                     allTags={allTags}
                     onBreakdown={onBreakdown}
+                    onExtractActions={onExtractActions}
                     onSelect={onSelect}
                     isSelected={selectedCardId === item.data.id}
                     isFocus={item.data.id === focusTaskId}
@@ -327,6 +329,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                   onMove={onMove}
                   allTags={allTags}
                   onBreakdown={onBreakdown}
+                  onExtractActions={onExtractActions}
                   onSelect={onSelect}
                   isSelected={selectedCardId === todo.id}
                   isFocus={todo.id === focusTaskId}

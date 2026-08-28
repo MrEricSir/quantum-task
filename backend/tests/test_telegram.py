@@ -437,6 +437,73 @@ class TestBotCompleted:
         assert "Old task" not in reply
 
 
+class TestBotReport:
+
+    def test_done_report_for_known_tag(self):
+        with BotTestSession() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+            db.add(models.Card(
+                title="Ship the fix", section="today", completed=True,
+                completed_at=datetime.now(timezone.utc), tags=[tag], position=0,
+            ))
+            db.commit()
+
+        from telegram.bot import _reply_report
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_report({"tag": "work", "mode": "done", "period": "this_week"}, tz_offset=0)
+        assert "Ship the fix" in reply
+        assert "work" in reply
+
+    def test_tag_name_matched_case_insensitively(self):
+        with BotTestSession() as db:
+            tag = models.Tag(name="Work")
+            db.add(tag)
+            db.commit()
+
+        from telegram.bot import _reply_report
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_report({"tag": "work", "mode": "todo", "period": "this_week"}, tz_offset=0)
+        assert "don't have a tag" not in reply
+
+    def test_unknown_tag_gives_clear_error_and_creates_nothing(self):
+        from telegram.bot import _reply_report
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_report({"tag": "nonexistent", "mode": "done", "period": "this_week"}, tz_offset=0)
+        assert "don't have a tag" in reply
+        with BotTestSession() as db:
+            assert db.query(models.Tag).count() == 0
+
+    def test_missing_tag_or_mode_gives_helpful_message_without_querying(self):
+        from telegram.bot import _reply_report
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_report({"tag": "", "mode": "done", "period": "this_week"}, tz_offset=0)
+        assert "couldn't tell" in reply.lower()
+
+    def test_invalid_period_falls_back_to_this_week(self):
+        with BotTestSession() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+
+        from telegram.bot import _reply_report
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_report({"tag": "work", "mode": "todo", "period": "next_decade"}, tz_offset=0)
+        assert "don't have a tag" not in reply
+
+    def test_no_items_shows_nothing_found_message(self):
+        with BotTestSession() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+
+        from telegram.bot import _reply_report
+        with patch("telegram.bot.SessionLocal", BotTestSession):
+            reply = _reply_report({"tag": "work", "mode": "done", "period": "this_week"}, tz_offset=0)
+        assert "Nothing found" in reply
+
+
 class TestBotBulkReschedule:
 
     def test_moves_overdue_tasks_to_week(self):

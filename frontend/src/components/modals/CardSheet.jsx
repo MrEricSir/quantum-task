@@ -6,9 +6,10 @@ import './CardModal.css'
 import './CardSheet.css'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import { parseGitHubUrl } from '../../lib/github'
+import { useExtractActions } from '../../hooks/useExtractActions'
 
 // card=null means "new card" mode (starts directly in edit mode)
-export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], topTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove, onBreakdown, onCreateTag }) {
+export default function CardSheet({ card = null, defaultSection = 'today', allTags = [], topTags = [], onClose, onSave, onCreate, onDelete, onArchive, onToggle, onMove, onBreakdown, onCreateTag, onExtractActions }) {
   const isNew = !card?.id
   const [mode, setMode] = useState(isNew ? 'edit' : 'view')
   const [showAssist, setShowAssist] = useState(false)
@@ -22,6 +23,7 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [copiedOutput, setCopiedOutput] = useState(false)
+  const { extracting, extractError, handleExtractActions } = useExtractActions(card, onExtractActions)
 
   const handleCopyOutput = useCallback(() => {
     navigator.clipboard.writeText(savedOutput).then(() => {
@@ -108,7 +110,20 @@ export default function CardSheet({ card = null, defaultSection = 'today', allTa
                       {gh.repo} #{gh.number} &#8599;
                     </a>
                   ) : (
-                    <p className="card-sheet-desc-text">{card.description}</p>
+                    <>
+                      <p className="card-sheet-desc-text">{card.description}</p>
+                      {onExtractActions && (
+                        <button
+                          type="button"
+                          className="card-sheet-extract-btn"
+                          onClick={handleExtractActions}
+                          disabled={extracting}
+                        >
+                          {extracting ? 'Scanning…' : 'Extract action items'}
+                        </button>
+                      )}
+                      {extractError && <div className="card-sheet-extract-error">{extractError}</div>}
+                    </>
                   )}
                 </div>
               )}

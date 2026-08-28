@@ -418,6 +418,14 @@
   overflow-y: auto;
 }
 
+.quick-bulk-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+  padding: 24px 0;
+  margin: 0 0 8px;
+}
+
 .quick-bulk-item {
   display: flex;
   align-items: center;

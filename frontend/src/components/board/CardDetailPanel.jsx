@@ -8,6 +8,7 @@ import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
 import { parseGitHubUrl } from '../../lib/github'
 import { getBridgeJobChain, queueFixJob } from '../../api'
+import { useExtractActions } from '../../hooks/useExtractActions'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -34,6 +35,7 @@ export default function CardDetailPanel({
   onBreakdown,
   onRefreshGithubItem,
   onDismissComment,
+  onExtractActions,
 }) {
   const [mode, setMode] = useState(initialMode)
 
@@ -63,6 +65,7 @@ export default function CardDetailPanel({
   const [fixQueuing, setFixQueuing] = useState(false)
   const [fixError, setFixError] = useState('')
   const [assistInitialTab, setAssistInitialTab] = useState('assist')
+  const { extracting, extractError, handleExtractActions } = useExtractActions(card, onExtractActions)
 
   // ── Reset when a different card is opened or initialMode changes ──────────
   useEffect(() => {
@@ -445,6 +448,17 @@ export default function CardDetailPanel({
                           {showFullDesc ? 'Show less' : 'Show more'}
                         </button>
                       )}
+                      {onExtractActions && (
+                        <button
+                          type="button"
+                          className="cdp-extract-btn"
+                          onClick={handleExtractActions}
+                          disabled={extracting}
+                        >
+                          {extracting ? 'Scanning…' : 'Extract action items'}
+                        </button>
+                      )}
+                      {extractError && <div className="cdp-extract-error">{extractError}</div>}
                     </>
                   )}
                 </div>

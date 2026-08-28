@@ -150,6 +150,9 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - Check off tasks as complete; completed tasks move to the Archive
 - Edit and delete tasks via the `⋯` card menu
 - Recurring tasks auto-spawn the next occurrence on completion
+- Any card with a description gets an **Extract action items** button — scans pasted text
+  (meeting notes, an email) for concrete action items and opens the same bulk-confirm
+  review screen Quick Add uses, so you can edit/remove before creating them as real tasks
 
 ### Capture (AI Quick Add)
 - Describe anything in plain English — the LLM classifies it as a **task**, **habit**, **food log**, **workout log**, **habit completion**, **task completion**, or **assist** request automatically
@@ -449,6 +452,18 @@ Receive your daily briefing as a Telegram message each morning, and send message
 | `do I have time for a quick nap?` | Computes the actual gap until your next commitment and gives a yes/no |
 | `weather` / `what's the weather like today?` | Current conditions and forecast — uses a location shared in the chat if you send one, otherwise falls back to the last location the web app reported |
 
+#### Reports
+
+Same generator behind Settings → Tags → the report icon on any tag, so the webapp and the
+bot always return identical results for the same tag/mode/period.
+
+| What you send | What happens |
+|---|---|
+| `report on client-x for last month` | Completed or outstanding tasks for a tag over a period — pick the closest period if none is named (defaults to this week) |
+| `what's outstanding for trainsit?` | "To do" report — open tasks for that tag, including undated backlog items |
+| `what did I finish on the api project this week?` | "Done" report — completed tasks for that tag in the period |
+| `give me a to-do report for work for last 7 days` | Explicit mode + period |
+
 #### Habits and health
 
 | What you send | What happens |
@@ -569,6 +584,10 @@ Configured in **Settings → Telegram** — set a send time for each:
 - Create and manage color-coded tags
 - Filter any page to a single tag via the sidebar
 - Tags are auto-suggested during AI Quick Add parsing
+- Report icon on any tag (Settings → Tags) generates a "Done" or "To do" list for that tag
+  over a period (today/this week/last week/this month/last month/last 7 or 30 days, or a
+  custom range) — a copy-pasteable Markdown list, e.g. for meeting notes. Same generator
+  the Telegram bot's report intent uses, see [Telegram Integration](#telegram-integration)
 
 ### Archive
 - Completed tasks collected in a collapsible section, sorted by completion time

@@ -108,6 +108,37 @@
   margin: 0;
 }
 
+.card-sheet-extract-btn {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.card-sheet-extract-btn:hover:not(:disabled) {
+  border-color: var(--accent, #7c6fcd);
+  color: var(--text);
+}
+
+.card-sheet-extract-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.card-sheet-extract-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #f85149;
+}
+
 /* ── Thread output ── */
 .card-sheet-thread-output {
   display: flex;

@@ -16,7 +16,7 @@ function formatScheduled(iso) {
   })
 }
 
-export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onSelect, isSelected, inOverdueGroup = false, isFocus = false }) {
+export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onExtractActions, onSelect, isSelected, inOverdueGroup = false, isFocus = false }) {
   const [showSheet,   setShowSheet]   = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [popping,     setPopping]     = useState(false)
@@ -146,6 +146,7 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
           onToggle={onToggle}
           onMove={onMove}
           onBreakdown={onBreakdown}
+          onExtractActions={onExtractActions}
         />
       )}
     </div>

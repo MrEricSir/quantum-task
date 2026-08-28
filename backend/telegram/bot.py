@@ -157,6 +157,24 @@ The "action" field must be one of:
       Examples: "what am I avoiding?", "what have I been putting off?",
                 "what keeps getting pushed?", "what am I procrastinating on?"
 
+  "generate_report"
+      User wants a report of tasks for a specific tag/project over a time period --
+      either what's DONE (completed) or what's still TO DO (open), e.g. to paste into
+      meeting notes.
+      Also return:
+        "tag"    — the exact tag name from the available tags list above (required;
+                   if no tag in the message clearly matches one of the available tags,
+                   use action "capture" instead of guessing)
+        "mode"   — "done" or "todo" (required)
+        "period" — one of: today, this_week, last_week, this_month, last_month,
+                   last_7_days, last_30_days (required — pick the closest match,
+                   default to "this_week" if genuinely no period is mentioned)
+      Examples: "report on client-x for last month" (tag=client-x, mode=done or todo
+                depending on wording, period=last_month), "what's outstanding for
+                trainsit?" (mode=todo, period=this_week — no period stated),
+                "what did I finish on the api project this week?" (mode=done,
+                period=this_week), "give me a to-do report for work for last 7 days"
+
 """
 + REGISTRY["food"].telegram_description
 + """
@@ -468,6 +486,9 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
     if action == "query_avoiding":
         return _reply_avoiding(tz_offset)
 
+    if action == "generate_report":
+        return _reply_report(intent, tz_offset)
+
     if action == "query_completed":
         return _reply_completed(tz_offset, intent.get("date"))
 
@@ -705,6 +726,47 @@ def _reply_completed(tz_offset: int, date_str: str | None = None) -> str:
         lines.append(f"✓ {c.title}")
     if is_today:
         lines.append("\nNice work! 💪")
+    return "\n".join(lines)
+
+
+def _reply_report(intent: dict, tz_offset: int) -> str:
+    """Tag + period report of done or outstanding tasks -- see reports/generate.py
+    for the shared, LLM-free query logic (also used by GET /api/reports/tag)."""
+    from reports import generate_tag_report, resolve_period, PERIOD_CHOICES
+
+    tag_name = (intent.get("tag") or "").strip()
+    mode = intent.get("mode")
+    period = intent.get("period")
+    if not tag_name or mode not in ("done", "todo"):
+        return "I couldn't tell which tag or which kind of report you wanted -- try 'report on [tag] for [done/to do] this week'."
+    if period not in PERIOD_CHOICES:
+        period = "this_week"
+
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+    today = now_local.date()
+    start, end = resolve_period(period, today)
+
+    with SessionLocal() as db:
+        # Case-insensitive exact match only -- unlike _resolve_tag_ids, never
+        # auto-create a tag here: this is a read path, and silently creating a
+        # tag from a mistyped name would be a confusing side effect of asking
+        # for a report. ilike with no wildcards is an exact case-insensitive
+        # match, same as bridge/router.py's identical tag-by-name lookup.
+        tag = db.query(models.Tag).filter(models.Tag.name.ilike(tag_name)).first()
+        if not tag:
+            return f"I don't have a tag called \"{tag_name}\"."
+        report = generate_tag_report(db, tag.id, mode, start, end, tz_offset)
+
+    label = "Done" if mode == "done" else "To do"
+    period_label = f"{start.strftime('%b %-d')} - {end.strftime('%b %-d')}" if start != end else start.strftime("%b %-d")
+    header = f"<b>{label}: {report['tag_name']}</b> ({period_label})"
+    if not report["items"]:
+        return f"{header}\n\nNothing found for this tag and period."
+
+    lines = [header, ""]
+    for item in report["items"]:
+        suffix = f" ({item['date']})" if item["date"] else ""
+        lines.append(f"• {item['title']}{suffix}")
     return "\n".join(lines)
 
 

@@ -10,6 +10,7 @@ export function useModals() {
   const [quickAddInitialText, setQuickAddInitialText] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [showTagManager, setShowTagManager] = useState(false)
+  const [reportTag, setReportTag] = useState(null)
   const [showCalendarSettings, setShowCalendarSettings] = useState(false)
   const [showGithubSettings, setShowGithubSettings] = useState(false)
   const [showWithingsSettings, setShowWithingsSettings] = useState(false)
@@ -31,6 +32,7 @@ export function useModals() {
     quickAddInitialText, setQuickAddInitialText,
     showSearch, setShowSearch,
     showTagManager, setShowTagManager,
+    reportTag, setReportTag,
     showCalendarSettings, setShowCalendarSettings,
     showGithubSettings, setShowGithubSettings,
     showWithingsSettings, setShowWithingsSettings,

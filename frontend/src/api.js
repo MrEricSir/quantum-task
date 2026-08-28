@@ -825,6 +825,28 @@ export async function fetchContextFrom(cardId, source, { section, tagId } = {}) 
   return res.json()
 }
 
+export async function extractCardActions(cardId) {
+  const res = await apiFetch(`/api/cards/${cardId}/extract-actions`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to extract action items')
+  }
+  return res.json()
+}
+
+export async function fetchTagReport(tagId, mode, { period, start, end } = {}) {
+  const params = new URLSearchParams({ tag_id: tagId, mode })
+  if (period) params.set('period', period)
+  if (start) params.set('start', start)
+  if (end) params.set('end', end)
+  const res = await apiFetch(`/api/reports/tag?${params.toString()}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to generate report')
+  }
+  return res.json()
+}
+
 // Triggers a browser download of the user's data export. Goes through
 // apiFetch (rather than a bare `window.location.href` navigation, which
 // can't carry custom headers) so this stays consistent with every other

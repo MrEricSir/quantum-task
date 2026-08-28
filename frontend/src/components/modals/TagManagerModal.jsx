@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Pencil1Icon, Cross2Icon } from '@radix-ui/react-icons'
+import { Pencil1Icon, Cross2Icon, FileTextIcon } from '@radix-ui/react-icons'
 import Modal from './Modal'
 import './TagManagerModal.css'
 
@@ -39,7 +39,7 @@ function TagTypeToggle({ value, onChange }) {
   )
 }
 
-export default function TagManagerModal({ tags, cards = [], onClose, onCreate, onUpdate, onDelete, onReplace }) {
+export default function TagManagerModal({ tags, cards = [], onClose, onCreate, onUpdate, onDelete, onReplace, onReport }) {
   const [name, setName] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0])
   const [isProject, setIsProject] = useState(false)
@@ -213,6 +213,15 @@ export default function TagManagerModal({ tags, cards = [], onClose, onCreate, o
                 {tag.is_project && <span className="tag-mgr-project-badge">project</span>}
                 {usageCount > 0 && (
                   <span className="tag-mgr-count">{usageCount}</span>
+                )}
+                {onReport && (
+                  <button
+                    className="tag-mgr-report"
+                    onClick={() => onReport(tag)}
+                    title="Generate report"
+                  >
+                    <FileTextIcon />
+                  </button>
                 )}
                 <button
                   className="tag-mgr-edit"

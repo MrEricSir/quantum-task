@@ -166,6 +166,38 @@
 
 .cdp-desc-toggle:hover { text-decoration: underline; }
 
+.cdp-extract-btn {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.cdp-extract-btn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.cdp-extract-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cdp-extract-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #f85149;
+}
+
 /* ── AI output ── */
 .cdp-output-header {
   display: flex;

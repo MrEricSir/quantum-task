@@ -101,6 +101,7 @@ export default function QuickAddModal({
   isImperial = false,
   initialText = '',
   initialStep = 'input',
+  initialBulkItems = null,
 }) {
   // ── Input step ──
   const [text, setText] = useState(initialText)
@@ -128,7 +129,9 @@ export default function QuickAddModal({
   const recognitionRef = useRef(null)
 
   // ── Bulk confirm step ──
-  const [bulkItems, setBulkItems] = useState([])
+  const [bulkItems, setBulkItems] = useState(
+    () => (initialBulkItems ?? []).map((item, i) => ({ ...item, _key: i }))
+  )
   const [editingBulkIdx, setEditingBulkIdx] = useState(null)
   const [splittingIdx, setSplittingIdx] = useState(null)
   const [splitText, setSplitText] = useState('')
@@ -564,6 +567,9 @@ export default function QuickAddModal({
         return (
           <>
             <Dialog.Title asChild><h2>Add {visible.length} Item{visible.length !== 1 ? 's' : ''}</h2></Dialog.Title>
+            {visible.length === 0 && (
+              <p className="quick-bulk-empty">No items found.</p>
+            )}
             <div className="quick-bulk-list">
               {visible.map((item, visIdx) => (
                 <div key={item._key}>
