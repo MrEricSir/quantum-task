@@ -25,7 +25,7 @@ import app_setting_keys as setting_keys
 from alembic.config import Config as AlembicConfig
 from alembic import command as alembic_command
 from database import SessionLocal, engine
-from deps import AUTH_PASSWORD, SESSION_TOKEN
+from deps import AUTH_PASSWORD, get_db
 
 from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, mood, workouts, preferences, health
 import assist as assist_pkg
@@ -55,15 +55,37 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or path == "/api/bridge/install.py"
         ):
             return await call_next(request)
+        # DB-backed secrets (session cookie, bridge token) are resolved through the
+        # get_db dependency override (not a bare SessionLocal()) so tests that swap
+        # in a different database still get consistent auth behavior.
+        db_dependency = request.app.dependency_overrides.get(get_db, get_db)
+        db_gen = db_dependency()
+        db = next(db_gen)
+        try:
+            settings_rows = {
+                row.key: row.value
+                for row in db.query(models.AppSetting).filter(
+                    models.AppSetting.key.in_([setting_keys.SESSION_SECRET, setting_keys.BRIDGE_TOKEN])
+                )
+            }
+        finally:
+            db_gen.close()
+
         # Session cookie (browser)
+        session_secret = settings_rows.get(setting_keys.SESSION_SECRET, "")
         token = request.cookies.get("session", "")
-        if _hmac.compare_digest(token, SESSION_TOKEN):
+        if session_secret and _hmac.compare_digest(token, session_secret):
             return await call_next(request)
         # Bearer token (API clients e.g. iOS Shortcuts)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             bearer = auth_header[7:]
             if _hmac.compare_digest(bearer, AUTH_PASSWORD):
+                return await call_next(request)
+            # Bearer token (installed qtask-bridge CLI) -- a separate, independently
+            # rotatable credential baked into the install script, see app_setting_keys.BRIDGE_TOKEN.
+            bridge_token = settings_rows.get(setting_keys.BRIDGE_TOKEN, "")
+            if bridge_token and _hmac.compare_digest(bearer, bridge_token):
                 return await call_next(request)
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 

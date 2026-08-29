@@ -1,8 +1,8 @@
-import { CheckIcon } from '@radix-ui/react-icons'
+import { CheckIcon, FileTextIcon } from '@radix-ui/react-icons'
 import { orderedNavItems } from '../../lib/navItems'
 import './Sidebar.css'
 
-export default function Sidebar({ tags, selectedTagIds, page, navOrder, onNavigate, onToggleTag, onClearTags }) {
+export default function Sidebar({ tags, selectedTagIds, page, navOrder, onNavigate, onToggleTag, onClearTags, onReport }) {
   const showTags = tags.length > 0
   const navItems = orderedNavItems(navOrder)
 
@@ -34,20 +34,31 @@ export default function Sidebar({ tags, selectedTagIds, page, navOrder, onNaviga
             {tags.map((tag) => {
               const active = selectedTagIds.has(tag.id)
               return (
-                <button
-                  key={tag.id}
-                  className={`sidebar-item ${active ? 'sidebar-item--active' : ''}`}
-                  onClick={() => onToggleTag(tag.id)}
-                  aria-pressed={active}
-                >
-                  <span
-                    className={`sidebar-tag-check${active ? ' sidebar-tag-check--on' : ''}`}
-                    style={{ borderColor: tag.color, background: active ? tag.color : 'transparent' }}
+                <div key={tag.id} className="sidebar-tag-row">
+                  <button
+                    className={`sidebar-item ${active ? 'sidebar-item--active' : ''}`}
+                    onClick={() => onToggleTag(tag.id)}
+                    aria-pressed={active}
                   >
-                    {active && <CheckIcon width={9} height={9} />}
-                  </span>
-                  {tag.name}
-                </button>
+                    <span
+                      className={`sidebar-tag-check${active ? ' sidebar-tag-check--on' : ''}`}
+                      style={{ borderColor: tag.color, background: active ? tag.color : 'transparent' }}
+                    >
+                      {active && <CheckIcon width={9} height={9} />}
+                    </span>
+                    {tag.name}
+                  </button>
+                  {onReport && (
+                    <button
+                      className="sidebar-tag-report"
+                      onClick={() => onReport(tag)}
+                      title="Generate report"
+                      aria-label={`Generate report for ${tag.name}`}
+                    >
+                      <FileTextIcon width={12} height={12} />
+                    </button>
+                  )}
+                </div>
               )
             })}
           </nav>

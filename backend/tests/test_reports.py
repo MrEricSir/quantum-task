@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 import models
 from main import app
 from deps import get_db
-from reports.generate import generate_tag_report, render_markdown, resolve_period
+from reports.generate import count_by_period, generate_tag_report, render_markdown, resolve_period
 
 test_engine = create_engine(
     "sqlite://",
@@ -189,6 +189,92 @@ class TestGenerateTagReport:
         assert report["count"] == 1
 
 
+class TestCountByPeriod:
+    TODAY = date(2026, 8, 19)  # a Wednesday; this_week starts 2026-08-17
+
+    def test_unknown_tag_returns_none(self):
+        with TestingSessionLocal() as db:
+            result = count_by_period(db, 999, "done", self.TODAY)
+        assert result is None
+
+    def test_unknown_mode_raises(self):
+        with TestingSessionLocal() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+            with pytest.raises(ValueError):
+                count_by_period(db, tag.id, "sideways", self.TODAY)
+
+    def test_counts_one_key_per_period_choice(self):
+        with TestingSessionLocal() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+            counts = count_by_period(db, tag.id, "done", self.TODAY)
+        from reports.generate import PERIOD_CHOICES
+        assert set(counts.keys()) == set(PERIOD_CHOICES)
+        assert all(v == 0 for v in counts.values())
+
+    def test_done_item_counts_toward_containing_periods_only(self):
+        with TestingSessionLocal() as db:
+            work = models.Tag(name="work")
+            db.add(work)
+            db.commit()
+            # This week (Aug 17-19) -- also within this_month, last_7_days, last_30_days,
+            # but NOT today or last_week.
+            db.add(models.Card(
+                title="Done this week", section="today", completed=True,
+                completed_at=datetime(2026, 8, 18, 12, 0), tags=[work],
+            ))
+            db.commit()
+            counts = count_by_period(db, work.id, "done", self.TODAY)
+        assert counts["this_week"] == 1
+        assert counts["this_month"] == 1
+        assert counts["last_7_days"] == 1
+        assert counts["last_30_days"] == 1
+        assert counts["today"] == 0
+        assert counts["last_week"] == 0
+        assert counts["last_month"] == 0
+
+    def test_undated_todo_item_counts_toward_every_period(self):
+        with TestingSessionLocal() as db:
+            work = models.Tag(name="work")
+            db.add(work)
+            db.commit()
+            db.add(models.Card(title="Backlog item", section="later", tags=[work]))
+            db.commit()
+            counts = count_by_period(db, work.id, "todo", self.TODAY)
+        from reports.generate import PERIOD_CHOICES
+        assert all(counts[p] == 1 for p in PERIOD_CHOICES)
+
+    def test_matches_generate_tag_report_count_for_each_period(self):
+        # count_by_period is a separate code path from generate_tag_report (one
+        # query pass vs. per-period filtering) -- they must agree on every period.
+        with TestingSessionLocal() as db:
+            work = models.Tag(name="work")
+            db.add(work)
+            db.commit()
+            work_id = work.id
+            db.add(models.Card(
+                title="Done today", section="today", completed=True,
+                completed_at=datetime(2026, 8, 19, 12, 0), tags=[work],
+            ))
+            db.add(models.Card(
+                title="Done last month", section="today", completed=True,
+                completed_at=datetime(2026, 7, 10, 12, 0), tags=[work],
+            ))
+            db.commit()
+
+        from reports.generate import PERIOD_CHOICES
+        with TestingSessionLocal() as db:
+            counts = count_by_period(db, work_id, "done", self.TODAY)
+        for period in PERIOD_CHOICES:
+            with TestingSessionLocal() as db:
+                start, end = resolve_period(period, self.TODAY)
+                report = generate_tag_report(db, work_id, "done", start, end)
+            assert counts[period] == report["count"], f"mismatch for period={period!r}"
+
+
 class TestRenderMarkdown:
     def test_empty_items_shows_nothing_found(self):
         report = {"tag_name": "work", "mode": "done", "start": "2026-08-01", "end": "2026-08-31", "items": []}
@@ -264,3 +350,29 @@ class TestReportEndpoint:
             tag_id = tag.id
         r = client.get(f"/api/reports/tag?tag_id={tag_id}&mode=todo&start=2026-08-01&end=2026-08-31")
         assert r.status_code == 200
+
+
+class TestPeriodCountsEndpoint:
+    def test_invalid_mode_returns_400(self, client):
+        with TestingSessionLocal() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+            tag_id = tag.id
+        r = client.get(f"/api/reports/tag/period-counts?tag_id={tag_id}&mode=sideways")
+        assert r.status_code == 400
+
+    def test_unknown_tag_returns_404(self, client):
+        r = client.get("/api/reports/tag/period-counts?tag_id=999&mode=done")
+        assert r.status_code == 404
+
+    def test_returns_counts_for_every_period(self, client):
+        with TestingSessionLocal() as db:
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.commit()
+            tag_id = tag.id
+        r = client.get(f"/api/reports/tag/period-counts?tag_id={tag_id}&mode=done")
+        assert r.status_code == 200
+        from reports.generate import PERIOD_CHOICES
+        assert set(r.json()["counts"].keys()) == set(PERIOD_CHOICES)

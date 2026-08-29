@@ -29,6 +29,49 @@ def _get_bridge_install_token(db: Session) -> str:
     return token
 
 
+def _get_bridge_token(db: Session) -> str:
+    """Return the current bridge API token, creating one if it doesn't exist.
+
+    This is the credential baked into the served install script for the CLI's own
+    ongoing requests -- deliberately separate from AUTH_PASSWORD (see BRIDGE_TOKEN's
+    definition in app_setting_keys.py) and from BRIDGE_INSTALL_TOKEN (which only
+    gates fetching the install script itself, not the CLI's later requests)."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_TOKEN).first()
+    if row:
+        return row.value
+    token = secrets.token_hex(24)
+    db.add(models.AppSetting(key=setting_keys.BRIDGE_TOKEN, value=token))
+    db.commit()
+    return token
+
+
+def validate_branch_name(branch_name: str) -> str | None:
+    """Return an error message if branch_name is unsafe to hand to git/the filesystem,
+    else None. Not full git check-ref-format compliance -- just the characters that
+    matter for how this branch name gets used downstream: passed as its own argv
+    element to `git worktree add ... -b <name>` (never through a shell, so no shell
+    injection risk) and joined into a worktree directory path
+    (bridge/scripts/agent_core.py's WORKTREES_ROOT/repo_slug/branch.replace("/", "-")).
+    ".." is currently blocked indirectly by git's own ref-name rules before a branch
+    with that name could ever exist, but validating it here too means that stays true
+    even if a future code path builds a path from this string before git ever sees it."""
+    if not branch_name:
+        return "Branch name can't be empty"
+    if any(c.isspace() for c in branch_name):
+        return "Branch name can't contain whitespace"
+    if branch_name.startswith("-"):
+        return "Branch name can't start with '-'"
+    if ".." in branch_name:
+        return "Branch name can't contain '..'"
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in branch_name):
+        return "Branch name can't contain control characters"
+    if any(c in branch_name for c in ("~", "^", ":", "?", "*", "[", "\\")):
+        return "Branch name can't contain any of: ~ ^ : ? * [ \\"
+    if branch_name.startswith("/") or branch_name.endswith("/"):
+        return "Branch name can't start or end with '/'"
+    return None
+
+
 def _repo_from_external_id(external_id: str | None) -> str | None:
     """Parse 'github:owner/repo/issues/42' → 'owner/repo', or None if not a GitHub link.
 

@@ -332,14 +332,17 @@ class TestFetchTimeout:
             url = "https://example.com/feed.ics"
             headers = {"Content-Type": "text/calendar"}
             content = b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
+            is_redirect = False
+            is_permanent_redirect = False
             def raise_for_status(self):
                 pass
 
-        def fake_get(url, timeout=None, headers=None):
+        def fake_get(url, timeout=None, headers=None, allow_redirects=None):
             captured["timeout"] = timeout
             return FakeResponse()
 
-        with patch("gcal.requests.get", side_effect=fake_get):
+        with patch("gcal.requests.get", side_effect=fake_get), \
+             patch("gcal._is_safe_host", return_value=True):
             gcal.fetch_events("https://example.com/feed.ics",
                               datetime.now(timezone.utc).date(),
                               (datetime.now(timezone.utc) + timedelta(days=1)).date())

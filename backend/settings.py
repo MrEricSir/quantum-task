@@ -35,6 +35,20 @@ class Settings:
         else:
             self._db.add(models.AppSetting(key=key, value=value))
 
+    # ── Auth ──────────────────────────────────────────────────────────────────
+
+    @property
+    def session_secret(self) -> str:
+        return self.get(keys.SESSION_SECRET)
+
+    @property
+    def auth_failed_attempts(self) -> int:
+        return int(self.get(keys.AUTH_FAILED_ATTEMPTS, "0") or "0")
+
+    @property
+    def auth_lockout_until(self) -> str:
+        return self.get(keys.AUTH_LOCKOUT_UNTIL)
+
     # ── Telegram ──────────────────────────────────────────────────────────────
 
     @property

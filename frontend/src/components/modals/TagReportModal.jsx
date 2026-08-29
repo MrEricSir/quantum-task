@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { CopyIcon, CheckIcon } from '@radix-ui/react-icons'
 import Modal from './Modal'
-import { fetchTagReport } from '../../api'
+import { fetchTagReport, fetchTagReportPeriodCounts } from '../../api'
 import './TagReportModal.css'
 
 // Mirrors backend/reports/generate.py's PERIOD_CHOICES.
@@ -26,6 +26,31 @@ export default function TagReportModal({ tag, onClose }) {
   const [error, setError] = useState('')
   const [report, setReport] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [counts, setCounts] = useState(null)
+
+  // Which quick-pick periods actually have something to report, so we can
+  // disable the empty ones before the user wastes a click finding out. Fails
+  // open (leaves periods enabled) if the counts call itself fails -- an
+  // unrelated network hiccup here shouldn't block the report feature.
+  useEffect(() => {
+    let cancelled = false
+    setCounts(null)
+    fetchTagReportPeriodCounts(tag.id, mode)
+      .then((c) => { if (!cancelled) setCounts(c) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [tag.id, mode])
+
+  // If the selected period turns out to be empty once counts load, jump to
+  // the first non-empty one instead of leaving a doomed selection active.
+  useEffect(() => {
+    if (customRange || !counts) return
+    if (counts[period] > 0) return
+    const firstNonEmpty = PERIOD_OPTIONS.find((opt) => counts[opt.value] > 0)
+    if (firstNonEmpty) setPeriod(firstNonEmpty.value)
+  }, [counts]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const generateDisabled = loading || (!customRange && counts && !counts[period])
 
   const handleGenerate = async () => {
     if (customRange && (!start || !end)) { setError('Pick both a start and end date.'); return }
@@ -74,16 +99,22 @@ export default function TagReportModal({ tag, onClose }) {
 
       {!customRange ? (
         <div className="tag-report-period-row">
-          {PERIOD_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className={`tag-report-period-btn${period === opt.value ? ' tag-report-period-btn--active' : ''}`}
-              onClick={() => setPeriod(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
+          {PERIOD_OPTIONS.map((opt) => {
+            const count = counts?.[opt.value]
+            const empty = counts && !count
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`tag-report-period-btn${period === opt.value ? ' tag-report-period-btn--active' : ''}${empty ? ' tag-report-period-btn--empty' : ''}`}
+                onClick={() => setPeriod(opt.value)}
+                disabled={empty}
+                title={empty ? 'Nothing to report for this period' : undefined}
+              >
+                {opt.label}{counts && <span className="tag-report-period-count">{count}</span>}
+              </button>
+            )
+          })}
           <button type="button" className="tag-report-custom-link" onClick={() => setCustomRange(true)}>
             Custom range…
           </button>
@@ -100,7 +131,7 @@ export default function TagReportModal({ tag, onClose }) {
       )}
 
       <div className="tag-report-generate-row">
-        <button className="btn-save" onClick={handleGenerate} disabled={loading}>
+        <button className="btn-save" onClick={handleGenerate} disabled={generateDisabled}>
           {loading ? 'Generating…' : 'Generate'}
         </button>
       </div>

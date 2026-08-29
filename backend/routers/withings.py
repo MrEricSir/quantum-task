@@ -13,12 +13,15 @@ Credentials are stored in the withings_credentials table (typed columns).
 Last-sync timestamp is stored in the last_synced column on that same row.
 """
 
+import hmac
 import json
 import os
+import secrets
 import threading
 import traceback
 from datetime import date, datetime, timedelta, timezone
 from typing import List
+from urllib.parse import parse_qs, urlparse
 
 import arrow
 import requests as _requests
@@ -26,6 +29,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+import app_setting_keys as setting_keys
 import models
 import schemas
 from deps import get_db
@@ -499,10 +503,36 @@ def withings_status(db: Session = Depends(get_db)):
     )
 
 
-def get_auth_url() -> str:
+def _store_pending_oauth_state(db: Session, state: str) -> None:
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.WITHINGS_OAUTH_STATE).first()
+    if row:
+        row.value = state
+    else:
+        db.add(models.AppSetting(key=setting_keys.WITHINGS_OAUTH_STATE, value=state))
+    db.commit()
+
+
+def _pop_pending_oauth_state(db: Session) -> str:
+    """Return the pending state value and clear it (one-time use)."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.WITHINGS_OAUTH_STATE).first()
+    if not row:
+        return ""
+    value = row.value
+    db.delete(row)
+    db.commit()
+    return value
+
+
+def get_auth_url(db: Session) -> str:
     """Build the Withings OAuth authorization URL. Raises RuntimeError if not configured.
 
     Shared by the /auth-url endpoint below and integrations.withings.WithingsProvider.
+
+    Generates and persists a random CSRF `state` value that /callback below must see come
+    back unchanged before it will exchange the code -- otherwise an attacker could trick the
+    user's browser into completing an authorization the user never initiated (linking the
+    attacker's own Withings account to this app, so their data flows in as if it were the
+    user's).
     """
     from withings_api import WithingsAuth, AuthScope
     if not WITHINGS_CLIENT_ID or not WITHINGS_SECRET:
@@ -513,14 +543,17 @@ def get_auth_url() -> str:
         callback_uri=WITHINGS_CALLBACK_URI,
         scope=(AuthScope.USER_METRICS, AuthScope.USER_ACTIVITY, AuthScope.USER_SLEEP_EVENTS),
     )
-    return auth.get_authorize_url()
+    url = auth.get_authorize_url()
+    state = parse_qs(urlparse(url).query).get("state", [""])[0]
+    _store_pending_oauth_state(db, state)
+    return url
 
 
 @router.get("/api/withings/auth-url")
-def withings_auth_url():
+def withings_auth_url(db: Session = Depends(get_db)):
     """Return the Withings OAuth authorization URL."""
     try:
-        return {"url": get_auth_url()}
+        return {"url": get_auth_url(db)}
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=503)
 
@@ -566,8 +599,12 @@ def exchange_code(code: str, db: Session) -> dict:
 
 
 @router.get("/api/withings/callback")
-def withings_callback(code: str, db: Session = Depends(get_db)):
+def withings_callback(code: str, state: str = "", db: Session = Depends(get_db)):
     """OAuth callback: exchange authorization code for tokens."""
+    expected_state = _pop_pending_oauth_state(db)
+    if not expected_state or not secrets.compare_digest(state, expected_state):
+        print("[withings] callback error: state mismatch or missing (possible CSRF attempt)")
+        return RedirectResponse(f"{ALLOWED_ORIGIN}/board?withings=error&msg=Invalid+or+expired+authorization+attempt")
     try:
         exchange_code(code, db)
         # Do NOT call do_sync here — it makes 4 sequential Withings API calls
@@ -586,7 +623,6 @@ def withings_sync(db: Session = Depends(get_db)):
     return do_sync(db)
 
 
-import app_setting_keys as setting_keys
 _GOALS_KEY = setting_keys.WITHINGS_HEALTH_GOALS
 _ALL_METRICS = ("steps", "fat_ratio", "weight")
 

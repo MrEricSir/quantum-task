@@ -76,6 +76,38 @@
   transition: background 0.12s, border-color 0.12s;
 }
 
+.sidebar-tag-row {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-tag-row .sidebar-item {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-tag-report {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  padding: 5px 8px 5px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: color 0.15s, background 0.15s, opacity 0.15s;
+}
+
+.sidebar-tag-row:hover .sidebar-tag-report {
+  opacity: 1;
+}
+
+.sidebar-tag-report:hover {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.12);
+}
+
 
 /* Hidden on mobile — tag filter pills are used instead */
 @media (max-width: 640px) {

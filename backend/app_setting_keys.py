@@ -5,6 +5,20 @@ Every key used anywhere in the codebase should be listed here with a comment
 explaining its value format and purpose.
 """
 
+# ── Auth ────────────────────────────────────────────────────────────────────
+# Random secret backing the "session" cookie value. Generated on first login;
+# rotating it (see routers/auth.py's logout) invalidates every outstanding
+# session cookie at once. Deliberately independent of AUTH_PASSWORD -- see
+# deps.py's Auth config comment for why.
+SESSION_SECRET = "session_secret"
+# Integer string: consecutive failed /api/auth/login attempts since the last
+# success or lockout. Reset to "0" on a successful login.
+AUTH_FAILED_ATTEMPTS = "auth_failed_attempts"
+# ISO 8601 UTC timestamp: login is locked out until this time (set once
+# AUTH_FAILED_ATTEMPTS crosses the threshold in routers/auth.py). Empty/absent
+# means not currently locked out.
+AUTH_LOCKOUT_UNTIL = "auth_lockout_until"
+
 # ── Event discovery ────────────────────────────────────────────────────────────
 # Plain text describing the user's interests, used by the LLM event ranker.
 DISCOVERY_INTERESTS = "event_discovery_interests"
@@ -39,6 +53,13 @@ WITHINGS_HEALTH_GOALS = "withings_health_goals"
 # invalid_token failures; cleared on the next successful refresh, so a
 # fresh failure after reconnecting notifies again instead of staying silent.
 WITHINGS_AUTH_FAILURE_NOTIFIED = "withings_auth_failure_notified"
+
+# Pending OAuth "state" value for the in-flight Withings authorization attempt.
+# Set when /api/withings/auth-url is called, checked and cleared on
+# /api/withings/callback -- guards against CSRF (an attacker tricking the user's
+# browser into completing an authorization the user never started). Single value
+# because this is a single-user app with one in-flight OAuth attempt at a time.
+WITHINGS_OAUTH_STATE = "withings_oauth_state"
 
 # ── Telegram ──────────────────────────────────────────────────────────
 # Telegram Bot API token (from @BotFather).
@@ -95,6 +116,13 @@ BRIDGE_LAST_NOTIFIED_RUNNING_JOB = "bridge_last_notified_running_job"
 # Scoped, rotatable secret required as ?token= on GET /api/bridge/install.py — lets that
 # endpoint be curl-able with no session while keeping it separate from AUTH_PASSWORD.
 BRIDGE_INSTALL_TOKEN = "bridge_install_token"
+# Scoped, rotatable secret baked into the served install script (config.json on the
+# user's machine) so the installed qtask-bridge CLI can authenticate its own ongoing
+# requests. Deliberately separate from AUTH_PASSWORD: it lives in a local file on
+# whatever machine ran the installer, and can be rotated (revoking every installed
+# CLI's credential) without changing the real app login password. Accepted as an
+# alternative Bearer credential in main.py's AuthMiddleware.
+BRIDGE_TOKEN = "bridge_token"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.

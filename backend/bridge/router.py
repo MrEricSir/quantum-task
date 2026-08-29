@@ -27,15 +27,17 @@ import app_setting_keys as setting_keys
 from bridge.jobs import (
     _build_prompt,
     _get_bridge_install_token,
+    _get_bridge_token,
     _job_response,
     _queue_fix_job,
     _queue_job_for_card,
     _queue_resume_job,
+    validate_branch_name,
 )
 from bridge.render import render_agent_script, render_install_script
 from bridge.stale import check_stale_bridge_jobs
 from bridge.unblock import unblock_dependent_jobs
-from deps import get_db, AUTH_PASSWORD
+from deps import get_db
 from settings import Settings
 
 router = APIRouter()
@@ -90,15 +92,10 @@ def create_job(body: _JobCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Card has no spec — generate one first")
 
     branch_name = body.branch_name.strip() if body.branch_name else None
-    if branch_name and any(c.isspace() for c in branch_name):
-        raise HTTPException(status_code=400, detail="Branch name can't contain whitespace")
-    if branch_name and branch_name.startswith("-"):
-        # _create_worktree passes this straight into `git worktree add <path> -b <name> ...`
-        # as its own argv element (never through a shell, so no injection risk) -- but a
-        # leading "-" risks git's own arg parser treating it as a flag rather than -b's
-        # value. Simplest to just refuse it here rather than rely on exactly how git's
-        # getopt-style parsing happens to behave for every possible dash-prefixed string.
-        raise HTTPException(status_code=400, detail="Branch name can't start with '-'")
+    if branch_name:
+        error = validate_branch_name(branch_name)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
 
     target_repo = body.target_repo.strip() if body.target_repo else None
 
@@ -425,10 +422,9 @@ def rename_job_branch(job_id: int, body: _JobRenameBranch, db: Session = Depends
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     branch_name = body.branch_name.strip()
-    if not branch_name:
-        raise HTTPException(status_code=400, detail="branch_name can't be empty")
-    if any(c.isspace() for c in branch_name):
-        raise HTTPException(status_code=400, detail="branch_name can't contain whitespace")
+    error = validate_branch_name(branch_name)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
     job.branch_name = branch_name
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -556,20 +552,35 @@ def rotate_bridge_install_token(db: Session = Depends(get_db)):
     return {"token": new_token}
 
 
+@router.post("/api/bridge/token/rotate")
+def rotate_bridge_token(db: Session = Depends(get_db)):
+    """Rotate the bridge API token, invalidating every already-installed CLI's
+    credential. A user re-runs the installer afterward to pick up the new one."""
+    new_token = secrets.token_hex(24)
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_TOKEN).first()
+    if row:
+        row.value = new_token
+    else:
+        db.add(models.AppSetting(key=setting_keys.BRIDGE_TOKEN, value=new_token))
+    db.commit()
+    return {"token": new_token}
+
+
 @router.get("/api/bridge/install.py", response_class=PlainTextResponse)
 def get_install_script(install_token: str = Query(..., alias="token"), db: Session = Depends(get_db)):
     """
     Serve a pre-authed install script for qtask-bridge.
     Requires ?token=<bridge install token> (separate from AUTH_PASSWORD, shown in the
-    GitHub settings modal). The app password and app URL are baked into the served
-    script so the CLI can authenticate its own ongoing requests afterward:
+    GitHub settings modal). A dedicated, independently-rotatable bridge token (not the
+    real app password) and app URL are baked into the served script so the CLI can
+    authenticate its own ongoing requests afterward:
         curl https://your-app/api/bridge/install.py?token=... | python3
     """
     valid_install_token = _get_bridge_install_token(db)
     if not secrets.compare_digest(install_token, valid_install_token):
         raise HTTPException(status_code=401, detail="Invalid install token")
 
-    token = AUTH_PASSWORD or ""
+    token = _get_bridge_token(db)
     app_url = _APP_URL.rstrip("/")
     script = render_install_script(app_url, token)
     return PlainTextResponse(script, media_type="text/plain")

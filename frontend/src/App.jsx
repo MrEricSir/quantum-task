@@ -873,6 +873,7 @@ export default function App() {
           onNavigate={handlePageNavigate}
           onToggleTag={handleTagToggle}
           onClearTags={handleClearTags}
+          onReport={(tag) => setReportTag(tag)}
         />
 
       <PullToRefresh className="board-wrapper" onRefresh={refreshAll}>

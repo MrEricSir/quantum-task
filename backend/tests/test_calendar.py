@@ -295,6 +295,8 @@ class TestGetCalendarEvents:
 class _MockResponse:
     """Minimal requests.Response stub for patching gcal.requests.get."""
     status_code = 200
+    is_redirect = False
+    is_permanent_redirect = False
 
     def __init__(self, content: bytes, url: str = "http://test/test.ics"):
         self.content = content
@@ -528,8 +530,13 @@ def _expected_utc(dtstart_utc: str) -> datetime:
 
 
 def _fetch(ics_content: bytes) -> list[dict]:
-    """Call gcal.fetch_events with mocked HTTP response."""
-    with patch("gcal.requests.get", return_value=_MockResponse(ics_content)):
+    """Call gcal.fetch_events with mocked HTTP response.
+
+    Patches gcal._is_safe_host too since these tests use a fake, unresolvable
+    "test" hostname -- SSRF host-safety validation itself is covered separately
+    in TestFetchEventsSSRFGuard below."""
+    with patch("gcal.requests.get", return_value=_MockResponse(ics_content)), \
+         patch("gcal._is_safe_host", return_value=True):
         return gcal.fetch_events("http://test/test.ics", _FETCH_START, _FETCH_END)
 
 

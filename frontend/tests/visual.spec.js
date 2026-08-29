@@ -782,6 +782,11 @@ test.describe('settings modals', () => {
   })
 
   test('generating a report shows the returned markdown and item count', async ({ page }) => {
+    // Registered after the broader mock below so it wins for this more specific URL
+    // (Playwright tries routes most-recently-registered first).
+    await page.route('**/api/reports/tag/period-counts*', r => r.fulfill({ json: { counts: {
+      today: 1, this_week: 1, last_week: 1, this_month: 1, last_month: 1, last_7_days: 1, last_30_days: 1,
+    }}}))
     await page.route('**/api/reports/tag*', r => r.fulfill({ json: {
       tag_name: 'work', mode: 'done', start: '2026-06-01', end: '2026-06-03',
       items: [{ id: 1, title: 'Ship the fix', date: '2026-06-02' }], count: 1,
@@ -798,6 +803,9 @@ test.describe('settings modals', () => {
   })
 
   test('an empty report shows the "nothing found" message from the server', async ({ page }) => {
+    await page.route('**/api/reports/tag/period-counts*', r => r.fulfill({ json: { counts: {
+      today: 1, this_week: 1, last_week: 1, this_month: 1, last_month: 1, last_7_days: 1, last_30_days: 1,
+    }}}))
     await page.route('**/api/reports/tag*', r => r.fulfill({ json: {
       tag_name: 'work', mode: 'todo', start: '2026-06-01', end: '2026-06-03',
       items: [], count: 0,
@@ -821,6 +829,59 @@ test.describe('settings modals', () => {
     await expect(page.getByLabel('Start date')).toBeVisible()
     await expect(page.getByLabel('End date')).toBeVisible()
     await expect(page.getByRole('button', { name: /this week/i })).toHaveCount(0)
+  })
+
+  test('a period with zero items is disabled and shows a count of 0', async ({ page }) => {
+    await page.route('**/api/reports/tag/period-counts*', r => r.fulfill({ json: { counts: {
+      today: 0, this_week: 3, last_week: 0, this_month: 5, last_month: 0, last_7_days: 3, last_30_days: 5,
+    }}}))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    const lastWeek = page.getByRole('button', { name: /^last week/i })
+    await expect(lastWeek).toBeDisabled()
+    await expect(lastWeek).toContainText('0')
+    const thisWeek = page.getByRole('button', { name: /^this week/i })
+    await expect(thisWeek).toBeEnabled()
+    await expect(thisWeek).toContainText('3')
+  })
+
+  test('an empty-count selected period auto-switches to the first period with items', async ({ page }) => {
+    await page.route('**/api/reports/tag/period-counts*', r => r.fulfill({ json: { counts: {
+      today: 0, this_week: 0, last_week: 4, this_month: 4, last_month: 0, last_7_days: 0, last_30_days: 4,
+    }}}))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    // Default selection is "this_week", which this mock reports as empty.
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await expect(page.getByRole('button', { name: /^last week/i })).toHaveClass(/--active/)
+  })
+
+  test('the Generate button is disabled while the selected period has zero items', async ({ page }) => {
+    await page.route('**/api/reports/tag/period-counts*', r => r.fulfill({ json: { counts: {
+      today: 0, this_week: 0, last_week: 0, this_month: 0, last_month: 0, last_7_days: 0, last_30_days: 0,
+    }}}))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await expect(page.getByRole('button', { name: /^generate$/i })).toBeDisabled()
+  })
+
+  test('a custom range stays generatable even when quick periods have no items', async ({ page }) => {
+    await page.route('**/api/reports/tag/period-counts*', r => r.fulfill({ json: { counts: {
+      today: 0, this_week: 0, last_week: 0, this_month: 0, last_month: 0, last_7_days: 0, last_30_days: 0,
+    }}}))
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /tags/i }).click()
+    const modal = page.getByRole('dialog')
+    await modal.locator('.tag-mgr-row', { hasText: 'work' }).locator('.tag-mgr-report').click()
+    await page.getByRole('button', { name: /custom range/i }).click()
+    await page.getByLabel('Start date').fill('2026-01-01')
+    await page.getByLabel('End date').fill('2026-01-31')
+    await expect(page.getByRole('button', { name: /^generate$/i })).toBeEnabled()
   })
 
   test('calendar settings opens with heading and Save/Cancel footer buttons', async ({ page }) => {
@@ -1214,6 +1275,16 @@ test.describe('sidebar tags', () => {
   test('tag filter buttons are visible', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'work', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'personal', exact: true })).toBeVisible()
+  })
+
+  test('a report icon is present next to each sidebar tag', async ({ page }) => {
+    const row = page.locator('.sidebar-tag-row', { hasText: 'work' })
+    await expect(row.locator('.sidebar-tag-report')).toBeVisible()
+  })
+
+  test('clicking the sidebar report icon opens the report modal for that tag', async ({ page }) => {
+    await page.locator('.sidebar-tag-row', { hasText: 'work' }).locator('.sidebar-tag-report').click()
+    await expect(page.getByRole('heading', { name: 'Report: work' })).toBeVisible()
   })
 })
 

@@ -61,6 +61,22 @@ def _to_local_date(dt: datetime, tz_offset: int) -> date:
     return (naive_utc - timedelta(minutes=tz_offset)).date()
 
 
+def _fetch_candidates(db: Session, tag_id: int, mode: str) -> list[models.Card]:
+    """The tag's completed cards (mode="done") or open, non-archived cards
+    (mode="todo") -- shared by generate_tag_report and count_by_period so
+    there's one query implementation, not two independently-drifting ones."""
+    base = db.query(models.Card).filter(models.Card.tags.any(models.Tag.id == tag_id))
+    if mode == "done":
+        return base.filter(
+            models.Card.completed == True,  # noqa: E712
+            models.Card.completed_at.isnot(None),
+        ).all()
+    return base.filter(
+        models.Card.completed == False,  # noqa: E712
+        models.Card.archived == False,  # noqa: E712
+    ).all()
+
+
 def generate_tag_report(
     db: Session, tag_id: int, mode: str, start: date, end: date, tz_offset: int = 0,
 ) -> dict[str, Any] | None:
@@ -76,24 +92,16 @@ def generate_tag_report(
     if mode not in ("done", "todo"):
         raise ValueError(f"Unknown mode: {mode!r}")
 
-    base = db.query(models.Card).filter(models.Card.tags.any(models.Tag.id == tag_id))
+    candidates = _fetch_candidates(db, tag_id, mode)
 
     items: list[dict] = []
     if mode == "done":
-        candidates = base.filter(
-            models.Card.completed == True,  # noqa: E712
-            models.Card.completed_at.isnot(None),
-        ).all()
         for c in candidates:
             local_date = _to_local_date(c.completed_at, tz_offset)
             if start <= local_date <= end:
                 items.append({"id": c.id, "title": c.title, "date": local_date.isoformat()})
         items.sort(key=lambda i: i["date"])
     else:
-        candidates = base.filter(
-            models.Card.completed == False,  # noqa: E712
-            models.Card.archived == False,  # noqa: E712
-        ).all()
         for c in candidates:
             if c.scheduled_at is None:
                 items.append({"id": c.id, "title": c.title, "date": None})
@@ -112,6 +120,40 @@ def generate_tag_report(
         "items": items,
         "count": len(items),
     }
+
+
+def count_by_period(
+    db: Session, tag_id: int, mode: str, today: date, tz_offset: int = 0,
+) -> dict[str, int] | None:
+    """Item count for each of PERIOD_CHOICES, computed in one pass over the
+    tag's candidate cards rather than one query per period. Used by the
+    webapp to disable a quick-pick period that would generate an empty
+    report before the user even clicks Generate. Returns None if tag_id
+    doesn't exist. An undated "todo"-mode backlog item counts toward every
+    period, matching generate_tag_report's own inclusion rule."""
+    tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not tag:
+        return None
+    if mode not in ("done", "todo"):
+        raise ValueError(f"Unknown mode: {mode!r}")
+
+    candidates = _fetch_candidates(db, tag_id, mode)
+    date_field = "completed_at" if mode == "done" else "scheduled_at"
+
+    dated: list[date] = []
+    undated_count = 0
+    for c in candidates:
+        raw = getattr(c, date_field)
+        if raw is None:
+            undated_count += 1  # only reachable for mode="todo"
+            continue
+        dated.append(_to_local_date(raw, tz_offset))
+
+    counts: dict[str, int] = {}
+    for period in PERIOD_CHOICES:
+        start, end = resolve_period(period, today)
+        counts[period] = undated_count + sum(1 for d in dated if start <= d <= end)
+    return counts
 
 
 def render_markdown(report: dict[str, Any]) -> str:

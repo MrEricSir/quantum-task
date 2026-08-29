@@ -43,18 +43,32 @@ def db():
 # ── get_auth_url ────────────────────────────────────────────────────────────
 
 class TestGetAuthUrl:
-    def test_raises_when_not_configured(self, monkeypatch):
+    def test_raises_when_not_configured(self, db, monkeypatch):
         monkeypatch.setattr(withings, "WITHINGS_CLIENT_ID", "")
         monkeypatch.setattr(withings, "WITHINGS_SECRET", "")
         with pytest.raises(RuntimeError, match="not configured"):
-            withings.get_auth_url()
+            withings.get_auth_url(db)
 
-    def test_returns_url_when_configured(self, monkeypatch):
+    def test_returns_url_when_configured(self, db, monkeypatch):
         monkeypatch.setattr(withings, "WITHINGS_CLIENT_ID", "cid")
         monkeypatch.setattr(withings, "WITHINGS_SECRET", "secret")
         with patch("withings_api.WithingsAuth") as mock_auth_cls:
-            mock_auth_cls.return_value.get_authorize_url.return_value = "https://withings.example/auth"
-            assert withings.get_auth_url() == "https://withings.example/auth"
+            mock_auth_cls.return_value.get_authorize_url.return_value = (
+                "https://withings.example/auth?state=abc123"
+            )
+            assert withings.get_auth_url(db) == "https://withings.example/auth?state=abc123"
+
+    def test_persists_state_for_later_validation(self, db, monkeypatch):
+        monkeypatch.setattr(withings, "WITHINGS_CLIENT_ID", "cid")
+        monkeypatch.setattr(withings, "WITHINGS_SECRET", "secret")
+        with patch("withings_api.WithingsAuth") as mock_auth_cls:
+            mock_auth_cls.return_value.get_authorize_url.return_value = (
+                "https://withings.example/auth?state=abc123"
+            )
+            withings.get_auth_url(db)
+        row = db.query(models.AppSetting).filter_by(key="withings_oauth_state").first()
+        assert row is not None
+        assert row.value == "abc123"
 
 
 # ── exchange_code ─────────────────────────────────────────────────────────────
@@ -97,11 +111,11 @@ class TestExchangeCode:
 # ── WithingsProvider ────────────────────────────────────────────────────────
 
 class TestWithingsProvider:
-    def test_auth_url_delegates(self):
+    def test_auth_url_delegates(self, db):
         provider = WithingsProvider()
         with patch.object(withings, "get_auth_url", return_value="https://auth") as mock:
-            assert provider.auth_url() == "https://auth"
-        mock.assert_called_once_with()
+            assert provider.auth_url(db) == "https://auth"
+        mock.assert_called_once_with(db)
 
     def test_exchange_code_delegates(self, db):
         provider = WithingsProvider()

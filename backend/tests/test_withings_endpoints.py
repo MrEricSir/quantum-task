@@ -156,3 +156,94 @@ class TestWithingsDisconnect:
         resp = client.delete("/api/withings/disconnect")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+
+# ── GET /api/withings/callback — CSRF state validation ────────────────────────
+
+class TestWithingsCallbackState:
+
+    def _mock_auth_url(self, monkeypatch, state="realstate123"):
+        import routers.withings as withings_module
+        from unittest.mock import patch
+
+        monkeypatch.setattr(withings_module, "WITHINGS_CLIENT_ID", "cid")
+        monkeypatch.setattr(withings_module, "WITHINGS_SECRET", "secret")
+        return patch(
+            "withings_api.WithingsAuth.get_authorize_url",
+            return_value=f"https://account.withings.com/oauth2_user/authorize2?state={state}",
+        )
+
+    def test_callback_rejects_missing_state(self, client, db, monkeypatch):
+        with self._mock_auth_url(monkeypatch):
+            client.get("/api/withings/auth-url")
+        resp = client.get("/api/withings/callback?code=somecode", follow_redirects=False)
+        assert resp.status_code in (302, 307)
+        assert "error" in resp.headers["location"]
+        assert db.query(models.WithingsCredentials).first() is None
+
+    def test_callback_rejects_wrong_state(self, client, db, monkeypatch):
+        with self._mock_auth_url(monkeypatch):
+            client.get("/api/withings/auth-url")
+        resp = client.get(
+            "/api/withings/callback?code=somecode&state=attacker-supplied",
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 307)
+        assert "error" in resp.headers["location"]
+        assert db.query(models.WithingsCredentials).first() is None
+
+    def test_callback_accepts_matching_state(self, client, db, monkeypatch):
+        import routers.withings as withings_module
+        from unittest.mock import MagicMock, patch as _patch
+
+        with self._mock_auth_url(monkeypatch, state="realstate123"):
+            client.get("/api/withings/auth-url")
+
+        resp = MagicMock()
+        resp.json.return_value = {
+            "status": 0,
+            "body": {
+                "access_token": "tok_new",
+                "refresh_token": "ref_new",
+                "userid": 555,
+                "expires_in": 10800,
+            },
+        }
+        with _patch.object(withings_module._requests, "post", return_value=resp):
+            callback_resp = client.get(
+                "/api/withings/callback?code=somecode&state=realstate123",
+                follow_redirects=False,
+            )
+        assert callback_resp.status_code in (302, 307)
+        assert "connected" in callback_resp.headers["location"]
+        assert db.query(models.WithingsCredentials).first() is not None
+
+    def test_state_is_single_use(self, client, db, monkeypatch):
+        """A replayed callback with the same state (e.g. an attacker resending an
+        intercepted redirect) must fail once the state has already been consumed."""
+        import routers.withings as withings_module
+        from unittest.mock import MagicMock, patch as _patch
+
+        with self._mock_auth_url(monkeypatch, state="realstate123"):
+            client.get("/api/withings/auth-url")
+
+        resp = MagicMock()
+        resp.json.return_value = {
+            "status": 0,
+            "body": {
+                "access_token": "tok_new",
+                "refresh_token": "ref_new",
+                "userid": 555,
+                "expires_in": 10800,
+            },
+        }
+        with _patch.object(withings_module._requests, "post", return_value=resp):
+            client.get(
+                "/api/withings/callback?code=somecode&state=realstate123",
+                follow_redirects=False,
+            )
+            replay_resp = client.get(
+                "/api/withings/callback?code=somecode&state=realstate123",
+                follow_redirects=False,
+            )
+        assert "error" in replay_resp.headers["location"]

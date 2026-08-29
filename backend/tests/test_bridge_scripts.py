@@ -557,7 +557,6 @@ class TestBridgeScriptsExemptFromAuth:
     @pytest.fixture
     def auth_client(self, monkeypatch):
         monkeypatch.setattr("main.AUTH_PASSWORD", "s3cret")
-        monkeypatch.setattr("main.SESSION_TOKEN", "unrelated-session-token")
         app.dependency_overrides[get_db] = override_get_db
         with TestClient(app) as c:
             yield c
@@ -592,6 +591,70 @@ class TestBridgeScriptsExemptFromAuth:
         and the install.py exemption above isn't just masking a broken middleware."""
         res = auth_client.get("/api/bridge/jobs/card/1/latest")
         assert res.status_code == 401
+
+    def test_served_install_script_does_not_bake_in_the_real_auth_password(self, auth_client):
+        """Regression guard: the install script must bake in a separate, scoped
+        BRIDGE_TOKEN, never the real login password -- leaking a copy of the
+        installed CLI's config.json must not hand out full account access."""
+        token_res = auth_client.get(
+            "/api/bridge/install-token", headers={"Authorization": "Bearer s3cret"}
+        )
+        install_token = token_res.json()["token"]
+        res = auth_client.get(f"/api/bridge/install.py?token={install_token}")
+        assert "s3cret" not in res.text
+
+    def test_bridge_token_is_accepted_as_bearer_credential(self, auth_client):
+        token_res = auth_client.get(
+            "/api/bridge/install-token", headers={"Authorization": "Bearer s3cret"}
+        )
+        install_token = token_res.json()["token"]
+        script = auth_client.get(f"/api/bridge/install.py?token={install_token}").text
+        import re
+        m = re.search(r'TOKEN\s*=\s*"([0-9a-f]{48})"', script)
+        assert m, "expected a hex bridge token baked into the served script"
+        bridge_token = m.group(1)
+        assert bridge_token != "s3cret"
+
+        res = auth_client.get(
+            "/api/bridge/jobs/card/1/latest",
+            headers={"Authorization": f"Bearer {bridge_token}"},
+        )
+        assert res.status_code != 401
+
+    def test_wrong_bridge_token_is_rejected(self, auth_client):
+        res = auth_client.get(
+            "/api/bridge/jobs/card/1/latest",
+            headers={"Authorization": "Bearer not-the-real-bridge-token"},
+        )
+        assert res.status_code == 401
+
+    def test_rotating_bridge_token_invalidates_the_old_one(self, auth_client):
+        token_res = auth_client.get(
+            "/api/bridge/install-token", headers={"Authorization": "Bearer s3cret"}
+        )
+        install_token = token_res.json()["token"]
+        script = auth_client.get(f"/api/bridge/install.py?token={install_token}").text
+        import re
+        old_bridge_token = re.search(r'TOKEN\s*=\s*"([0-9a-f]{48})"', script).group(1)
+
+        rotate_res = auth_client.post(
+            "/api/bridge/token/rotate", headers={"Authorization": "Bearer s3cret"}
+        )
+        assert rotate_res.status_code == 200
+        new_bridge_token = rotate_res.json()["token"]
+        assert new_bridge_token != old_bridge_token
+
+        old_res = auth_client.get(
+            "/api/bridge/jobs/card/1/latest",
+            headers={"Authorization": f"Bearer {old_bridge_token}"},
+        )
+        assert old_res.status_code == 401
+
+        new_res = auth_client.get(
+            "/api/bridge/jobs/card/1/latest",
+            headers={"Authorization": f"Bearer {new_bridge_token}"},
+        )
+        assert new_res.status_code != 401
 
 
 # ── GET /api/bridge/agent.py ──────────────────────────────────────────────────

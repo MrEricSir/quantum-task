@@ -406,6 +406,8 @@ def _route_message(text: str, tz_offset: int, chat_id: str = "") -> str:
             "<b>move [task] to [date]</b> — reschedule a task\n"
             "<b>move all overdue to next week</b> — bulk reschedule\n"
             "<b>avoiding</b> — see what you've been putting off\n"
+            "<b>report on [tag] for [period]</b> — done or to-do report for a tag, e.g. "
+            "\"report on client-x for last month\"\n"
             "<b>undo</b> — reverse your last action\n"
             "<b>/build [task]</b> — queue a Claude Code build job for a card\n"
             "<b>anything else</b> — I'll figure it out or capture it as a task\n\n"

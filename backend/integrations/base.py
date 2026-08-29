@@ -58,9 +58,12 @@ class HealthProvider(Protocol):
     routers/withings.py's do_sync() docstring for the production incident (two unsynchronized
     callers racing a refresh) this constraint protects against. `db` is typed loosely (`Any`)
     here rather than importing SQLAlchemy's `Session` into this otherwise dependency-free file.
+
+    auth_url() also takes `db`: it must persist a per-attempt CSRF `state` value for
+    exchange_code()'s caller to validate against on the OAuth callback.
     """
 
-    def auth_url(self) -> str:
+    def auth_url(self, db: Any) -> str:
         """Build the provider's OAuth authorization URL. Raises if not configured."""
         ...
 

@@ -254,6 +254,58 @@ class TestTelegramTest:
         assert res.json()["ok"] is False
 
 
+# ── POST /api/telegram/webhook ─────────────────────────────────────────────────
+
+class TestTelegramWebhook:
+
+    def _set_webhook_secret(self, secret):
+        from settings import Settings
+        db = TestingSessionLocal()
+        Settings(db).set(keys.TELEGRAM_WEBHOOK_SECRET, secret)
+        db.commit()
+        db.close()
+
+    def test_rejects_when_no_secret_registered_yet(self, client):
+        """Regression guard: before /register-webhook has ever run, there's no
+        secret to check against -- the endpoint must fail closed (reject) rather
+        than silently processing an unauthenticated, forgeable update."""
+        with patch("telegram.router.handle_update") as mock_handle:
+            res = client.post("/api/telegram/webhook", json={"message": {"text": "hi"}})
+        assert res.status_code == 401
+        assert res.json()["ok"] is False
+        mock_handle.assert_not_called()
+
+    def test_rejects_missing_header_once_secret_is_set(self, client):
+        self._set_webhook_secret("realsecret")
+        with patch("telegram.router.handle_update") as mock_handle:
+            res = client.post("/api/telegram/webhook", json={"message": {"text": "hi"}})
+        assert res.status_code == 401
+        mock_handle.assert_not_called()
+
+    def test_rejects_wrong_secret(self, client):
+        self._set_webhook_secret("realsecret")
+        with patch("telegram.router.handle_update") as mock_handle:
+            res = client.post(
+                "/api/telegram/webhook",
+                json={"message": {"text": "hi"}},
+                headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"},
+            )
+        assert res.status_code == 401
+        mock_handle.assert_not_called()
+
+    def test_accepts_matching_secret(self, client):
+        self._set_webhook_secret("realsecret")
+        with patch("telegram.router.handle_update") as mock_handle:
+            res = client.post(
+                "/api/telegram/webhook",
+                json={"message": {"text": "hi"}},
+                headers={"X-Telegram-Bot-Api-Secret-Token": "realsecret"},
+            )
+        assert res.status_code == 200
+        assert res.json()["ok"] is True
+        mock_handle.assert_called_once()
+
+
 # ── Bot reply function tests ───────────────────────────────────────────────────
 # These test the core bot logic directly (no HTTP layer needed).
 

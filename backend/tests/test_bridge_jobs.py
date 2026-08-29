@@ -125,6 +125,54 @@ def _make_comment(item_id, github_id, author="coderabbitai[bot]", body="Consider
         return comment.id
 
 
+# ── validate_branch_name ──────────────────────────────────────────────────────
+
+class TestValidateBranchName:
+
+    def test_valid_name_returns_none(self):
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("qtask/7-fix-thing") is None
+
+    def test_empty_is_rejected(self):
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("") is not None
+
+    def test_whitespace_is_rejected(self):
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("has space") is not None
+
+    def test_leading_dash_is_rejected(self):
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("-flag-like") is not None
+
+    def test_dotdot_is_rejected(self):
+        """The finding this guards against: a branch name string used to build a
+        filesystem worktree path (WORKTREES_ROOT/repo_slug/branch) before git's own
+        ref-name rules would ever reject it."""
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("../../etc/passwd") is not None
+        assert validate_branch_name("foo/../bar") is not None
+
+    def test_control_characters_are_rejected(self):
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("bad\x00name") is not None
+
+    def test_git_special_characters_are_rejected(self):
+        from bridge.jobs import validate_branch_name
+        for bad in ["a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "a\\b"]:
+            assert validate_branch_name(bad) is not None, f"expected rejection for {bad!r}"
+
+    def test_leading_or_trailing_slash_is_rejected(self):
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("/leading") is not None
+        assert validate_branch_name("trailing/") is not None
+
+    def test_internal_slash_is_allowed(self):
+        """qtask/<id>-<slug> and custom namespaced names like feature/foo are normal."""
+        from bridge.jobs import validate_branch_name
+        assert validate_branch_name("qtask/12-my-feature") is None
+
+
 # ── POST /api/bridge/jobs ─────────────────────────────────────────────────────
 
 class TestCreateBridgeJob:
@@ -214,6 +262,28 @@ class TestCreateBridgeJob:
         card_id = _make_card(spec="s")
         res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "-not-a-flag"})
         assert res.status_code == 400
+
+    def test_400_for_branch_name_containing_dotdot(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "../../etc/passwd"})
+        assert res.status_code == 400
+
+    def test_400_for_branch_name_with_control_characters(self, client):
+        card_id = _make_card(spec="s")
+        res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": "bad\x00name"})
+        assert res.status_code == 400
+
+    def test_400_for_branch_name_with_git_special_characters(self, client):
+        card_id = _make_card(spec="s")
+        for bad in ["a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "a\\b"]:
+            res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": bad})
+            assert res.status_code == 400, f"expected 400 for branch_name={bad!r}"
+
+    def test_400_for_branch_name_starting_or_ending_with_slash(self, client):
+        card_id = _make_card(spec="s")
+        for bad in ["/leading", "trailing/"]:
+            res = client.post("/api/bridge/jobs", json={"card_id": card_id, "branch_name": bad})
+            assert res.status_code == 400, f"expected 400 for branch_name={bad!r}"
 
     def test_requested_branch_name_appears_in_next_pending_payload(self, client):
         card_id = _make_card(spec="s")
@@ -731,6 +801,16 @@ class TestRenameBranchJob:
     def test_400_for_branch_name_with_whitespace(self, client):
         job_id = self._make_started_job(client)
         res = client.post(f"/api/bridge/jobs/{job_id}/rename-branch", json={"branch_name": "bad name"})
+        assert res.status_code == 400
+
+    def test_400_for_branch_name_containing_dotdot(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/rename-branch", json={"branch_name": "../escape"})
+        assert res.status_code == 400
+
+    def test_400_for_branch_name_starting_with_a_dash(self, client):
+        job_id = self._make_started_job(client)
+        res = client.post(f"/api/bridge/jobs/{job_id}/rename-branch", json={"branch_name": "-flag-like"})
         assert res.status_code == 400
 
 

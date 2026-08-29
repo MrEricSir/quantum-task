@@ -7,6 +7,7 @@ import hmac
 import secrets
 
 from fastapi import APIRouter, Depends, Header, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -171,8 +172,12 @@ async def telegram_webhook(
     throttles CPU after the response is sent so BackgroundTasks won't run."""
     s = Settings(db)
     secret = s.telegram_webhook_secret
-    if secret and not hmac.compare_digest(x_telegram_bot_api_secret_token or "", secret):
-        return {"ok": False}
+    # Fail closed: with no secret registered yet, there is no way to tell a real
+    # Telegram update from one forged by anyone who can reach this URL, so reject
+    # rather than silently processing it. A secret is set the moment
+    # /api/telegram/register-webhook is first called (see above).
+    if not secret or not hmac.compare_digest(x_telegram_bot_api_secret_token or "", secret):
+        return JSONResponse({"ok": False}, status_code=401)
 
     body = await request.json()
     handle_update(body)

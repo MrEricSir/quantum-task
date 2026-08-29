@@ -6,7 +6,9 @@ No authentication required. Uses Google Calendar's
 """
 
 import base64
+import ipaddress
 import re
+import socket
 import urllib.parse
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 
@@ -15,6 +17,9 @@ import icalendar
 import recurring_ical_events
 
 _GCAL_ICAL_URL_RE = re.compile(r'calendar\.google\.com/calendar/ical/([^/]+)/')
+
+_ALLOWED_FETCH_SCHEMES = {"http", "https"}
+_MAX_FETCH_REDIRECTS = 5
 
 _OOO_TITLE_RE = re.compile(
     r'\b(out\s+of\s+office|OOO|PTO|vacation|annual\s+leave|day\s+off|time\s+off|on\s+leave)\b',
@@ -73,6 +78,49 @@ def normalize_ical_url(url: str) -> str:
             return f"https://calendar.google.com/calendar/ical/{calendar_id}/public/basic.ics"
 
     return url
+
+
+def _is_safe_host(hostname: str) -> bool:
+    """Reject hostnames that resolve to a private, loopback, link-local, or otherwise
+    non-public address -- blocks SSRF to cloud metadata endpoints (169.254.169.254) and
+    internal network services via a stored feed URL that gets refetched automatically
+    forever (calendar mappings, discovery feeds) with no further attacker action needed."""
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+    for info in addrinfos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
+def _assert_safe_fetch_url(url: str) -> None:
+    """Raise ValueError unless url is a plain http(s) URL resolving only to public
+    addresses. Called both before the initial request and before following each
+    redirect hop, so a feed can't bounce the fetch to an internal address either."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in _ALLOWED_FETCH_SCHEMES:
+        raise ValueError(f"Refusing to fetch calendar feed with scheme {parsed.scheme!r} (only http/https allowed).")
+    if not parsed.hostname:
+        raise ValueError("Calendar feed URL has no host.")
+    if not _is_safe_host(parsed.hostname):
+        raise ValueError(
+            f"Refusing to fetch calendar feed at host {parsed.hostname!r} -- it resolves to a "
+            "private, internal, or otherwise disallowed address."
+        )
 
 
 # In-memory cache for iCal feed fetches.
@@ -181,11 +229,27 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
     Each dict: id, title, description, start (datetime), end (datetime|None), all_day (bool)
     """
     ical_url = normalize_ical_url(ical_url)
+    _assert_safe_fetch_url(ical_url)
     # (connect, read) -- most real iCal servers respond in a few seconds; this still gives a
     # genuinely slow feed real headroom without letting one pathological feed hold up an
     # entire request for the better part of a minute (was (10, 45) -- see
     # DISCOVERY_IMPROVEMENTS.md's "slow to load" Phase 1 for why this got tightened).
-    response = requests.get(ical_url, timeout=(5, 15), headers=_FETCH_HEADERS)
+    # Redirects are followed manually (not via allow_redirects=True) so each hop's target
+    # gets the same SSRF check as the original URL -- a feed can't pass validation once and
+    # then redirect the actual request to an internal address.
+    current_url = ical_url
+    for _ in range(_MAX_FETCH_REDIRECTS):
+        response = requests.get(current_url, timeout=(5, 15), headers=_FETCH_HEADERS, allow_redirects=False)
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            if not location:
+                break
+            current_url = urllib.parse.urljoin(current_url, location)
+            _assert_safe_fetch_url(current_url)
+            continue
+        break
+    else:
+        raise ValueError(f"Too many redirects while fetching calendar feed at {ical_url!r}.")
     response.raise_for_status()
 
     # Detect when the server redirected to a login/auth page instead of returning iCal data.

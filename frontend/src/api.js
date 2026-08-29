@@ -847,6 +847,14 @@ export async function fetchTagReport(tagId, mode, { period, start, end } = {}) {
   return res.json()
 }
 
+export async function fetchTagReportPeriodCounts(tagId, mode) {
+  const params = new URLSearchParams({ tag_id: tagId, mode })
+  const res = await apiFetch(`/api/reports/tag/period-counts?${params.toString()}`)
+  if (!res.ok) throw new Error('Failed to load period counts')
+  const { counts } = await res.json()
+  return counts
+}
+
 // Triggers a browser download of the user's data export. Goes through
 // apiFetch (rather than a bare `window.location.href` navigation, which
 // can't carry custom headers) so this stays consistent with every other

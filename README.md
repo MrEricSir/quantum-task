@@ -216,6 +216,13 @@ the command can be fetched by a bare `curl` on a machine with no prior login. If
 somewhere it might leak, click **Rotate token** in the same panel; that invalidates the old
 command without touching your app password or any machine you've already installed on.
 
+The script itself also bakes in a second, separate credential — the one the installed CLI
+uses for its own ongoing requests (fetching jobs, posting results) after setup finishes. That's
+also independent of your app password: if a laptop with the CLI installed is ever lost or
+compromised, `POST /api/bridge/token/rotate` invalidates that credential everywhere without
+forcing a login-password change, at the cost of needing to re-run the installer on every
+machine you still use.
+
 This installs `qtask-bridge` into your PATH, creates `~/.config/qtask-bridge/config.toml`, and
 configures git to ignore the files the bridge writes into every worktree (`BRIDGE_SPEC.md`,
 `.claude/settings.local.json`, `.env.qtask`) **globally** — via git's own `core.excludesFile`
@@ -584,10 +591,12 @@ Configured in **Settings → Telegram** — set a send time for each:
 - Create and manage color-coded tags
 - Filter any page to a single tag via the sidebar
 - Tags are auto-suggested during AI Quick Add parsing
-- Report icon on any tag (Settings → Tags) generates a "Done" or "To do" list for that tag
-  over a period (today/this week/last week/this month/last month/last 7 or 30 days, or a
-  custom range) — a copy-pasteable Markdown list, e.g. for meeting notes. Same generator
-  the Telegram bot's report intent uses, see [Telegram Integration](#telegram-integration)
+- Report icon on any tag — in the sidebar, or Settings → Tags — generates a "Done" or "To do"
+  list for that tag over a period (today/this week/last week/this month/last month/last 7 or
+  30 days, or a custom range) — a copy-pasteable Markdown list, e.g. for meeting notes. Quick
+  periods with nothing to report are disabled (shown with their item count) instead of letting
+  you generate an empty report. Same generator the Telegram bot's report intent uses, see
+  [Telegram Integration](#telegram-integration)
 
 ### Archive
 - Completed tasks collected in a collapsible section, sorted by completion time
@@ -657,6 +666,8 @@ In production, `DATABASE_URL` points at local container disk
 | `AUTH_PASSWORD` | _(unset)_ | Login password — auth disabled if not set |
 
 When set, the password is also accepted as a Bearer token (`Authorization: Bearer <password>`) for API clients such as the iOS Shortcut.
+
+The session cookie issued on login is a random secret independent of the password itself, so logging out actually revokes access (it invalidates every outstanding session cookie, not just the browser that clicked logout) rather than only clearing one browser's cookie. Repeated failed login attempts (5 within one lockout window) lock out further attempts — including with the correct password — for 15 minutes.
 
 ### Semantic search (optional)
 

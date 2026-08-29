@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from deps import get_db, local_date, utc_offset_minutes
-from reports.generate import PERIOD_CHOICES, generate_tag_report, render_markdown, resolve_period
+from reports.generate import (
+    PERIOD_CHOICES, count_by_period, generate_tag_report, render_markdown, resolve_period,
+)
 
 router = APIRouter()
 
@@ -44,3 +46,17 @@ def get_tag_report(
 
     report["markdown"] = render_markdown(report)
     return report
+
+
+@router.get("/api/reports/tag/period-counts")
+def get_tag_report_period_counts(request: Request, tag_id: int, mode: str, db: Session = Depends(get_db)):
+    """Item count for each quick-pick period, so the webapp can disable one
+    that would generate an empty report before the user clicks Generate."""
+    if mode not in ("done", "todo"):
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode!r}")
+
+    today = local_date(request)
+    counts = count_by_period(db, tag_id, mode, today, utc_offset_minutes(request))
+    if counts is None:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return {"counts": counts}

@@ -1,5 +1,4 @@
 """Shared FastAPI dependencies and app-wide configuration."""
-import hmac as _hmac
 import os
 from datetime import date
 
@@ -45,12 +44,12 @@ def reasoning_kwargs() -> dict:
 
 
 # ── Auth config ───────────────────────────────────────────────────────────────
+# The session cookie's value (app_setting_keys.SESSION_SECRET, see settings.py and
+# routers/auth.py) is a random secret stored in the DB, not derived from AUTH_PASSWORD --
+# that makes logout a real revocation (rotating it invalidates every outstanding
+# cookie) independent of the login password.
 
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
-SESSION_TOKEN = (
-    _hmac.new(AUTH_PASSWORD.encode(), b"session-v1", "sha256").hexdigest()
-    if AUTH_PASSWORD else ""
-)
 
 # ── DB dependency ─────────────────────────────────────────────────────────────
 

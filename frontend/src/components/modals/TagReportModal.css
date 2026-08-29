@@ -59,6 +59,21 @@
   color: #fff;
 }
 
+.tag-report-period-btn--empty {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tag-report-period-btn--empty:hover {
+  border-color: var(--border);
+}
+
+.tag-report-period-count {
+  margin-left: 4px;
+  opacity: 0.75;
+  font-size: 11px;
+}
+
 .tag-report-custom-link {
   background: none;
   border: none;

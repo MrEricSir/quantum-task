@@ -29,8 +29,8 @@ DEFAULT_LOOKBACK_DAYS = 89
 class WithingsProvider:
     """Implements HealthProvider by delegating to routers/withings.py."""
 
-    def auth_url(self) -> str:
-        return _withings.get_auth_url()
+    def auth_url(self, db: Any) -> str:
+        return _withings.get_auth_url(db)
 
     def exchange_code(self, code: str, db: Any) -> dict:
         return _withings.exchange_code(code, db)
