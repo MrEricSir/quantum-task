@@ -21,7 +21,9 @@ Tests are in `frontend/tests/visual.spec.js`. They check element presence and vi
 
 - All API calls are mocked — no backend needed
 - Clock is frozen to `2026-06-03T10:00:00`
-- 34 tests covering: app shell, today page, tasks board, notes, habits, quick-add modal (input + confirm screen), settings modals (tag manager, calendar settings), offline banner
+- Covers: app shell, today page, tasks board, notes, habits, quick-add modal (input + confirm screen), settings modals (tag manager, calendar settings), offline banner, card detail panel (assist/breakdown/code tabs, GitHub panel), and more — see the file for the current full list.
+
+Separately, `cd frontend && npx vitest run` covers pure-logic unit tests (`src/lib/*.test.js`) and extracted-hook tests (`src/hooks/*.test.js`, e.g. `useAssistChat`/`useAssistBreakdown`/`useAssistCode`) via `@testing-library/react`'s `renderHook`. Add a hook-level test here when extracting stateful logic out of a component, rather than only relying on Playwright's end-to-end coverage.
 
 
 ## Backend Architecture
