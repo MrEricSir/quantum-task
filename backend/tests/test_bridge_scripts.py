@@ -1026,7 +1026,7 @@ class TestAgentScript:
         res = client.get("/api/bridge/agent.py")
         assert "def _start_heartbeat" in res.text
         assert "/heartbeat" in res.text
-        assert "_start_heartbeat(cfg, job_id)" in res.text
+        assert "_start_heartbeat(cfg, job_id, cwd)" in res.text
 
     def test_verification_runs_before_completion(self, client):
         """Verification (test_cmd + acceptance check) must run -- and the
@@ -1733,6 +1733,71 @@ class TestCommitIfDirty:
         agent_core._commit_if_dirty(str(repo), 7, "resuming a previous session")
         log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=repo, capture_output=True, text=True)
         assert "resuming a previous session" in log.stdout
+
+
+class TestCheckForRequestedRename:
+    """The bridge-side half of the mid-session branch rename flow (Code tab edits the
+    branch name while a job is running -- see bridge/router.py's request_job_rename).
+    Checked on every heartbeat tick (agent_core._start_heartbeat); `git branch -m` only
+    touches refs, not the working tree, so it's safe to run alongside the coding agent."""
+
+    def _init_repo(self, tmp_path, branch="qtask/7-original"):
+        subprocess.run(["git", "init", "-q", "--initial-branch=" + branch], cwd=tmp_path)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path)
+        (tmp_path / "README.md").write_text("hello\n")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path)
+        subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=tmp_path)
+        return tmp_path
+
+    def _current_branch(self, repo):
+        return subprocess.run(
+            ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def test_renames_the_current_branch_when_requested_differs(self, tmp_path, monkeypatch):
+        repo = self._init_repo(tmp_path)
+        calls = []
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: calls.append((method, path, body)))
+
+        agent_core._check_for_requested_rename({}, 42, str(repo), {"requested_branch_name": "qtask/7-renamed"})
+
+        assert self._current_branch(repo) == "qtask/7-renamed"
+        assert calls == [("POST", "/api/bridge/jobs/42/rename-branch", {"branch_name": "qtask/7-renamed"})]
+
+    def test_noop_when_no_rename_requested(self, tmp_path, monkeypatch):
+        repo = self._init_repo(tmp_path)
+        calls = []
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: calls.append((method, path, body)))
+
+        agent_core._check_for_requested_rename({}, 42, str(repo), {"requested_branch_name": None})
+        agent_core._check_for_requested_rename({}, 42, str(repo), {})
+        agent_core._check_for_requested_rename({}, 42, str(repo), None)
+
+        assert self._current_branch(repo) == "qtask/7-original"
+        assert calls == []
+
+    def test_noop_when_requested_name_matches_current(self, tmp_path, monkeypatch):
+        repo = self._init_repo(tmp_path)
+        calls = []
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: calls.append((method, path, body)))
+
+        agent_core._check_for_requested_rename({}, 42, str(repo), {"requested_branch_name": "qtask/7-original"})
+
+        assert calls == []
+
+    def test_does_not_call_the_api_when_the_git_rename_fails(self, tmp_path, monkeypatch, capsys):
+        repo = self._init_repo(tmp_path)
+        # A branch named "taken" already exists -- `git branch -m taken` onto it fails.
+        subprocess.run(["git", "branch", "taken"], cwd=repo, check=True)
+        calls = []
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: calls.append((method, path, body)))
+
+        agent_core._check_for_requested_rename({}, 42, str(repo), {"requested_branch_name": "taken"})
+
+        assert self._current_branch(repo) == "qtask/7-original"
+        assert calls == []
+        assert "WARNING" in capsys.readouterr().out
 
 
 class TestGitDiffStat:

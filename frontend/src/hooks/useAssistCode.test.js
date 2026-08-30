@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
   queueResumeJob: vi.fn(),
   queueCompanionJob: vi.fn(),
   getKnownBridgeRepos: vi.fn(),
+  requestBranchRename: vi.fn(),
 }))
 
 const taskNoSpec = { id: 3, title: 'Ship the thing', spec: null }
@@ -62,6 +63,50 @@ describe('useAssistCode — loading on open', () => {
   it('computes a slugified default branch name from the task title', () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     expect(result.current.defaultBranch).toBe('qtask/4-ship-the-other-thing')
+  })
+
+  it('seeds branchOverride from the root job\'s actual branch name once fetched', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 1, status: 'running', branch_name: 'qtask/4-real-name' }, companion: null,
+    })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+
+    await waitFor(() => expect(result.current.branchOverride).toBe('qtask/4-real-name'))
+  })
+
+  it('leaves branchOverride blank when the root job has no branch_name yet', async () => {
+    api.getBridgeJobChain.mockResolvedValue({ root: { id: 1, status: 'pending', branch_name: null }, companion: null })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+
+    await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
+    expect(result.current.branchOverride).toBe('')
+  })
+})
+
+describe('useAssistCode — branch field editability', () => {
+  it.each([
+    ['no job at all', null],
+    ['pending', { status: 'pending' }],
+    ['running', { status: 'running' }],
+  ])('is enabled when %s', async (_label, bridgeJobFixture) => {
+    api.getBridgeJobChain.mockResolvedValue({ root: bridgeJobFixture, companion: null })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalled())
+
+    expect(result.current.branchFieldDisabled).toBe(false)
+  })
+
+  it.each([
+    ['done', { status: 'done' }],
+    ['error', { status: 'error' }],
+    ['stalled', { status: 'stalled' }],
+    ['blocked', { status: 'blocked' }],
+  ])('is disabled when %s', async (_label, bridgeJobFixture) => {
+    api.getBridgeJobChain.mockResolvedValue({ root: bridgeJobFixture, companion: null })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalled())
+
+    expect(result.current.branchFieldDisabled).toBe(true)
   })
 })
 
@@ -164,6 +209,99 @@ describe('useAssistCode — queueing a bridge job', () => {
     await act(() => result.current.handleSendToBridge())
 
     expect(result.current.bridgeError).toBe('Card has no spec')
+  })
+})
+
+describe('useAssistCode — renaming a live job\'s branch', () => {
+  it('requests a rename when the value differs from the current branch name', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 9, status: 'running', branch_name: 'qtask/4-original' }, companion: null,
+    })
+    api.requestBranchRename.mockResolvedValue({ id: 9, status: 'running', branch_name: 'qtask/4-original', requested_branch_name: 'qtask/4-renamed' })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.branchOverride).toBe('qtask/4-original'))
+
+    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    await act(() => result.current.handleRenameBranch())
+
+    expect(api.requestBranchRename).toHaveBeenCalledWith(9, 'qtask/4-renamed')
+    expect(result.current.bridgeJob.requested_branch_name).toBe('qtask/4-renamed')
+  })
+
+  it('does nothing when the value is unchanged from the current branch name', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 9, status: 'running', branch_name: 'qtask/4-original' }, companion: null,
+    })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.branchOverride).toBe('qtask/4-original'))
+
+    await act(() => result.current.handleRenameBranch())
+
+    expect(api.requestBranchRename).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the value already matches a still-pending request', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 9, status: 'running', branch_name: 'qtask/4-original', requested_branch_name: 'qtask/4-renamed' },
+      companion: null,
+    })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
+
+    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    await act(() => result.current.handleRenameBranch())
+
+    expect(api.requestBranchRename).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when there is no bridge job yet', async () => {
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+
+    await act(() => result.current.handleRenameBranch())
+
+    expect(api.requestBranchRename).not.toHaveBeenCalled()
+  })
+
+  it.each(['done', 'error', 'stalled', 'blocked'])('does nothing when the job is %s', async (status) => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 9, status, branch_name: 'qtask/4-original' }, companion: null,
+    })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
+
+    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    await act(() => result.current.handleRenameBranch())
+
+    expect(api.requestBranchRename).not.toHaveBeenCalled()
+  })
+
+  it('rejects a value with whitespace without calling the API', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 9, status: 'running', branch_name: 'qtask/4-original' }, companion: null,
+    })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
+
+    act(() => result.current.setBranchOverride('has a space'))
+    await act(() => result.current.handleRenameBranch())
+
+    expect(result.current.bridgeError).toBe("Branch name can't contain whitespace")
+    expect(api.requestBranchRename).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a server error message when the rename request fails', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 9, status: 'running', branch_name: 'qtask/4-original' }, companion: null,
+    })
+    api.requestBranchRename.mockRejectedValue(new Error('Job is not active'))
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
+
+    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    await act(() => result.current.handleRenameBranch())
+
+    expect(result.current.bridgeError).toBe('Job is not active')
   })
 })
 

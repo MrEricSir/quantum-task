@@ -81,6 +81,10 @@ class _JobRenameBranch(BaseModel):
     branch_name: str                   # the new name, already renamed git-side by the CLI
 
 
+class _JobRequestRename(BaseModel):
+    branch_name: str                   # the name the webapp wants the branch renamed to
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/api/bridge/jobs")
@@ -446,18 +450,56 @@ def rename_job_branch(job_id: int, body: _JobRenameBranch, db: Session = Depends
     return _job_response(job)
 
 
+@router.post("/api/bridge/jobs/{job_id}/request-rename")
+def request_job_rename(job_id: int, body: _JobRequestRename, db: Session = Depends(get_db)):
+    """Ask for an in-progress (or not-yet-started) job's branch to be renamed, from the
+    webapp's Code tab. Stores the request in requested_branch_name (the same field a
+    queue-time branch override uses) rather than renaming anything directly here:
+
+    - pending job: nothing else to do -- _create_worktree reads requested_branch_name
+      fresh when the job actually starts, same as a queue-time override.
+    - running job: there's already a worktree/branch, so nothing here can rename it
+      directly (the server never reaches into a local machine). The bridge's own
+      heartbeat loop (agent_core.py's _start_heartbeat) checks the heartbeat response for
+      a requested_branch_name that doesn't match its worktree's actual current branch and
+      performs the real `git branch -m` locally, then confirms back via /rename-branch
+      above -- so this takes effect on the next heartbeat tick (HEARTBEAT_INTERVAL, 5 min),
+      not instantly.
+
+    A job with no active/pending session (done/error/stalled/blocked) has nothing that
+    will ever pick this request up, so it's rejected outright rather than silently
+    accepting a request that will never be fulfilled."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("pending", "running"):
+        raise HTTPException(status_code=400, detail="Job is not active — nothing would pick up a rename")
+    branch_name = body.branch_name.strip()
+    error = validate_branch_name(branch_name)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    job.requested_branch_name = branch_name
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return _job_response(job)
+
+
 @router.post("/api/bridge/jobs/{job_id}/heartbeat")
 def heartbeat_job(job_id: int, db: Session = Depends(get_db)):
     """Bridge pings this periodically while a job is running, so a crashed
     or hung agent process (no output for a long stretch, or an interactive
     session where nothing is posted until it ends) can still be detected
-    as stale server-side. See bridge.stale.check_stale_bridge_jobs."""
+    as stale server-side. See bridge.stale.check_stale_bridge_jobs.
+
+    Also returns requested_branch_name so the bridge can notice a rename requested from
+    the webapp mid-session -- see request_job_rename above for the full mechanism."""
     job = db.query(models.BridgeJob).filter_by(id=job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "requested_branch_name": job.requested_branch_name}
 
 
 @router.post("/api/bridge/jobs/check-stale")

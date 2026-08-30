@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   generateSpec, queueBridgeJob, getBridgeJob, getBridgeJobChain, queueResumeJob,
-  queueCompanionJob, getKnownBridgeRepos,
+  queueCompanionJob, getKnownBridgeRepos, requestBranchRename,
 } from '../api'
 
 // Mirrors bridge/scripts/agent_core.py's _slugify -- only used for the branch-name field's
@@ -10,6 +10,14 @@ import {
 // bridge compute the real default itself, at pickup time, from the card's title then).
 function slugifyPreview(text) {
   return (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+}
+
+// Shared by handleSendToBridge (queue-time override) and handleRenameBranch (mid-session
+// rename request) -- same constraints either way, see bridge/jobs.py's validate_branch_name.
+function _branchNameError(branchName) {
+  if (branchName && /\s/.test(branchName)) return "Branch name can't contain whitespace"
+  if (branchName.startsWith('-')) return "Branch name can't start with '-'"
+  return null
 }
 
 // "Code" tab state for AssistModal (spec generation + bridge job + cross-repo
@@ -28,6 +36,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   const [copiedWorktree, setCopiedWorktree] = useState(false)
   const [resumeQueuing,  setResumeQueuing]  = useState(false)
   const [branchOverride, setBranchOverride] = useState('')
+  const [renameQueuing,  setRenameQueuing]  = useState(false)
 
   // Cross-repo companion job (BRIDGE_CROSS_REPO_JOBS.md Phase 3)
   const [companionJob,     setCompanionJob]     = useState(null)
@@ -49,7 +58,12 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
 
     if (task.spec) {
       getBridgeJobChain(task.id)
-        .then(({ root, companion }) => { setBridgeJob(root); setCompanionJob(companion) })
+        .then(({ root, companion }) => {
+          setBridgeJob(root); setCompanionJob(companion)
+          // Show the job's actual current name (rather than blank + placeholder) once
+          // there is one, so editing it starts from reality, not a guess.
+          if (root?.branch_name) setBranchOverride(root.branch_name)
+        })
         .catch(() => {})
     }
   }, [open, task?.id, initialTab]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -140,14 +154,8 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   const handleSendToBridge = async () => {
     if (!task || bridgeQueuing) return
     const branchName = branchOverride.trim()
-    if (branchName && /\s/.test(branchName)) {
-      setBridgeError("Branch name can't contain whitespace")
-      return
-    }
-    if (branchName.startsWith('-')) {
-      setBridgeError("Branch name can't start with '-'")
-      return
-    }
+    const error = _branchNameError(branchName)
+    if (error) { setBridgeError(error); return }
     setBridgeQueuing(true); setBridgeError('')
     try {
       const job = await queueBridgeJob(task.id, branchName || undefined)
@@ -156,6 +164,30 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
       setBridgeError(e.message || 'Failed to queue bridge job')
     } finally {
       setBridgeQueuing(false)
+    }
+  }
+
+  // Fires when the branch field loses focus while a job is pending/running (see
+  // branchFieldDisabled -- it's only editable then, or before a job exists at all, in
+  // which case this never fires since handleSendToBridge hasn't created bridgeJob yet).
+  // No-ops quietly for an unchanged or empty value -- this is a passive "did it change"
+  // check on blur, not an explicit submit action, so it shouldn't complain about a value
+  // that's just the same name reformatted by losing and regaining focus.
+  const handleRenameBranch = async () => {
+    if (!bridgeJob || renameQueuing) return
+    if (!['pending', 'running'].includes(bridgeJob.status)) return
+    const branchName = branchOverride.trim()
+    if (!branchName || branchName === bridgeJob.branch_name || branchName === bridgeJob.requested_branch_name) return
+    const error = _branchNameError(branchName)
+    if (error) { setBridgeError(error); return }
+    setRenameQueuing(true); setBridgeError('')
+    try {
+      const job = await requestBranchRename(bridgeJob.id, branchName)
+      setBridgeJob(job)
+    } catch (e) {
+      setBridgeError(e.message || 'Failed to request branch rename')
+    } finally {
+      setRenameQueuing(false)
     }
   }
 
@@ -215,17 +247,22 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   }
 
   const defaultBranch = `qtask/${task?.id}${slugifyPreview(task?.title) ? '-' + slugifyPreview(task.title) : ''}`
+  // Editable before a job exists (queue-time override) and while pending/running (a live
+  // rename request -- see handleRenameBranch); locked once done/error/stalled/blocked,
+  // since nothing would ever pick up a rename request for those (resuming reuses the
+  // existing branch/worktree by design, not a fresh name).
   const branchFieldDisabled =
-    bridgeQueuing || bridgeJob?.status === 'running' || bridgeJob?.status === 'pending'
+    bridgeQueuing || renameQueuing ||
+    ['done', 'error', 'stalled', 'blocked'].includes(bridgeJob?.status)
 
   return {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
     bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing,
-    branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled,
+    branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
     companionError, knownRepos, companionResumeQueuing,
     handleGenerateSpec, handleSaveSpec, handleStartSpecEdit, handleCancelSpecEdit, handleCopySpec,
-    handleCopyWorktreePath, handleSendToBridge, handleResumeJob,
+    handleCopyWorktreePath, handleSendToBridge, handleRenameBranch, handleResumeJob,
     handleResumeCompanionJob, handleOpenCompanion, handleCancelCompanion, handleQueueCompanion,
   }
 }

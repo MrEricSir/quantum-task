@@ -922,6 +922,93 @@ class TestRenameBranchJob:
         assert res.status_code == 400
 
 
+# ── POST /api/bridge/jobs/{id}/request-rename ────────────────────────────────
+
+class TestRequestJobRename:
+    """Webapp-side half of the mid-session branch rename flow (Code tab).
+    The bridge-side half (heartbeat noticing the request and doing the actual
+    `git branch -m`) is covered in test_bridge_scripts.py."""
+
+    def test_sets_requested_branch_name_on_a_pending_job(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/request-rename",
+                          json={"branch_name": "qtask/7-better-name"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["requested_branch_name"] == "qtask/7-better-name"
+        assert data["branch_name"] is None  # not started yet -- nothing to rename directly
+
+    def test_sets_requested_branch_name_on_a_running_job(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={"branch": "qtask/7-original", "agent": "work-mac"})
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/request-rename",
+                          json={"branch_name": "qtask/7-renamed"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["requested_branch_name"] == "qtask/7-renamed"
+        assert data["branch_name"] == "qtask/7-original"  # unchanged until the bridge confirms
+
+    def test_visible_in_the_next_heartbeat_response(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={"branch": "qtask/7-original", "agent": "work-mac"})
+        client.post(f"/api/bridge/jobs/{job_id}/request-rename", json={"branch_name": "qtask/7-renamed"})
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/heartbeat")
+        assert res.status_code == 200
+        assert res.json() == {"ok": True, "requested_branch_name": "qtask/7-renamed"}
+
+    def test_404_for_missing_job(self, client):
+        res = client.post("/api/bridge/jobs/9999/request-rename", json={"branch_name": "qtask/1-foo"})
+        assert res.status_code == 404
+
+    def test_400_for_done_job(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={"branch": "qtask/7-original", "agent": "work-mac"})
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/request-rename", json={"branch_name": "qtask/7-renamed"})
+        assert res.status_code == 400
+
+    def test_400_for_error_job(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/request-rename", json={"branch_name": "qtask/7-renamed"})
+        assert res.status_code == 400
+
+    def test_400_for_blocked_job(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+        companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/other", "depends_on_job_id": job_id,
+        }).json()
+        assert companion["status"] == "blocked"
+
+        res = client.post(f"/api/bridge/jobs/{companion['id']}/request-rename",
+                          json={"branch_name": "qtask/7-renamed"})
+        assert res.status_code == 400
+
+    def test_400_for_empty_branch_name(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        res = client.post(f"/api/bridge/jobs/{job_id}/request-rename", json={"branch_name": "   "})
+        assert res.status_code == 400
+
+    def test_400_for_branch_name_with_whitespace(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        res = client.post(f"/api/bridge/jobs/{job_id}/request-rename", json={"branch_name": "bad name"})
+        assert res.status_code == 400
+
+
 # ── POST /api/bridge/jobs/{id}/fix ───────────────────────────────────────────
 
 class TestQueueFixJob:

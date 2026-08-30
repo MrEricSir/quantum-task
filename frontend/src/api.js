@@ -743,6 +743,23 @@ export async function queueResumeJob(jobId) {
   return res.json()
 }
 
+// Asks for an in-progress (or not-yet-started) job's branch to be renamed. For a running
+// job this doesn't rename anything itself -- the bridge's heartbeat loop picks the
+// request up and does the actual `git branch -m` locally (see bridge/router.py's
+// request_job_rename docstring), so it takes effect on the next heartbeat, not instantly.
+export async function requestBranchRename(jobId, branchName) {
+  const res = await apiFetch(`/api/bridge/jobs/${jobId}/request-rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch_name: branchName }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to request branch rename')
+  }
+  return res.json()
+}
+
 export async function getBridgeJobChain(cardId) {
   const res = await apiFetch(`/api/bridge/jobs/card/${cardId}/chain`)
   if (!res.ok) throw new Error('Failed to fetch bridge job chain')

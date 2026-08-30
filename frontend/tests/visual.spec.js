@@ -3621,14 +3621,109 @@ test.describe('card detail panel — github and spec', () => {
     expect(requestFired).toBe(false)
   })
 
-  test('"Use this" seeds the branch field with the auto-generated default', async ({ page }) => {
+  test('clearing a typed branch name falls back to the auto-generated default', async ({ page }) => {
+    let requestBody = null
+    await page.route('**/api/bridge/jobs', async r => {
+      requestBody = r.request().postDataJSON()
+      return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
+                                 created_at: '2026-06-03T10:00:00Z', updated_at: null } })
+    })
     await page.locator('.cdp-btn--assist-footer').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const input = page.locator('.cdp-branch-input')
+    await input.fill('my-custom-branch')
+    await input.fill('')
     await expect(input).toHaveValue('')
-    await page.locator('.cdp-branch-use-default').click()
-    await expect(input).toHaveValue('qtask/99-oauth-login-feature')
+    await expect(input).toHaveAttribute('placeholder', 'qtask/99-oauth-login-feature')
+
+    await page.locator('.cdp-spec-bridge-btn').click()
+    expect(requestBody).toEqual({ card_id: 99 })
+  })
+
+  test('branch field stays editable while a job is running, showing its real current name', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'running', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const input = page.locator('.cdp-branch-input')
+    await expect(input).toHaveValue('qtask/99-oauth-login')
+    await expect(input).toBeEnabled()
+  })
+
+  test('branch field is locked once a job is done', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'https://github.com/owner/repo/pull/7', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-branch-input')).toBeDisabled()
+  })
+
+  test('editing and clicking away from the branch field while running requests a rename', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'running', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    let requestBody = null
+    await page.route('**/api/bridge/jobs/5/request-rename', async r => {
+      requestBody = r.request().postDataJSON()
+      return r.fulfill({ json: { ...job, requested_branch_name: requestBody.branch_name } })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const input = page.locator('.cdp-branch-input')
+    await input.fill('qtask/99-better-name')
+    await page.locator('.cdp-section-label', { hasText: 'Brief' }).click()  // blur
+
+    await expect.poll(() => requestBody).toEqual({ branch_name: 'qtask/99-better-name' })
+  })
+
+  test('clicking away without changing the branch name does not request a rename', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'running', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    let requestFired = false
+    await page.route('**/api/bridge/jobs/5/request-rename', async r => {
+      requestFired = true
+      return r.fulfill({ json: job })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const input = page.locator('.cdp-branch-input')
+    await expect(input).toHaveValue('qtask/99-oauth-login')
+    await input.click()
+    await page.locator('.cdp-section-label', { hasText: 'Brief' }).click()  // blur, unchanged
+
+    expect(requestFired).toBe(false)
   })
 
   test('Resume button appears for an errored job with a resumable worktree', async ({ page }) => {

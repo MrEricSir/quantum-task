@@ -14,13 +14,15 @@ export default function AssistCodeTab({ code }) {
   const {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
     bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing,
-    branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled,
+    branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
     companionError, knownRepos, companionResumeQueuing,
     handleGenerateSpec, handleSaveSpec, handleStartSpecEdit, handleCancelSpecEdit, handleCopySpec,
-    handleCopyWorktreePath, handleSendToBridge, handleResumeJob,
+    handleCopyWorktreePath, handleSendToBridge, handleRenameBranch, handleResumeJob,
     handleResumeCompanionJob, handleOpenCompanion, handleCancelCompanion, handleQueueCompanion,
   } = code
+
+  const branchIsLive = bridgeJob && ['pending', 'running'].includes(bridgeJob.status)
 
   return (
     <div className="assist-spec-tab">
@@ -71,19 +73,16 @@ export default function AssistCodeTab({ code }) {
             className="cdp-branch-input"
             value={branchOverride}
             onChange={e => setBranchOverride(e.target.value)}
+            onBlur={branchIsLive ? handleRenameBranch : undefined}
             placeholder={defaultBranch}
             disabled={branchFieldDisabled}
-            title="Leave blank to use the auto-generated name shown as a placeholder"
+            title={
+              branchIsLive
+                ? "Edit and click away to rename — takes effect on the machine running this job the next time it checks in (up to a few minutes)"
+                : "Leave blank to use the auto-generated name shown as a placeholder"
+            }
           />
-          <button
-            type="button"
-            className="cdp-branch-use-default"
-            onClick={() => setBranchOverride(defaultBranch)}
-            disabled={branchFieldDisabled || branchOverride === defaultBranch}
-            title="Copy the auto-generated name in so you can tweak it, instead of typing it from scratch"
-          >
-            Use this
-          </button>
+          {renameQueuing && <span className="cdp-branch-status">Renaming…</span>}
         </div>
       )}
 

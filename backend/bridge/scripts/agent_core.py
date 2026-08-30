@@ -902,19 +902,49 @@ def _set_terminal_title(title):
     sys.stdout.flush()
 
 
-def _start_heartbeat(cfg, job_id):
+def _check_for_requested_rename(cfg, job_id, cwd, heartbeat_response):
+    """If the webapp asked (mid-session, via the Code tab) for this job's branch to be
+    renamed, the heartbeat response carries it in requested_branch_name -- see
+    bridge/router.py's request_job_rename for the full mechanism this is the other half
+    of. Renames the currently-checked-out branch (no need to know its old name) and
+    confirms back via /rename-branch so the server's own record stays in sync. Asks git
+    for the actual current branch fresh every call rather than tracking it in a local
+    variable, so this stays correct even across multiple renames in one session."""
+    requested = (heartbeat_response or {}).get("requested_branch_name")
+    if not requested:
+        return
+    current = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=cwd, capture_output=True, text=True,
+    ).stdout.strip()
+    if not current or current == requested:
+        return
+    r = subprocess.run(["git", "branch", "-m", requested], cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"\n[bridge] WARNING: failed to rename branch to '{requested}': {r.stderr.strip()}")
+        return
+    print(f"\n[bridge] Branch renamed to '{requested}' (requested from the app)")
+    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/rename-branch", {"branch_name": requested})
+
+
+def _start_heartbeat(cfg, job_id, cwd):
     """Start a background thread pinging the job's heartbeat endpoint every
     HEARTBEAT_INTERVAL seconds while the coding agent process runs, so a
     crashed/hung/sleeping-laptop session can be detected server-side even
     though no output is posted while the agent is thinking (interactive
     mode posts nothing at all until the session ends). Agent-agnostic —
-    wraps "launch and wait", not the specific launch command. Returns a
-    threading.Event; set it to stop the thread once the process exits."""
+    wraps "launch and wait", not the specific launch command. Also checks each
+    heartbeat's response for a mid-session branch-rename request (see
+    _check_for_requested_rename) -- `git branch -m` only touches refs, not the working
+    tree, so it's safe to run concurrently with the coding agent editing files in the
+    same worktree. Returns a threading.Event; set it to stop the thread once the
+    process exits."""
     stop_event = threading.Event()
 
     def _loop():
         while not stop_event.wait(HEARTBEAT_INTERVAL):
-            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/heartbeat")
+            resp = api(cfg, "POST", f"/api/bridge/jobs/{job_id}/heartbeat")
+            _check_for_requested_rename(cfg, job_id, cwd, resp)
 
     thread = threading.Thread(target=_loop, daemon=True)
     thread.start()
@@ -1046,7 +1076,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
     print("[bridge] You can interact with the agent in the session below.")
     print("[bridge] When done, type 'exit' or press Ctrl-D.\n")
     _set_terminal_title(branch)
-    stop_heartbeat = _start_heartbeat(cfg, job_id)
+    stop_heartbeat = _start_heartbeat(cfg, job_id, cwd)
     verification = ""
     make_prompt = {"fix": _make_fix_prompt, "resume": _make_resume_prompt}.get(
         prompt_kind, _make_prompt)
@@ -1110,7 +1140,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
             {"result": f"{AGENT_LABEL} not found on PATH"})
         return False
 
-    stop_heartbeat = _start_heartbeat(cfg, job_id)
+    stop_heartbeat = _start_heartbeat(cfg, job_id, cwd)
 
     buffer = []
     last_flush = time.time()

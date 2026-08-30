@@ -161,7 +161,7 @@ class TestHeartbeatEndpoint:
         job_id = _make_job(status="running", minutes_ago=STALE_THRESHOLD_MINUTES + 5)
         res = client.post(f"/api/bridge/jobs/{job_id}/heartbeat")
         assert res.status_code == 200
-        assert res.json() == {"ok": True}
+        assert res.json() == {"ok": True, "requested_branch_name": None}
 
         with TestSession() as db:
             job = db.query(models.BridgeJob).filter_by(id=job_id).first()
