@@ -182,6 +182,62 @@ def _job_response(job: models.BridgeJob) -> dict:
     }
 
 
+# Lower means more worth surfacing on a card-tile badge -- error/stalled tie for most urgent
+# since both mean "this needs a human," ahead of in-progress, ahead of merely queued/blocked.
+_BADGE_STATUS_PRIORITY = {"error": 0, "stalled": 0, "running": 1, "pending": 2, "blocked": 3, "done": 4}
+
+
+def get_bridge_job_statuses(db: Session) -> dict[int, dict]:
+    """Return the current job status per card, for the Board/Today card tile's at-a-glance
+    status badge.
+
+    Mirrors get_card_job_chain's root+companion pairing in bridge/router.py (newest root job,
+    newest companion of *that specific* root -- not just any job ever attached to the card, so
+    a card whose very first attempt errored but was later resumed successfully doesn't show a
+    stale error forever) but batched across every card with a job in two queries instead of
+    one query per card, and collapses root+companion down to whichever single status is more
+    worth surfacing rather than returning both -- this is a lightweight indicator, not the
+    authoritative per-job display the Code tab itself renders.
+
+    Selects only the columns needed (not spec_snapshot/prompt_snapshot/output, which can be
+    large) since this runs on a poll interval across every card with a job, unlike the Code
+    tab's own once-per-open-card chain fetch.
+    """
+    root_rows = (
+        db.query(models.BridgeJob.id, models.BridgeJob.card_id, models.BridgeJob.status)
+        .filter(models.BridgeJob.depends_on_job_id.is_(None))
+        .order_by(models.BridgeJob.card_id, models.BridgeJob.created_at.desc())
+        .all()
+    )
+    root_by_card: dict[int, tuple[int, str]] = {}  # card_id -> (job_id, status)
+    for job_id, card_id, status in root_rows:
+        if card_id not in root_by_card:
+            root_by_card[card_id] = (job_id, status)
+
+    companion_rows = (
+        db.query(models.BridgeJob.depends_on_job_id, models.BridgeJob.status)
+        .filter(models.BridgeJob.depends_on_job_id.isnot(None))
+        .order_by(models.BridgeJob.depends_on_job_id, models.BridgeJob.created_at.desc())
+        .all()
+    )
+    companion_by_root: dict[int, str] = {}  # root_job_id -> newest companion's status
+    for root_id, status in companion_rows:
+        if root_id not in companion_by_root:
+            companion_by_root[root_id] = status
+
+    statuses: dict[int, dict] = {}
+    for card_id, (job_id, root_status) in root_by_card.items():
+        companion_status = companion_by_root.get(job_id)
+        if (
+            companion_status
+            and _BADGE_STATUS_PRIORITY.get(companion_status, 5) < _BADGE_STATUS_PRIORITY.get(root_status, 5)
+        ):
+            statuses[card_id] = {"job_id": job_id, "status": companion_status}
+        else:
+            statuses[card_id] = {"job_id": job_id, "status": root_status}
+    return statuses
+
+
 def _queue_fix_job(
     db: Session, original_job: models.BridgeJob, comments: list[models.EngineeringItemComment]
 ) -> models.BridgeJob:

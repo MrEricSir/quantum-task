@@ -79,7 +79,7 @@ function MetricProgress({ habit, todayMetrics, isImperial }) {
   return null
 }
 
-export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onExtractActions, onSelect, selectedCardId, briefingAutoShow = false }) {
+export default function TodayPage({ cards, calendarEvents, habits, onToggle, onToggleHabit, onEdit, onSave, onDelete, onArchive, onMove, onWeather, briefingKey = 0, calendarReady = true, healthData, isImperial = false, allTags = [], onBreakdown, onExtractActions, onSelect, selectedCardId, bridgeJobStatuses, briefingAutoShow = false }) {
   const activeCards = cards.filter((t) => !t.completed)
   const overdueCards = activeCards.filter((t) => t.section !== 'today' && (t.overdue_days ?? 0) > 0)
   const todayCards   = activeCards.filter((t) => t.section === 'today')
@@ -288,6 +288,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                       isSelected={selectedCardId === todo.id}
                       inOverdueGroup
                       isFocus={todo.id === focusTaskId}
+                      bridgeJobStatus={bridgeJobStatuses?.[todo.id]}
                     />
                   ))}
                   {(scheduleItems.length > 0 || sortedUntimedTasks.length > 0) && (
@@ -314,6 +315,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     onSelect={onSelect}
                     isSelected={selectedCardId === item.data.id}
                     isFocus={item.data.id === focusTaskId}
+                    bridgeJobStatus={bridgeJobStatuses?.[item.data.id]}
                   />
                 )
               )}
@@ -333,6 +335,7 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                   onSelect={onSelect}
                   isSelected={selectedCardId === todo.id}
                   isFocus={todo.id === focusTaskId}
+                  bridgeJobStatus={bridgeJobStatuses?.[todo.id]}
                 />
               ))}
             </div>

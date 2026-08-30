@@ -4,7 +4,7 @@ import Card from './Card'
 import { SECTION_COLORS } from '../../lib/sections'
 import './Column.css'
 
-export default function Column({ section, label, cards, isActive, isMobile, onEdit, onSave, onDelete, onArchive, onToggle, onMove, onAdd, allTags, onBreakdown, onExtractActions, onSelect, selectedCardId }) {
+export default function Column({ section, label, cards, isActive, isMobile, onEdit, onSave, onDelete, onArchive, onToggle, onMove, onAdd, allTags, onBreakdown, onExtractActions, onSelect, selectedCardId, bridgeJobStatuses }) {
   const { setNodeRef, isOver } = useDroppable({ id: section })
   const { active } = useDndContext()
 
@@ -30,6 +30,7 @@ export default function Column({ section, label, cards, isActive, isMobile, onEd
       onSelect={onSelect}
       isSelected={selectedCardId === todo.id}
       inOverdueGroup={inOverdueGroup}
+      bridgeJobStatus={bridgeJobStatuses?.[todo.id]}
     />
   )
 

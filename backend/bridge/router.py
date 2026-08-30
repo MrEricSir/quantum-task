@@ -32,6 +32,7 @@ from bridge.jobs import (
     _queue_fix_job,
     _queue_job_for_card,
     _queue_resume_job,
+    get_bridge_job_statuses,
     validate_branch_name,
 )
 from bridge.render import render_agent_script, render_install_script
@@ -287,6 +288,19 @@ def get_latest_worktree_job(path: str, db: Session = Depends(get_db)):
     if not job:
         return {"job": None}
     return {"job": _job_response(job)}
+
+
+@router.get("/api/bridge/jobs/status")
+def get_bridge_job_statuses_endpoint(db: Session = Depends(get_db)):
+    """Latest job status per card with a bridge job, for the Board/Today card tile's status
+    badge -- polled on an interval independent of any single card being open. Not the Code
+    tab's own per-card root+companion chain (see get_card_job_chain below); see
+    bridge.jobs.get_bridge_job_statuses's docstring for how the two relate.
+
+    Registered BEFORE /api/bridge/jobs/{job_id} below -- routes match in registration order,
+    and "status" would otherwise be captured as that route's {job_id} path param and fail int
+    conversion (see by-worktree's docstring above for the same gotcha hit once already)."""
+    return {"statuses": get_bridge_job_statuses(db)}
 
 
 @router.get("/api/bridge/jobs/{job_id}")

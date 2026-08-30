@@ -24,6 +24,33 @@
   line-height: 1.6;
 }
 
+/* ── Bridge job status indicator — mirrors CardDetailPanel.css's .cdp-bridge-status--*
+   colors so the tile badge and the Code tab's own status pill agree visually. ── */
+.card-bridge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+  margin-top: 6px; /* center against the first line of the title, which sits at flex-start */
+}
+
+.card-bridge-dot--pending { color: #fbbf24; }
+.card-bridge-dot--running { color: #34d399; }
+.card-bridge-dot--done    { color: #a78bfa; }
+.card-bridge-dot--error   { color: #f87171; }
+.card-bridge-dot--stalled { color: #94a3b8; }
+.card-bridge-dot--blocked { color: #8b949e; }
+
+.card-bridge-dot--running {
+  animation: card-bridge-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes card-bridge-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
 /* ── Done state ── */
 .event-card--done .event-title {
   text-decoration: line-through;

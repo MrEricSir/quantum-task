@@ -470,6 +470,114 @@ class TestJobChainEndpoint:
         assert res["companion"] is None
 
 
+# ── GET /api/bridge/jobs/status ───────────────────────────────────────────────
+
+class TestBridgeJobStatusesEndpoint:
+
+    def test_no_jobs_returns_empty(self, client):
+        res = client.get("/api/bridge/jobs/status")
+        assert res.status_code == 200
+        assert res.json() == {"statuses": {}}
+
+    def test_card_with_no_job_is_absent_from_the_map(self, client):
+        _make_card(spec="s")
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"] == {}
+
+    def test_single_pending_job_reports_pending(self, client):
+        card_id = _make_card(spec="s")
+        job = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)] == {"job_id": job["id"], "status": "pending"}
+
+    def test_reports_running_after_being_claimed(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+        client.get("/api/bridge/jobs/next/pending")  # claims it, sets running
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)]["status"] == "running"
+
+    def test_reports_done_after_completion(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "PR opened"})
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)]["status"] == "done"
+
+    def test_reports_error(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)]["status"] == "error"
+
+    def test_only_the_newest_root_job_counts(self, client):
+        """A card whose first attempt errored but was later re-run from scratch shouldn't
+        show a stale error forever."""
+        card_id = _make_card(spec="s")
+        old_job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{old_job_id}/error", json={"result": "boom"})
+        new_job = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)] == {"job_id": new_job["id"], "status": "pending"}
+
+    def test_multiple_cards_each_get_their_own_status(self, client):
+        card_a = _make_card(spec="s")
+        card_b = _make_card(spec="s")
+        job_a = client.post("/api/bridge/jobs", json={"card_id": card_a}).json()
+        job_b_id = client.post("/api/bridge/jobs", json={"card_id": card_b}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_b_id}/error", json={"result": "boom"})
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_a)] == {"job_id": job_a["id"], "status": "pending"}
+        assert res["statuses"][str(card_b)]["status"] == "error"
+
+    def test_companion_error_surfaces_even_though_root_is_done(self, client):
+        card_id = _make_card(spec="s")
+        root = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        client.post(f"/api/bridge/jobs/{root['id']}/complete", json={"result": "done"})
+        companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": root["id"],
+        }).json()
+        client.post(f"/api/bridge/jobs/{companion['id']}/error", json={"result": "boom"})
+
+        res = client.get("/api/bridge/jobs/status").json()
+        # Reports the root job's id (the card-level "current job") but the more urgent status.
+        assert res["statuses"][str(card_id)] == {"job_id": root["id"], "status": "error"}
+
+    def test_root_done_and_companion_done_reports_done(self, client):
+        card_id = _make_card(spec="s")
+        root = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        client.post(f"/api/bridge/jobs/{root['id']}/complete", json={"result": "done"})
+        companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": root["id"],
+        }).json()
+        client.post(f"/api/bridge/jobs/{companion['id']}/complete", json={"result": "done"})
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)]["status"] == "done"
+
+    def test_companion_from_a_superseded_root_does_not_leak_in(self, client):
+        """A companion tied to an old root shouldn't affect the status of a newer root that
+        superseded it (e.g. the card was re-run from scratch after the first root+companion
+        pairing errored out)."""
+        card_id = _make_card(spec="s")
+        old_root = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        old_companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": old_root["id"],
+        }).json()
+        client.post(f"/api/bridge/jobs/{old_companion['id']}/error", json={"result": "boom"})
+        new_root = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get("/api/bridge/jobs/status").json()
+        assert res["statuses"][str(card_id)] == {"job_id": new_root["id"], "status": "pending"}
+
+
 # ── GET /api/bridge/repos ────────────────────────────────────────────────────
 
 class TestKnownReposEndpoint:

@@ -42,6 +42,7 @@ import { useHabits } from './hooks/useHabits'
 import { useCalendar } from './hooks/useCalendar'
 import { useWithings } from './hooks/useWithings'
 import { useEngineering } from './hooks/useEngineering'
+import { useBridgeJobStatuses } from './hooks/useBridgeJobStatuses'
 import { useModals } from './hooks/useModals'
 import { ModalContext } from './context/ModalContext'
 import { RefreshContext } from './context/RefreshContext'
@@ -168,6 +169,7 @@ export default function App() {
   } = useCalendar({ authed, invalidateBriefing })
 
   const { engineeringItems, lastEngineeringSynced, engineeringSyncing, refreshEngineeringItems } = useEngineering({ authed })
+  const { bridgeJobStatuses } = useBridgeJobStatuses({ authed })
 
   const {
     status: withingsStatus,
@@ -904,6 +906,7 @@ export default function App() {
             onExtractActions={handleExtractActions}
             onSelect={handleSelectCard}
             selectedCardId={selectedCardId}
+            bridgeJobStatuses={bridgeJobStatuses}
             onWeather={handleSetWeather}
             briefingKey={briefingKey}
             calendarReady={!calendarLoading}
@@ -955,6 +958,7 @@ export default function App() {
                     onExtractActions={handleExtractActions}
                     onSelect={handleSelectCard}
                     selectedCardId={selectedCardId}
+                    bridgeJobStatuses={bridgeJobStatuses}
                   />
                 ))}
               </div>

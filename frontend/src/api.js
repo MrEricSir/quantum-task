@@ -749,6 +749,15 @@ export async function getBridgeJobChain(cardId) {
   return res.json()
 }
 
+// Latest job status per card with a bridge job -- for the Board/Today card tile's status
+// badge (useBridgeJobStatuses), not the Code tab's own per-card chain fetch above.
+export async function fetchBridgeJobStatuses() {
+  const res = await apiFetch('/api/bridge/jobs/status')
+  if (!res.ok) throw new Error('Failed to fetch bridge job statuses')
+  const { statuses } = await res.json()
+  return statuses
+}
+
 export async function queueCompanionJob(cardId, targetRepo, dependsOnJobId) {
   const res = await apiFetch('/api/bridge/jobs', {
     method: 'POST',

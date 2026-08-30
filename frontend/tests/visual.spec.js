@@ -115,6 +115,7 @@ async function mockAPIs(page) {
   await page.route('**/api/engineering/status-config', r => r.fulfill({ json: {} }))
   await page.route('**/api/engineering/repo-tags', r => r.fulfill({ json: {} }))
   await page.route('**/api/bridge/install-token', r => r.fulfill({ json: { token: 'test-install-token' } }))
+  await page.route('**/api/bridge/jobs/status', r => r.fulfill({ json: { statuses: {} } }))
   await page.route('**/api/settings/navigation', r =>
     r.fulfill({ json: { order: ['today', 'board', 'calendar', 'health', 'engineering'], default_page: 'today' } }))
 
@@ -359,6 +360,80 @@ test.describe('tasks board', () => {
     await expect(page.getByText('Finish quarterly report')).toBeVisible()
     await expect(page.getByText('Book conference flights')).toBeVisible()
     await expect(page.getByText('Read that article')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bridge job status badge on card tiles (Board + Today)
+// ---------------------------------------------------------------------------
+test.describe('bridge job status badge', () => {
+  // Card id 1 = "Daily Engineering Standup" (section: today) -- appears on both
+  // /board's Today column and the Today page's schedule list.
+
+  test('no badge appears for a card with no bridge job', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
+    await expect(card.locator('.card-bridge-dot')).toHaveCount(0)
+  })
+
+  test('shows a running badge for a card with a running job', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/status', r => r.fulfill({
+      json: { statuses: { '1': { job_id: 10, status: 'running' } } },
+    }))
+    await page.goto('/board')
+    await waitForApp(page)
+
+    const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
+    const dot = card.locator('.card-bridge-dot')
+    await expect(dot).toHaveCount(1)
+    await expect(dot).toHaveClass(/card-bridge-dot--running/)
+    await expect(dot).toHaveAttribute('title', /running/i)
+  })
+
+  test('shows an error badge for a card with an errored job', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/status', r => r.fulfill({
+      json: { statuses: { '1': { job_id: 10, status: 'error' } } },
+    }))
+    await page.goto('/board')
+    await waitForApp(page)
+
+    const dot = page.locator('.event-card', { hasText: 'Daily Engineering Standup' }).locator('.card-bridge-dot')
+    await expect(dot).toHaveClass(/card-bridge-dot--error/)
+    await expect(dot).toHaveAttribute('title', /errored/i)
+  })
+
+  test('shows a done badge for a card with a completed job', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/status', r => r.fulfill({
+      json: { statuses: { '1': { job_id: 10, status: 'done' } } },
+    }))
+    await page.goto('/board')
+    await waitForApp(page)
+
+    const dot = page.locator('.event-card', { hasText: 'Daily Engineering Standup' }).locator('.card-bridge-dot')
+    await expect(dot).toHaveClass(/card-bridge-dot--done/)
+  })
+
+  test('only the card with a job shows a badge, not its column neighbors', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/status', r => r.fulfill({
+      json: { statuses: { '1': { job_id: 10, status: 'running' } } },
+    }))
+    await page.goto('/board')
+    await waitForApp(page)
+
+    const otherCard = page.locator('.event-card', { hasText: 'Review pull requests' })
+    await expect(otherCard.locator('.card-bridge-dot')).toHaveCount(0)
+  })
+
+  test('badge also appears on the Today page for the same card', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/status', r => r.fulfill({
+      json: { statuses: { '1': { job_id: 10, status: 'stalled' } } },
+    }))
+    await page.goto('/today')
+    await waitForApp(page)
+
+    const dot = page.locator('.event-card', { hasText: 'Daily Engineering Standup' }).locator('.card-bridge-dot')
+    await expect(dot).toHaveClass(/card-bridge-dot--stalled/)
   })
 })
 

@@ -16,7 +16,18 @@ function formatScheduled(iso) {
   })
 }
 
-export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onExtractActions, onSelect, isSelected, inOverdueGroup = false, isFocus = false }) {
+// Mirrors CardDetailPanel.css's .cdp-bridge-status--* labels (the Code tab's own per-job
+// status text) so the tile badge and the Code tab agree on what each status means.
+const BRIDGE_BADGE_LABELS = {
+  pending: 'Build queued — waiting for agent',
+  running: 'Claude Code running',
+  done: 'Build complete',
+  error: 'Build errored',
+  stalled: 'Agent went quiet — may have crashed or lost network',
+  blocked: 'Waiting on another job to finish',
+}
+
+export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onExtractActions, onSelect, isSelected, inOverdueGroup = false, isFocus = false, bridgeJobStatus }) {
   const [showSheet,   setShowSheet]   = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [popping,     setPopping]     = useState(false)
@@ -103,6 +114,12 @@ export default function Card({ card, onEdit, onSave, onDelete, onArchive, onTogg
         <span className="event-title">{card.title}</span>
         {card.thread_output && !isOverlay && (
           <span className="card-output-dot" title="Has assistant output">✦</span>
+        )}
+        {bridgeJobStatus && !isOverlay && (
+          <span
+            className={`card-bridge-dot card-bridge-dot--${bridgeJobStatus.status}`}
+            title={BRIDGE_BADGE_LABELS[bridgeJobStatus.status] ?? bridgeJobStatus.status}
+          />
         )}
       </div>
 
