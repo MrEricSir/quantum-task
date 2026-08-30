@@ -154,19 +154,29 @@ def _require_manual(habit_id: int, db: Session) -> models.Habit:
     return db_habit
 
 
-def check_habit_row(db: Session, habit_id: int, today: date) -> bool:
+def check_habit_row(db: Session, habit_id: int, today: date, *, from_workout: bool = False) -> bool:
     """Mark a habit completed for today, no-op if already checked. Returns
     whether it newly completed (vs. an already-done no-op). Shared by the
     manual check-off endpoint, Telegram's habit-completion handler, and
     workout-triggered auto-completion -- deliberately does not enforce
     _require_manual, since that guard only makes sense for direct manual UI
-    toggling of Withings-tracked habits."""
+    toggling of Withings-tracked habits.
+
+    from_workout=True when called from correlations.check_habit_for_workout (a real
+    WorkoutEntry already exists, this call is just recording the habit side of it) --
+    skips check_workout_for_habit's own auto-log-a-workout side effect, since that's the
+    mirror-image hook (habit -> workout) and would otherwise spawn a synthetic duplicate
+    of the very workout that triggered this call. Every other caller gets the workout
+    auto-log for free without needing to wire it up itself."""
     today_str = today.isoformat()
     if db.query(models.HabitCompletion).filter_by(habit_id=habit_id, date=today_str).first():
         return False
     db.add(models.HabitCompletion(habit_id=habit_id, date=today_str))
     db.flush()
     recompute_from(db, habit_id, today)
+    if not from_workout:
+        from routers.correlations import check_workout_for_habit
+        check_workout_for_habit(db, habit_id, today)
     db.commit()
     return True
 

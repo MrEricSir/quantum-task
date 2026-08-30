@@ -59,13 +59,14 @@ def _habit(db, name: str, health_metric=None, health_goal=None) -> models.Habit:
     return h
 
 
-def _experiment(db, habit_id: int, status: str = "active") -> models.HealthExperiment:
+def _experiment(db, habit_id: int, status: str = "active", **workout_fields) -> models.HealthExperiment:
     exp = models.HealthExperiment(
         week="2026-W25",
         text="Test experiment",
         needs_habit=True,
         habit_id=habit_id,
         status=status,
+        **workout_fields,
     )
     db.add(exp)
     db.flush()
@@ -107,6 +108,27 @@ class TestCheckHabit:
     def test_nonexistent_habit_returns_404(self, client):
         r = client.post("/api/habits/9999/check", headers=HEADERS)
         assert r.status_code == 404
+
+    def test_checking_a_workout_routine_habit_auto_logs_the_workout(self, client, db_session):
+        """End-to-end regression test for the "row 1.2 miles" bug report: checking off a
+        workout-routine experiment's habit through the real endpoint must create a
+        WorkoutEntry, not just the HabitCompletion -- see
+        routers.correlations.check_workout_for_habit."""
+        h = _habit(db_session, "🧪 Row 1.2 miles")
+        _experiment(
+            db_session, habit_id=h.id, status="active",
+            action="Row 1.2 miles", workout_type="row",
+            workout_target_value=1.2, workout_unit="mile",
+        )
+        db_session.commit()
+
+        r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
+
+        assert r.status_code == 200
+        entries = db_session.query(models.WorkoutEntry).all()
+        assert len(entries) == 1
+        assert entries[0].type == "row"
+        assert entries[0].value == 1.2
 
 
 # ── Uncheck endpoint ──────────────────────────────────────────────────────────

@@ -25,8 +25,10 @@ from routers.correlations import (
     _load_weekly_obs, _migrate_appsetting,
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
-    _week_start, _current_isoweek, check_habit_for_workout, _recent_avg_steps,
+    _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
+    _recent_avg_steps,
 )
+from routers.habits import check_habit_row
 
 
 @pytest.fixture()
@@ -1177,8 +1179,14 @@ class TestGenerateExperimentStepGoalFallback:
 class TestCheckHabitForWorkout:
 
     def _active_experiment(self, db, workout_type="row", habit_id=None, week=None):
+        # Matches the fixed date(2026, 6, 20) every test in this class passes to
+        # check_habit_for_workout -- previously this defaulted to _current_isoweek()
+        # with no argument (real wall-clock "today"), which only ever passed because
+        # check_habit_for_workout itself had the same bug (computed its week lookup
+        # from real "today" too, ignoring the date it was actually given). Fixing that
+        # bug means this fixture must now agree with the fixed test date explicitly.
         exp = models.HealthExperiment(
-            week=week or _current_isoweek(), text="t", status="active",
+            week=week or _current_isoweek(date(2026, 6, 20)), text="t", status="active",
             workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
             habit_id=habit_id,
         )
@@ -1269,3 +1277,170 @@ class TestCheckHabitForWorkout:
 
         assert result is None
         assert db.query(models.HabitCompletion).count() == 0
+
+
+class TestCheckWorkoutForHabit:
+    """The mirror direction of TestCheckHabitForWorkout: checking off the habit should
+    auto-log a workout at the experiment's target value (the "row 1.2 miles" bug report
+    this was built for -- checking the habit never touched workout logs at all)."""
+
+    def _active_experiment(self, db, workout_type="row", habit_id=None, week=None,
+                            target_value=1.2, unit="mile", action="Row 1.2 miles"):
+        exp = models.HealthExperiment(
+            week=week or _current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            action=action, workout_type=workout_type, workout_target_value=target_value,
+            workout_unit=unit, habit_id=habit_id,
+        )
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def _habit(self, db, name="🧪 Row 1.2 miles", archived=False):
+        habit = models.Habit(name=name, archived=archived)
+        db.add(habit)
+        db.commit()
+        return habit
+
+    def test_logs_a_workout_at_the_target_value(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, habit_id=habit.id)
+
+        entry = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+
+        assert entry is not None
+        assert entry.type == "row"
+        assert entry.value == 1.2
+        assert entry.unit == "mile"
+        assert entry.logged_at.date() == date(2026, 6, 20)
+
+    def test_no_active_experiment_is_a_noop(self, db):
+        habit = self._habit(db)
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        assert result is None
+        assert db.query(models.WorkoutEntry).count() == 0
+
+    def test_habit_not_linked_to_this_experiment_is_a_noop(self, db):
+        habit = self._habit(db)
+        other_habit = self._habit(db, name="other")
+        self._active_experiment(db, habit_id=other_habit.id)
+
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        assert result is None
+        assert db.query(models.WorkoutEntry).count() == 0
+
+    def test_experiment_without_a_workout_type_is_a_noop(self, db):
+        """A plain habit/Withings-metric experiment shouldn't ever auto-log a
+        workout, even if it happens to have a habit_id."""
+        habit = self._habit(db)
+        db.add(models.HealthExperiment(
+            week=_current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            habit_id=habit.id,
+        ))
+        db.commit()
+
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        assert result is None
+        assert db.query(models.WorkoutEntry).count() == 0
+
+    def test_experiment_from_a_different_week_does_not_match(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, habit_id=habit.id, week="2020-W01")
+
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        assert result is None
+        assert db.query(models.WorkoutEntry).count() == 0
+
+    def test_dismissed_experiment_is_a_noop(self, db):
+        habit = self._habit(db)
+        exp = self._active_experiment(db, habit_id=habit.id)
+        exp.status = "dismissed"
+        db.commit()
+
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        assert result is None
+        assert db.query(models.WorkoutEntry).count() == 0
+
+    def test_a_real_workout_already_logged_today_takes_precedence(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, habit_id=habit.id)
+        db.add(models.WorkoutEntry(
+            type="row", value=2.5, unit="mi", raw_input="rowed 2.5 mi",
+            logged_at=datetime(2026, 6, 20, 9, 0),
+        ))
+        db.commit()
+
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+
+        assert result is None
+        entries = db.query(models.WorkoutEntry).all()
+        assert len(entries) == 1
+        assert entries[0].value == 2.5  # the real entry, untouched
+
+    def test_does_not_double_log_if_called_twice(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, habit_id=habit.id)
+
+        first = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        second = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+
+        assert first is not None
+        assert second is None
+        assert db.query(models.WorkoutEntry).count() == 1
+
+    def test_a_matching_workout_from_a_different_day_does_not_block_todays_autolog(self, db):
+        habit = self._habit(db)
+        self._active_experiment(db, habit_id=habit.id)
+        db.add(models.WorkoutEntry(
+            type="row", value=1.2, unit="mi", raw_input="rowed yesterday",
+            logged_at=datetime(2026, 6, 19, 9, 0),
+        ))
+        db.commit()
+
+        result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
+        assert result is not None
+        assert db.query(models.WorkoutEntry).count() == 2
+
+
+class TestCheckHabitRowWorkoutAutoLogWiring:
+    """check_habit_row is the single place this gets wired in (see its from_workout
+    docstring) -- these confirm the manual path triggers it and the workout-triggered
+    path doesn't loop back and double-log itself."""
+
+    def _linked_habit_and_experiment(self, db):
+        habit = models.Habit(name="🧪 Row 1.2 miles")
+        db.add(habit)
+        db.commit()
+        db.add(models.HealthExperiment(
+            week=_current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            action="Row 1.2 miles", workout_type="row", workout_target_value=1.2,
+            workout_unit="mile", habit_id=habit.id,
+        ))
+        db.commit()
+        return habit
+
+    def test_manual_checkoff_auto_logs_the_linked_workout(self, db):
+        habit = self._linked_habit_and_experiment(db)
+
+        check_habit_row(db, habit.id, date(2026, 6, 20))
+
+        entries = db.query(models.WorkoutEntry).all()
+        assert len(entries) == 1
+        assert entries[0].type == "row"
+        assert entries[0].value == 1.2
+
+    def test_workout_triggered_checkoff_does_not_double_log(self, db):
+        habit = self._linked_habit_and_experiment(db)
+
+        check_habit_for_workout(db, "row", date(2026, 6, 20))
+
+        assert db.query(models.WorkoutEntry).count() == 0
+
+    def test_already_completed_today_does_not_re_trigger_the_autolog(self, db):
+        """Re-checking an already-completed habit today is a no-op for the completion
+        itself, and must not attempt a second auto-log alongside it."""
+        habit = self._linked_habit_and_experiment(db)
+        check_habit_row(db, habit.id, date(2026, 6, 20))
+        assert db.query(models.WorkoutEntry).count() == 1
+
+        check_habit_row(db, habit.id, date(2026, 6, 20))
+        assert db.query(models.WorkoutEntry).count() == 1

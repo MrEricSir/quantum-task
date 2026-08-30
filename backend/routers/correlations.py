@@ -52,8 +52,20 @@ def _week_start(wk: str) -> date:
     return jan4 - timedelta(days=jan4.weekday()) + timedelta(weeks=w - 1)
 
 
-def _current_isoweek() -> str:
-    y, w, _ = date.today().isocalendar()
+def _current_isoweek(today: date | None = None) -> str:
+    """ISO week string for `today`. `today` should almost always be passed explicitly
+    (the caller's client-local date, from deps.local_date(request)) -- the server runs
+    UTC (Cloud Run), so the no-arg default (date.today(), server-UTC) silently computes
+    the wrong week for part of the day for any non-UTC user, right at the Sunday/Monday
+    boundary specifically. See check_habit_for_workout's fix for the bug this caused:
+    it received a correct local `today` but ignored it for its own week lookup, so a
+    workout logged in the hours where UTC has already rolled to Monday but the user's
+    local day is still Sunday would silently fail to match that week's still-active
+    experiment. The no-arg fallback is kept only for call sites that don't have a
+    request/local date available (e.g. the legacy AppSetting migration below) and where
+    day-level precision doesn't matter."""
+    d = today or date.today()
+    y, w, _ = d.isocalendar()
     return f"{y}-W{w:02d}"
 
 
@@ -66,7 +78,7 @@ def check_habit_for_workout(db: Session, workout_type: str, today: date) -> mode
     time). Returns the habit that got checked, or None if nothing matched."""
     exp = (
         db.query(models.HealthExperiment)
-        .filter_by(week=_current_isoweek(), status="active")
+        .filter_by(week=_current_isoweek(today), status="active")
         .filter(models.HealthExperiment.workout_type == workout_type)
         .first()
     )
@@ -75,8 +87,54 @@ def check_habit_for_workout(db: Session, workout_type: str, today: date) -> mode
     habit = db.query(models.Habit).filter_by(id=exp.habit_id, archived=False).first()
     if not habit:
         return None
-    check_habit_row(db, habit.id, today)
+    check_habit_row(db, habit.id, today, from_workout=True)
     return habit
+
+
+def check_workout_for_habit(db: Session, habit_id: int, today: date) -> models.WorkoutEntry | None:
+    """The mirror of check_habit_for_workout (workout -> habit): if habit_id is the linked
+    habit of an active workout-routine experiment this week, auto-log a workout entry for
+    today at the experiment's target value. Assumes the target was hit exactly rather than
+    asking for the real distance, so checking the habit off stays a single tap -- see the
+    "row 1.2 miles" bug report this was built for. Called from check_habit_row itself
+    (from_workout=False path) rather than from each manual-checkoff call site individually,
+    so any future caller of check_habit_row gets this for free without remembering to wire
+    it up. No-ops (returns None) if habit_id isn't linked to an active workout-routine
+    experiment, or if a workout of that type is already logged today (a real logged workout
+    always takes precedence over a synthetic one -- never overwrites or duplicates it)."""
+    exp = (
+        db.query(models.HealthExperiment)
+        .filter_by(week=_current_isoweek(today), status="active", habit_id=habit_id)
+        .filter(models.HealthExperiment.workout_type.isnot(None))
+        .first()
+    )
+    if not exp:
+        return None
+
+    day_start = datetime.combine(today, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    already_logged = (
+        db.query(models.WorkoutEntry)
+        .filter(
+            models.WorkoutEntry.type == exp.workout_type,
+            models.WorkoutEntry.logged_at >= day_start,
+            models.WorkoutEntry.logged_at < day_end,
+        )
+        .first()
+    )
+    if already_logged:
+        return None
+
+    entry = models.WorkoutEntry(
+        type=exp.workout_type,
+        value=exp.workout_target_value,
+        unit=exp.workout_unit,
+        logged_at=day_start.replace(hour=12),
+        raw_input=f"Auto-logged from completing \"{exp.action or exp.text}\"",
+    )
+    db.add(entry)
+    db.flush()
+    return entry
 
 
 # ── Shared data loader ────────────────────────────────────────────────────────
@@ -654,10 +712,16 @@ provides no new information.\
 """
 
 
-def _generate_experiment(correlations: list[dict], db: Session) -> models.HealthExperiment:
-    """Generate a new experiment via LLM, persist to health_experiments table."""
-    week = _current_isoweek()
-    today = date.today()
+def _generate_experiment(correlations: list[dict], db: Session, today: date | None = None) -> models.HealthExperiment:
+    """Generate a new experiment via LLM, persist to health_experiments table.
+
+    `today` should be the caller's client-local date (deps.local_date(request)) so the
+    week this experiment is stamped with agrees with check_habit_for_workout's own
+    week lookup -- see _current_isoweek's docstring. Optional/defaults to server-UTC
+    date.today() only so existing callers/tests that don't care about day-level
+    precision don't all need updating."""
+    today = today or date.today()
+    week = _current_isoweek(today)
 
     # Guard against concurrent generation: re-check inside the session before inserting.
     existing = db.query(models.HealthExperiment).filter_by(week=week, status="active").first()
@@ -924,8 +988,10 @@ def _generate_experiment(correlations: list[dict], db: Session) -> models.Health
     if action:
         # Always create a tracking habit — even for non-Withings experiments it
         # serves as a daily reminder and shows up in the Health & Habits section.
-        # Workout-routine experiments get one too (checked off manually, same as
-        # every other non-Withings habit -- no auto-completion from WorkoutEntry).
+        # Workout-routine experiments get one too -- logging a matching WorkoutEntry
+        # auto-checks it via check_habit_for_workout (matches on workout_type against
+        # this experiment's row, not on hitting workout_target_value), in addition to
+        # checking it off manually like any other habit.
         habit_name = f"🧪 {action[:60]}"
         habit = models.Habit(
             name=habit_name,
@@ -1324,8 +1390,8 @@ def auto_expire_stale_experiments(db: Session, current_week: str, today: date) -
 @router.get("/api/health/experiment")
 def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     """Return the active experiment for the current week, generating one if needed."""
-    current_week = _current_isoweek()
     today = local_date(request)
+    current_week = _current_isoweek(today)
 
     # Archive habits and expire any active experiments from previous weeks so
     # week-rollover cleanup happens automatically (not just on explicit dismiss).
@@ -1343,21 +1409,21 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     # Generate a new experiment
     weight_obs, fat_obs = _load_weekly_obs(db, today)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
-    exp = _generate_experiment(correlations, db)
+    exp = _generate_experiment(correlations, db, today)
     return _exp_to_dict(exp)
 
 
 @router.delete("/api/health/experiment")
 def dismiss_health_experiment(request: Request, db: Session = Depends(get_db)):
     """Dismiss the active experiment, recording outcome metrics."""
-    current_week = _current_isoweek()
+    today = local_date(request)
+    current_week = _current_isoweek(today)
     exp = (
         db.query(models.HealthExperiment)
         .filter_by(week=current_week, status="active")
         .first()
     )
     if exp:
-        today = local_date(request)
         _record_outcome(exp, db, today)
         exp.status       = "dismissed"
         exp.dismissed_at = datetime.now(timezone.utc)
