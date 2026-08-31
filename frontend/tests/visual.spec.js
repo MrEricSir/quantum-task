@@ -2279,6 +2279,36 @@ test.describe('health page', () => {
     await expect(section.getByRole('button', { name: /^log$/i })).toBeVisible()
   })
 
+  test('dismissing and regenerating the weekly experiment refreshes the habits list', async ({ page }) => {
+    // Regression test: dismissing archives the old habit and generating the replacement
+    // creates a new one server-side -- the Habits list must refetch afterward instead of
+    // keeping the now-stale cached habits (the now-archived old one still "active", the
+    // new one missing) until some unrelated action happens to refresh it.
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let habitsRequestCount = 0
+    await page.route(/\/api\/habits(\?|$)/, r => {
+      habitsRequestCount += 1
+      const url = r.request().url()
+      return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
+    })
+    await page.route('**/api/health/experiment', async r => {
+      if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } })
+      return r.fulfill({ json: {
+        id: 42, week: '2026-W22', text: 'Row 1.5 mi/day instead of 1 mi/day',
+        hypothesis: null, needs_habit: true, habit_id: 10, health_metric: null,
+      } })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.locator('.experiment-card')).toBeVisible()
+
+    const countBeforeDismiss = habitsRequestCount
+    await page.getByRole('button', { name: /dismiss & generate new/i }).click()
+
+    await expect.poll(() => habitsRequestCount).toBeGreaterThan(countBeforeDismiss)
+  })
+
   test('logging a manual measurement POSTs the entry and shows it in the list', async ({ page }) => {
     let postBody = null
     await page.route('**/api/health/measurements**', r => {

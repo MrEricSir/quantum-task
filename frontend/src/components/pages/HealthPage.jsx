@@ -502,6 +502,7 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
   const [exp, setExp] = useState(null)
   const [loading, setLoading] = useState(true)
   const [dismissing, setDismissing] = useState(false)
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     fetchHealthExperiment()
@@ -514,6 +515,13 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
     setDismissing(true)
     try {
       await dismissHealthExperiment()
+      // Dismissing archives the old habit and generating the replacement creates a new
+      // one server-side -- without this, the Habits list (here and on the Today page)
+      // keeps showing the now-archived habit and never picks up the new one until some
+      // unrelated action happens to invalidate the cache (same fix already applied to
+      // WorkoutLog's onMutate below, for the same class of "server changed a habit
+      // out from under the cache" bug).
+      queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
       setExp(null)
       onDismiss?.()
     } catch {
