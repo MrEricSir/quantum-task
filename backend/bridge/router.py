@@ -32,6 +32,7 @@ from bridge.jobs import (
     _queue_fix_job,
     _queue_job_for_card,
     _queue_resume_job,
+    compute_attempt_stats,
     get_bridge_job_statuses,
     get_bridge_jobs_dashboard,
     validate_branch_name,
@@ -583,6 +584,7 @@ def get_card_job_chain(card_id: int, db: Session = Depends(get_db)):
     return {
         "root": _job_response(root) if root else None,
         "companion": _job_response(companion) if companion else None,
+        "attempts": compute_attempt_stats(db, card_id),
     }
 
 

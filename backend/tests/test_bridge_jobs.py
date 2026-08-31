@@ -430,7 +430,7 @@ class TestJobChainEndpoint:
         card_id = _make_card(spec="s")
         res = client.get(f"/api/bridge/jobs/card/{card_id}/chain")
         assert res.status_code == 200
-        assert res.json() == {"root": None, "companion": None}
+        assert res.json() == {"root": None, "companion": None, "attempts": None}
 
     def test_single_job_is_root_with_no_companion(self, client):
         card_id = _make_card(spec="s")
@@ -468,6 +468,96 @@ class TestJobChainEndpoint:
         res = client.get(f"/api/bridge/jobs/card/{card_a}/chain").json()
         assert res["root"]["id"] == job_a["id"]
         assert res["companion"] is None
+
+
+class TestJobChainAttemptStats:
+    """attempts: {number, prior_count, prior_failed_count} -- the Code tab's "3rd attempt,
+    2 previous attempts failed" line."""
+
+    def test_no_jobs_is_null(self, client):
+        card_id = _make_card(spec="s")
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] is None
+
+    def test_single_job_is_attempt_one_with_no_prior(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 1, "prior_count": 0, "prior_failed_count": 0}
+
+    def test_second_attempt_after_an_error_counts_one_prior_failure(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 2, "prior_count": 1, "prior_failed_count": 1}
+
+    def test_a_resume_job_counts_as_its_own_attempt(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/1-fix", "agent": "work-mac", "worktree_path": "/tmp/wt/1",
+        })
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+        client.post(f"/api/bridge/jobs/{job_id}/resume")
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 2, "prior_count": 1, "prior_failed_count": 1}
+
+    def test_a_done_prior_attempt_does_not_count_as_failed(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "PR opened"})
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 2, "prior_count": 1, "prior_failed_count": 0}
+
+    def test_a_stalled_prior_attempt_counts_as_failed(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.status = "stalled"
+            db.commit()
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 2, "prior_count": 1, "prior_failed_count": 1}
+
+    def test_three_attempts_two_prior_failures(self, client):
+        card_id = _make_card(spec="s")
+        job_1 = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_1}/error", json={"result": "boom"})
+        job_2 = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_2}/error", json={"result": "boom again"})
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 3, "prior_count": 2, "prior_failed_count": 2}
+
+    def test_companion_jobs_are_not_counted_as_attempts(self, client):
+        card_id = _make_card(spec="s")
+        root_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": root_id,
+        })
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/chain").json()
+        assert res["attempts"] == {"number": 1, "prior_count": 0, "prior_failed_count": 0}
+
+    def test_unrelated_cards_dont_bleed_into_each_others_attempt_count(self, client):
+        card_a = _make_card(spec="s")
+        card_b = _make_card(spec="s")
+        job_a = client.post("/api/bridge/jobs", json={"card_id": card_a}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_a}/error", json={"result": "boom"})
+        client.post("/api/bridge/jobs", json={"card_id": card_b})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_a}/chain").json()
+        assert res["attempts"] == {"number": 1, "prior_count": 0, "prior_failed_count": 0}
 
 
 # ── GET /api/bridge/jobs/status ───────────────────────────────────────────────

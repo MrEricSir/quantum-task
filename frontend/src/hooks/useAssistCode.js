@@ -37,6 +37,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   const [resumeQueuing,  setResumeQueuing]  = useState(false)
   const [branchOverride, setBranchOverride] = useState('')
   const [renameQueuing,  setRenameQueuing]  = useState(false)
+  const [attemptStats,   setAttemptStats]   = useState(null)
 
   // Cross-repo companion job (BRIDGE_CROSS_REPO_JOBS.md Phase 3)
   const [companionJob,     setCompanionJob]     = useState(null)
@@ -55,11 +56,12 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     setBridgeJob(null); setBridgeError(''); setResumeQueuing(false); setBranchOverride('')
     setCompanionJob(null); setCompanionOpen(false); setCompanionRepo('')
     setCompanionQueuing(false); setCompanionError(''); setCompanionResumeQueuing(false)
+    setAttemptStats(null)
 
     if (task.spec) {
       getBridgeJobChain(task.id)
-        .then(({ root, companion }) => {
-          setBridgeJob(root); setCompanionJob(companion)
+        .then(({ root, companion, attempts }) => {
+          setBridgeJob(root); setCompanionJob(companion); setAttemptStats(attempts)
           // Show the job's actual current name (rather than blank + placeholder) once
           // there is one, so editing it starts from reality, not a guess.
           if (root?.branch_name) setBranchOverride(root.branch_name)
@@ -67,6 +69,14 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
         .catch(() => {})
     }
   }, [open, task?.id, initialTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refreshes attempt-history stats (see bridge/jobs.py's compute_attempt_stats) after
+  // queueing a fresh run or a resume -- both add a new attempt, and the count/prior-failure
+  // stats aren't part of either action's own response, only the chain endpoint's.
+  const _refreshAttemptStats = () => {
+    if (!task?.id) return
+    getBridgeJobChain(task.id).then(({ attempts }) => setAttemptStats(attempts)).catch(() => {})
+  }
 
   // Pick up spec generated in background while panel was open
   useEffect(() => {
@@ -160,6 +170,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     try {
       const job = await queueBridgeJob(task.id, branchName || undefined)
       setBridgeJob(job)
+      _refreshAttemptStats()
     } catch (e) {
       setBridgeError(e.message || 'Failed to queue bridge job')
     } finally {
@@ -197,6 +208,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     try {
       const job = await queueResumeJob(bridgeJob.id)
       setBridgeJob(job)
+      _refreshAttemptStats()
     } catch (e) {
       setBridgeError(e.message || 'Failed to queue resume job')
     } finally {
@@ -257,7 +269,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
 
   return {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
-    bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing,
+    bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing, attemptStats,
     branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
     companionError, knownRepos, companionResumeQueuing,

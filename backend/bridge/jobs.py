@@ -298,6 +298,38 @@ def get_bridge_jobs_dashboard(db: Session) -> list[dict]:
     ]
 
 
+def compute_attempt_stats(db: Session, card_id: int) -> dict | None:
+    """How many times this card's primary job lineage has been attempted, and how many of
+    the attempts before the current (latest) one failed -- the data behind the Code tab's
+    "3rd attempt -- 2 previous attempts failed" line, so a repeated failure loop is visible
+    instead of a Resume button that looks the same on attempt 1 and attempt 5.
+
+    "Attempt" = a root job (depends_on_job_id IS NULL, same definition get_card_job_chain
+    uses) -- a fresh run or a resume/fix of one, in chronological order. Cross-repo companion
+    jobs aren't attempts at this card's own work, so they're excluded, same as
+    get_card_job_chain's "root" already does. "Failed" = status is error or stalled;
+    "cancelled"-style states don't exist in this app's status vocabulary, only those two mean
+    the session didn't reach a working result.
+
+    Returns None if the card has no bridge jobs at all yet (nothing to report)."""
+    statuses = [
+        s for (s,) in (
+            db.query(models.BridgeJob.status)
+            .filter_by(card_id=card_id, depends_on_job_id=None)
+            .order_by(models.BridgeJob.created_at.asc())
+            .all()
+        )
+    ]
+    if not statuses:
+        return None
+    prior_statuses = statuses[:-1]
+    return {
+        "number": len(statuses),
+        "prior_count": len(prior_statuses),
+        "prior_failed_count": sum(1 for s in prior_statuses if s in ("error", "stalled")),
+    }
+
+
 def _queue_fix_job(
     db: Session, original_job: models.BridgeJob, comments: list[models.EngineeringItemComment]
 ) -> models.BridgeJob:

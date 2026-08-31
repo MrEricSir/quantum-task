@@ -873,6 +873,18 @@
   text-overflow: ellipsis;
 }
 
+/* Attempt history ("Attempt 3 · 2 of 2 previous attempts failed") -- neutral by default,
+   only calls out in warning color once a prior attempt actually failed, so a plain
+   "Attempt 2" after e.g. a manual re-run doesn't read as alarming. */
+.cdp-bridge-attempts {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.cdp-bridge-attempts--failed {
+  color: #f87171;
+}
+
 .cdp-bridge-agent {
   opacity: 0.65;
 }

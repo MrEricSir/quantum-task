@@ -7,13 +7,25 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text, { breaks: true }), { ADD_ATTR: ['target', 'rel'] })
 }
 
+// null on a first attempt (nothing to report yet) -- see bridge/jobs.py's
+// compute_attempt_stats for exactly what counts as an "attempt" and a "failure".
+function formatAttemptStats(attempts) {
+  if (!attempts || attempts.number <= 1) return null
+  const { number, prior_count, prior_failed_count } = attempts
+  if (prior_failed_count === 0) return `Attempt ${number}`
+  const failedPhrase = prior_failed_count === prior_count
+    ? (prior_count === 1 ? 'previous attempt failed' : `all ${prior_count} previous attempts failed`)
+    : `${prior_failed_count} of ${prior_count} previous attempts failed`
+  return `Attempt ${number} · ${failedPhrase}`
+}
+
 // "Code" tab content for AssistModal (spec generation + bridge job + cross-repo
 // companion job). All state/handlers come from useAssistCode -- this component
 // is presentational only.
 export default function AssistCodeTab({ code }) {
   const {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
-    bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing,
+    bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing, attemptStats,
     branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
     companionError, knownRepos, companionResumeQueuing,
@@ -109,6 +121,13 @@ export default function AssistCodeTab({ code }) {
               {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
               {bridgeJob.status === 'blocked'  && 'Waiting on another job to finish…'}
             </span>
+            {formatAttemptStats(attemptStats) && (
+              <span
+                className={`cdp-bridge-attempts${attemptStats.prior_failed_count > 0 ? ' cdp-bridge-attempts--failed' : ''}`}
+              >
+                {formatAttemptStats(attemptStats)}
+              </span>
+            )}
             {bridgeJob.branch_name && (
               <span className="cdp-bridge-branch">
                 {bridgeJob.branch_name}

@@ -19,7 +19,7 @@ const taskWithSpec = { id: 4, title: 'Ship the other thing', spec: 'Do the work'
 
 beforeEach(() => {
   vi.resetAllMocks()
-  api.getBridgeJobChain.mockResolvedValue({ root: null, companion: null })
+  api.getBridgeJobChain.mockResolvedValue({ root: null, companion: null, attempts: null })
   api.getKnownBridgeRepos.mockResolvedValue([])
   global.navigator.clipboard = { writeText: vi.fn(() => Promise.resolve()) }
 })
@@ -81,6 +81,31 @@ describe('useAssistCode — loading on open', () => {
     await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
     expect(result.current.branchOverride).toBe('')
   })
+
+  it('seeds attemptStats from the chain response', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 1, status: 'error' }, companion: null,
+      attempts: { number: 2, prior_count: 1, prior_failed_count: 1 },
+    })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+
+    await waitFor(() => expect(result.current.attemptStats).toEqual({ number: 2, prior_count: 1, prior_failed_count: 1 }))
+  })
+
+  it('resets attemptStats to null when the task changes', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 1, status: 'error' }, companion: null,
+      attempts: { number: 2, prior_count: 1, prior_failed_count: 1 },
+    })
+    const { result, rerender } = renderHook(
+      ({ task }) => useAssistCode(task, true, 'code', vi.fn()),
+      { initialProps: { task: taskWithSpec } }
+    )
+    await waitFor(() => expect(result.current.attemptStats).not.toBeNull())
+
+    rerender({ task: taskNoSpec })
+    expect(result.current.attemptStats).toBeNull()
+  })
 })
 
 describe('useAssistCode — branch field editability', () => {
@@ -135,7 +160,7 @@ describe('useAssistCode — spec generation', () => {
 
   it('handleStartSpecEdit/handleSaveSpec/handleCancelSpecEdit manage the draft', async () => {
     const onSpecSaved = vi.fn()
-    api.getBridgeJobChain.mockResolvedValue({ root: null, companion: null })
+    api.getBridgeJobChain.mockResolvedValue({ root: null, companion: null, attempts: null })
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', onSpecSaved))
     await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalled())
 
@@ -209,6 +234,32 @@ describe('useAssistCode — queueing a bridge job', () => {
     await act(() => result.current.handleSendToBridge())
 
     expect(result.current.bridgeError).toBe('Card has no spec')
+  })
+
+  it('refreshes attempt stats after successfully queueing a job', async () => {
+    api.queueBridgeJob.mockResolvedValue({ id: 9, status: 'pending' })
+    api.getBridgeJobChain.mockResolvedValueOnce({ root: null, companion: null, attempts: null })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalledTimes(1))
+
+    api.getBridgeJobChain.mockResolvedValueOnce({
+      root: { id: 9, status: 'pending' }, companion: null,
+      attempts: { number: 1, prior_count: 0, prior_failed_count: 0 },
+    })
+    await act(() => result.current.handleSendToBridge())
+
+    await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalledTimes(2))
+    expect(result.current.attemptStats).toEqual({ number: 1, prior_count: 0, prior_failed_count: 0 })
+  })
+
+  it('does not refresh attempt stats when queueing fails', async () => {
+    api.queueBridgeJob.mockRejectedValue(new Error('boom'))
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalledTimes(1))
+
+    await act(() => result.current.handleSendToBridge())
+
+    expect(api.getBridgeJobChain).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -316,6 +367,25 @@ describe('useAssistCode — resuming jobs', () => {
 
     expect(api.queueResumeJob).toHaveBeenCalledWith(1)
     expect(result.current.bridgeJob.status).toBe('pending')
+  })
+
+  it('refreshes attempt stats after a successful resume', async () => {
+    api.getBridgeJobChain.mockResolvedValueOnce({
+      root: { id: 1, status: 'error' }, companion: null,
+      attempts: { number: 1, prior_count: 0, prior_failed_count: 0 },
+    })
+    api.queueResumeJob.mockResolvedValue({ id: 1, status: 'pending', resumes_job_id: 1 })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob?.status).toBe('error'))
+
+    api.getBridgeJobChain.mockResolvedValueOnce({
+      root: { id: 1, status: 'pending', resumes_job_id: 1 }, companion: null,
+      attempts: { number: 2, prior_count: 1, prior_failed_count: 1 },
+    })
+    await act(() => result.current.handleResumeJob())
+
+    await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalledTimes(2))
+    expect(result.current.attemptStats).toEqual({ number: 2, prior_count: 1, prior_failed_count: 1 })
   })
 
   it('handleResumeCompanionJob replaces companionJob with the resumed job', async () => {

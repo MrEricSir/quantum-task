@@ -3882,6 +3882,62 @@ test.describe('card detail panel — github and spec', () => {
     expect(resumeCalled).toBe(true)
   })
 
+  test('no attempt history is shown on a first attempt', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'running', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r => r.fulfill({
+      json: { root: job, companion: null, attempts: { number: 1, prior_count: 0, prior_failed_count: 0 } },
+    }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-attempts')).toHaveCount(0)
+  })
+
+  test('attempt history is shown once a prior attempt failed', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'error', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'claude exited with code 1', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r => r.fulfill({
+      json: { root: job, companion: null, attempts: { number: 3, prior_count: 2, prior_failed_count: 2 } },
+    }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const attempts = page.locator('.cdp-bridge-attempts')
+    await expect(attempts).toBeVisible()
+    await expect(attempts).toHaveText('Attempt 3 · all 2 previous attempts failed')
+    await expect(attempts).toHaveClass(/cdp-bridge-attempts--failed/)
+  })
+
+  test('attempt history without a failure omits the failed-warning styling', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'running', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: null, output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:05:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r => r.fulfill({
+      json: { root: job, companion: null, attempts: { number: 2, prior_count: 1, prior_failed_count: 0 } },
+    }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const attempts = page.locator('.cdp-bridge-attempts')
+    await expect(attempts).toHaveText('Attempt 2')
+    await expect(attempts).not.toHaveClass(/cdp-bridge-attempts--failed/)
+  })
+
   test('companion job button appears once a root job exists, and opens the repo form', async ({ page }) => {
     const job = {
       id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
