@@ -29,6 +29,20 @@ from main import app
 from deps import get_db
 
 
+def _isoweek_for_tz_offset(tz_offset_minutes=0):
+    """The ISO week _reply_log_workout/_capture_from_text's own now_local computation
+    falls in, for a given tz_offset -- used to seed a HealthExperiment fixture that
+    check_habit_for_workout will actually match. Must NOT use
+    routers.correlations._current_isoweek()'s no-arg fallback (date.today(), the *test
+    runner machine's* configured local timezone) -- that can genuinely disagree with
+    the UTC-offset arithmetic the bot code itself uses, right at the Sunday/Monday UTC
+    boundary if the machine isn't itself set to UTC. Hit exactly this in practice once
+    already (a real, if rare, source of test flakiness, not a hypothetical one)."""
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset_minutes)
+    year, week, _ = now_local.date().isocalendar()
+    return f"{year}-W{week:02d}"
+
+
 # ── In-memory DB fixture ──────────────────────────────────────────────────────
 
 test_engine = create_engine(
@@ -1144,12 +1158,11 @@ class TestBotLogWorkout:
             assert db.query(models.WorkoutEntry).filter_by(raw_input="bench pressed 185 lbs").count() == 0
 
     def _seed_active_experiment(self, db, workout_type="row"):
-        from routers.correlations import _current_isoweek
         habit = models.Habit(name="🧪 Row 2 miles")
         db.add(habit)
         db.commit()
         db.add(models.HealthExperiment(
-            week=_current_isoweek(), text="t", status="active",
+            week=_isoweek_for_tz_offset(0), text="t", status="active",
             workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
             habit_id=habit.id,
         ))
@@ -1514,13 +1527,12 @@ class TestCaptureFromText:
 
     def test_workout_capture_checks_a_matching_active_experiment_habit(self):
         from telegram.bot import _capture_from_text
-        from routers.correlations import _current_isoweek
         with BotTestSession() as db:
             habit = models.Habit(name="🧪 Row 2 miles")
             db.add(habit)
             db.commit()
             db.add(models.HealthExperiment(
-                week=_current_isoweek(), text="t", status="active",
+                week=_isoweek_for_tz_offset(0), text="t", status="active",
                 workout_type="row", workout_target_value=2.0, workout_unit="mi",
                 habit_id=habit.id,
             ))

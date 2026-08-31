@@ -1,6 +1,7 @@
 import { UpdateIcon } from '@radix-ui/react-icons'
 import { useEffect, useMemo, useState } from 'react'
 import { useModalContext } from '../../context/ModalContext'
+import { useBridgeJobsDashboard } from '../../hooks/useBridgeJobsDashboard'
 import './EngineeringPage.css'
 
 // Cap tags shown per row so one item with several matching repo-tag rules
@@ -25,6 +26,48 @@ function staleDays(item) {
   if (item.item_type !== 'pr' || !item.body_updated_at) return null
   const days = Math.floor((Date.now() - new Date(item.body_updated_at).getTime()) / 86400000)
   return days >= STALE_DAYS ? days : null
+}
+
+// Mirrors CardDetailPanel.css's .cdp-bridge-status--* labels (the Code tab's own per-job
+// status text) so the dashboard and the Code tab agree on what each status means.
+const BUILD_STATUS_LABELS = {
+  pending: 'Queued',
+  running: 'Running',
+  done: 'Done',
+  error: 'Error',
+  stalled: 'Stalled',
+  blocked: 'Blocked',
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return ''
+  const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h ago`
+  return `${Math.floor(diffHr / 24)}d ago`
+}
+
+function BuildRow({ job, card, onOpenCard }) {
+  const label = BUILD_STATUS_LABELS[job.status] ?? job.status
+  return (
+    <div
+      className={`eng-build-row${card ? ' eng-build-row--clickable' : ''}`}
+      onClick={card ? () => onOpenCard(card) : undefined}
+      role={card ? 'button' : undefined}
+      tabIndex={card ? 0 : undefined}
+    >
+      <span className={`eng-build-dot eng-build-dot--${job.status}`} />
+      <span className="eng-build-title">{job.card_title}</span>
+      <span className={`eng-build-status-pill eng-build-status-pill--${job.status}`}>{label}</span>
+      <span className="eng-build-sub">
+        {job.branch_name && <span className="eng-build-branch">{job.branch_name}</span>}
+        {job.target_repo && <span className="eng-build-repo">{job.target_repo}</span>}
+        <span className="eng-build-time">{formatRelativeTime(job.updated_at || job.created_at)}</span>
+      </span>
+    </div>
+  )
 }
 
 function ItemCard({ item, onAddToBoard, onOpenCard, addedCard }) {
@@ -96,6 +139,7 @@ function ItemCard({ item, onAddToBoard, onOpenCard, addedCard }) {
 export default function EngineeringPage({ items, cards = [], lastSynced, syncing, onSync, onAddToBoard, onOpenCard }) {
   const { openGithubSettings } = useModalContext()
   const [selectedRepo, setSelectedRepo] = useState(null)
+  const { jobs: buildJobs } = useBridgeJobsDashboard()
 
   useEffect(() => {
     onSync()
@@ -168,6 +212,25 @@ export default function EngineeringPage({ items, cards = [], lastSynced, syncing
           </button>{' '}
           in Settings to get started.
         </div>
+      )}
+
+      {buildJobs.length > 0 && (
+        <section className="eng-section">
+          <h3 className="eng-section-heading">
+            Builds
+            <span className="eng-count">{buildJobs.length}</span>
+          </h3>
+          <div className="eng-items">
+            {buildJobs.map((job) => (
+              <BuildRow
+                key={job.id}
+                job={job}
+                card={cards.find((c) => c.id === job.card_id) ?? null}
+                onOpenCard={onOpenCard}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
       {prs.length > 0 && (

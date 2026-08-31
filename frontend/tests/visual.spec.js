@@ -116,6 +116,7 @@ async function mockAPIs(page) {
   await page.route('**/api/engineering/repo-tags', r => r.fulfill({ json: {} }))
   await page.route('**/api/bridge/install-token', r => r.fulfill({ json: { token: 'test-install-token' } }))
   await page.route('**/api/bridge/jobs/status', r => r.fulfill({ json: { statuses: {} } }))
+  await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [] } }))
   await page.route('**/api/settings/navigation', r =>
     r.fulfill({ json: { order: ['today', 'board', 'calendar', 'health', 'engineering'], default_page: 'today' } }))
 
@@ -1331,6 +1332,80 @@ test.describe('engineering page', () => {
     await expect.poll(() => postedCard).not.toBeNull()
     expect(postedCard.title).toBe('GitHub PR: Bump deps')
     expect(postedCard.section).toBe('today')
+  })
+
+  test('no Builds section is shown when there are no bridge jobs', async ({ page }) => {
+    await expect(page.getByText('Builds')).not.toBeVisible()
+  })
+
+  test('Builds section appears above PRs to Review when jobs exist', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [
+      { id: 1, card_id: 1, card_title: 'Daily Engineering Standup', status: 'running',
+        target_repo: null, branch_name: 'qtask/1-standup', agent_name: 'work-mac', result: null,
+        depends_on_job_id: null, resumes_job_id: null,
+        created_at: '2026-06-03T09:00:00Z', updated_at: '2026-06-03T09:05:00Z' },
+    ] } }))
+    await page.route('**/api/engineering/items', r => r.fulfill({ json: [
+      { id: 1, external_id: 'github:org/repo/pull/1', title: 'Fix login bug', item_type: 'pr',
+        repo: 'org/repo', number: 1, url: 'https://github.com/org/repo/pull/1', state: 'open',
+        project_name: null, project_status: null, synced_at: new Date().toISOString() },
+    ]}))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    await expect(page.getByText('Builds')).toBeVisible()
+    await expect(page.locator('.eng-build-row', { hasText: 'Daily Engineering Standup' })).toBeVisible()
+    await expect(page.locator('.eng-build-row', { hasText: 'Running' })).toBeVisible()
+    await expect(page.locator('.eng-build-row', { hasText: 'qtask/1-standup' })).toBeVisible()
+
+    const sectionOrder = await page.locator('.eng-section-heading').allTextContents()
+    const buildsIndex = sectionOrder.findIndex((t) => t.includes('Builds'))
+    const prsIndex = sectionOrder.findIndex((t) => t.includes('PRs to Review'))
+    expect(buildsIndex).toBeGreaterThanOrEqual(0)
+    expect(buildsIndex).toBeLessThan(prsIndex)
+  })
+
+  test('clicking a build row for a known card opens it', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [
+      { id: 1, card_id: 1, card_title: 'Daily Engineering Standup', status: 'error',
+        target_repo: null, branch_name: 'qtask/1-standup', agent_name: 'work-mac', result: 'boom',
+        depends_on_job_id: null, resumes_job_id: null,
+        created_at: '2026-06-03T09:00:00Z', updated_at: '2026-06-03T09:05:00Z' },
+    ] } }))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    await page.locator('.eng-build-row', { hasText: 'Daily Engineering Standup' }).click()
+    await expect(page.locator('.cdp-title', { hasText: 'Daily Engineering Standup' })).toBeVisible()
+  })
+
+  test('a build row for an unknown card is shown but not clickable', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [
+      { id: 1, card_id: 999999, card_title: '(deleted card)', status: 'done',
+        target_repo: null, branch_name: 'qtask/999999-old', agent_name: 'work-mac', result: 'done',
+        depends_on_job_id: null, resumes_job_id: null,
+        created_at: '2026-06-03T09:00:00Z', updated_at: '2026-06-03T09:05:00Z' },
+    ] } }))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    const row = page.locator('.eng-build-row', { hasText: '(deleted card)' })
+    await expect(row).toBeVisible()
+    await expect(row).not.toHaveClass(/eng-build-row--clickable/)
+  })
+
+  test('a companion job shows its target repo', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [
+      { id: 2, card_id: 1, card_title: 'Daily Engineering Standup', status: 'blocked',
+        target_repo: 'owner/web-repo', branch_name: null, agent_name: null, result: null,
+        depends_on_job_id: 1, resumes_job_id: null,
+        created_at: '2026-06-03T09:00:00Z', updated_at: null },
+    ] } }))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    await expect(page.locator('.eng-build-row', { hasText: 'owner/web-repo' })).toBeVisible()
+    await expect(page.locator('.eng-build-row', { hasText: 'Blocked' })).toBeVisible()
   })
 })
 

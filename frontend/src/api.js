@@ -775,6 +775,16 @@ export async function fetchBridgeJobStatuses() {
   return statuses
 }
 
+// Every currently-relevant bridge job across all cards (active, or finished recently) --
+// for the Engineering page's fleet-level dashboard (useBridgeJobsDashboard), not the
+// per-card badge (fetchBridgeJobStatuses) or the Code tab's own single-card chain fetch.
+export async function fetchBridgeJobsDashboard() {
+  const res = await apiFetch('/api/bridge/jobs/dashboard')
+  if (!res.ok) throw new Error('Failed to fetch bridge jobs dashboard')
+  const { jobs } = await res.json()
+  return jobs
+}
+
 export async function queueCompanionJob(cardId, targetRepo, dependsOnJobId) {
   const res = await apiFetch('/api/bridge/jobs', {
     method: 'POST',

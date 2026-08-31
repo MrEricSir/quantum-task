@@ -5,13 +5,19 @@ adapter.
 """
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 import github_sync
 import models
 import app_setting_keys as setting_keys
+
+# Statuses with a live/pending session that could still change -- always shown on the
+# Engineering page dashboard regardless of age. See get_bridge_jobs_dashboard.
+_ACTIVE_JOB_STATUSES = ("pending", "running", "blocked")
+_DASHBOARD_RECENT_WINDOW = timedelta(hours=24)
 
 
 def _get_bridge_install_token(db: Session) -> str:
@@ -236,6 +242,60 @@ def get_bridge_job_statuses(db: Session) -> dict[int, dict]:
         else:
             statuses[card_id] = {"job_id": job_id, "status": root_status}
     return statuses
+
+
+def get_bridge_jobs_dashboard(db: Session) -> list[dict]:
+    """Every currently-relevant bridge job across all cards, for the Engineering page's
+    dashboard -- a fleet-level view, unlike the Code tab's own single-card chain or the
+    card-tile badge's single-status-per-card summary (see get_bridge_job_statuses).
+
+    "Relevant" = has a live/pending session (pending/running/blocked, shown regardless of
+    age) or finished within the last 24h (done/error/stalled) -- a build that just
+    finished or errored stays visible without hunting, but ancient history doesn't
+    clutter the page forever. Sorted active-first, then most-recently-updated, so
+    in-progress work always sits above historical record even if its last heartbeat is
+    older than a job that just finished.
+
+    Excludes the large text columns (spec_snapshot/prompt_snapshot/output) -- this is a
+    list across every relevant job, not a single job's detail view."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - _DASHBOARD_RECENT_WINDOW
+    last_activity = func.coalesce(models.BridgeJob.updated_at, models.BridgeJob.created_at)
+    jobs = (
+        db.query(models.BridgeJob)
+        .filter(
+            (models.BridgeJob.status.in_(_ACTIVE_JOB_STATUSES)) | (last_activity >= cutoff)
+        )
+        .order_by(last_activity.desc())
+        .limit(30)
+        .all()
+    )
+    if not jobs:
+        return []
+
+    card_titles = dict(
+        db.query(models.Card.id, models.Card.title)
+        .filter(models.Card.id.in_({j.card_id for j in jobs}))
+        .all()
+    )
+    jobs.sort(key=lambda j: j.status not in _ACTIVE_JOB_STATUSES)  # stable: keeps recency order within each group
+
+    return [
+        {
+            "id": job.id,
+            "card_id": job.card_id,
+            "card_title": card_titles.get(job.card_id, "(deleted card)"),
+            "status": job.status,
+            "target_repo": job.target_repo,
+            "branch_name": job.branch_name,
+            "agent_name": job.agent_name,
+            "result": job.result,
+            "depends_on_job_id": job.depends_on_job_id,
+            "resumes_job_id": job.resumes_job_id,
+            "created_at": job.created_at.isoformat(),
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        }
+        for job in jobs
+    ]
 
 
 def _queue_fix_job(

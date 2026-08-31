@@ -19,7 +19,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -576,6 +576,109 @@ class TestBridgeJobStatusesEndpoint:
 
         res = client.get("/api/bridge/jobs/status").json()
         assert res["statuses"][str(card_id)] == {"job_id": new_root["id"], "status": "pending"}
+
+
+# ── GET /api/bridge/jobs/dashboard ───────────────────────────────────────────
+
+class TestBridgeJobsDashboardEndpoint:
+
+    def _set_updated_at(self, job_id, when):
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.updated_at = when
+            db.commit()
+
+    def test_no_jobs_returns_empty(self, client):
+        res = client.get("/api/bridge/jobs/dashboard")
+        assert res.status_code == 200
+        assert res.json() == {"jobs": []}
+
+    def test_includes_pending_job_with_card_title(self, client):
+        card_id = _make_card(title="Fix login bug", spec="s")
+        job = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert len(res["jobs"]) == 1
+        entry = res["jobs"][0]
+        assert entry["id"] == job["id"]
+        assert entry["card_id"] == card_id
+        assert entry["card_title"] == "Fix login bug"
+        assert entry["status"] == "pending"
+
+    def test_excludes_large_text_fields(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        entry = client.get("/api/bridge/jobs/dashboard").json()["jobs"][0]
+        assert "spec_snapshot" not in entry
+        assert "prompt_snapshot" not in entry
+        assert "output" not in entry
+
+    def test_active_job_included_regardless_of_age(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        self._set_updated_at(job_id, datetime(2020, 1, 1))
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert len(res["jobs"]) == 1
+        assert res["jobs"][0]["status"] == "pending"
+
+    def test_old_finished_job_is_excluded(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+        self._set_updated_at(job_id, datetime(2020, 1, 1))
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert res["jobs"] == []
+
+    def test_recently_finished_job_is_included(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert len(res["jobs"]) == 1
+        assert res["jobs"][0]["status"] == "error"
+
+    def test_active_jobs_sort_above_recent_finished_ones_even_if_older(self, client):
+        card_a = _make_card(title="Errored recently", spec="s")
+        card_b = _make_card(title="Still running", spec="s")
+        error_job_id = client.post("/api/bridge/jobs", json={"card_id": card_a}).json()["id"]
+        client.post(f"/api/bridge/jobs/{error_job_id}/error", json={"result": "boom"})
+        running_job_id = client.post("/api/bridge/jobs", json={"card_id": card_b}).json()["id"]
+        client.get("/api/bridge/jobs/next/pending")  # claims it, sets running
+        # The running job's last heartbeat is older than the errored job's, but still
+        # within the recent-activity window (an active job's own age never matters, but
+        # this keeps the fixture realistic rather than relying on that fact).
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        self._set_updated_at(running_job_id, now - timedelta(hours=20))
+        self._set_updated_at(error_job_id, now - timedelta(minutes=5))
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        statuses = [j["status"] for j in res["jobs"]]
+        assert statuses == ["running", "error"]
+
+    def test_deleted_card_shows_a_placeholder_title(self, client):
+        # A job whose card no longer exists (FK enforcement is off for this app's SQLite
+        # connections, so this can genuinely happen -- see database.py) shouldn't 500 the
+        # whole dashboard just because one row's title lookup comes up empty.
+        with TestSession() as db:
+            db.add(models.BridgeJob(card_id=9999, status="pending"))
+            db.commit()
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert res["jobs"][0]["card_title"] == "(deleted card)"
+
+    def test_multiple_cards_each_get_their_own_entry(self, client):
+        card_a = _make_card(title="Card A", spec="s")
+        card_b = _make_card(title="Card B", spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_a})
+        client.post("/api/bridge/jobs", json={"card_id": card_b})
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        titles = {j["card_title"] for j in res["jobs"]}
+        assert titles == {"Card A", "Card B"}
 
 
 # ── GET /api/bridge/repos ────────────────────────────────────────────────────

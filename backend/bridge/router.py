@@ -33,6 +33,7 @@ from bridge.jobs import (
     _queue_job_for_card,
     _queue_resume_job,
     get_bridge_job_statuses,
+    get_bridge_jobs_dashboard,
     validate_branch_name,
 )
 from bridge.render import render_agent_script, render_install_script
@@ -305,6 +306,19 @@ def get_bridge_job_statuses_endpoint(db: Session = Depends(get_db)):
     and "status" would otherwise be captured as that route's {job_id} path param and fail int
     conversion (see by-worktree's docstring above for the same gotcha hit once already)."""
     return {"statuses": get_bridge_job_statuses(db)}
+
+
+@router.get("/api/bridge/jobs/dashboard")
+def get_bridge_jobs_dashboard_endpoint(db: Session = Depends(get_db)):
+    """Every currently-relevant bridge job across all cards, for the Engineering page's
+    fleet-level dashboard -- see bridge.jobs.get_bridge_jobs_dashboard's docstring for
+    exactly what counts as "relevant" and how this differs from /status (per-card badge)
+    and /card/{id}/chain (Code tab's own single-card root+companion pairing) below.
+
+    Registered BEFORE /api/bridge/jobs/{job_id} below -- routes match in registration order,
+    and "dashboard" would otherwise be captured as that route's {job_id} path param and fail
+    int conversion (see by-worktree's docstring above for the same gotcha hit once already)."""
+    return {"jobs": get_bridge_jobs_dashboard(db)}
 
 
 @router.get("/api/bridge/jobs/{job_id}")
