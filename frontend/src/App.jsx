@@ -164,9 +164,12 @@ export default function App() {
     handleArchiveHabit, handleUnarchiveHabit, handleToggleHabit,
   } = useHabits({ authed, invalidateBriefing })
 
+  const location = useLocation()
+  const isCalendarPage = location.pathname === '/calendar' || location.pathname.startsWith('/calendar/tag/')
+
   const {
     calendarEvents, calendarLoading, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
-  } = useCalendar({ authed, invalidateBriefing })
+  } = useCalendar({ authed, invalidateBriefing, active: isCalendarPage })
 
   const { engineeringItems, lastEngineeringSynced, engineeringSyncing, refreshEngineeringItems } = useEngineering({ authed })
   const { bridgeJobStatuses } = useBridgeJobStatuses({ authed })
@@ -239,10 +242,8 @@ export default function App() {
   )
 
   const navigate = useNavigate()
-  const location = useLocation()
   const isTodayPage       = location.pathname === '/today'       || location.pathname.startsWith('/today/tag/')
   const isBoardPage       = location.pathname === '/board'       || location.pathname.startsWith('/board/tag/')
-  const isCalendarPage    = location.pathname === '/calendar'    || location.pathname.startsWith('/calendar/tag/')
   const isEngineeringPage = location.pathname === '/engineering' || location.pathname.startsWith('/engineering/tag/')
   // /habits is a legacy URL — treat it as the health page
   const isHealthPage      = location.pathname === '/health' || location.pathname.startsWith('/health/tag/') ||
