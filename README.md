@@ -586,6 +586,15 @@ Configured in **Settings → Telegram** — set a send time for each:
 - iCal feeds are cached for ~3 hours; LLM rankings are cached until interests or feedback change, and persist across server restarts so a fresh instance doesn't have to re-rank from scratch
 - Ranking runs in the background so the panel shows events immediately (a "Ranking recommendations..." hint appears while it works) instead of blocking on the LLM call
 - Shows up to 20 events
+- Events farther than a configurable distance from your current location (Settings → Calendar,
+  default 25 miles / ~40 km, whichever your browser's locale suggests) are filtered out
+  entirely — no point surfacing an event you can't realistically get to. Each event's venue
+  address is geocoded once per feed refresh (~3 hours) and cached; events with no listed
+  address are always shown, since many feeds leave it blank for recurring local events rather
+  than because the event is far away. Your current location is read live from the browser on
+  each Discover visit, falling back to the same last-known location the daily briefing's
+  weather uses if it's unavailable — so filtering stays correct automatically while traveling,
+  no manual update needed.
 
 ### Tags
 - Create and manage color-coded tags

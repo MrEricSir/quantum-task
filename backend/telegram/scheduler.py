@@ -320,7 +320,7 @@ def check_meeting_alerts(db: Session, token: str, chat_id: str,
     to_alert = []
     for m in mappings:
         try:
-            for ev in _cached_fetch_events(m.ical_url, today, today + timedelta(days=1)):
+            for ev in _cached_fetch_events(m.ical_url, today, today + timedelta(days=1), tz_offset):
                 if ev.get("is_ooo") or ev.get("all_day"):
                     continue
                 ev_id = str(ev["id"])

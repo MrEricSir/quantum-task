@@ -20,23 +20,30 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
   const prevHeightRef = useRef(0)
 
   const getLocation = useCallback(() => {
-    // Refresh the cached location in the background so the next call is current.
-    if (navigator.geolocation) {
+    const cachedLocation = () => {
+      try {
+        const cached = localStorage.getItem('briefing-last-location')
+        return cached ? JSON.parse(cached) : null
+      } catch {
+        return null
+      }
+    }
+    if (!navigator.geolocation) return Promise.resolve(cachedLocation())
+    // Wait for a live reading first -- resolving from the cache immediately would
+    // keep showing the pre-trip city's weather for every briefing fetched right after
+    // landing somewhere new, until some later unrelated call happened to refresh the
+    // cache. Only fall back to the cache if geolocation is denied or times out.
+    return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const loc = { lat: pos.coords.latitude, lon: pos.coords.longitude }
           try { localStorage.setItem('briefing-last-location', JSON.stringify(loc)) } catch {}
+          resolve(loc)
         },
-        () => {},
+        () => resolve(cachedLocation()),
         { timeout: 10000 },
       )
-    }
-    // Resolve immediately with the cached value so the fetch isn't blocked.
-    try {
-      const cached = localStorage.getItem('briefing-last-location')
-      if (cached) return Promise.resolve(JSON.parse(cached))
-    } catch {}
-    return Promise.resolve(null)
+    })
   }, [])
 
   const generate = async (force = false) => {

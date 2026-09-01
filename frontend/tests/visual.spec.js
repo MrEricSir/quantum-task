@@ -2157,6 +2157,72 @@ test.describe('calendar page', () => {
     await expect(page.locator('.cal-url-input').first()).toBeVisible()
     await expect(page.locator('.cal-disc-interests')).toHaveValue('Tech meetups and workshops')
   })
+
+  test('calendar settings modal shows a saved max distance and unit', async ({ page }) => {
+    await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
+    await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
+    await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [] }))
+    await page.route('**/api/discovery/interests', r => r.fulfill({ json: {
+      // Stored canonically in miles regardless of display unit -- 40mi displays as ~64km.
+      interests: '', max_distance_miles: 40, distance_unit: 'km',
+    } }))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+    await expect(page.locator('.cal-disc-distance-input')).toHaveValue('64')
+    await expect(page.getByRole('button', { name: 'km' })).toHaveClass(/cal-feed-tag-pill--all/)
+  })
+
+  test('saving calendar settings PUTs the max distance converted to miles', async ({ page }) => {
+    await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
+    await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
+    await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [] }))
+    let putBody = null
+    await page.route('**/api/discovery/interests', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ok: true } })
+      }
+      return r.fulfill({ json: { interests: '', max_distance_miles: null, distance_unit: null } })
+    })
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+    await page.locator('.cal-disc-distance-input').fill('50')
+    await page.getByRole('button', { name: 'km' }).click()
+    await page.locator('.btn-save').click()
+    await expect.poll(() => putBody).toBeTruthy()
+    expect(putBody.distance_unit).toBe('km')
+    expect(putBody.max_distance_miles).toBeCloseTo(50 * 0.621371, 2)
+  })
+
+  test('discovery event card shows distance when present', async ({ page }) => {
+    await page.route('**/api/discovery/events', r => r.fulfill({
+      headers: { 'X-Distance-Unit': 'mi' },
+      json: [{
+        id: 'feed1::ev1',
+        uid: 'feed1::ev1',
+        title: 'Nearby Meetup',
+        description: null,
+        location: 'Oakland, CA',
+        url: null,
+        start: '2026-06-06T10:00:00Z',
+        end: null,
+        all_day: false,
+        feed_name: 'Meetup SF',
+        score: null,
+        reason: null,
+        distance_miles: 8.3,
+      }],
+    }))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await page.getByRole('button', { name: /^discover$/i }).click()
+    await expect(page.getByText('Nearby Meetup')).toBeVisible()
+    await expect(page.getByText('8.3 mi away')).toBeVisible()
+  })
 })
 
 // ---------------------------------------------------------------------------

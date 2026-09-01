@@ -231,25 +231,35 @@ export async function fetchDiscoveryInterests() {
   return res.json()
 }
 
-export async function saveDiscoveryInterests(interests) {
+export async function saveDiscoveryInterests(interests, maxDistanceMiles, distanceUnit) {
   const res = await apiFetch('/api/discovery/interests', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ interests }),
+    body: JSON.stringify({
+      interests,
+      ...(maxDistanceMiles != null ? { max_distance_miles: maxDistanceMiles } : {}),
+      ...(distanceUnit != null ? { distance_unit: distanceUnit } : {}),
+    }),
   })
   if (!res.ok) throw new Error('Failed to save discovery interests')
   return res.json()
 }
 
-export async function fetchDiscoveryEvents({ force = false } = {}) {
-  const res = await apiFetch(`/api/discovery/events${force ? '?force=true' : ''}`)
+export async function fetchDiscoveryEvents({ force = false, lat = null, lon = null } = {}) {
+  const params = new URLSearchParams()
+  if (force) params.set('force', 'true')
+  if (lat != null) params.set('lat', lat)
+  if (lon != null) params.set('lon', lon)
+  const qs = params.toString()
+  const res = await apiFetch(`/api/discovery/events${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error('Failed to fetch discovery events')
   const events = await res.json()
   // While ranking runs in the background, the server returns events
   // immediately (stale or chronological) and flags them as such so the
   // caller can poll for the freshly-ranked list instead of blocking on it.
   const pending = res.headers.get('X-Ranking-Status') === 'pending'
-  return { events, pending }
+  const distanceUnit = res.headers.get('X-Distance-Unit') || 'mi'
+  return { events, pending, distanceUnit }
 }
 
 export async function testDiscoveryFeeds() {

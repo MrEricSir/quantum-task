@@ -137,6 +137,15 @@ class Settings:
         v = self.get(keys.LAST_KNOWN_LON)
         return float(v) if v else None
 
+    @property
+    def discovery_max_distance_miles(self) -> float:
+        v = self.get(keys.DISCOVERY_MAX_DISTANCE_MILES)
+        return float(v) if v else 25.0
+
+    @property
+    def discovery_distance_unit(self) -> str:
+        return self.get(keys.DISCOVERY_DISTANCE_UNIT, "mi")
+
     # ── Navigation preferences ───────────────────────────────────────────────
 
     @property

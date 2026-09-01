@@ -4,11 +4,13 @@ import concurrent.futures
 import hashlib
 import html
 import json
+import math
 import re
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from typing import List
 
+import requests
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Request, Response
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,8 @@ import models
 import schemas
 import app_setting_keys as setting_keys
 from deps import LLM_MODEL, get_db, llm_client, local_date, reasoning_kwargs
+from deps import utc_offset_minutes as get_utc_offset
+from settings import Settings
 
 router = APIRouter()
 
@@ -103,6 +107,68 @@ def _deserialize_gcal_events(s: str) -> list:
         {**ev, "start": _dec(ev.get("start")), "end": _dec(ev.get("end"))}
         for ev in json.loads(s)
     ]
+
+
+# ── Geocoding / distance filtering ──────────────────────────────────────────
+#
+# Geocoded coordinates are attached to each event dict (location_lat/location_lon) at fetch
+# time, right before it gets serialized into feed.cached_events -- so a feed only pays the
+# geocoding cost once per ~3-hour refresh cycle, not on every request that reads the cache.
+
+_geocode_cache: dict[str, tuple[float, float] | None] = {}
+_last_geocode_call = 0.0
+_GEOCODE_MIN_INTERVAL_SECONDS = 1.0  # Nominatim's usage policy caps public requests at 1/sec
+
+
+def _geocode_location(location_text: str) -> tuple[float, float] | None:
+    """Forward-geocode a free-text event location to (lat, lon), or None if it can't be resolved."""
+    import time
+
+    key = location_text.strip().lower()
+    if not key:
+        return None
+    if key in _geocode_cache:
+        return _geocode_cache[key]
+
+    global _last_geocode_call
+    wait = _GEOCODE_MIN_INTERVAL_SECONDS - (time.monotonic() - _last_geocode_call)
+    if wait > 0:
+        time.sleep(wait)
+    _last_geocode_call = time.monotonic()
+
+    result = None
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": location_text, "format": "json", "limit": 1},
+            headers={"User-Agent": "quantum-task/1.0"},
+            timeout=5,
+        )
+        matches = r.json()
+        if matches:
+            result = (float(matches[0]["lat"]), float(matches[0]["lon"]))
+    except Exception as e:
+        print(f"[discovery] geocode error for {location_text!r}: {e}")
+    _geocode_cache[key] = result
+    return result
+
+
+def _attach_geocoded_locations(events: list[dict]) -> None:
+    """Mutate each event dict in place, adding location_lat/location_lon (float or None)."""
+    for ev in events:
+        location = (ev.get("location") or "").strip()
+        ev["location_lat"], ev["location_lon"] = (
+            _geocode_location(location) if location else (None, None)
+        )
+
+
+def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r_miles = 3958.8
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+    return 2 * r_miles * math.asin(math.sqrt(a))
 
 
 def _ranking_key(interests: str, liked_uids: list, disliked_uids: list, event_ids: list) -> str:
@@ -427,12 +493,30 @@ def set_discovery_feeds(
     return {"ok": True}
 
 
-# ── Interest description (stored as an AppSetting) ─────────────────────────
+# ── Interest description + distance preferences (stored as AppSettings) ────
 
 @router.get("/api/discovery/interests")
 def get_discovery_interests(db: Session = Depends(get_db)):
     row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
-    return {"interests": row.value if row else ""}
+    dist_row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_MAX_DISTANCE_MILES).first()
+    unit_row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_DISTANCE_UNIT).first()
+    return {
+        "interests": row.value if row else "",
+        # null when never explicitly configured -- lets the settings UI apply a locale-aware
+        # default (25 mi vs. ~40 km) instead of always showing the server's own miles-based
+        # fallback (Settings.discovery_max_distance_miles, used for actual filtering) before
+        # the user has ever visited this screen.
+        "max_distance_miles": float(dist_row.value) if dist_row and dist_row.value else None,
+        "distance_unit": unit_row.value if unit_row else None,
+    }
+
+
+def _upsert_setting(db: Session, key: str, value: str) -> None:
+    row = db.query(models.AppSetting).filter_by(key=key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(models.AppSetting(key=key, value=value))
 
 
 @router.put("/api/discovery/interests")
@@ -441,11 +525,20 @@ def set_discovery_interests(
     db: Session = Depends(get_db),
 ):
     text = (body.get("interests") or "").strip()
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
-    if row:
-        row.value = text
-    else:
-        db.add(models.AppSetting(key=setting_keys.DISCOVERY_INTERESTS, value=text))
+    _upsert_setting(db, setting_keys.DISCOVERY_INTERESTS, text)
+
+    if "max_distance_miles" in body:
+        try:
+            miles = float(body["max_distance_miles"])
+        except (TypeError, ValueError):
+            miles = None
+        if miles is not None and miles > 0:
+            _upsert_setting(db, setting_keys.DISCOVERY_MAX_DISTANCE_MILES, str(miles))
+
+    unit = body.get("distance_unit")
+    if unit in ("mi", "km"):
+        _upsert_setting(db, setting_keys.DISCOVERY_DISTANCE_UNIT, unit)
+
     db.commit()
     _ranking_cache.clear()
     return {"ok": True}
@@ -458,11 +551,12 @@ def test_discovery_feeds(request: Request, db: Session = Depends(get_db)):
     """Try fetching each configured discovery feed and report success / error."""
     feeds = db.query(models.EventDiscoveryFeed).all()
     today = local_date(request)
+    offset_minutes = get_utc_offset(request)
     window_end = today + timedelta(days=28)
     results = []
     for feed in feeds:
         try:
-            events = gcal_lib.fetch_events(feed.ical_url, today, window_end)
+            events = gcal_lib.fetch_events(feed.ical_url, today, window_end, offset_minutes)
             results.append({
                 "id": feed.id,
                 "name": feed.name or feed.ical_url,
@@ -490,12 +584,15 @@ def get_discovery_events(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     force: bool = False,
+    lat: float | None = None,
+    lon: float | None = None,
 ):
     feeds = db.query(models.EventDiscoveryFeed).all()
     if not feeds:
         return []
 
     today = local_date(request)
+    offset_minutes = get_utc_offset(request)
     window_end = today + timedelta(days=28)
     now = datetime.now(timezone.utc)
     now_naive = datetime.utcnow()
@@ -528,13 +625,14 @@ def get_discovery_events(
             max_workers=min(8, len(feeds_needing_fetch))
         ) as pool:
             future_to_feed = {
-                pool.submit(gcal_lib.fetch_events, feed.ical_url, today, window_end): feed
+                pool.submit(gcal_lib.fetch_events, feed.ical_url, today, window_end, offset_minutes): feed
                 for feed in feeds_needing_fetch
             }
             for future in concurrent.futures.as_completed(future_to_feed):
                 feed = future_to_feed[future]
                 try:
                     raw_events = future.result()
+                    _attach_geocoded_locations(raw_events)
                     feed.last_fetched = now_naive
                     feed.cached_events = _serialize_gcal_events(raw_events)
                     db.add(feed)
@@ -600,6 +698,8 @@ def get_discovery_events(
                 "title": ev["title"],
                 "description": ev.get("description"),
                 "location": ev.get("location"),
+                "location_lat": ev.get("location_lat"),
+                "location_lon": ev.get("location_lon"),
                 "url": ev.get("url"),
                 "start": _to_dt(start),
                 "end": _to_dt(end),
@@ -607,6 +707,7 @@ def get_discovery_events(
                 "feed_name": feed.name or None,
                 "score": None,
                 "reason": None,
+                "distance_miles": None,
             }
 
             if uid:
@@ -630,6 +731,46 @@ def get_discovery_events(
     # uids (the sort above only catches literal re-appearances of the same source event) --
     # see DISCOVERY_IMPROVEMENTS.md Phase 4.
     events = _merge_cross_feed_duplicates(events)
+
+    # Filter out events too far from the user's current location to realistically attend.
+    # Resolve the current location the same way briefing/generate.py does: prefer a live
+    # reading passed on this request, persist it if fresh, and fall back to the last one on
+    # record so an event feed browsed without a location prompt still gets filtered using
+    # wherever the user was last known to be (e.g. after landing on a trip and opening the
+    # Today page, before ever visiting Discover).
+    settings = Settings(db)
+    if lat is not None and lon is not None:
+        for key, val in [
+            (setting_keys.LAST_KNOWN_LAT, str(lat)),
+            (setting_keys.LAST_KNOWN_LON, str(lon)),
+        ]:
+            row = db.query(models.AppSetting).filter_by(key=key).first()
+            if row:
+                row.value = val
+            else:
+                db.add(models.AppSetting(key=key, value=val))
+        db.commit()
+        user_lat, user_lon = lat, lon
+    else:
+        user_lat, user_lon = settings.last_known_lat, settings.last_known_lon
+
+    if user_lat is not None and user_lon is not None:
+        max_distance = settings.discovery_max_distance_miles
+        kept = []
+        for e in events:
+            if e["location_lat"] is None or e["location_lon"] is None:
+                # Unknown location -- many feeds leave this blank for events the organizer
+                # assumes you already know the venue for. Treated as "not disqualified"
+                # rather than "too far", so these still compete on interest match alone.
+                kept.append(e)
+                continue
+            distance = _haversine_miles(user_lat, user_lon, e["location_lat"], e["location_lon"])
+            if distance <= max_distance:
+                e["distance_miles"] = round(distance, 1)
+                kept.append(e)
+        events = kept
+
+    response.headers["X-Distance-Unit"] = settings.discovery_distance_unit
 
     # Load interests
     row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()

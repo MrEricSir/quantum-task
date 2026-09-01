@@ -131,7 +131,7 @@ class TestConcurrentFetch:
         _make_feed("Feed B", "https://b.example/feed.ics")
         _make_feed("Feed C", "https://c.example/feed.ics")
 
-        def fake_fetch(url, start, end):
+        def fake_fetch(url, start, end, *_):
             name = {"https://a.example/feed.ics": "A", "https://b.example/feed.ics": "B",
                     "https://c.example/feed.ics": "C"}[url]
             return [_event(f"Event {name}")]
@@ -150,7 +150,7 @@ class TestConcurrentFetch:
         _make_feed("Fast", "https://fast.example/feed.ics")
         _make_feed("Slow", "https://slow.example/feed.ics")
 
-        def fake_fetch(url, start, end):
+        def fake_fetch(url, start, end, *_):
             if "slow" in url:
                 time.sleep(0.05)
                 return [_event("Slow Event")]
@@ -169,7 +169,7 @@ class TestConcurrentFetch:
         for i in range(3):
             _make_feed(f"Feed {i}", f"https://{i}.example/feed.ics")
 
-        def fake_fetch(url, start, end):
+        def fake_fetch(url, start, end, *_):
             time.sleep(0.2)
             return [_event("Event")]
 
@@ -197,7 +197,7 @@ class TestConcurrentFetch:
         _make_feed("Broken", "https://broken.example/feed.ics")
         _make_feed("Working", "https://working.example/feed.ics")
 
-        def fake_fetch(url, start, end):
+        def fake_fetch(url, start, end, *_):
             if "broken" in url:
                 raise ConnectionError("boom")
             return [_event("Working Event")]
@@ -569,7 +569,7 @@ class TestDuplicateDetectionEndToEnd:
             uid="agg-1@example.com",
         )
 
-        def fake_fetch(url, start, end):
+        def fake_fetch(url, start, end, *_):
             return [city_event] if "city" in url else [aggregator_event]
 
         with patch("routers.discovery.gcal_lib.fetch_events", side_effect=fake_fetch):
@@ -713,3 +713,196 @@ class TestDisplayResultCap:
 
         assert res.status_code == 200
         assert len(res.json()) == discovery._DISPLAY_RESULT_CAP
+
+
+def _geo_event(title, location, days_from_now=1, uid=None):
+    start = datetime.now(timezone.utc) + timedelta(days=days_from_now)
+    return {
+        "id": title.lower().replace(" ", "-"),
+        "uid": uid or f"{title.lower().replace(' ', '-')}@example.com",
+        "sequence": 0,
+        "title": title,
+        "description": None,
+        "location": location,
+        "url": None,
+        "start": start,
+        "end": start + timedelta(hours=1),
+        "all_day": False,
+    }
+
+
+class TestHaversine:
+    def test_same_point_is_zero_distance(self):
+        assert discovery._haversine_miles(37.7749, -122.4194, 37.7749, -122.4194) == 0
+
+    def test_sf_to_oakland_is_roughly_eight_miles(self):
+        # San Francisco City Hall -> Oakland City Hall
+        d = discovery._haversine_miles(37.7793, -122.4193, 37.8044, -122.2712)
+        assert 7 < d < 9
+
+    def test_sf_to_los_angeles_is_roughly_three_hundred_fifty_miles(self):
+        d = discovery._haversine_miles(37.7749, -122.4194, 34.0522, -118.2437)
+        assert 340 < d < 360
+
+
+class TestGeocodeLocation:
+    def setup_method(self):
+        discovery._geocode_cache.clear()
+        discovery._last_geocode_call = 0.0
+
+    def test_blank_location_never_calls_network(self):
+        with patch("routers.discovery.requests.get") as mock_get:
+            assert discovery._geocode_location("") is None
+            assert discovery._geocode_location("   ") is None
+        mock_get.assert_not_called()
+
+    def test_successful_match_returns_lat_lon(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [{"lat": "37.7749", "lon": "-122.4194"}]
+        with patch("routers.discovery.requests.get", return_value=mock_resp):
+            result = discovery._geocode_location("San Francisco, CA")
+        assert result == (37.7749, -122.4194)
+
+    def test_no_match_returns_none(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        with patch("routers.discovery.requests.get", return_value=mock_resp):
+            result = discovery._geocode_location("Somewhere Unresolvable")
+        assert result is None
+
+    def test_network_error_returns_none_rather_than_raising(self):
+        with patch("routers.discovery.requests.get", side_effect=Exception("boom")):
+            assert discovery._geocode_location("San Francisco, CA") is None
+
+    def test_repeated_lookup_of_the_same_location_hits_cache_not_network(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [{"lat": "1.0", "lon": "2.0"}]
+        with patch("routers.discovery.requests.get", return_value=mock_resp) as mock_get:
+            discovery._geocode_location("Some Venue")
+            discovery._geocode_location("Some Venue")
+            discovery._geocode_location("some venue")  # case-insensitive cache key
+        assert mock_get.call_count == 1
+
+
+class TestDistanceFiltering:
+    def setup_method(self):
+        discovery._geocode_cache.clear()
+
+    def test_event_within_range_is_kept_with_distance_attached(self, client):
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        events = [_geo_event("Nearby Show", "Oakland, CA")]
+
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=events), \
+             patch("routers.discovery._geocode_location", return_value=(37.8044, -122.2712)):
+            # San Francisco City Hall as the user's current location -- ~8 miles from Oakland
+            res = client.get("/api/discovery/events?lat=37.7793&lon=-122.4193")
+
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body) == 1
+        assert body[0]["title"] == "Nearby Show"
+        assert 7 < body[0]["distance_miles"] < 9
+
+    def test_event_beyond_max_distance_is_excluded(self, client):
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        events = [_geo_event("LA Show", "Los Angeles, CA")]
+
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=events), \
+             patch("routers.discovery._geocode_location", return_value=(34.0522, -118.2437)):
+            res = client.get("/api/discovery/events?lat=37.7749&lon=-122.4194")
+
+        assert res.status_code == 200
+        assert res.json() == []
+
+    def test_event_with_no_location_is_never_filtered_out(self, client):
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        events = [_geo_event("Mystery Venue Event", None)]
+
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=events):
+            res = client.get("/api/discovery/events?lat=37.7749&lon=-122.4194")
+
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body) == 1
+        assert body[0]["distance_miles"] is None
+
+    def test_no_location_available_anywhere_does_not_filter_at_all(self, client):
+        """No lat/lon on the request and nothing in LAST_KNOWN_LAT/LON -- existing
+        behavior (no distance filtering) must be preserved exactly."""
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        events = [_geo_event("LA Show", "Los Angeles, CA")]
+
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=events), \
+             patch("routers.discovery._geocode_location", return_value=(34.0522, -118.2437)):
+            res = client.get("/api/discovery/events")
+
+        assert res.status_code == 200
+        assert len(res.json()) == 1
+
+    def test_lat_lon_on_request_persists_as_last_known_location(self, client):
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=[]):
+            res = client.get("/api/discovery/events?lat=37.7749&lon=-122.4194")
+        assert res.status_code == 200
+
+        with TestingSessionLocal() as db:
+            lat_row = db.query(models.AppSetting).filter_by(key="last_known_lat").first()
+            lon_row = db.query(models.AppSetting).filter_by(key="last_known_lon").first()
+        assert lat_row.value == "37.7749"
+        assert lon_row.value == "-122.4194"
+
+    def test_falls_back_to_last_known_location_when_request_omits_it(self, client):
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        with TestingSessionLocal() as db:
+            db.add(models.AppSetting(key="last_known_lat", value="34.0522"))
+            db.add(models.AppSetting(key="last_known_lon", value="-118.2437"))
+            db.commit()
+
+        events = [_geo_event("Faraway Show", "San Francisco, CA")]
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=events), \
+             patch("routers.discovery._geocode_location", return_value=(37.7749, -122.4194)):
+            res = client.get("/api/discovery/events")
+
+        # Falls back to the stored LA location -- SF is ~350mi away, beyond the 25mi default.
+        assert res.status_code == 200
+        assert res.json() == []
+
+    def test_custom_max_distance_setting_is_respected(self, client):
+        _make_feed("Feed", "https://feed.example/feed.ics")
+        client.put("/api/discovery/interests", json={"interests": "", "max_distance_miles": 500})
+
+        events = [_geo_event("LA Show", "Los Angeles, CA")]
+        with patch("routers.discovery.gcal_lib.fetch_events", return_value=events), \
+             patch("routers.discovery._geocode_location", return_value=(34.0522, -118.2437)):
+            res = client.get("/api/discovery/events?lat=37.7749&lon=-122.4194")
+
+        assert res.status_code == 200
+        assert len(res.json()) == 1
+
+
+class TestDistancePreferences:
+    def test_unset_preferences_return_null(self, client):
+        res = client.get("/api/discovery/interests")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["max_distance_miles"] is None
+        assert body["distance_unit"] is None
+
+    def test_saved_preferences_round_trip(self, client):
+        put_res = client.put("/api/discovery/interests", json={
+            "interests": "hiking",
+            "max_distance_miles": 40,
+            "distance_unit": "km",
+        })
+        assert put_res.status_code == 200
+
+        get_res = client.get("/api/discovery/interests")
+        body = get_res.json()
+        assert body["interests"] == "hiking"
+        assert body["max_distance_miles"] == 40
+        assert body["distance_unit"] == "km"
+
+    def test_invalid_unit_is_ignored(self, client):
+        client.put("/api/discovery/interests", json={"interests": "", "distance_unit": "furlongs"})
+        body = client.get("/api/discovery/interests").json()
+        assert body["distance_unit"] is None

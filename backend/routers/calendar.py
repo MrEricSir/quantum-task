@@ -93,7 +93,7 @@ def get_calendar_events(request: Request, db: Session = Depends(get_db), force: 
     for m in mappings:
         tag = db.query(models.Tag).filter(models.Tag.id == m.tag_id).first()
         try:
-            for ev in _cached_fetch_events(m.ical_url, today, window_end, force=force):
+            for ev in _cached_fetch_events(m.ical_url, today, window_end, offset_minutes, force=force):
                 start = ev["start"]
                 end = ev.get("end")
 

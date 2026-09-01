@@ -129,18 +129,23 @@ def _assert_safe_fetch_url(url: str) -> None:
 # applied so a busy day doesn't hammer external servers.
 _TTL_SECONDS = 15 * 60  # 15 minutes
 
-_ical_cache: dict[tuple[str, str], tuple[float, list]] = {}
+_ical_cache: dict[tuple[str, str, int], tuple[float, list]] = {}
 
 
-def _cached_fetch_events(ical_url: str, start: date, end: date, *, force: bool = False) -> list[dict]:
+def _cached_fetch_events(
+    ical_url: str, start: date, end: date, tz_offset_minutes: int = 0, *, force: bool = False
+) -> list[dict]:
     import time
-    key = (ical_url, start.isoformat())
+    # tz_offset_minutes is part of the key (not just url/date) so a user's offset changing
+    # mid-trip is picked up immediately instead of serving a window built for their old
+    # timezone until the TTL/day-key naturally expires.
+    key = (ical_url, start.isoformat(), tz_offset_minutes)
     now = time.monotonic()
     if not force and key in _ical_cache:
         ts, events = _ical_cache[key]
         if now - ts < _TTL_SECONDS:
             return events
-    events = fetch_events(ical_url, start, end)
+    events = fetch_events(ical_url, start, end, tz_offset_minutes)
     _ical_cache[key] = (now, events)
     return events
 
@@ -174,7 +179,7 @@ def get_personal_events(
     fetch_errors = []
     for m in mappings:
         try:
-            for ev in _cached_fetch_events(m.ical_url, start_date, end_date):
+            for ev in _cached_fetch_events(m.ical_url, start_date, end_date, tz_offset_minutes):
                 if ev.get("is_ooo"):
                     continue
                 ev_start = ev["start"]
@@ -220,11 +225,18 @@ _FETCH_HEADERS = {
     ),
 }
 
-def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
+def fetch_events(ical_url: str, start: date, end: date, tz_offset_minutes: int = 0) -> list[dict]:
     """Fetch and expand events from an iCal URL in [start, end).
 
     Handles recurring events, all-day events, and timezone-aware datetimes.
     Returns timed-event datetimes as UTC-aware so callers can convert to any local timezone.
+
+    tz_offset_minutes uses the JS Date.getTimezoneOffset() convention (UTC+10 -> -600,
+    UTC-5 -> +300, see deps.py's utc_offset_minutes docstring) and is used only to place
+    [start, end)'s midnight boundaries in the caller's local timezone before asking
+    recurring_ical_events to expand occurrences -- using the server's own timezone here
+    (always UTC on Cloud Run) instead would shift the fetch window by the caller's full
+    UTC offset, silently dropping or including events for callers far from UTC.
 
     Each dict: id, title, description, start (datetime), end (datetime|None), all_day (bool)
     """
@@ -271,7 +283,7 @@ def fetch_events(ical_url: str, start: date, end: date) -> list[dict]:
 
     # Pass timezone-aware datetimes so the library doesn't default to UTC midnight,
     # which would include events that are already in the past in the user's local tz.
-    local_tz = datetime.now().astimezone().tzinfo
+    local_tz = timezone(timedelta(minutes=-tz_offset_minutes))
     start_aware = datetime.combine(start, dt_time.min).replace(tzinfo=local_tz)
     end_aware = datetime.combine(end, dt_time.min).replace(tzinfo=local_tz)
     occurrences = recurring_ical_events.of(cal).between(start_aware, end_aware)

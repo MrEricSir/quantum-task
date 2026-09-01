@@ -41,6 +41,36 @@ ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
+def _sync_tz_offset_from_headers(request: Request, db) -> None:
+    """Opportunistically refresh the stored briefing tz_offset from a live webapp request.
+
+    telegram/scheduler.py's cron-triggered checks (daily briefing, streak/nudge
+    "today" boundaries, Withings sync window) have no per-request offset to read --
+    they run on a schedule, not inside a browser request -- so they rely entirely on
+    this stored value. Refreshing it here means it self-heals the moment the user
+    opens the webapp in a new timezone, instead of requiring a manual visit to
+    Settings > Telegram > Save.
+    """
+    raw = request.headers.get("X-UTC-Offset")
+    if raw is None:
+        return
+    try:
+        offset = int(raw)
+    except ValueError:
+        return
+    row = db.query(models.AppSetting).filter(
+        models.AppSetting.key == setting_keys.BRIEFING_TZ_OFFSET
+    ).first()
+    current = int(row.value) if row and row.value else 0
+    if current == offset:
+        return
+    if row:
+        row.value = str(offset)
+    else:
+        db.add(models.AppSetting(key=setting_keys.BRIEFING_TZ_OFFSET, value=str(offset)))
+    db.commit()
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not AUTH_PASSWORD:
@@ -68,14 +98,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     models.AppSetting.key.in_([setting_keys.SESSION_SECRET, setting_keys.BRIDGE_TOKEN])
                 )
             }
+            # Session cookie (browser)
+            session_secret = settings_rows.get(setting_keys.SESSION_SECRET, "")
+            token = request.cookies.get("session", "")
+            if session_secret and _hmac.compare_digest(token, session_secret):
+                _sync_tz_offset_from_headers(request, db)
+                return await call_next(request)
         finally:
             db_gen.close()
 
-        # Session cookie (browser)
-        session_secret = settings_rows.get(setting_keys.SESSION_SECRET, "")
-        token = request.cookies.get("session", "")
-        if session_secret and _hmac.compare_digest(token, session_secret):
-            return await call_next(request)
         # Bearer token (API clients e.g. iOS Shortcuts)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):

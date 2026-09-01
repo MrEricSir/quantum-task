@@ -48,3 +48,4 @@ class DiscoveryEventOut(BaseModel):
     feed_name: Optional[str] = None
     score: Optional[int] = None
     reason: Optional[str] = None
+    distance_miles: Optional[float] = None

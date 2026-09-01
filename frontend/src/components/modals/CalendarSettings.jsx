@@ -16,6 +16,19 @@ function emptyDiscFeed() {
   return { id: null, name: '', ical_url: '' }
 }
 
+const MILES_PER_KM = 0.621371
+
+// Most of the world uses metric; the US (plus a couple of small holdouts) uses miles.
+// Only used to pick a sensible starting unit/value the first time this screen is opened --
+// once saved, the stored preference always wins.
+function detectImperialLocale() {
+  try {
+    return /^en-US\b/i.test(Intl.NumberFormat().resolvedOptions().locale)
+  } catch {
+    return true
+  }
+}
+
 export default function CalendarSettings({ tags, onClose, onDiscoverySaved }) {
   const [feeds, setFeeds] = useState([])
   const [loading, setLoading] = useState(true)
@@ -31,6 +44,8 @@ export default function CalendarSettings({ tags, onClose, onDiscoverySaved }) {
   const [interests, setInterests] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResults, setTestResults] = useState(null)
+  const [maxDistance, setMaxDistance] = useState(25)
+  const [distanceUnit, setDistanceUnit] = useState('mi')
 
   const exportUrl = exportToken
     ? `${window.location.origin}/api/calendar/export.ics?token=${exportToken}${exportTagId != null ? `&tag_id=${exportTagId}` : ''}`
@@ -55,6 +70,20 @@ export default function CalendarSettings({ tags, onClose, onDiscoverySaved }) {
         setExportToken(token)
         setDiscFeeds(discFeedsData)
         setInterests(interestData.interests || '')
+        if (interestData.distance_unit != null && interestData.max_distance_miles != null) {
+          setDistanceUnit(interestData.distance_unit)
+          setMaxDistance(
+            interestData.distance_unit === 'km'
+              ? Math.round(interestData.max_distance_miles / MILES_PER_KM)
+              : interestData.max_distance_miles
+          )
+        } else {
+          // Never configured -- pick a locale-appropriate starting point (25 mi, or its
+          // near-equivalent ~40 km) rather than always defaulting to miles.
+          const imperial = detectImperialLocale()
+          setDistanceUnit(imperial ? 'mi' : 'km')
+          setMaxDistance(imperial ? 25 : Math.round(25 / MILES_PER_KM))
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
@@ -96,10 +125,11 @@ export default function CalendarSettings({ tags, onClose, onDiscoverySaved }) {
       const discPayload = discFeeds
         .filter((f) => f.ical_url.trim())
         .map((f) => ({ id: f.id, name: f.name.trim(), ical_url: f.ical_url.trim() }))
+      const maxDistanceMiles = distanceUnit === 'km' ? Number(maxDistance) * MILES_PER_KM : Number(maxDistance)
       await Promise.all([
         saveCalendarMappings(calPayload),
         saveDiscoveryFeeds(discPayload),
-        saveDiscoveryInterests(interests),
+        saveDiscoveryInterests(interests, maxDistanceMiles, distanceUnit),
       ])
       onDiscoverySaved?.()
       onClose()
@@ -260,6 +290,36 @@ export default function CalendarSettings({ tags, onClose, onDiscoverySaved }) {
         />
         <p className="cal-settings-hint" style={{ marginTop: '0.4rem', marginBottom: 0 }}>
           The more specific you are, the better the AI recommendations.
+        </p>
+
+        <div className="cal-export-label" style={{ marginTop: '1rem' }}>Maximum distance</div>
+        <div className="cal-disc-distance-row">
+          <input
+            type="number"
+            min="1"
+            step="1"
+            className="cal-disc-distance-input"
+            value={maxDistance}
+            onChange={(e) => setMaxDistance(e.target.value)}
+          />
+          <button
+            type="button"
+            className={`cal-feed-tag-pill${distanceUnit === 'mi' ? ' cal-feed-tag-pill--all' : ''}`}
+            onClick={() => setDistanceUnit('mi')}
+          >
+            mi
+          </button>
+          <button
+            type="button"
+            className={`cal-feed-tag-pill${distanceUnit === 'km' ? ' cal-feed-tag-pill--all' : ''}`}
+            onClick={() => setDistanceUnit('km')}
+          >
+            km
+          </button>
+        </div>
+        <p className="cal-settings-hint" style={{ marginTop: '0.4rem', marginBottom: 0 }}>
+          Events farther than this from your current location are hidden entirely, based on
+          the venue address in each feed (events with no listed address are still shown).
         </p>
       </div>
 

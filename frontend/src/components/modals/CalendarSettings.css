@@ -194,6 +194,27 @@
 .cal-disc-interests:focus { outline: 2px solid #7c3aed; outline-offset: -1px; }
 .cal-disc-interests::placeholder { color: var(--text-muted); opacity: 0.6; }
 
+/* ── Discovery distance ── */
+.cal-disc-distance-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-disc-distance-input {
+  width: 5rem;
+  box-sizing: border-box;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.cal-disc-distance-input:focus { outline: 2px solid #7c3aed; outline-offset: -1px; }
+
 /* ── Export section ── */
 .cal-export-section {
   border-top: 1px solid var(--border);

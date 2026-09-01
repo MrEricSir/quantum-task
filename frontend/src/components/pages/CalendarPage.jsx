@@ -17,6 +17,22 @@ function formatLastUpdated(date) {
   return `${diffMin} min ago`
 }
 
+function getLiveLocation() {
+  if (!navigator.geolocation) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => resolve(null), // denied/unavailable/timed out -- server falls back to the last known location
+      { timeout: 8000 },
+    )
+  })
+}
+
+function formatDistance(miles, unit) {
+  if (miles == null) return null
+  return unit === 'km' ? `${(miles * 1.60934).toFixed(1)} km away` : `${miles.toFixed(1)} mi away`
+}
+
 function toDateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
@@ -171,6 +187,7 @@ function DiscoveryPanel({ refreshTrigger }) {
   const [feedback, setFeedback] = useState({})
   // UIDs that were already disliked when the view loaded — hidden from the list entirely
   const [initialDisliked, setInitialDisliked] = useState(new Set())
+  const [distanceUnit, setDistanceUnit] = useState('mi')
 
   // Returns whether the server is still ranking in the background, so the
   // polling loop below can drive off the fresh result instead of a
@@ -178,7 +195,12 @@ function DiscoveryPanel({ refreshTrigger }) {
   const load = useCallback(async (force = false) => {
     setLoading(true)
     try {
-      const [{ events: data, pending }, fb] = await Promise.all([fetchDiscoveryEvents({ force }), fetchDiscoveryFeedback()])
+      const loc = await getLiveLocation()
+      const [{ events: data, pending, distanceUnit: unit }, fb] = await Promise.all([
+        fetchDiscoveryEvents({ force, lat: loc?.lat, lon: loc?.lon }),
+        fetchDiscoveryFeedback(),
+      ])
+      setDistanceUnit(unit)
       const fbMap = {}
       const disliked = new Set()
       for (const r of fb) {
@@ -338,6 +360,7 @@ function DiscoveryPanel({ refreshTrigger }) {
                         <div className="disc-event-meta">
                           <span>{formatDiscoveryDate(ev.start)}{time ? ` · ${time}` : ''}{endTime && endTime !== time ? `–${endTime}` : ''}</span>
                           {ev.location && <span> · {ev.location}</span>}
+                          {ev.distance_miles != null && <span> · {formatDistance(ev.distance_miles, distanceUnit)}</span>}
                         </div>
                         {ev.reason && !isExpanded && (
                           <div className="disc-event-reason">{ev.reason}</div>

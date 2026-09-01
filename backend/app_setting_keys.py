@@ -76,6 +76,12 @@ BRIEFING_LAST_SENT = "briefing_last_sent"
 LAST_KNOWN_LAT = "last_known_lat"
 LAST_KNOWN_LON = "last_known_lon"
 
+# Event Discovery: events farther than this from the last known location are filtered out.
+# Stored canonically in miles regardless of DISCOVERY_DISTANCE_UNIT (display-only).
+DISCOVERY_MAX_DISTANCE_MILES = "discovery_max_distance_miles"
+# Which unit the Calendar Settings UI shows/accepts the distance in: "mi" or "km".
+DISCOVERY_DISTANCE_UNIT = "discovery_distance_unit"
+
 # Random hex token sent as X-Telegram-Bot-Api-Secret-Token on every webhook POST.
 # Generated on first webhook registration; used to verify requests come from Telegram.
 TELEGRAM_WEBHOOK_SECRET = "telegram_webhook_secret"
