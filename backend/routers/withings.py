@@ -163,10 +163,10 @@ def _auto_check_habits(db: Session, today: date, lookback_days: int = _AUTO_CHEC
     day's data arrived late.
     """
     for days_back in range(lookback_days):
-        auto_check_habits_for_date(db, today - timedelta(days=days_back))
+        auto_check_habits_for_date(db, today - timedelta(days=days_back), today)
 
 
-def auto_check_habits_for_date(db: Session, check_date: date) -> None:
+def auto_check_habits_for_date(db: Session, check_date: date, today: date) -> None:
     """Auto-complete habits whose Withings goal was met on `check_date`.
 
     Steps: goal met when value >= goal.
@@ -195,7 +195,7 @@ def auto_check_habits_for_date(db: Session, check_date: date) -> None:
             ).first():
                 db.add(models.HabitCompletion(habit_id=habit.id, date=date_str))
                 db.flush()
-                recompute_from(db, habit.id, check_date)
+                recompute_from(db, habit.id, check_date, today=today)
 
 
 class _TokenAuthError(Exception):

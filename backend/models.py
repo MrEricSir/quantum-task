@@ -148,6 +148,28 @@ class DiscoveryFeedback(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class Trip(Base):
+    """A travel window that pauses habit-streak accounting without pausing logging.
+
+    start_date/end_date are "YYYY-MM-DD" local-wall-clock date strings, matching
+    HabitCompletion.date/HabitStreakDay.date's convention (see streak.py). end_date is
+    null while the trip is still active -- open-ended by design, closed explicitly via
+    POST /api/trip/{id}/end rather than requiring a guessed return date up front."""
+    __tablename__ = "trips"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=True)
+    start_date = Column(String, nullable=False)
+    end_date = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    retrospective_sent = Column(Boolean, default=False)
+    # True when the trip ended too soon after it started (see trip/router.py's
+    # MIN_TRIP_DURATION_MINUTES) to be a real trip rather than an accidental toggle --
+    # distinct from retrospective_sent=False, which means "still owed, retry" and would
+    # otherwise make the scheduler backstop send a retrospective for a trip that never happened.
+    retrospective_skipped = Column(Boolean, default=False)
+
+
 class DiscoveryRankingCache(Base):
     """Persisted LLM event-ranking results, keyed by a hash of (interests + feedback +
     event ids) -- survives a Cloud Run cold start instead of forcing a full re-rank on

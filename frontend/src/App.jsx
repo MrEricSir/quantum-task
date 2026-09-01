@@ -40,6 +40,7 @@ import { useNotifications } from './hooks/useNotifications'
 import { useCards } from './hooks/useCards'
 import { useHabits } from './hooks/useHabits'
 import { useCalendar } from './hooks/useCalendar'
+import { useTrip } from './hooks/useTrip'
 import { useWithings } from './hooks/useWithings'
 import { useEngineering } from './hooks/useEngineering'
 import { useBridgeJobStatuses } from './hooks/useBridgeJobStatuses'
@@ -170,6 +171,8 @@ export default function App() {
   const {
     calendarEvents, calendarLoading, lastRefreshed, calendarRefreshing, handleRefreshCalendar,
   } = useCalendar({ authed, invalidateBriefing, active: isCalendarPage })
+
+  const { trip, handleStartTrip, handleEndTrip } = useTrip({ authed })
 
   const { engineeringItems, lastEngineeringSynced, engineeringSyncing, refreshEngineeringItems } = useEngineering({ authed })
   const { bridgeJobStatuses } = useBridgeJobStatuses({ authed })
@@ -827,11 +830,29 @@ export default function App() {
                         &#128197; Calendar
                       </DropdownMenu.Item>
                     )
-                    if (pageId === 'health') return (
+                    if (pageId === 'health') return [
                       <DropdownMenu.Item key="withings" className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
                         &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
-                      </DropdownMenu.Item>
-                    )
+                      </DropdownMenu.Item>,
+                      <DropdownMenu.Item
+                        key="travel-mode"
+                        className="settings-dropdown-item settings-dropdown-notif"
+                        onSelect={(e) => {
+                          e.preventDefault()
+                          const isActive = trip && !trip.end_date
+                          if (isActive) handleEndTrip(trip.id)
+                          else handleStartTrip(null, null)
+                        }}
+                      >
+                        <span>
+                          &#9992;&#65039; Travel mode
+                          {trip && !trip.end_date
+                            ? ` (since ${new Date(trip.start_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`
+                            : ''}
+                        </span>
+                        <span className={`notif-toggle ${trip && !trip.end_date ? 'notif-toggle--on' : ''}`} />
+                      </DropdownMenu.Item>,
+                    ]
                     if (pageId === 'engineering') return (
                       <DropdownMenu.Item key="github" className="settings-dropdown-item" onSelect={() => setShowGithubSettings(true)}>
                         &#128279; Engineering (GitHub)

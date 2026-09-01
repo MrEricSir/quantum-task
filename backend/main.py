@@ -35,6 +35,7 @@ import telegram as telegram_pkg
 import backup as backup_pkg
 import export as export_pkg
 import reports as reports_pkg
+import trip as trip_pkg
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 
@@ -453,6 +454,7 @@ app.include_router(preferences.router)
 app.include_router(health.router)
 app.include_router(export_pkg.router)
 app.include_router(reports_pkg.router)
+app.include_router(trip_pkg.router)
 
 # Serve bundled frontend for all non-API routes (must be last).
 # Using an explicit catch-all route instead of StaticFiles mount to avoid

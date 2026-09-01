@@ -173,7 +173,7 @@ def check_habit_row(db: Session, habit_id: int, today: date, *, from_workout: bo
         return False
     db.add(models.HabitCompletion(habit_id=habit_id, date=today_str))
     db.flush()
-    recompute_from(db, habit_id, today)
+    recompute_from(db, habit_id, today, today=today)
     if not from_workout:
         from routers.correlations import check_workout_for_habit
         check_workout_for_habit(db, habit_id, today)
@@ -197,6 +197,6 @@ def uncheck_habit(request: Request, habit_id: int, db: Session = Depends(get_db)
     if row:
         db.delete(row)
         db.flush()
-        recompute_from(db, habit_id, today)
+        recompute_from(db, habit_id, today, today=today)
         db.commit()
     return {"ok": True}

@@ -358,6 +358,43 @@ export async function fetchHabitStreakDays(id, from, to) {
   return res.json()
 }
 
+export async function fetchTrip() {
+  const res = await apiFetch('/api/trip')
+  if (!res.ok) throw new Error('Failed to fetch trip')
+  return res.json()
+}
+
+export async function startTrip(name, startDate) {
+  const res = await apiFetch('/api/trip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name || null, start_date: startDate || null }),
+  })
+  if (!res.ok) throw new Error('Failed to start trip')
+  return res.json()
+}
+
+export async function updateTrip(tripId, name, startDate) {
+  const res = await apiFetch(`/api/trip/${tripId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name ?? null, start_date: startDate ?? null }),
+  })
+  if (!res.ok) throw new Error('Failed to update trip')
+  return res.json()
+}
+
+export async function endTrip(tripId) {
+  const res = await apiFetch(`/api/trip/${tripId}/end`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to end trip')
+  return res.json()
+}
+
+export async function deleteTrip(tripId) {
+  const res = await apiFetch(`/api/trip/${tripId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete trip')
+}
+
 export async function fetchEngineeringConfig() {
   const res = await apiFetch('/api/engineering/config')
   if (!res.ok) throw new Error('Failed to fetch engineering config')

@@ -8,13 +8,13 @@ Telegram all work identically regardless of where a reading came from.
 """
 from datetime import date as _date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 
 import models
 import schemas
-from deps import get_db
+from deps import get_db, local_date
 from routers.withings import upsert_measurement, auto_check_habits_for_date
 
 router = APIRouter()
@@ -29,7 +29,7 @@ MANUAL_METRICS = {
 
 
 @router.post("/api/health/measurements", response_model=schemas.WithingsMeasurementOut, status_code=201)
-def create_health_measurement(payload: schemas.HealthMeasurementCreate, db: Session = Depends(get_db)):
+def create_health_measurement(request: Request, payload: schemas.HealthMeasurementCreate, db: Session = Depends(get_db)):
     if payload.metric not in MANUAL_METRICS:
         raise HTTPException(status_code=400, detail=f"Unknown metric: {payload.metric}")
     try:
@@ -43,7 +43,7 @@ def create_health_measurement(payload: schemas.HealthMeasurementCreate, db: Sess
     # A manually-entered steps/weight/fat_ratio value may satisfy a linked habit's goal --
     # give it the same immediate auto-check treatment do_sync() gives synced values, rather
     # than waiting for a Withings sync that may never come for a manual-only user.
-    auto_check_habits_for_date(db, parsed_date)
+    auto_check_habits_for_date(db, parsed_date, local_date(request))
     db.commit()
 
     return schemas.WithingsMeasurementOut(id=row.id, date=row.date, metric=row.metric, value=row.value, source=row.source)

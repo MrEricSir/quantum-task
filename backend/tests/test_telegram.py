@@ -2370,6 +2370,88 @@ class TestCheckWeeklyReview:
         assert result == "error: generation failed"
 
 
+class TestCheckTripRetrospective:
+    """Backstop for trips ended via POST /api/trip/{id}/end -- generate_trip_retrospective
+    is imported lazily inside check_trip_retrospective (mirrors discovery.py's
+    _persist_ranking pattern), so tests patch it at its source (trip.generate), not on
+    telegram.scheduler where check_weekly_review's own same-module generate_weekly_review
+    would be patched instead."""
+
+    def test_skipped_when_no_trips_exist(self):
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "skipped"
+
+    def test_skipped_while_trip_still_active(self):
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            db.add(models.Trip(start_date="2026-08-01"))
+            db.commit()
+            result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "skipped"
+
+    def test_sends_for_an_ended_unsent_trip(self):
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            db.add(models.Trip(name="Tokyo", start_date="2026-08-01", end_date="2026-08-10"))
+            db.commit()
+            with patch("telegram.scheduler.send_message", return_value=True) as mock_send, \
+                 patch("trip.generate.generate_trip_retrospective", return_value="<b>Welcome back</b>") as mock_gen:
+                result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "sent"
+        mock_gen.assert_called_once_with("2026-08-01", "2026-08-10", "Tokyo", 0)
+        mock_send.assert_called_once_with("tok", "123", "<b>Welcome back</b>")
+        with BotTestSession() as db:
+            trip = db.query(models.Trip).first()
+            assert trip.retrospective_sent is True
+
+    def test_does_not_resend_once_marked_sent(self):
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            db.add(models.Trip(start_date="2026-08-01", end_date="2026-08-10", retrospective_sent=True))
+            db.commit()
+            with patch("telegram.scheduler.send_message") as mock_send:
+                result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "skipped"
+        mock_send.assert_not_called()
+
+    def test_does_not_send_for_a_trip_marked_retrospective_skipped(self):
+        """An accidental toggle (ended too soon after starting, see
+        trip/router.py's MIN_TRIP_DURATION_MINUTES) sets retrospective_skipped rather
+        than retrospective_sent -- the backstop must not treat that as "still owed"."""
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            db.add(models.Trip(start_date="2026-08-01", end_date="2026-08-01", retrospective_skipped=True))
+            db.commit()
+            with patch("telegram.scheduler.send_message") as mock_send:
+                result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "skipped"
+        mock_send.assert_not_called()
+
+    def test_generation_failure_returns_error(self):
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            db.add(models.Trip(start_date="2026-08-01", end_date="2026-08-10"))
+            db.commit()
+            with patch("trip.generate.generate_trip_retrospective", return_value=None):
+                result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "error: generation failed"
+
+    def test_send_failure_leaves_retrospective_unsent(self):
+        from telegram.scheduler import check_trip_retrospective
+        with BotTestSession() as db:
+            db.add(models.Trip(start_date="2026-08-01", end_date="2026-08-10"))
+            db.commit()
+            with patch("telegram.scheduler.send_message", return_value=False), \
+                 patch("trip.generate.generate_trip_retrospective", return_value="text"):
+                result = check_trip_retrospective(db, "tok", "123", 0, TODAY)
+        assert result == "send_failed"
+        with BotTestSession() as db:
+            trip = db.query(models.Trip).first()
+            assert trip.retrospective_sent is False
+
+
 class TestWeeklyReviewEndpoint:
 
     def test_returns_error_when_not_configured(self, client):

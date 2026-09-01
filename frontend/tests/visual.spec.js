@@ -129,6 +129,7 @@ async function mockAPIs(page) {
     return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
   })
   await page.route(/\/api\/habits\/\d+\/streak-days/, r => r.fulfill({ json: [] }))
+  await page.route('**/api/trip', r => r.fulfill({ json: null }))
 
   await page.route('**/api/insights', r => r.fulfill({ json: [] }))
 
@@ -2343,6 +2344,55 @@ test.describe('health page', () => {
     const section = page.locator('.health-section', { hasText: 'Log a measurement' })
     await expect(page.getByRole('heading', { name: 'Log a measurement' })).toBeVisible()
     await expect(section.getByRole('button', { name: /^log$/i })).toBeVisible()
+  })
+
+  test('trip mode: travel mode toggle is off by default in settings', async ({ page }) => {
+    await page.locator('button[title="Settings"]').click()
+    const item = page.locator('.settings-dropdown-item', { hasText: 'Travel mode' })
+    await expect(item).toBeVisible()
+    await expect(item.locator('.notif-toggle')).not.toHaveClass(/notif-toggle--on/)
+  })
+
+  test('trip mode: toggling on in settings starts a trip', async ({ page }) => {
+    let currentTrip = null
+    await page.route('**/api/trip', r => {
+      if (r.request().method() === 'POST') {
+        currentTrip = { id: 1, name: null, start_date: '2026-09-01', end_date: null, retrospective_sent: false }
+        return r.fulfill({ json: currentTrip })
+      }
+      return r.fulfill({ json: currentTrip })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+
+    await page.locator('button[title="Settings"]').click()
+    const item = page.locator('.settings-dropdown-item', { hasText: 'Travel mode' })
+    await item.click()
+
+    await expect(item.locator('.notif-toggle')).toHaveClass(/notif-toggle--on/)
+    await expect(item).toContainText('since')
+  })
+
+  test('trip mode: toggling off in settings ends the active trip', async ({ page }) => {
+    let currentTrip = { id: 1, name: null, start_date: '2026-09-01', end_date: null, retrospective_sent: false }
+    await page.route('**/api/trip', r => r.fulfill({ json: currentTrip }))
+    await page.route('**/api/trip/1/end', r => {
+      currentTrip = { ...currentTrip, end_date: '2026-09-06', retrospective_sent: true }
+      return r.fulfill({ json: {
+        trip: currentTrip,
+        retrospective: '<b>Welcome back</b>\n\nGreat trip, and your streaks are safe.',
+      } })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+
+    await page.locator('button[title="Settings"]').click()
+    const item = page.locator('.settings-dropdown-item', { hasText: 'Travel mode' })
+    await expect(item.locator('.notif-toggle')).toHaveClass(/notif-toggle--on/)
+
+    await item.click()
+    await expect(item.locator('.notif-toggle')).not.toHaveClass(/notif-toggle--on/)
+    await expect(item).not.toContainText('since')
   })
 
   test('dismissing and regenerating the weekly experiment refreshes the habits list', async ({ page }) => {

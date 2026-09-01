@@ -29,6 +29,7 @@ from schemas.jobs import (
 from schemas.withings import WithingsStatus, WithingsMeasurementOut, WithingsHealthData
 from schemas.health import HealthMeasurementCreate
 from schemas.engineering import EngineeringItem, EngineeringItemComment
+from schemas.trip import TripCreate, TripUpdate, Trip, TripEndResult
 
 # Legacy Note schemas — kept for any lingering imports
 from pydantic import BaseModel

@@ -295,6 +295,37 @@ def check_weekly_review(db: Session, token: str, chat_id: str,
     return "sent" if send_message(token, chat_id, text) else "send_failed"
 
 
+def check_trip_retrospective(db: Session, token: str, chat_id: str, tz_offset: int, today: date) -> str:
+    """Backstop for trips ended via POST /api/trip/{id}/end -- that endpoint already
+    attempts an immediate send, this only fires for a trip that's over
+    (end_date is set) but never got its retrospective out (send failed, or Telegram
+    wasn't configured yet at the moment the trip was ended)."""
+    from trip.generate import generate_trip_retrospective
+
+    trip = (
+        db.query(models.Trip)
+        .filter(
+            models.Trip.end_date.isnot(None),
+            models.Trip.retrospective_sent == False,  # noqa: E712
+            models.Trip.retrospective_skipped == False,  # noqa: E712
+        )
+        .order_by(models.Trip.id)
+        .first()
+    )
+    if not trip:
+        return "skipped"
+
+    text = generate_trip_retrospective(trip.start_date, trip.end_date, trip.name, tz_offset)
+    if not text:
+        return "error: generation failed"
+    if not send_message(token, chat_id, text):
+        return "send_failed"
+
+    trip.retrospective_sent = True
+    db.commit()
+    return "sent"
+
+
 def check_meeting_alerts(db: Session, token: str, chat_id: str,
                           tz_offset: int, now_utc: datetime, now_local: datetime) -> str:
     """Alert for calendar meetings starting in ~30 minutes (25–35 min window)."""
@@ -841,6 +872,7 @@ def check_all(db: Session) -> dict:
         "briefing":           check_briefing(db, token, chat_id, tz_offset, now_local, today),
         "evening_summary":    check_evening_summary(db, token, chat_id, tz_offset, now_local, today),
         "weekly_review":      check_weekly_review(db, token, chat_id, tz_offset, now_local, today),
+        "trip_retrospective": check_trip_retrospective(db, token, chat_id, tz_offset, today),
         "overdue_nudge":      check_overdue_nudge(db, token, chat_id, now_local, today),
         "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
         "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),
