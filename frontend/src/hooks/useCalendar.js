@@ -20,20 +20,38 @@ export function useCalendar({ authed, invalidateBriefing, active = false }) {
     enabled: !!authed,
     staleTime: STALE_TIME_MS,
     refetchInterval: 15 * 60 * 1000,
+    // Without this, refetchInterval pauses the instant the tab loses focus (React Query's
+    // default) -- a tab left open in the background for hours would otherwise come back
+    // showing whatever was cached from before it was backgrounded, not just 15-min stale.
+    refetchIntervalInBackground: true,
   })
 
+  const isStale = () => !dataUpdatedAt || Date.now() - dataUpdatedAt > STALE_TIME_MS
+
   // This query lives at the App shell level, not inside CalendarPage, so it never
-  // remounts on in-app navigation to /calendar -- refetchOnWindowFocus only fires on
-  // real browser tab focus/blur, which doesn't happen when someone just clicks between
-  // pages in the SPA. Without this, arriving at Calendar after being on another page for
-  // a while (longer than staleTime, shorter than the 15-min background poll) silently
-  // shows stale events until a manual refresh.
+  // remounts on in-app navigation to /calendar. Without this, arriving at Calendar after
+  // being on another page for a while (longer than staleTime, shorter than the background
+  // poll) silently shows stale events until a manual refresh.
   useEffect(() => {
-    // dataUpdatedAt is falsy until the query's own initial fetch resolves -- only step in
-    // for a previously-loaded query that's since gone stale, never race that first fetch.
-    if (!active || !dataUpdatedAt) return
-    if (Date.now() - dataUpdatedAt > STALE_TIME_MS) refetch()
+    if (!active) return
+    if (isStale()) refetch()
   }, [active]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Belt-and-suspenders for a backgrounded tab or OS sleep: React Query's own
+  // refetchOnWindowFocus is supposed to cover this, but relying solely on it left stale
+  // data on return in practice (confirmed by user report) -- an explicit listener doesn't
+  // depend on trusting that mechanism fires reliably in every browser/PWA context.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && isStale()) refetch()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [dataUpdatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const lastRefreshed = dataUpdatedAt ? new Date(dataUpdatedAt) : null
 
