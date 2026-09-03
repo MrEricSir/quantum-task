@@ -2154,6 +2154,23 @@ class TestScanQtaskWorktrees:
         found = agent_core._scan_qtask_worktrees(cfg)
         assert not any(f[3] == "my-own-work" for f in found)
 
+    def test_does_not_double_list_a_worktree_when_two_repos_entries_share_the_same_repo(self, scratch_repo):
+        """User report: --cleanup showed every worktree twice, and removing one removed
+        both. Root cause: git worktree list run from ANY worktree of a repo returns every
+        worktree that repo has (they share one .git) -- if two [repos] entries happen to
+        resolve into the same underlying repo, each entry's scan pass returns the exact
+        same full list, so before deduplication every real worktree appeared once per
+        entry pointing at that repo."""
+        cfg = self._cfg(scratch_repo)
+        cfg["repos"]["scratch/repo-again"] = str(scratch_repo)  # same path, second [repos] entry
+        job = {"id": 5, "card_id": 5, "card_title": "Whatever"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+
+        found = agent_core._scan_qtask_worktrees(cfg)
+        matches = [f for f in found if f[3] == "qtask/5-whatever"]
+        assert len(matches) == 1
+
     def test_cleanup_removes_a_custom_named_branch_and_its_worktree(self, scratch_repo, monkeypatch):
         cfg = self._cfg(scratch_repo)
         job = {"id": 4, "card_id": 4, "card_title": "Whatever", "requested_branch_name": "cleanup-me"}

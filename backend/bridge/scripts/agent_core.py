@@ -1467,8 +1467,18 @@ def _scan_qtask_worktrees(cfg):
     qtask/<id>-<slug>) would otherwise make an overridden worktree invisible here, since the
     old check was purely "does the branch start with qtask/". Also still matches on the old
     refs/heads/qtask/ prefix as a fallback, for worktrees created before this marker file
-    existed -- an older worktree without the marker shouldn't suddenly become untrackable."""
+    existed -- an older worktree without the marker shouldn't suddenly become untrackable.
+
+    Deduplicated by the worktree's own absolute path: `git worktree list` run from ANY
+    worktree of a repo returns every worktree that repo has, since they all share one
+    .git -- so if two [repos] entries happen to resolve into the same underlying repo
+    (e.g. the main checkout plus one of its own qtask worktrees, both separately listed),
+    each entry's scan pass would otherwise return the exact same full list, and every real
+    worktree would appear once per entry pointing at that repo. Without this, --cleanup's
+    picker showed every worktree twice, and removing one removed both -- they were never
+    two different things, just the same worktree listed twice."""
     found = []
+    seen_paths = set()
     for repo_name in (cfg.get("repos") or {}):
         path, *_ = _repo_entry(cfg, repo_name)
         work_dir = os.path.expanduser(path) if path else None
@@ -1481,9 +1491,14 @@ def _scan_qtask_worktrees(cfg):
         for entry in _parse_worktree_porcelain(r.stdout):
             branch = entry.get("branch", "")
             has_marker = os.path.isfile(os.path.join(entry["worktree"], WORKTREE_MARKER_FILENAME))
-            if has_marker or branch.startswith("refs/heads/qtask/"):
-                found.append((repo_name, work_dir, entry["worktree"],
-                             branch[len("refs/heads/"):] if branch else "(detached)"))
+            if not (has_marker or branch.startswith("refs/heads/qtask/")):
+                continue
+            wt_abspath = os.path.abspath(entry["worktree"])
+            if wt_abspath in seen_paths:
+                continue
+            seen_paths.add(wt_abspath)
+            found.append((repo_name, work_dir, entry["worktree"],
+                         branch[len("refs/heads/"):] if branch else "(detached)"))
     return found
 
 
