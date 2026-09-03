@@ -30,7 +30,9 @@ import importlib.util
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import http.server
+import io
 import json
+import socket
 import subprocess
 import threading
 import time
@@ -1049,7 +1051,82 @@ class TestAgentScript:
         assert streaming_body.index("_run_verification(") < streaming_body.index("stop_heartbeat.set()")
 
 
-# ── Verification: test_cmd + acceptance-criteria check ────────────────────────
+# ── api() network-error handling ───────────────────────────────────────────
+
+class TestApi:
+    """User report: a laptop sleeping mid-session eventually killed the heartbeat thread
+    with an unhandled TimeoutError, silently stopping all future heartbeats for the rest
+    of the session. api() previously only caught urllib.error.HTTPError (a real HTTP
+    error response) -- a network-level failure (connection reset, DNS lookup failed, or a
+    read timing out because the TCP connection went stale over sleep) propagated straight
+    out, which is fatal for anything running unattended in a background thread with
+    nothing watching for it, like _start_heartbeat's loop."""
+
+    def _cfg(self):
+        return {"app_url": "http://fake", "token": "x"}
+
+    def test_returns_none_on_a_read_timeout_instead_of_raising(self, monkeypatch, capsys):
+        def _raise_timeout(req, timeout=None):
+            raise TimeoutError("The read operation timed out")
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _raise_timeout)
+
+        result = agent_core.api(self._cfg(), "POST", "/api/bridge/jobs/1/heartbeat")
+
+        assert result is None
+        assert "Network error" in capsys.readouterr().err
+
+    def test_returns_none_on_connection_refused(self, monkeypatch):
+        def _raise_refused(req, timeout=None):
+            raise ConnectionRefusedError()
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _raise_refused)
+
+        assert agent_core.api(self._cfg(), "GET", "/api/bridge/jobs/next/pending") is None
+
+    def test_returns_none_on_dns_failure(self, monkeypatch):
+        def _raise_dns(req, timeout=None):
+            raise socket.gaierror("nodename nor servname provided, or not known")
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _raise_dns)
+
+        assert agent_core.api(self._cfg(), "GET", "/api/bridge/jobs/next/pending") is None
+
+    def test_still_reports_a_real_http_error_response_distinctly(self, monkeypatch, capsys):
+        """Regression guard: broadening the except clause to OSError must not swallow or
+        reclassify an actual HTTP error response from the server -- HTTPError is caught
+        first and keeps printing the server's own error body, not the generic network
+        message."""
+        def _raise_http_error(req, timeout=None):
+            raise agent_core.urllib.error.HTTPError(
+                req.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"detail": "bad input"}')
+            )
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _raise_http_error)
+
+        result = agent_core.api(self._cfg(), "POST", "/api/bridge/jobs")
+
+        assert result is None
+        err = capsys.readouterr().err
+        assert "API error 400" in err
+        assert "bad input" in err
+        assert "Network error" not in err
+
+    def test_heartbeat_loop_survives_a_network_error_and_keeps_going(self, monkeypatch):
+        """End-to-end confirmation of the actual bug: _start_heartbeat's background
+        thread must not die from a single failed heartbeat -- it should just skip that
+        cycle and try again next interval."""
+        call_count = 0
+
+        def _flaky_urlopen(req, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            raise TimeoutError("The read operation timed out")
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _flaky_urlopen)
+        monkeypatch.setattr(agent_core, "HEARTBEAT_INTERVAL", 0.05)
+
+        stop_event = agent_core._start_heartbeat(self._cfg(), 1, "/tmp")
+        time.sleep(0.25)
+        stop_event.set()
+
+        assert call_count >= 2  # the loop kept calling api() after the first failure
+
 
 class TestExtractSection:
 

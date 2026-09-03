@@ -296,6 +296,19 @@ def api(cfg, method, path, body=None):
         body = e.read().decode()
         print(f"API error {e.code}: {body}", file=sys.stderr)
         return None
+    except OSError as e:
+        # Network-level failure, not an HTTP error response -- connection refused/reset,
+        # DNS lookup failed, or (most commonly in practice) a read timeout after the
+        # laptop slept and the TCP connection went stale without either side noticing
+        # until the read blocked and finally timed out. Previously unhandled here, so it
+        # propagated out of api() entirely -- fatal for anything running unattended with
+        # no one watching stderr, like _start_heartbeat's background thread, which would
+        # silently stop pinging forever (crashing the whole thread) the moment this
+        # happened once. Every existing caller already treats a None return as "this
+        # call failed" (same as the HTTPError case above), so this is a safe, uniform
+        # fallback rather than a special case.
+        print(f"[bridge] Network error calling {method} {path}: {e}", file=sys.stderr)
+        return None
 
 
 def _repo_from_git_url(url):
