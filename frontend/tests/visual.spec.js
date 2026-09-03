@@ -1298,7 +1298,7 @@ test.describe('engineering page', () => {
     await item.getByRole('button', { name: /add to board/i }).click()
 
     await expect.poll(() => postedCard).not.toBeNull()
-    expect(postedCard.title).toBe('GitHub Issue: Fix login bug')
+    expect(postedCard.title).toBe('Fix login bug')
     expect(postedCard.section).toBe('week')
     expect(postedCard.external_id).toBe('github:org/repo/issues/1')
 
@@ -1331,7 +1331,7 @@ test.describe('engineering page', () => {
       .click()
 
     await expect.poll(() => postedCard).not.toBeNull()
-    expect(postedCard.title).toBe('GitHub PR: Bump deps')
+    expect(postedCard.title).toBe('Bump deps')
     expect(postedCard.section).toBe('today')
   })
 

@@ -7,7 +7,9 @@ Covers:
   - github_sync._tags_for_repo         — owner-only, repo-only, union, no match
   - github_sync.tag_ids_for_external_id
   - github_sync.sync                   — auto-created card picks up repo tags
-  - routers.cards.create_card          — manual "Add to board" picks up repo tags
+  - routers.cards.create_card          — manual "Add to board" picks up repo tags,
+                                          and dedupes by external_id (no duplicate
+                                          cards from re-adding an already-linked item)
   - routers.engineering.get_engineering_items — items list shows computed repo tags,
     ordered by repo / status-lane / title
   - GET/PUT /api/engineering/repo-tags — config CRUD endpoints
@@ -312,6 +314,81 @@ class TestCreateCardAppliesRepoTags:
         })
         assert resp.status_code == 201
         assert resp.json()["tags"] == []
+
+
+# ── POST /api/cards dedupes by external_id (redundant-ticket fix) ───────────
+#
+# User report: the Engineering page sometimes created duplicate cards for the same
+# GitHub issue/PR. Root cause: github_sync.py's automatic sync-triggered card creation
+# already checked "does a non-archived card with this external_id exist" before
+# creating one, but routers.cards.create_card_row (used by manual "Add to board" and
+# Telegram capture) had no such check -- clicking "Add to board" for an item that
+# already had a linked card (e.g. auto-created earlier, or added once before) created
+# a second, genuinely duplicate card.
+
+class TestCreateCardDedupesByExternalId:
+
+    def test_second_add_to_board_returns_the_existing_card_not_a_duplicate(self, client):
+        first = client.post("/api/cards", json={
+            "title": "Fix login bug", "section": "today",
+            "external_id": "github:owner/repo/issues/1", "tag_ids": [],
+        })
+        assert first.status_code == 201
+        first_id = first.json()["id"]
+
+        second = client.post("/api/cards", json={
+            "title": "Fix login bug", "section": "week",
+            "external_id": "github:owner/repo/issues/1", "tag_ids": [],
+        })
+        assert second.status_code == 201
+        assert second.json()["id"] == first_id
+        # The existing card is returned as-is -- the second call's section is ignored,
+        # not applied as an update.
+        assert second.json()["section"] == "today"
+
+        with TestSession() as db:
+            count = db.query(models.Card).filter_by(
+                external_id="github:owner/repo/issues/1"
+            ).count()
+        assert count == 1
+
+    def test_re_adding_after_the_original_was_archived_creates_a_fresh_card(self, client):
+        """Mirrors github_sync.py's own archived=False dedup check -- archiving a card
+        means "done with this," so if the same external item comes up again it's
+        treated as new, not blocked forever."""
+        first = client.post("/api/cards", json={
+            "title": "Fix login bug", "section": "today",
+            "external_id": "github:owner/repo/issues/1", "tag_ids": [],
+        })
+        first_id = first.json()["id"]
+        with TestSession() as db:
+            card = db.query(models.Card).filter_by(id=first_id).first()
+            card.archived = True
+            db.commit()
+
+        second = client.post("/api/cards", json={
+            "title": "Fix login bug", "section": "today",
+            "external_id": "github:owner/repo/issues/1", "tag_ids": [],
+        })
+        assert second.status_code == 201
+        assert second.json()["id"] != first_id
+
+        with TestSession() as db:
+            count = db.query(models.Card).filter_by(
+                external_id="github:owner/repo/issues/1"
+            ).count()
+        assert count == 2
+
+    def test_different_external_ids_both_get_created(self, client):
+        r1 = client.post("/api/cards", json={
+            "title": "Fix login bug", "section": "today",
+            "external_id": "github:owner/repo/issues/1", "tag_ids": [],
+        })
+        r2 = client.post("/api/cards", json={
+            "title": "Bump deps", "section": "today",
+            "external_id": "github:owner/repo/pull/2", "tag_ids": [],
+        })
+        assert r1.json()["id"] != r2.json()["id"]
 
 
 # ── GET /api/engineering/items shows computed repo tags ─────────────────────

@@ -135,7 +135,22 @@ def get_cards(request: Request, db: Session = Depends(get_db)):
 def create_card_row(db: Session, data: dict, tag_ids: list[int]) -> models.Card:
     """Shared Card-creation DB logic: position calc, today_since, GitHub
     repo-tag auto-tagging, tag resolution. Used by POST /api/cards and
-    telegram/bot.py's capture handling."""
+    telegram/bot.py's capture handling.
+
+    external_id is a unique link to an external resource (currently only GitHub
+    issues/PRs) -- if a non-archived card already exists for it, that card is
+    returned as-is instead of creating a duplicate. Mirrors github_sync.py's own
+    automatic-sync dedup check (external_id + archived=False), so "Add to board"
+    from the Engineering page is idempotent no matter which of the app's several
+    card-creation paths (this one, the automatic sync-triggered one, Telegram
+    capture) got there first -- previously only the automatic path had this
+    check, so re-adding an already-linked item created a genuine duplicate card."""
+    external_id = data.get("external_id")
+    if external_id:
+        existing = db.query(models.Card).filter_by(external_id=external_id, archived=False).first()
+        if existing:
+            return existing
+
     count = db.query(models.Card).filter(models.Card.section == data.get("section", "today")).count()
     # Cards linked to a GitHub item automatically pick up any tags configured
     # for that repo (or its owner), in addition to whatever was passed in.

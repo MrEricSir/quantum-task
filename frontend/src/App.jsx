@@ -1037,10 +1037,12 @@ export default function App() {
             syncing={engineeringSyncing}
             onSync={refreshEngineeringItems}
             onAddToBoard={async (item) => {
+              // Plain title, matching github_sync.py's automatic sync-triggered card
+              // creation -- a "GitHub Issue: "/"GitHub PR: " prefix here (removed) meant
+              // the same item's title looked different depending on which of the app's
+              // two card-creation paths got to it first.
               await handleAddCard({
-                title: item.item_type === 'pr'
-                  ? `GitHub PR: ${item.title}`
-                  : `GitHub Issue: ${item.title}`,
+                title: item.title,
                 description: '',
                 section: item.item_type === 'pr' ? 'today' : 'week',
                 tag_ids: [],
