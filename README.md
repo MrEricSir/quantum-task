@@ -120,7 +120,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side)
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -326,7 +326,7 @@ Symlinked, not copied: a copy would scatter live secrets across every worktree d
 
 #### Verifying a fix before you review it
 
-Two opt-in checks run automatically after a session ends, before the job is marked complete — both off by default, so nothing changes unless you configure them:
+Three opt-in checks run automatically after a session ends, before the job is marked complete — all off by default, so nothing changes unless you configure them:
 
 ```toml
 [repos."owner/project_1"]
@@ -336,13 +336,19 @@ test_cmd = "npm test"          # run your test suite; pass/fail + a truncated ou
 verify_acceptance = true        # one extra, read-only Claude check of the diff against the
                                  # spec's Acceptance Criteria checklist, reporting MET/NOT MET
                                  # per item. Costs one extra LLM call per job.
+self_review = true              # the same lead-engineer checklist qtask-bridge --review runs
+                                 # manually (see below), but automatic. Costs one extra LLM
+                                 # call per job.
 
 # top-level fallback for repos that don't set their own, same as setup_cmd
 test_cmd = "pytest"
 verify_acceptance = true
+self_review = true
 ```
 
-`verify_acceptance` is explicitly told not to modify any files — it only reports, it never fixes. Both results get prepended to the job's `result` text, so they show up in the Code tab and Telegram alongside whatever note you'd normally see. If the implementation session itself errors out, verification is skipped — nothing useful to test against a session that didn't complete.
+`verify_acceptance` and `self_review` are both explicitly told not to modify any files — they only report, they never fix. All three results get prepended to the job's `result` text, so they show up in the Code tab and Telegram alongside whatever note you'd normally see. If the implementation session itself errors out, verification is skipped — nothing useful to test against a session that didn't complete.
+
+`self_review` asks the agent to end its response with a machine-parsed verdict line (`REVIEW_VERDICT: CLEAN` or `REVIEW_VERDICT: ISSUES_FOUND`), since — unlike the manual `--review` pass below — nothing here is a human reading the output before deciding what happens next. If the verdict comes back `ISSUES_FOUND`, or the line is missing/doesn't parse, the job lands in `needs_confirmation` instead of `done` (see [Needs confirmation: checkpoint patterns and automatic self-review](#needs-confirmation-checkpoint-patterns-and-automatic-self-review) below) — it fails open toward asking you to look, rather than silently trusting an ambiguous response.
 
 #### Trying a change yourself
 
@@ -392,6 +398,15 @@ This is the deliberately scoped-down first step of the self-review pass: manual 
 `BRIDGE_SPEC.md` is deleted from the worktree once a job finishes, but the original spec text isn't lost — it's recovered from the server (matched back to this worktree by branch name) and given to the review as context, along with any `test_cmd`/`verify_acceptance` results from the original run, so the review can focus on real problems instead of re-deriving what's already known. If no matching job record is found, the review still runs — just without that context.
 
 Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining leaves the worktree untouched, same as before. Accepting launches an interactive session in the same worktree with the review's own findings handed back as context, so applying them doesn't mean re-explaining what was just found from scratch — you can then also redirect it, push back on any individual suggestion, or ask it to stop partway through. A failed review (agent crashed, network error) skips the prompt entirely rather than asking you to act on an incomplete result. Like every other agent session the bridge launches, an interrupted apply (crash, Ctrl-C) auto-commits whatever was in progress rather than losing it.
+
+#### Needs confirmation: checkpoint patterns and automatic self-review
+
+Every unattended job (`--tag`/`--card`, no one watching it live) runs with the coding agent's own tool-use permission checks fully bypassed — there's no live prompt to intercept mid-session. Rather than trying to pause a running agent, the bridge checks the finished result against two independent, opt-in signals; either one lands the job in a `needs_confirmation` status instead of `done` once the session ends. The coding work still genuinely finished either way (a waiting cross-repo companion job still unblocks) — it's just flagged for you to look at before it counts as fully resolved.
+
+- **Checkpoint patterns** — a global list of glob patterns (e.g. `alembic/versions/*`, `package.json`) configured once in the webapp's Settings → GitHub/Bridge modal, applying to every unattended job automatically. If a job's final diff touches any matching path, it's flagged — a purely mechanical check, no LLM judgment involved.
+- **Automatic self-review** (`self_review` in `config.toml`, see above) — if the agent's own review verdict comes back `ISSUES_FOUND`, or doesn't parse.
+
+A flagged job shows its reason(s) in the Code tab — the specific matched paths, a "Self-review flagged possible issues" note, or both — alongside a **✓ Mark reviewed** button. Clicking it is a pure status flip (`needs_confirmation` → `done`) done entirely in the webapp; no CLI or subprocess involvement, since the coding session already ended. Nothing is ever pushed without separate human review regardless of any of this (the existing push-lock), so `needs_confirmation` is about not mistaking a risky or self-flagged change for a fully-resolved one — not a live gate on the agent itself.
 
 #### Code tab actions
 

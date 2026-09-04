@@ -121,7 +121,13 @@ export default function AssistCodeTab({ code }) {
               {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
               {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
               {bridgeJob.status === 'blocked'  && 'Waiting on another job to finish…'}
-              {bridgeJob.status === 'needs_confirmation' && (bridgeJob.result || 'Finished — touched a flagged path, needs your review')}
+              {bridgeJob.status === 'needs_confirmation' && (
+                bridgeJob.result || (
+                  bridgeJob.self_review_flagged
+                    ? 'Finished — self-review flagged possible issues, needs your review'
+                    : 'Finished — touched a flagged path, needs your review'
+                )
+              )}
             </span>
             {formatAttemptStats(attemptStats) && (
               <span
@@ -134,6 +140,9 @@ export default function AssistCodeTab({ code }) {
               <ul className="cdp-bridge-checkpoint-paths">
                 {bridgeJob.checkpoint_matched_paths.map((path) => <li key={path}>{path}</li>)}
               </ul>
+            )}
+            {bridgeJob.status === 'needs_confirmation' && bridgeJob.self_review_flagged && (
+              <div className="cdp-bridge-self-review-flag">⚠ Self-review flagged possible issues</div>
             )}
             {bridgeJob.branch_name && (
               <span className="cdp-bridge-branch">

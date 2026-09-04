@@ -529,6 +529,14 @@ class BridgeJob(Base):
     # app_setting_keys.CHECKPOINT_PATTERNS) -- set only when status == "needs_confirmation".
     # Null for every other status, including a job that finished clean with no match.
     checkpoint_matched_paths = Column(Text, nullable=True)
+    # True when the automatic self-review pass (config.toml's self_review, mirroring
+    # test_cmd/verify_acceptance's opt-in plumbing -- see agent_core.py's _run_self_review /
+    # _parse_review_verdict) is why status == "needs_confirmation": the diff came back
+    # ISSUES_FOUND, or the verdict was missing/unparseable (fails open). Deliberately a
+    # separate column from checkpoint_matched_paths, not folded into it -- a job can be
+    # flagged by one trigger, the other, or both, and merging them would lose "why." Null for
+    # every other status, including a job that finished clean with self_review enabled.
+    self_review_flagged = Column(Boolean, nullable=True)
 
     card = relationship("Card")
 

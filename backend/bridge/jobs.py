@@ -211,6 +211,7 @@ def _job_response(job: models.BridgeJob) -> dict:
         "depends_on_job_id": job.depends_on_job_id,
         "diff_summary": job.diff_summary,
         "checkpoint_matched_paths": json.loads(job.checkpoint_matched_paths) if job.checkpoint_matched_paths else None,
+        "self_review_flagged": job.self_review_flagged,
     }
 
 

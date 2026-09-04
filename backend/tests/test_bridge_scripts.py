@@ -1036,7 +1036,8 @@ class TestAgentScript:
         not after; otherwise a slow check either gets lost or looks stalled."""
         res = client.get("/api/bridge/agent.py")
         assert "def _run_verification" in res.text
-        assert "_run_verification(cwd, test_cmd, verify_acceptance, spec_text)" in res.text
+        assert "_run_verification(" in res.text
+        assert "test_cmd, verify_acceptance, spec_text, self_review)" in res.text
         # Interactive: verification happens inside the heartbeat's try/finally,
         # i.e. before stop_heartbeat.set()
         interactive_start = res.text.index("def _run_interactive")
@@ -1208,38 +1209,101 @@ class TestRunVerification:
     )
 
     def test_neither_configured_returns_empty_string(self, tmp_path):
-        result = agent_core._run_verification(str(tmp_path), None, False, self.SPEC_WITH_CRITERIA)
+        result, flagged = agent_core._run_verification(str(tmp_path), None, False, self.SPEC_WITH_CRITERIA)
         assert result == ""
+        assert flagged is False
 
     def test_test_cmd_only(self, tmp_path):
-        result = agent_core._run_verification(
+        result, flagged = agent_core._run_verification(
             str(tmp_path), "python3 -c \"print('ok')\"", False, self.SPEC_WITH_CRITERIA
         )
         assert result.startswith("## Verification")
         assert "### Tests" in result
         assert "### Acceptance Criteria" not in result
+        assert flagged is False
 
     def test_both_configured_produces_both_sections(self, tmp_path, monkeypatch):
         monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["echo", "MET: yes"], raising=False)
-        result = agent_core._run_verification(
+        result, flagged = agent_core._run_verification(
             str(tmp_path), "python3 -c \"print('ok')\"", True, self.SPEC_WITH_CRITERIA
         )
         assert "### Tests" in result
         assert "### Acceptance Criteria" in result
         assert "MET: yes" in result
+        assert flagged is False
 
     def test_verify_acceptance_with_no_criteria_section_skips_gracefully(self, tmp_path, monkeypatch):
         monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["echo", "should not run"], raising=False)
-        result = agent_core._run_verification(
+        result, flagged = agent_core._run_verification(
             str(tmp_path), None, True, "## Problem Statement\nno acceptance criteria here"
         )
         assert result == ""
+        assert flagged is False
 
     def test_acceptance_check_only(self, tmp_path, monkeypatch):
         monkeypatch.setattr(agent_core, "streaming_command", lambda prompt: ["echo", "NOT MET: needs work"], raising=False)
-        result = agent_core._run_verification(str(tmp_path), None, True, self.SPEC_WITH_CRITERIA)
+        result, flagged = agent_core._run_verification(str(tmp_path), None, True, self.SPEC_WITH_CRITERIA)
         assert "### Tests" not in result
         assert "NOT MET: needs work" in result
+        assert flagged is False
+
+    def test_self_review_only_clean_verdict_returns_no_flag(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            agent_core, "streaming_command",
+            lambda prompt: ["echo", "Looks solid.\nREVIEW_VERDICT: CLEAN"], raising=False,
+        )
+        result, flagged = agent_core._run_verification(
+            str(tmp_path), None, False, self.SPEC_WITH_CRITERIA, self_review=True
+        )
+        assert "### Self-Review" in result
+        assert flagged is False
+
+    def test_self_review_only_issues_found_flags(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            agent_core, "streaming_command",
+            lambda prompt: ["echo", "Found a bug.\nREVIEW_VERDICT: ISSUES_FOUND"], raising=False,
+        )
+        result, flagged = agent_core._run_verification(
+            str(tmp_path), None, False, self.SPEC_WITH_CRITERIA, self_review=True
+        )
+        assert "### Self-Review" in result
+        assert flagged is True
+
+    def test_self_review_missing_verdict_fails_open_to_flagged(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            agent_core, "streaming_command",
+            lambda prompt: ["echo", "No verdict line here."], raising=False,
+        )
+        result, flagged = agent_core._run_verification(
+            str(tmp_path), None, False, self.SPEC_WITH_CRITERIA, self_review=True
+        )
+        assert flagged is True
+
+    def test_self_review_uses_the_last_verdict_when_restated(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            agent_core, "streaming_command",
+            lambda prompt: [
+                "echo", "REVIEW_VERDICT: ISSUES_FOUND\n...actually, on reflection:\nREVIEW_VERDICT: CLEAN",
+            ], raising=False,
+        )
+        result, flagged = agent_core._run_verification(
+            str(tmp_path), None, False, self.SPEC_WITH_CRITERIA, self_review=True
+        )
+        assert flagged is False
+
+    def test_all_three_configured_produces_three_sections(self, tmp_path, monkeypatch):
+        def fake_streaming_command(prompt):
+            if "REVIEW_VERDICT" in prompt:
+                return ["echo", "Reviewed everything.\nREVIEW_VERDICT: ISSUES_FOUND"]
+            return ["echo", "MET: yes"]
+        monkeypatch.setattr(agent_core, "streaming_command", fake_streaming_command, raising=False)
+        result, flagged = agent_core._run_verification(
+            str(tmp_path), "python3 -c \"print('ok')\"", True, self.SPEC_WITH_CRITERIA, self_review=True
+        )
+        assert "### Tests" in result
+        assert "### Acceptance Criteria" in result
+        assert "### Self-Review" in result
+        assert flagged is True
 
 
 class TestLoadConfig:
@@ -1273,6 +1337,7 @@ test_cmd = "npm test"
 run_cmd = "npm run dev"
 open_url = "http://localhost:3000"
 verify_acceptance = true
+self_review = true
 env_files = ["backend/.env"]
 """)
         cfg = agent_core.load_config()
@@ -1282,6 +1347,7 @@ env_files = ["backend/.env"]
         assert cfg["run_cmd"] == "npm run dev"
         assert cfg["open_url"] == "http://localhost:3000"
         assert cfg["verify_acceptance"] is True
+        assert cfg["self_review"] is True
         assert cfg["env_files"] == ["backend/.env"]
 
     def test_repos_and_repo_roots_still_load(self, tmp_path, monkeypatch):
@@ -1378,6 +1444,26 @@ verify_acceptance = "true"
         agent_core.load_config()
         err = capsys.readouterr().err
         assert "verify_acceptance" in err
+        assert "expected true/false" in err
+
+    def test_flags_self_review_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+self_review = "true"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "self_review" in err
+        assert "expected true/false" in err
+
+    def test_flags_top_level_self_review_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+self_review = "yes"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "self_review" in err
         assert "expected true/false" in err
 
     def test_flags_repo_entry_of_wrong_type(self, tmp_path, monkeypatch, capsys):
@@ -1589,6 +1675,7 @@ class TestRepoEntryVerificationFields:
         assert entry.setup_cmd == "npm install"
         assert entry.test_cmd == "npm test"
         assert entry.verify_acceptance is True
+        assert entry.self_review is None
         assert entry.run_cmd is None
         assert entry.env_files is None
         assert entry.open_url is None
@@ -1599,12 +1686,19 @@ class TestRepoEntryVerificationFields:
         assert entry.path == "/x"
         assert entry.test_cmd is None
         assert entry.verify_acceptance is None
+        assert entry.self_review is None
         assert entry.run_cmd is None
         assert entry.env_files is None
         assert entry.open_url is None
 
     def test_unconfigured_repo_returns_all_none(self):
-        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None)
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None, None)
+
+    def test_resolves_self_review_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {"path": "/x", "self_review": True}}}
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.self_review is True
 
     def test_resolves_run_cmd_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
@@ -1630,7 +1724,7 @@ class TestRepoEntryVerificationFields:
 
     def test_path_star_unpack_still_works_unchanged(self):
         """The two call sites that only need `path` do `path, *_ = _repo_entry(...)`
-        -- confirms that pattern still works now that RepoEntry has seven
+        -- confirms that pattern still works now that RepoEntry has eight
         fields instead of a plain tuple's original five."""
         cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
         path, *_ = agent_core._repo_entry(cfg, "owner/repo")
@@ -3240,6 +3334,54 @@ class TestMakeReviewPrompt:
         assert "## Automated Verification Results" not in prompt
 
 
+class TestMakeSelfReviewPrompt:
+
+    def test_reuses_make_review_prompt_checklist_verbatim(self):
+        """The automatic pass must ask the exact same question as manual --review, not a
+        rewritten/duplicated checklist -- confirmed by checking _make_review_prompt's own
+        output is a literal substring of the self-review prompt."""
+        base = agent_core._make_review_prompt("## Spec\nfix the bug", "**passed**")
+        self_review_prompt = agent_core._make_self_review_prompt("## Spec\nfix the bug", "**passed**")
+        assert base in self_review_prompt
+
+    def test_appends_verdict_instruction(self):
+        prompt = agent_core._make_self_review_prompt(None, None)
+        assert "REVIEW_VERDICT: CLEAN" in prompt
+        assert "REVIEW_VERDICT: ISSUES_FOUND" in prompt
+
+    def test_manual_review_prompt_has_no_verdict_instruction(self):
+        """The manual --review prompt must NOT gain the verdict instruction -- a human reads
+        its output directly and doesn't need machine-parseable structure."""
+        prompt = agent_core._make_review_prompt(None, None)
+        assert "REVIEW_VERDICT" not in prompt
+
+
+class TestParseReviewVerdict:
+
+    def test_clean_verdict_returns_false(self):
+        assert agent_core._parse_review_verdict("Looks good.\nREVIEW_VERDICT: CLEAN") is False
+
+    def test_issues_found_verdict_returns_true(self):
+        assert agent_core._parse_review_verdict("Found a bug.\nREVIEW_VERDICT: ISSUES_FOUND") is True
+
+    def test_missing_verdict_fails_open_to_true(self):
+        assert agent_core._parse_review_verdict("Some review text with no verdict line.") is True
+
+    def test_empty_output_fails_open_to_true(self):
+        assert agent_core._parse_review_verdict("") is True
+        assert agent_core._parse_review_verdict(None) is True
+
+    def test_last_match_wins_when_verdict_is_restated(self):
+        text = "REVIEW_VERDICT: ISSUES_FOUND\n...on reflection...\nREVIEW_VERDICT: CLEAN"
+        assert agent_core._parse_review_verdict(text) is False
+        text2 = "REVIEW_VERDICT: CLEAN\n...wait, actually...\nREVIEW_VERDICT: ISSUES_FOUND"
+        assert agent_core._parse_review_verdict(text2) is True
+
+    def test_whitespace_variants_still_parse(self):
+        assert agent_core._parse_review_verdict("REVIEW_VERDICT:    CLEAN") is False
+        assert agent_core._parse_review_verdict("REVIEW_VERDICT:CLEAN") is False
+
+
 class TestCmdReview:
     """cmd_review resolution + streaming, with streaming_command monkeypatched
     to a real (trivial) subprocess so output actually has to flow through the
@@ -3727,6 +3869,105 @@ class TestAgentScriptFullFlow:
             subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
                            cwd=scratch_repo, capture_output=True)
 
+    def _run_job_with_fake_agent_commit_and_review(self, scratch_repo, monkeypatch, job_id,
+                                                     checkpoint_patterns, touched_path,
+                                                     self_review, review_output):
+        """Like _run_job_with_fake_agent_commit, but also configures self_review in cfg and
+        stubs the self-review pass's own subprocess.run call (distinguished from the main
+        coding session's interactive call by the --print flag streaming_command adds) to
+        return review_output instead of writing/committing a file. Returns (api_calls,
+        worktree_dir) for the caller to assert on and clean up."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        def fake_api(cfg, method, path, body=None):
+            api_calls.append((method, path, body))
+            if path == "/api/bridge/checkpoint-patterns":
+                return {"patterns": checkpoint_patterns}
+            return {}
+        ns["api"] = fake_api
+
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"] and "--print" in cmd:
+                # The self-review pass: non-interactive, streaming_command-shaped.
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0, stdout=review_output, stderr="")
+            if cmd[:1] == ["claude"]:
+                work_cwd = k.get("cwd")
+                full_path = os.path.join(work_cwd, touched_path)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, "w") as f:
+                    f.write("content\n")
+                real_run(["git", "add", touched_path], cwd=work_cwd, check=True)
+                real_run(["git", "commit", "-q", "-m", "agent commit"], cwd=work_cwd, check=True)
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [],
+               "name": "test-agent", "self_review": self_review}
+        job = {"id": job_id, "card_id": 84, "card_title": "Some feature",
+               "prompt": "do the thing", "target_repo": None}
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        start_call = next(c for c in api_calls if c[1] == f"/api/bridge/jobs/{job_id}/start")
+        worktree_dir = start_call[2]["worktree_path"]
+        return api_calls, worktree_dir
+
+    def test_run_job_reports_needs_confirmation_when_self_review_flags_issues(self, scratch_repo, monkeypatch):
+        api_calls, worktree_dir = self._run_job_with_fake_agent_commit_and_review(
+            scratch_repo, monkeypatch, job_id=20,
+            checkpoint_patterns=[], touched_path="src/app.py",
+            self_review=True, review_output="Found a real issue.\nREVIEW_VERDICT: ISSUES_FOUND",
+        )
+        try:
+            needs_conf_calls = [c for c in api_calls if c[1] == "/api/bridge/jobs/20/needs-confirmation"]
+            assert needs_conf_calls, "job never reached /needs-confirmation"
+            assert needs_conf_calls[0][2]["self_review_flagged"] is True
+            assert needs_conf_calls[0][2]["matched_paths"] == []
+            assert not any(c[1] == "/api/bridge/jobs/20/complete" for c in api_calls)
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=scratch_repo, capture_output=True)
+
+    def test_run_job_reports_complete_when_self_review_is_clean(self, scratch_repo, monkeypatch):
+        api_calls, worktree_dir = self._run_job_with_fake_agent_commit_and_review(
+            scratch_repo, monkeypatch, job_id=21,
+            checkpoint_patterns=[], touched_path="src/app.py",
+            self_review=True, review_output="Looks great.\nREVIEW_VERDICT: CLEAN",
+        )
+        try:
+            assert any(c[1] == "/api/bridge/jobs/21/complete" for c in api_calls), \
+                "job never reached /complete"
+            assert not any(c[1] == "/api/bridge/jobs/21/needs-confirmation" for c in api_calls)
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=scratch_repo, capture_output=True)
+
+    def test_run_job_needs_confirmation_when_both_checkpoint_and_self_review_trigger(self, scratch_repo, monkeypatch):
+        api_calls, worktree_dir = self._run_job_with_fake_agent_commit_and_review(
+            scratch_repo, monkeypatch, job_id=22,
+            checkpoint_patterns=["alembic/versions/*"], touched_path="alembic/versions/0002_y.py",
+            self_review=True, review_output="Also found issues.\nREVIEW_VERDICT: ISSUES_FOUND",
+        )
+        try:
+            needs_conf_calls = [c for c in api_calls if c[1] == "/api/bridge/jobs/22/needs-confirmation"]
+            assert needs_conf_calls, "job never reached /needs-confirmation"
+            assert needs_conf_calls[0][2]["matched_paths"] == ["alembic/versions/0002_y.py"]
+            assert needs_conf_calls[0][2]["self_review_flagged"] is True
+            assert not any(c[1] == "/api/bridge/jobs/22/complete" for c in api_calls)
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=scratch_repo, capture_output=True)
+
     def test_run_job_resumes_existing_worktree_for_a_fix_job(self, scratch_repo, monkeypatch):
         """A fix job (job["resumes_job_id"] set) must resume the worktree/branch already on
         the job payload instead of creating a fresh one -- proves run_job's branch actually
@@ -4039,7 +4280,7 @@ class TestAgentScriptFullFlow:
             return real_popen(cmd, *a, **k)
         monkeypatch.setattr(ns["subprocess"], "Popen", fake_popen)
 
-        def fake_verification(cwd, test_cmd, verify_acceptance, spec_text):
+        def fake_verification(cwd, test_cmd, verify_acceptance, spec_text, self_review=False):
             raise KeyboardInterrupt()
         monkeypatch.setitem(ns, "_run_verification", fake_verification)
 

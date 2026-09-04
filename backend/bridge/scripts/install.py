@@ -39,7 +39,7 @@ TOML_TEMPLATE = textwrap.dedent("""\
 
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
-    # "verify_acceptance" / "run_cmd" / "env_files" keys. setup_cmd is a
+    # "verify_acceptance" / "self_review" / "run_cmd" / "env_files" keys. setup_cmd is a
     # one-time command run in a fresh worktree before Claude launches, for
     # repos that need dependencies installed (npm install, pip install, etc).
     #
@@ -93,7 +93,7 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # not an automatic default.
 
     # Verification, run automatically after a session ends (before the job
-    # is marked complete) -- both are opt-in and off by default.
+    # is marked complete) -- all three are opt-in and off by default.
     #
     # test_cmd runs your test suite and includes pass/fail in the job
     # result -- no LLM call, purely mechanical. Set per-repo (see [repos]
@@ -107,6 +107,17 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # set (per-repo, or as a fallback here):
     #
     # verify_acceptance = true
+
+    # self_review runs the same lead-engineer-style checklist `qtask-bridge --review`
+    # already runs manually (assumptions, code quality, duplication, anti-patterns, test
+    # coverage) -- but automatically, right after a session ends, with the verdict decided
+    # by the agent itself rather than a human reading it. If the pass comes back flagging
+    # anything (or its verdict can't be parsed -- fails open toward flagging), the job lands
+    # in "needs_confirmation" instead of "done", the same status a checkpoint pattern match
+    # uses, surfaced in the Code tab. Never applies fixes on its own. Costs one extra LLM
+    # call per job, so it's off unless set (per-repo, or as a fallback here):
+    #
+    # self_review = true
 
     # Alternatively, list root directories and the bridge will discover repos by
     # scanning for matching .git remotes automatically. Auto-discovered repos

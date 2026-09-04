@@ -106,6 +106,52 @@ class TestCheckpointPatternsEndpoint:
         assert res.json() == {"patterns": []}
 
 
+class TestNeedsConfirmationEndpoint:
+    """The two triggers that can land a job here -- a checkpoint pattern match, and the
+    automatic self-review pass (agent_core.py's _run_self_review) -- both post to this same
+    endpoint. See _JobNeedsConfirmation's self_review_flagged field."""
+
+    def test_self_review_flagged_round_trips_through_job_response(self, client):
+        card_id = _make_card()
+        job_id = _make_job(card_id, status="running")
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/needs-confirmation", json={
+            "result": "session finished", "diff_summary": "1 file changed",
+            "matched_paths": [], "self_review_flagged": True,
+        })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "needs_confirmation"
+        assert body["self_review_flagged"] is True
+        assert body["checkpoint_matched_paths"] == []
+
+    def test_self_review_flagged_defaults_to_false_when_omitted(self, client):
+        """Backward compatibility: a checkpoint-only trigger (no self_review configured)
+        doesn't send self_review_flagged at all -- must not break or silently flag it."""
+        card_id = _make_card()
+        job_id = _make_job(card_id, status="running")
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/needs-confirmation", json={
+            "result": "session finished", "diff_summary": "1 file changed",
+            "matched_paths": ["alembic/versions/0001_x.py"],
+        })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["self_review_flagged"] is False
+        assert body["checkpoint_matched_paths"] == ["alembic/versions/0001_x.py"]
+
+    def test_acknowledge_works_regardless_of_which_field_caused_needs_confirmation(self, client):
+        card_id = _make_card()
+        job_id = _make_job(card_id, status="running")
+        client.post(f"/api/bridge/jobs/{job_id}/needs-confirmation", json={
+            "matched_paths": [], "self_review_flagged": True,
+        })
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/acknowledge")
+        assert res.status_code == 200
+        assert res.json()["status"] == "done"
+
+
 class TestAcknowledgeEndpoint:
     def test_flips_needs_confirmation_to_done(self, client):
         card_id = _make_card()

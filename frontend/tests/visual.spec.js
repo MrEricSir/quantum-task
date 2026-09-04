@@ -4045,6 +4045,27 @@ test.describe('card detail panel — github and spec', () => {
     await expect(page.getByRole('button', { name: /mark reviewed/i })).toHaveCount(0)
   })
 
+  test('a needs_confirmation job flagged by self-review shows the self-review note and fallback label', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'needs_confirmation', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: '', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      checkpoint_matched_paths: [], self_review_flagged: true,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-status--needs_confirmation')).toContainText(/self-review flagged possible issues/i)
+    await expect(page.locator('.cdp-bridge-self-review-flag')).toBeVisible()
+    await expect(page.locator('.cdp-bridge-checkpoint-paths')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /mark reviewed/i })).toBeVisible()
+  })
+
   test('clicking Resume queues a resume job and updates the status label', async ({ page }) => {
     const job = {
       id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',

@@ -73,6 +73,7 @@ class _JobNeedsConfirmation(BaseModel):
     result: str = ""
     diff_summary: str = ""
     matched_paths: list[str] = []   # changed paths that matched a configured checkpoint pattern
+    self_review_flagged: bool = False   # True when the automatic self-review pass is why
 
 class _CheckpointPatterns(BaseModel):
     patterns: list[str] = []
@@ -412,11 +413,13 @@ def complete_job(job_id: int, body: _JobComplete, db: Session = Depends(get_db))
 
 @router.post("/api/bridge/jobs/{job_id}/needs-confirmation")
 def job_needs_confirmation(job_id: int, body: _JobNeedsConfirmation, db: Session = Depends(get_db)):
-    """Bridge calls this instead of /complete when the session succeeded but its diff touched
-    a configured checkpoint pattern (app_setting_keys.CHECKPOINT_PATTERNS) -- the coding work
-    genuinely finished, it's just flagged for review rather than treated as fully resolved.
-    Mirrors complete_job in every other respect, including unblocking a waiting companion job,
-    since the upstream work is done either way."""
+    """Bridge calls this instead of /complete when the session succeeded but either a
+    configured checkpoint pattern (app_setting_keys.CHECKPOINT_PATTERNS) matched the diff, or
+    the automatic self-review pass (config.toml's self_review) came back flagged -- either
+    trigger alone, or both together, means the coding work genuinely finished, it's just
+    flagged for review rather than treated as fully resolved. Mirrors complete_job in every
+    other respect, including unblocking a waiting companion job, since the upstream work is
+    done either way."""
     job = db.query(models.BridgeJob).filter_by(id=job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -424,6 +427,7 @@ def job_needs_confirmation(job_id: int, body: _JobNeedsConfirmation, db: Session
     job.result = body.result or ""
     job.diff_summary = body.diff_summary or ""
     job.checkpoint_matched_paths = json.dumps(body.matched_paths)
+    job.self_review_flagged = body.self_review_flagged
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
     unblock_dependent_jobs(db)

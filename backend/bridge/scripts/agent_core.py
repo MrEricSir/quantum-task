@@ -135,12 +135,13 @@ COLOR_RESET = "\033[0m"
 # _validate_toml_structure can flag anything else as an unrecognized
 # top-level key -- almost always a typo.
 _TOML_SCALAR_FALLBACK_KEYS = {
-    "name", "setup_cmd", "test_cmd", "verify_acceptance", "env_files", "run_cmd", "open_url",
-    "agent",
+    "name", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "env_files", "run_cmd",
+    "open_url", "agent",
 }
 _TOML_TOP_LEVEL_KEYS = _TOML_SCALAR_FALLBACK_KEYS | {"repos", "repo_roots"}
 _TOML_REPO_TABLE_KEYS = {
-    "path", "setup_cmd", "test_cmd", "verify_acceptance", "run_cmd", "env_files", "open_url",
+    "path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "run_cmd", "env_files",
+    "open_url",
 }
 
 # See the "Coding-agent adapter contract" section of this file's module docstring.
@@ -202,6 +203,8 @@ def _validate_toml_structure(toml):
             problems.append(f'"{key}": expected a string, got {type(toml[key]).__name__}')
     if "verify_acceptance" in toml and toml["verify_acceptance"] is not None and not isinstance(toml["verify_acceptance"], bool):
         problems.append(f'"verify_acceptance": expected true/false, got {type(toml["verify_acceptance"]).__name__}')
+    if "self_review" in toml and toml["self_review"] is not None and not isinstance(toml["self_review"], bool):
+        problems.append(f'"self_review": expected true/false, got {type(toml["self_review"]).__name__}')
     if "env_files" in toml and toml["env_files"] is not None and not isinstance(toml["env_files"], list):
         problems.append(f'"env_files": expected a list of paths, got {type(toml["env_files"]).__name__}')
 
@@ -227,6 +230,8 @@ def _validate_toml_structure(toml):
             problems.append(f'repos."{name}".env_files: expected a list of paths, got {type(entry["env_files"]).__name__}')
         if "verify_acceptance" in entry and entry["verify_acceptance"] is not None and not isinstance(entry["verify_acceptance"], bool):
             problems.append(f'repos."{name}".verify_acceptance: expected true/false, got {type(entry["verify_acceptance"]).__name__}')
+        if "self_review" in entry and entry["self_review"] is not None and not isinstance(entry["self_review"], bool):
+            problems.append(f'repos."{name}".self_review: expected true/false, got {type(entry["self_review"]).__name__}')
 
     repo_roots = toml.get("repo_roots")
     if repo_roots is not None:
@@ -324,9 +329,10 @@ def _slugify(text, max_len=40):
 
 RepoEntry = namedtuple(
     "RepoEntry",
-    ["path", "setup_cmd", "test_cmd", "verify_acceptance", "run_cmd", "env_files", "open_url"],
+    ["path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "run_cmd",
+     "env_files", "open_url"],
 )
-_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None)
+_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None, None)
 
 
 def _repo_entry(cfg, target_repo):
@@ -349,6 +355,7 @@ def _repo_entry(cfg, target_repo):
         setup_cmd = "npm install"
         test_cmd = "npm test"
         verify_acceptance = true
+        self_review = true
         run_cmd = "npm run dev"
         env_files = ["backend/.env", "frontend/.env"]
         open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
@@ -357,11 +364,11 @@ def _repo_entry(cfg, target_repo):
     if entry is None:
         return _EMPTY_REPO_ENTRY
     if isinstance(entry, str):
-        return RepoEntry(entry, None, None, None, None, None, None)
+        return RepoEntry(entry, None, None, None, None, None, None, None)
     if isinstance(entry, dict):
         return RepoEntry(
             entry.get("path"), entry.get("setup_cmd"),
-            entry.get("test_cmd"), entry.get("verify_acceptance"),
+            entry.get("test_cmd"), entry.get("verify_acceptance"), entry.get("self_review"),
             entry.get("run_cmd"), entry.get("env_files"), entry.get("open_url"),
         )
     return _EMPTY_REPO_ENTRY
@@ -1025,19 +1032,26 @@ def _match_checkpoint_patterns(worktree_path, patterns):
     return [p for p in changed if any(fnmatch.fnmatch(p, pat) for pat in patterns)]
 
 
-def _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns):
-    """Shared tail of both _run_interactive and _run_streaming's success path: check the
-    diff against any configured checkpoint patterns and report completion accordingly.
-    A match reports /needs-confirmation instead of /complete -- the coding work still
-    genuinely finished (and still unblocks a waiting companion job server-side), it's just
-    flagged for review rather than silently counted as fully resolved."""
+def _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns, review_flagged=False):
+    """Shared tail of both _run_interactive and _run_streaming's success path: checks the
+    diff against any configured checkpoint patterns AND the self-review verdict
+    (review_flagged, from _run_verification's opt-in self_review pass), and reports
+    completion accordingly. Either trigger alone -- or both together -- lands the job in
+    needs_confirmation instead of done; the coding work still genuinely finished (and still
+    unblocks a waiting companion job server-side), it's just flagged for review rather than
+    silently counted as fully resolved. matched_paths and self_review_flagged are reported as
+    separate fields, never merged, so the webapp can show *why* a job needs confirmation."""
     diff_summary = _git_diff_stat(cwd)
     matched = _match_checkpoint_patterns(cwd, checkpoint_patterns)
-    if matched:
-        print(f"[bridge] ⚠ Touched checkpoint-flagged paths: {', '.join(matched)} "
-              f"— marking needs-confirmation, not done.")
+    if matched or review_flagged:
+        if matched:
+            print(f"[bridge] ⚠ Touched checkpoint-flagged paths: {', '.join(matched)} "
+                  f"— marking needs-confirmation, not done.")
+        if review_flagged:
+            print("[bridge] ⚠ Self-review flagged this job — marking needs-confirmation, not done.")
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/needs-confirmation",
-            {"result": result_text, "diff_summary": diff_summary, "matched_paths": matched})
+            {"result": result_text, "diff_summary": diff_summary, "matched_paths": matched,
+             "self_review_flagged": review_flagged})
     else:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete",
             {"result": result_text, "diff_summary": diff_summary})
@@ -1096,14 +1110,18 @@ def _check_acceptance_criteria(worktree_path, criteria_text, test_summary=None):
     return f"### Acceptance Criteria\n\n{report}"
 
 
-def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text):
-    """Run configured verification checks after the coding session ends,
-    before the job is marked complete. Both checks are opt-in (test_cmd
-    unset = skip, verify_acceptance defaults False) so existing installs
-    behave exactly as before with no config changes. Returns a markdown
-    block to prepend to the job's result, or "" if nothing ran."""
+def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text, self_review=False):
+    """Run configured verification checks after the coding session ends, before the job is
+    marked complete. All three checks are opt-in (test_cmd unset = skip, verify_acceptance
+    and self_review default False) so existing installs behave exactly as before with no
+    config changes. Returns (markdown_block, review_flagged) -- markdown_block is "" if
+    nothing ran; review_flagged is True only when self_review is on AND the pass came back
+    ISSUES_FOUND or unparseable (see _parse_review_verdict), independent of test_cmd's own
+    pass/fail (that's already visible in the same markdown block -- conflating the two would
+    make it harder to tell WHY a job needs confirmation later, see _report_job_finished)."""
     sections = []
     test_summary = None
+    review_flagged = False
     if test_cmd:
         test_summary = _run_test_cmd(worktree_path, test_cmd)
         sections.append(test_summary)
@@ -1114,13 +1132,17 @@ def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text):
         else:
             print("[bridge] verify_acceptance is on but no Acceptance Criteria "
                   "section found in spec — skipping")
+    if self_review:
+        review_summary, review_flagged = _run_self_review(
+            worktree_path, spec_text, "\n\n".join(sections) if sections else None)
+        sections.append(review_summary)
     if not sections:
-        return ""
-    return "## Verification\n\n" + "\n\n".join(sections)
+        return "", False
+    return "## Verification\n\n" + "\n\n".join(sections), review_flagged
 
 
 def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
-                      test_cmd=None, verify_acceptance=False, spec_text=None,
+                      test_cmd=None, verify_acceptance=False, self_review=False, spec_text=None,
                       prompt_kind="normal", checkpoint_patterns=None):
     """Launch the coding agent as an interactive session the user can engage with.
 
@@ -1134,6 +1156,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
     _set_terminal_title(branch)
     stop_heartbeat = _start_heartbeat(cfg, job_id, cwd)
     verification = ""
+    review_flagged = False
     make_prompt = {"fix": _make_fix_prompt, "resume": _make_resume_prompt}.get(
         prompt_kind, _make_prompt)
     try:
@@ -1147,7 +1170,8 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
             return False
         # Heartbeat stays alive through verification too — a slow but
         # legitimate check shouldn't get mistaken for a stalled job.
-        verification = _run_verification(cwd, test_cmd, verify_acceptance, spec_text)
+        verification, review_flagged = _run_verification(
+            cwd, test_cmd, verify_acceptance, spec_text, self_review)
     finally:
         stop_heartbeat.set()
         # In the finally, not just the next line -- a KeyboardInterrupt (or anything else)
@@ -1166,12 +1190,12 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
             pass
     if verification:
         result_text = f"{verification}\n\n{result_text}" if result_text else verification
-    _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns)
+    _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns, review_flagged)
     return True
 
 
 def _run_streaming(cfg, job_id, branch, cwd,
-                    test_cmd=None, verify_acceptance=False, spec_text=None,
+                    test_cmd=None, verify_acceptance=False, self_review=False, spec_text=None,
                     prompt_kind="normal", checkpoint_patterns=None):
     """Launch the coding agent non-interactively and stream stdout back to the app.
 
@@ -1210,6 +1234,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
         last_flush = time.time()
 
     verification = ""
+    review_flagged = False
     try:
         for line in proc.stdout:
             line = line.rstrip("\n")
@@ -1223,7 +1248,8 @@ def _run_streaming(cfg, job_id, branch, cwd,
         # Only verify a session that actually succeeded — nothing useful to
         # test against one that didn't. Heartbeat stays alive through it.
         if proc.returncode == 0:
-            verification = _run_verification(cwd, test_cmd, verify_acceptance, spec_text)
+            verification, review_flagged = _run_verification(
+                cwd, test_cmd, verify_acceptance, spec_text, self_review)
     finally:
         stop_heartbeat.set()
         # In the finally, not just the next line -- see _run_interactive's matching comment.
@@ -1231,7 +1257,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
 
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
     if proc.returncode == 0:
-        _report_job_finished(cfg, job_id, cwd, verification, checkpoint_patterns)
+        _report_job_finished(cfg, job_id, cwd, verification, checkpoint_patterns, review_flagged)
     else:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
             {"result": f"{AGENT_LABEL} exited with code {proc.returncode}"})
@@ -1334,6 +1360,9 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     verify_acceptance = entry.verify_acceptance
     if verify_acceptance is None:
         verify_acceptance = cfg.get("verify_acceptance", False)
+    self_review = entry.self_review
+    if self_review is None:
+        self_review = cfg.get("self_review", False)
     env_files = entry.env_files or cfg.get("env_files")
     checkpoint_resp = api(cfg, "GET", "/api/bridge/checkpoint-patterns")
     checkpoint_patterns = (checkpoint_resp or {}).get("patterns") or []
@@ -1367,11 +1396,13 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
         if streaming:
             _run_streaming(cfg, job_id, branch, worktree_path,
                             test_cmd=test_cmd, verify_acceptance=verify_acceptance,
+                            self_review=self_review,
                             spec_text=spec_text, prompt_kind=prompt_kind,
                             checkpoint_patterns=checkpoint_patterns)
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
                               test_cmd=test_cmd, verify_acceptance=verify_acceptance,
+                              self_review=self_review,
                               spec_text=spec_text, prompt_kind=prompt_kind,
                               checkpoint_patterns=checkpoint_patterns)
     except Exception as e:
@@ -2179,6 +2210,64 @@ def _make_review_prompt(spec_text, verification_text):
     if verification_text:
         parts += ["", "## Automated Verification Results", verification_text]
     return "\n".join(parts)
+
+
+def _make_self_review_prompt(spec_text, verification_text):
+    """Build the automatic, machine-scored self-review prompt: reuses
+    _make_review_prompt's lead-engineer checklist verbatim (assumptions, code quality,
+    duplication, anti-patterns, test coverage) so the manual and automatic passes ask the
+    exact same question -- the only difference is a final verdict line the manual pass
+    doesn't need, since a human reads --review's output directly but nothing reads this
+    pass's output before _report_job_finished decides whether to escalate the job. See
+    _parse_review_verdict for how the line is read back out."""
+    prompt = _make_review_prompt(spec_text, verification_text)
+    prompt += (
+        "\n\nFinally, on its own line, at the very end of your response, write exactly one "
+        "of:\n  REVIEW_VERDICT: CLEAN\n  REVIEW_VERDICT: ISSUES_FOUND\n"
+        "Use CLEAN only if you found nothing worth flagging above. Use ISSUES_FOUND if you "
+        "flagged anything at all, even something minor. This line is parsed by automation, "
+        "not read by a human first -- write it verbatim, exactly once, as the literal last "
+        "line of your response."
+    )
+    return prompt
+
+
+_REVIEW_VERDICT_RE = re.compile(r"REVIEW_VERDICT:\s*(CLEAN|ISSUES_FOUND)\b")
+
+
+def _parse_review_verdict(output_text):
+    """Parse a self-review pass's REVIEW_VERDICT line and return True if the job should be
+    escalated to needs_confirmation, False if the review came back genuinely clean. Uses the
+    LAST match in output_text, not the first -- an agent that restates its verdict in a
+    closing summary (common) would otherwise have its real, later verdict overridden by an
+    earlier passing mention. Fails OPEN toward True (escalate) whenever the verdict line is
+    missing or doesn't parse: an agent that ignored the instruction, got cut off, or phrased
+    it slightly differently is a reason to ask a human, not a reason to silently trust an
+    ambiguous response -- the same posture the checkpoint gate itself already takes toward
+    anything it isn't sure about."""
+    matches = _REVIEW_VERDICT_RE.findall(output_text or "")
+    if not matches:
+        return True
+    return matches[-1] != "CLEAN"
+
+
+def _run_self_review(worktree_path, spec_text, verification_text):
+    """Run the automatic self-review pass and return (summary_markdown, issues_found).
+    Non-interactive (capture_output=True), same shape as _check_acceptance_criteria -- unlike
+    cmd_review's live-streamed Popen, nobody is watching this run in real time, so there's no
+    reason to stream it. Never applies fixes -- read-only, the same posture
+    _make_review_prompt's own instructions already enforce; auto-applying findings
+    unattended is a separate, still-deferred backlog item (PRODUCT_NOTES.md's "Unattended
+    review auto-fixing") and must not happen here."""
+    prompt = _make_self_review_prompt(spec_text, verification_text)
+    print("[bridge] Running self-review...")
+    r = subprocess.run(streaming_command(prompt), cwd=worktree_path,
+                       capture_output=True, text=True)
+    report = (r.stdout or "").strip() or "(no output)"
+    issues_found = _parse_review_verdict(report)
+    print("[bridge] Self-review flagged possible issues -- will mark needs-confirmation."
+          if issues_found else "[bridge] Self-review: clean.")
+    return f"### Self-Review\n\n{report}", issues_found
 
 
 def _make_review_followup_prompt(review_output):
