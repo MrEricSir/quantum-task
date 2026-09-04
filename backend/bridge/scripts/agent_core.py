@@ -87,6 +87,7 @@ different coding agent, write a new adapter file implementing the same six names
 IDE_SETTINGS_GITIGNORE_ENTRY value (if not None) to install.py's BRIDGE_IGNORE_ENTRIES.
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -1000,6 +1001,48 @@ def _git_diff_stat(worktree_path):
     return r.stdout.strip()
 
 
+def _match_checkpoint_patterns(worktree_path, patterns):
+    """Return the changed paths (relative to the repo root, against the primary branch) that
+    match any of the configured checkpoint glob patterns, or [] if patterns is empty or none
+    match. Purely mechanical -- fnmatch against the full relative path string, no LLM
+    judgment -- same "opt-in, no-op until configured" philosophy as _run_verification's
+    test_cmd/verify_acceptance. Unattended jobs run with all tool-use permission checks
+    bypassed (--dangerously-skip-permissions / --yes-always), so there's no real permission
+    prompt to intercept -- this is a post-hoc check of what actually changed, run once the
+    session has already ended, not a live intervention."""
+    if not patterns:
+        return []
+    primary = _detect_primary_branch(worktree_path)
+    if not primary:
+        return []
+    r = subprocess.run(
+        ["git", "diff", "--name-only", f"origin/{primary}...HEAD"],
+        cwd=worktree_path, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return []
+    changed = [p for p in r.stdout.strip().splitlines() if p]
+    return [p for p in changed if any(fnmatch.fnmatch(p, pat) for pat in patterns)]
+
+
+def _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns):
+    """Shared tail of both _run_interactive and _run_streaming's success path: check the
+    diff against any configured checkpoint patterns and report completion accordingly.
+    A match reports /needs-confirmation instead of /complete -- the coding work still
+    genuinely finished (and still unblocks a waiting companion job server-side), it's just
+    flagged for review rather than silently counted as fully resolved."""
+    diff_summary = _git_diff_stat(cwd)
+    matched = _match_checkpoint_patterns(cwd, checkpoint_patterns)
+    if matched:
+        print(f"[bridge] ⚠ Touched checkpoint-flagged paths: {', '.join(matched)} "
+              f"— marking needs-confirmation, not done.")
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/needs-confirmation",
+            {"result": result_text, "diff_summary": diff_summary, "matched_paths": matched})
+    else:
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete",
+            {"result": result_text, "diff_summary": diff_summary})
+
+
 def _run_test_cmd(worktree_path, test_cmd):
     """Run the configured test command in the worktree and summarize the
     result. Purely mechanical -- no LLM call, no judgment about whether a
@@ -1078,7 +1121,7 @@ def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text):
 
 def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
                       test_cmd=None, verify_acceptance=False, spec_text=None,
-                      prompt_kind="normal"):
+                      prompt_kind="normal", checkpoint_patterns=None):
     """Launch the coding agent as an interactive session the user can engage with.
 
     prompt_kind selects the wrapper wording: "fix" for _make_fix_prompt (resuming an existing
@@ -1123,14 +1166,13 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
             pass
     if verification:
         result_text = f"{verification}\n\n{result_text}" if result_text else verification
-    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete",
-        {"result": result_text, "diff_summary": _git_diff_stat(cwd)})
+    _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns)
     return True
 
 
 def _run_streaming(cfg, job_id, branch, cwd,
                     test_cmd=None, verify_acceptance=False, spec_text=None,
-                    prompt_kind="normal"):
+                    prompt_kind="normal", checkpoint_patterns=None):
     """Launch the coding agent non-interactively and stream stdout back to the app.
 
     prompt_kind selects the wrapper wording -- see _run_interactive's docstring."""
@@ -1189,8 +1231,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
 
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
     if proc.returncode == 0:
-        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/complete",
-            {"result": verification, "diff_summary": _git_diff_stat(cwd)})
+        _report_job_finished(cfg, job_id, cwd, verification, checkpoint_patterns)
     else:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
             {"result": f"{AGENT_LABEL} exited with code {proc.returncode}"})
@@ -1294,6 +1335,8 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     if verify_acceptance is None:
         verify_acceptance = cfg.get("verify_acceptance", False)
     env_files = entry.env_files or cfg.get("env_files")
+    checkpoint_resp = api(cfg, "GET", "/api/bridge/checkpoint-patterns")
+    checkpoint_patterns = (checkpoint_resp or {}).get("patterns") or []
 
     # Everything from here on runs with the base repo's remote push disabled
     # (push_url_info holds what to restore). ALL of it -- not just the
@@ -1324,11 +1367,13 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
         if streaming:
             _run_streaming(cfg, job_id, branch, worktree_path,
                             test_cmd=test_cmd, verify_acceptance=verify_acceptance,
-                            spec_text=spec_text, prompt_kind=prompt_kind)
+                            spec_text=spec_text, prompt_kind=prompt_kind,
+                            checkpoint_patterns=checkpoint_patterns)
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
                               test_cmd=test_cmd, verify_acceptance=verify_acceptance,
-                              spec_text=spec_text, prompt_kind=prompt_kind)
+                              spec_text=spec_text, prompt_kind=prompt_kind,
+                              checkpoint_patterns=checkpoint_patterns)
     except Exception as e:
         # Best-effort: run_streaming/run_interactive already report their
         # own outcome (claude not found, non-zero exit, etc.) via /complete

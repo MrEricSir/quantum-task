@@ -117,6 +117,10 @@ async function mockAPIs(page) {
   await page.route('**/api/bridge/install-token', r => r.fulfill({ json: { token: 'test-install-token' } }))
   await page.route('**/api/bridge/jobs/status', r => r.fulfill({ json: { statuses: {} } }))
   await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [] } }))
+  await page.route('**/api/bridge/checkpoint-patterns', r => {
+    if (r.request().method() === 'PUT') return r.fulfill({ json: { ok: true } })
+    return r.fulfill({ json: { patterns: [] } })
+  })
   await page.route('**/api/settings/navigation', r =>
     r.fulfill({ json: { order: ['today', 'board', 'calendar', 'health', 'engineering'], default_page: 'today' } }))
 
@@ -3995,6 +3999,52 @@ test.describe('card detail panel — github and spec', () => {
     await expect(page.locator('.cdp-bridge-resume-btn')).toHaveCount(0)
   })
 
+  test('a needs_confirmation job shows the flagged paths and a Mark reviewed button', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'needs_confirmation', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      checkpoint_matched_paths: ['alembic/versions/0001_add_x.py'],
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-status--needs_confirmation')).toBeVisible()
+    await expect(page.locator('.cdp-bridge-checkpoint-paths')).toContainText('alembic/versions/0001_add_x.py')
+    await expect(page.getByRole('button', { name: /mark reviewed/i })).toBeVisible()
+    await expect(page.locator('.cdp-bridge-resume-btn').filter({ hasText: /resume/i })).toHaveCount(0)
+  })
+
+  test('clicking Mark reviewed acknowledges the job and updates the status', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'needs_confirmation', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      checkpoint_matched_paths: ['alembic/versions/0001_add_x.py'],
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    let acknowledgeCalled = false
+    await page.route('**/api/bridge/jobs/5/acknowledge', async r => {
+      acknowledgeCalled = true
+      return r.fulfill({ json: { ...job, status: 'done', checkpoint_matched_paths: null } })
+    })
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await page.getByRole('button', { name: /mark reviewed/i }).click()
+
+    expect(acknowledgeCalled).toBe(true)
+    await expect(page.locator('.cdp-bridge-status--done')).toBeVisible()
+    await expect(page.getByRole('button', { name: /mark reviewed/i })).toHaveCount(0)
+  })
+
   test('clicking Resume queues a resume job and updates the status label', async ({ page }) => {
     const job = {
       id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',
@@ -4336,5 +4386,36 @@ test.describe('github settings modal', () => {
 
     await expect.poll(() => putBody).not.toBeNull()
     expect(putBody).toEqual({})
+  })
+
+  test('checkpoint patterns textarea loads saved patterns and shows the save control', async ({ page }) => {
+    await page.route('**/api/bridge/checkpoint-patterns', r => {
+      if (r.request().method() === 'GET') return r.fulfill({ json: { patterns: ['alembic/versions/*', 'package.json'] } })
+      return r.fulfill({ json: { ok: true } })
+    })
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+
+    await expect(page.getByPlaceholder(/alembic\/versions/i)).toHaveValue('alembic/versions/*\npackage.json')
+    await expect(page.getByRole('button', { name: /save patterns/i })).toBeVisible()
+  })
+
+  test('saving checkpoint patterns PUTs the newline-split, trimmed list', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/bridge/checkpoint-patterns', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ok: true } })
+      }
+      return r.fulfill({ json: { patterns: [] } })
+    })
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+
+    await page.getByPlaceholder(/alembic\/versions/i).fill('alembic/versions/*\n  package.json  \n\nGemfile')
+    await page.getByRole('button', { name: /save patterns/i }).click()
+
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody).toEqual({ patterns: ['alembic/versions/*', 'package.json', 'Gemfile'] })
   })
 })

@@ -25,6 +25,7 @@ const BRIDGE_BADGE_LABELS = {
   error: 'Build errored',
   stalled: 'Agent went quiet — may have crashed or lost network',
   blocked: 'Waiting on another job to finish',
+  needs_confirmation: 'Build finished — needs your review',
 }
 
 export default function Card({ card, onEdit, onSave, onDelete, onArchive, onToggle, onMove, isMobile, isOverlay, allTags, onBreakdown, onExtractActions, onSelect, isSelected, inOverdueGroup = false, isFocus = false, bridgeJobStatus }) {

@@ -337,6 +337,7 @@
 .eng-build-dot--error   { color: #f87171; }
 .eng-build-dot--stalled { color: #94a3b8; }
 .eng-build-dot--blocked { color: #8b949e; }
+.eng-build-dot--needs_confirmation { color: #f59e0b; }
 
 @keyframes eng-build-pulse {
   0%, 100% { opacity: 1; }
@@ -368,6 +369,7 @@
 .eng-build-status-pill--error   { color: #f87171; border: 1px solid #f8717155; background: #f8717122; }
 .eng-build-status-pill--stalled { color: #94a3b8; border: 1px solid #94a3b855; background: #94a3b822; }
 .eng-build-status-pill--blocked { color: #8b949e; border: 1px solid #8b949e55; background: #8b949e22; }
+.eng-build-status-pill--needs_confirmation { color: #f59e0b; border: 1px solid #f59e0b55; background: #f59e0b22; }
 
 .eng-build-sub {
   grid-area: sub;

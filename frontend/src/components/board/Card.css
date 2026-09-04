@@ -41,6 +41,7 @@
 .card-bridge-dot--error   { color: #f87171; }
 .card-bridge-dot--stalled { color: #94a3b8; }
 .card-bridge-dot--blocked { color: #8b949e; }
+.card-bridge-dot--needs_confirmation { color: #f59e0b; }
 
 .card-bridge-dot--running {
   animation: card-bridge-pulse 1.4s ease-in-out infinite;

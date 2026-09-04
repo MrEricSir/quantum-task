@@ -129,6 +129,11 @@ BRIDGE_INSTALL_TOKEN = "bridge_install_token"
 # CLI's credential) without changing the real app login password. Accepted as an
 # alternative Bearer credential in main.py's AuthMiddleware.
 BRIDGE_TOKEN = "bridge_token"
+# Newline-joined shell-glob patterns (e.g. "alembic/versions/*"), same storage convention as
+# GITHUB_REPOS. If an unattended bridge job's diff touches any of these, it lands in
+# "needs_confirmation" instead of "done" rather than being silently treated as fully
+# resolved -- see bridge/scripts/agent_core.py's _match_checkpoint_patterns.
+CHECKPOINT_PATTERNS = "checkpoint_patterns"
 
 # ── One-time migration flags ───────────────────────────────────────────────────
 # Set to "1" once the habit streak_days backfill has completed.

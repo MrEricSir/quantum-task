@@ -14,10 +14,35 @@ import github_sync
 import models
 import app_setting_keys as setting_keys
 
-# Statuses with a live/pending session that could still change -- always shown on the
-# Engineering page dashboard regardless of age. See get_bridge_jobs_dashboard.
-_ACTIVE_JOB_STATUSES = ("pending", "running", "blocked")
+# Statuses that should always stay visible on the Engineering page dashboard regardless of
+# age, not just "has a live/pending session" -- needs_confirmation has none (the CLI already
+# finished and moved on, per _match_checkpoint_patterns) but still belongs here, since a
+# flagged job silently aging off the dashboard after 24h would defeat the point of flagging
+# it. Purely a dashboard-visibility/sort-order concern: GET /api/bridge/jobs/next/pending
+# (the CLI's actual queue-progression query) filters on status == "pending" directly and
+# never consults this list, so a status's presence/absence here has no effect on whether the
+# CLI treats it as "move on to the next job." See get_bridge_jobs_dashboard.
+_ACTIVE_JOB_STATUSES = ("pending", "running", "blocked", "needs_confirmation")
 _DASHBOARD_RECENT_WINDOW = timedelta(hours=24)
+
+
+def get_checkpoint_patterns(db: Session) -> list[str]:
+    """Return the configured checkpoint glob patterns. Same newline-joined storage
+    convention as github_sync.get_config's repos list. Empty list (the default) means
+    the checkpoint gate never fires -- opt-in, no config change required for existing
+    installs."""
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.CHECKPOINT_PATTERNS).first()
+    return [p.strip() for p in row.value.splitlines() if p.strip()] if row and row.value else []
+
+
+def save_checkpoint_patterns(db: Session, patterns: list[str]) -> None:
+    value = "\n".join(patterns)
+    row = db.query(models.AppSetting).filter_by(key=setting_keys.CHECKPOINT_PATTERNS).first()
+    if row:
+        row.value = value
+    else:
+        db.add(models.AppSetting(key=setting_keys.CHECKPOINT_PATTERNS, value=value))
+    db.commit()
 
 
 def _get_bridge_install_token(db: Session) -> str:
@@ -185,12 +210,16 @@ def _job_response(job: models.BridgeJob) -> dict:
         "requested_branch_name": job.requested_branch_name,
         "depends_on_job_id": job.depends_on_job_id,
         "diff_summary": job.diff_summary,
+        "checkpoint_matched_paths": json.loads(job.checkpoint_matched_paths) if job.checkpoint_matched_paths else None,
     }
 
 
 # Lower means more worth surfacing on a card-tile badge -- error/stalled tie for most urgent
 # since both mean "this needs a human," ahead of in-progress, ahead of merely queued/blocked.
-_BADGE_STATUS_PRIORITY = {"error": 0, "stalled": 0, "running": 1, "pending": 2, "blocked": 3, "done": 4}
+_BADGE_STATUS_PRIORITY = {
+    "error": 0, "stalled": 0, "needs_confirmation": 0,
+    "running": 1, "pending": 2, "blocked": 3, "done": 4,
+}
 
 
 def get_bridge_job_statuses(db: Session) -> dict[int, dict]:

@@ -37,6 +37,7 @@ const BUILD_STATUS_LABELS = {
   error: 'Error',
   stalled: 'Stalled',
   blocked: 'Blocked',
+  needs_confirmation: 'Needs confirmation',
 }
 
 function formatRelativeTime(iso) {

@@ -217,6 +217,20 @@ class TestUnblockDependentJobs:
             second = unblock_dependent_jobs(db)
         assert second == []
 
+    def test_upstream_needs_confirmation_still_unblocks_downstream(self):
+        """needs_confirmation means the upstream's coding work genuinely finished -- it's
+        just flagged for review because its diff touched a configured checkpoint pattern
+        (app_setting_keys.CHECKPOINT_PATTERNS). An unrelated companion job shouldn't have
+        to wait on that review."""
+        card_id = _make_card()
+        upstream = _make_job(card_id, status="needs_confirmation", target_repo="owner/api", result="Added endpoint.")
+        downstream = _make_job(card_id, status="blocked", target_repo="owner/web", depends_on_job_id=upstream)
+
+        with TestSession() as db:
+            unblocked = unblock_dependent_jobs(db)
+            assert [j.id for j in unblocked] == [downstream]
+        assert _status(downstream) == "pending"
+
     def test_a_blocked_job_with_no_depends_on_job_id_is_skipped_not_crashed(self):
         """Shouldn't be reachable via the normal job-creation path (status only becomes
         "blocked" when depends_on_job_id is set -- see _queue_job_for_card), but this
@@ -254,6 +268,21 @@ class TestCompleteEndpointUnblocksCompanion:
         res = client.post(f"/api/bridge/jobs/{upstream}/error", json={"result": "Build failed."})
         assert res.status_code == 200
         assert _status(downstream) == "blocked"
+
+    def test_needs_confirmation_upstream_instantly_unblocks_the_companion_job(self, client):
+        card_id = _make_card()
+        upstream = _make_job(card_id, status="running", target_repo="owner/api")
+        downstream = _make_job(card_id, status="blocked", target_repo="owner/web", depends_on_job_id=upstream)
+
+        res = client.post(f"/api/bridge/jobs/{upstream}/needs-confirmation", json={
+            "result": "Shipped the endpoint.", "matched_paths": ["alembic/versions/0001_x.py"],
+        })
+        assert res.status_code == 200
+        assert res.json()["status"] == "needs_confirmation"
+        assert res.json()["checkpoint_matched_paths"] == ["alembic/versions/0001_x.py"]
+
+        assert _status(downstream) == "pending"
+        assert "Shipped the endpoint." in _prompt(downstream)
 
 
 # ── POST /api/bridge/jobs/check-stale — safety-net sweep ────────────────────────

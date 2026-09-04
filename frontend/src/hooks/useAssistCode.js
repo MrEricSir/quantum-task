@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   generateSpec, queueBridgeJob, getBridgeJob, getBridgeJobChain, queueResumeJob,
-  queueCompanionJob, getKnownBridgeRepos, requestBranchRename,
+  queueCompanionJob, getKnownBridgeRepos, requestBranchRename, acknowledgeCheckpoint,
 } from '../api'
 
 // Mirrors bridge/scripts/agent_core.py's _slugify -- only used for the branch-name field's
@@ -38,6 +38,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   const [branchOverride, setBranchOverride] = useState('')
   const [renameQueuing,  setRenameQueuing]  = useState(false)
   const [attemptStats,   setAttemptStats]   = useState(null)
+  const [acknowledging,  setAcknowledging]  = useState(false)
 
   // Cross-repo companion job (BRIDGE_CROSS_REPO_JOBS.md Phase 3)
   const [companionJob,     setCompanionJob]     = useState(null)
@@ -202,6 +203,22 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     }
   }
 
+  // "Mark reviewed" on a needs_confirmation job -- no CLI/subprocess involved at all, the
+  // coding session already ended; this is purely "I looked at the flagged diff, it's fine"
+  // bookkeeping (needs_confirmation -> done). See bridge/router.py's acknowledge_job.
+  const handleAcknowledgeCheckpoint = async () => {
+    if (!bridgeJob || acknowledging) return
+    setAcknowledging(true); setBridgeError('')
+    try {
+      const job = await acknowledgeCheckpoint(bridgeJob.id)
+      setBridgeJob(job)
+    } catch (e) {
+      setBridgeError(e.message || 'Failed to acknowledge job')
+    } finally {
+      setAcknowledging(false)
+    }
+  }
+
   const handleResumeJob = async () => {
     if (!bridgeJob || resumeQueuing) return
     setResumeQueuing(true); setBridgeError('')
@@ -260,21 +277,22 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
 
   const defaultBranch = `qtask/${task?.id}${slugifyPreview(task?.title) ? '-' + slugifyPreview(task.title) : ''}`
   // Editable before a job exists (queue-time override) and while pending/running (a live
-  // rename request -- see handleRenameBranch); locked once done/error/stalled/blocked,
-  // since nothing would ever pick up a rename request for those (resuming reuses the
-  // existing branch/worktree by design, not a fresh name).
+  // rename request -- see handleRenameBranch); locked once done/error/stalled/blocked/
+  // needs_confirmation, since nothing would ever pick up a rename request for those
+  // (resuming reuses the existing branch/worktree by design, not a fresh name).
   const branchFieldDisabled =
     bridgeQueuing || renameQueuing ||
-    ['done', 'error', 'stalled', 'blocked'].includes(bridgeJob?.status)
+    ['done', 'error', 'stalled', 'blocked', 'needs_confirmation'].includes(bridgeJob?.status)
 
   return {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
     bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing, attemptStats,
     branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
-    companionError, knownRepos, companionResumeQueuing,
+    companionError, knownRepos, companionResumeQueuing, acknowledging,
     handleGenerateSpec, handleSaveSpec, handleStartSpecEdit, handleCancelSpecEdit, handleCopySpec,
     handleCopyWorktreePath, handleSendToBridge, handleRenameBranch, handleResumeJob,
     handleResumeCompanionJob, handleOpenCompanion, handleCancelCompanion, handleQueueCompanion,
+    handleAcknowledgeCheckpoint,
   }
 }

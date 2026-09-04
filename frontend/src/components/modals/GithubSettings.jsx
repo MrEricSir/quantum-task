@@ -4,6 +4,7 @@ import {
   fetchEngineeringConfig, saveEngineeringConfig, syncEngineering,
   fetchStatusConfig, saveStatusConfig, fetchRepoTagsConfig, saveRepoTagsConfig,
   fetchBridgeInstallToken, rotateBridgeInstallToken,
+  fetchCheckpointPatterns, saveCheckpointPatterns,
 } from '../../api'
 import Modal from './Modal'
 import './GithubSettings.css'
@@ -16,12 +17,15 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
   const [repos, setRepos] = useState('')
   const [statusConfig, setStatusConfig] = useState({})
   const [repoTags, setRepoTags] = useState([]) // [{ pattern, tagIds: number[] }]
+  const [checkpointPatterns, setCheckpointPatterns] = useState('')
   const [configured, setConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState(null)
   const [error, setError] = useState('')
+  const [savingCheckpoints, setSavingCheckpoints] = useState(false)
+  const [checkpointsSaved, setCheckpointsSaved] = useState(false)
 
   useEffect(() => {
     fetchEngineeringConfig()
@@ -38,6 +42,9 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
     fetchBridgeInstallToken().then(setBridgeInstallToken).catch(() => {})
+    fetchCheckpointPatterns()
+      .then((cfg) => setCheckpointPatterns((cfg.patterns || []).join('\n')))
+      .catch(() => {})
   }, [])
 
   const handleSave = async () => {
@@ -88,6 +95,21 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
       setError(e.message)
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleSaveCheckpoints = async () => {
+    setSavingCheckpoints(true)
+    setError('')
+    try {
+      const patterns = checkpointPatterns.split('\n').map((p) => p.trim()).filter(Boolean)
+      await saveCheckpointPatterns(patterns)
+      setCheckpointsSaved(true)
+      setTimeout(() => setCheckpointsSaved(false), 2000)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSavingCheckpoints(false)
     }
   }
 
@@ -302,6 +324,35 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
           After installing, run <code>qtask-bridge --watch</code> in your project directory.
           Open any card, generate a spec, then click <strong>▶ Bridge</strong> to queue a job.
         </p>
+
+        <div className="gh-field">
+          <label className="gh-label">
+            Checkpoint patterns <span className="gh-optional">(optional)</span>
+          </label>
+          <p className="gh-hint gh-hint--small">
+            If an unattended job's changes touch any of these paths, it's marked "Needs
+            confirmation" instead of "Done" so it doesn't get mistaken for fully resolved.
+          </p>
+          <textarea
+            className="gh-repos-input"
+            placeholder={'alembic/versions/*\npackage.json'}
+            value={checkpointPatterns}
+            onChange={(e) => setCheckpointPatterns(e.target.value)}
+            rows={3}
+            spellCheck={false}
+          />
+          <div className="gh-sync-row">
+            <button
+              type="button"
+              className="gh-sync-btn"
+              onClick={handleSaveCheckpoints}
+              disabled={savingCheckpoints}
+            >
+              {savingCheckpoints ? 'Saving…' : 'Save patterns'}
+            </button>
+            {checkpointsSaved && <span className="gh-sync-ok">Saved</span>}
+          </div>
+        </div>
       </div>
 
       <div className="modal-footer">

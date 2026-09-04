@@ -483,7 +483,7 @@ class BridgeJob(Base):
 
     id              = Column(Integer, primary_key=True, index=True)
     card_id         = Column(Integer, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
-    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error|stalled|blocked
+    status          = Column(String, nullable=False, default="pending")  # pending|running|done|error|stalled|blocked|needs_confirmation
     target_repo     = Column(String, nullable=True)   # "owner/repo" — null means any bridge can claim
     branch_name     = Column(String, nullable=True)   # local branch created by bridge, e.g. qtask/42-fix-login
     agent_name      = Column(String, nullable=True)   # hostname of the machine that ran the job
@@ -525,6 +525,10 @@ class BridgeJob(Base):
     # doesn't get noisier for everyone; only pulled in by bridge/unblock.py when building a
     # cross-repo companion job's prompt. See BRIDGE_CROSS_REPO_JOBS.md Phase 4.
     diff_summary = Column(Text, nullable=True)
+    # JSON list of changed paths that matched a configured checkpoint pattern (see
+    # app_setting_keys.CHECKPOINT_PATTERNS) -- set only when status == "needs_confirmation".
+    # Null for every other status, including a job that finished clean with no match.
+    checkpoint_matched_paths = Column(Text, nullable=True)
 
     card = relationship("Card")
 

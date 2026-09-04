@@ -2263,6 +2263,54 @@ class TestScanQtaskWorktrees:
         assert r.stdout.strip() == ""
 
 
+class TestMatchCheckpointPatterns:
+    """_match_checkpoint_patterns is the mechanical (no LLM) core of the checkpoint gate:
+    given the configured glob patterns, which changed paths (against the primary branch)
+    match. See PRODUCT_NOTES.md / QTASK_WORKFLOW_REVIEW.md's "watch/unattended middle
+    ground" entry for why this is a post-hoc diff check rather than a live intervention --
+    unattended jobs run with all permission checks bypassed, so there's no real
+    permission prompt to hook into."""
+
+    def _commit(self, repo, rel_path, content="content\n"):
+        full = repo / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content)
+        subprocess.run(["git", "add", rel_path], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", f"touch {rel_path}"], cwd=repo, check=True)
+
+    def test_empty_patterns_returns_empty_without_running_git(self, scratch_repo, monkeypatch):
+        def _fail(*a, **k):
+            raise AssertionError("must not shell out when there are no patterns to check")
+        monkeypatch.setattr(subprocess, "run", _fail)
+        assert agent_core._match_checkpoint_patterns(str(scratch_repo), []) == []
+
+    def test_matching_changed_file_is_returned(self, scratch_repo):
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=scratch_repo, check=True)
+        self._commit(scratch_repo, "alembic/versions/0001_x.py")
+        result = agent_core._match_checkpoint_patterns(str(scratch_repo), ["alembic/versions/*"])
+        assert result == ["alembic/versions/0001_x.py"]
+
+    def test_non_matching_changed_file_is_not_returned(self, scratch_repo):
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=scratch_repo, check=True)
+        self._commit(scratch_repo, "src/app.py")
+        result = agent_core._match_checkpoint_patterns(str(scratch_repo), ["alembic/versions/*"])
+        assert result == []
+
+    def test_no_changes_returns_empty(self, scratch_repo):
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=scratch_repo, check=True)
+        assert agent_core._match_checkpoint_patterns(str(scratch_repo), ["alembic/versions/*"]) == []
+
+    def test_multiple_patterns_and_files(self, scratch_repo):
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=scratch_repo, check=True)
+        self._commit(scratch_repo, "alembic/versions/0001_x.py")
+        self._commit(scratch_repo, "src/app.py")
+        self._commit(scratch_repo, "package.json")
+        result = agent_core._match_checkpoint_patterns(
+            str(scratch_repo), ["alembic/versions/*", "package.json"]
+        )
+        assert set(result) == {"alembic/versions/0001_x.py", "package.json"}
+
+
 class TestCmdAdopt:
     """cmd_adopt (CLAUDE_CODE_INTEGRATION.md's "Phase 2" plan): detach a qtask worktree from
     its branch and check the branch out in the primary checkout instead."""
@@ -3605,6 +3653,79 @@ class TestAgentScriptFullFlow:
         worktree_dir = os.path.dirname(os.path.dirname(settings_path))
         subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
                        cwd=scratch_repo, capture_output=True)
+
+    def _run_job_with_fake_agent_commit(self, scratch_repo, monkeypatch, job_id, patterns, touched_path):
+        """Shared setup for the two checkpoint-gate tests below: stub the `claude` subprocess
+        call to actually write and commit a file (simulating real coding-agent work) at
+        touched_path, with the checkpoint-patterns GET returning `patterns`. Returns
+        (api_calls, worktree_dir) for the caller to assert on and clean up."""
+        ns = self._load_rendered_agent_module()
+
+        api_calls = []
+        def fake_api(cfg, method, path, body=None):
+            api_calls.append((method, path, body))
+            if path == "/api/bridge/checkpoint-patterns":
+                return {"patterns": patterns}
+            return {}
+        ns["api"] = fake_api
+
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                work_cwd = k.get("cwd")
+                full_path = os.path.join(work_cwd, touched_path)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, "w") as f:
+                    f.write("content\n")
+                real_run(["git", "add", touched_path], cwd=work_cwd, check=True)
+                real_run(["git", "commit", "-q", "-m", "agent commit"], cwd=work_cwd, check=True)
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [], "name": "test-agent"}
+        job = {"id": job_id, "card_id": 84, "card_title": "Some feature",
+               "prompt": "do the thing", "target_repo": None}
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+        finally:
+            os.chdir(cwd_before)
+
+        start_call = next(c for c in api_calls if c[1] == f"/api/bridge/jobs/{job_id}/start")
+        worktree_dir = start_call[2]["worktree_path"]
+        return api_calls, worktree_dir
+
+    def test_run_job_reports_needs_confirmation_when_diff_matches_a_checkpoint_pattern(self, scratch_repo, monkeypatch):
+        api_calls, worktree_dir = self._run_job_with_fake_agent_commit(
+            scratch_repo, monkeypatch, job_id=10,
+            patterns=["alembic/versions/*"], touched_path="alembic/versions/0001_x.py",
+        )
+        try:
+            needs_conf_calls = [c for c in api_calls if c[1] == "/api/bridge/jobs/10/needs-confirmation"]
+            assert needs_conf_calls, "job never reached /needs-confirmation"
+            assert needs_conf_calls[0][2]["matched_paths"] == ["alembic/versions/0001_x.py"]
+            assert not any(c[1] == "/api/bridge/jobs/10/complete" for c in api_calls), \
+                "a checkpoint match must not also call /complete"
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=scratch_repo, capture_output=True)
+
+    def test_run_job_reports_complete_when_diff_does_not_match_any_pattern(self, scratch_repo, monkeypatch):
+        api_calls, worktree_dir = self._run_job_with_fake_agent_commit(
+            scratch_repo, monkeypatch, job_id=11,
+            patterns=["alembic/versions/*"], touched_path="src/app.py",
+        )
+        try:
+            assert any(c[1] == "/api/bridge/jobs/11/complete" for c in api_calls), \
+                "job never reached /complete"
+            assert not any(c[1] == "/api/bridge/jobs/11/needs-confirmation" for c in api_calls)
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=scratch_repo, capture_output=True)
 
     def test_run_job_resumes_existing_worktree_for_a_fix_job(self, scratch_repo, monkeypatch):
         """A fix job (job["resumes_job_id"] set) must resume the worktree/branch already on

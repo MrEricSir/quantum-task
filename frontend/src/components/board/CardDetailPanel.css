@@ -848,6 +848,12 @@
   color: #8b949e;
 }
 
+.cdp-bridge-status--needs_confirmation {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
 .cdp-bridge-dot {
   width: 7px;
   height: 7px;
@@ -883,6 +889,14 @@
 
 .cdp-bridge-attempts--failed {
   color: #f87171;
+}
+
+.cdp-bridge-checkpoint-paths {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #f59e0b;
 }
 
 .cdp-bridge-agent {

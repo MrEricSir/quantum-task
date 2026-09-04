@@ -28,10 +28,11 @@ export default function AssistCodeTab({ code }) {
     bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing, attemptStats,
     branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
-    companionError, knownRepos, companionResumeQueuing,
+    companionError, knownRepos, companionResumeQueuing, acknowledging,
     handleGenerateSpec, handleSaveSpec, handleStartSpecEdit, handleCancelSpecEdit, handleCopySpec,
     handleCopyWorktreePath, handleSendToBridge, handleRenameBranch, handleResumeJob,
     handleResumeCompanionJob, handleOpenCompanion, handleCancelCompanion, handleQueueCompanion,
+    handleAcknowledgeCheckpoint,
   } = code
 
   const branchIsLive = bridgeJob && ['pending', 'running'].includes(bridgeJob.status)
@@ -120,6 +121,7 @@ export default function AssistCodeTab({ code }) {
               {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
               {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
               {bridgeJob.status === 'blocked'  && 'Waiting on another job to finish…'}
+              {bridgeJob.status === 'needs_confirmation' && (bridgeJob.result || 'Finished — touched a flagged path, needs your review')}
             </span>
             {formatAttemptStats(attemptStats) && (
               <span
@@ -127,6 +129,11 @@ export default function AssistCodeTab({ code }) {
               >
                 {formatAttemptStats(attemptStats)}
               </span>
+            )}
+            {bridgeJob.status === 'needs_confirmation' && bridgeJob.checkpoint_matched_paths?.length > 0 && (
+              <ul className="cdp-bridge-checkpoint-paths">
+                {bridgeJob.checkpoint_matched_paths.map((path) => <li key={path}>{path}</li>)}
+              </ul>
             )}
             {bridgeJob.branch_name && (
               <span className="cdp-bridge-branch">
@@ -158,6 +165,17 @@ export default function AssistCodeTab({ code }) {
                 title="Resume in the same worktree, picking up where the session left off"
               >
                 {resumeQueuing ? 'Queuing…' : '↻ Resume'}
+              </button>
+            )}
+            {bridgeJob.status === 'needs_confirmation' && (
+              <button
+                type="button"
+                className="cdp-gh-btn cdp-bridge-resume-btn"
+                onClick={handleAcknowledgeCheckpoint}
+                disabled={acknowledging}
+                title="I've reviewed the flagged changes — mark this job done"
+              >
+                {acknowledging ? 'Marking…' : '✓ Mark reviewed'}
               </button>
             )}
           </div>

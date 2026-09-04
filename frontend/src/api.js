@@ -449,6 +449,28 @@ export async function syncEngineering() {
   return res.json()
 }
 
+export async function fetchCheckpointPatterns() {
+  const res = await apiFetch('/api/bridge/checkpoint-patterns')
+  if (!res.ok) throw new Error('Failed to fetch checkpoint patterns')
+  return res.json()
+}
+
+export async function saveCheckpointPatterns(patterns) {
+  const res = await apiFetch('/api/bridge/checkpoint-patterns', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patterns }),
+  })
+  if (!res.ok) throw new Error('Failed to save checkpoint patterns')
+  return res.json()
+}
+
+export async function acknowledgeCheckpoint(jobId) {
+  const res = await apiFetch(`/api/bridge/jobs/${jobId}/acknowledge`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to acknowledge job')
+  return res.json()
+}
+
 export async function fetchEngineeringItems() {
   const res = await apiFetch('/api/engineering/items')
   if (!res.ok) throw new Error('Failed to fetch engineering items')

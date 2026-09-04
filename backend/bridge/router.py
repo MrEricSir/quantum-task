@@ -12,6 +12,7 @@ Install endpoint:
 
 Business logic lives in bridge.jobs, bridge.render, and bridge.stale.
 """
+import json
 import os
 import secrets
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ from bridge.jobs import (
     compute_attempt_stats,
     get_bridge_job_statuses,
     get_bridge_jobs_dashboard,
+    get_checkpoint_patterns,
+    save_checkpoint_patterns,
     validate_branch_name,
 )
 from bridge.render import render_agent_script, render_install_script
@@ -65,6 +68,14 @@ class _QueueByTag(BaseModel):
 class _JobComplete(BaseModel):
     result: str = ""   # PR link, summary, or empty
     diff_summary: str = ""   # `git diff --stat` against the primary branch, complete_job only
+
+class _JobNeedsConfirmation(BaseModel):
+    result: str = ""
+    diff_summary: str = ""
+    matched_paths: list[str] = []   # changed paths that matched a configured checkpoint pattern
+
+class _CheckpointPatterns(BaseModel):
+    patterns: list[str] = []
 
 class _JobOutput(BaseModel):
     output: str        # chunk of stdout to append
@@ -397,6 +408,53 @@ def complete_job(job_id: int, body: _JobComplete, db: Session = Depends(get_db))
     # becomes claimable the moment its upstream finishes, not up to an hour later.
     unblock_dependent_jobs(db)
     return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/{job_id}/needs-confirmation")
+def job_needs_confirmation(job_id: int, body: _JobNeedsConfirmation, db: Session = Depends(get_db)):
+    """Bridge calls this instead of /complete when the session succeeded but its diff touched
+    a configured checkpoint pattern (app_setting_keys.CHECKPOINT_PATTERNS) -- the coding work
+    genuinely finished, it's just flagged for review rather than treated as fully resolved.
+    Mirrors complete_job in every other respect, including unblocking a waiting companion job,
+    since the upstream work is done either way."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.status = "needs_confirmation"
+    job.result = body.result or ""
+    job.diff_summary = body.diff_summary or ""
+    job.checkpoint_matched_paths = json.dumps(body.matched_paths)
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    unblock_dependent_jobs(db)
+    return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/{job_id}/acknowledge")
+def acknowledge_job(job_id: int, db: Session = Depends(get_db)):
+    """Webapp-only -- flips a needs_confirmation job to done once you've reviewed the flagged
+    diff. No CLI/subprocess involvement at all: the coding session already ended, this is
+    purely "I looked, it's fine" bookkeeping."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "needs_confirmation":
+        raise HTTPException(status_code=400, detail="Job is not awaiting confirmation")
+    job.status = "done"
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return _job_response(job)
+
+
+@router.get("/api/bridge/checkpoint-patterns")
+def get_checkpoint_patterns_endpoint(db: Session = Depends(get_db)):
+    return {"patterns": get_checkpoint_patterns(db)}
+
+
+@router.put("/api/bridge/checkpoint-patterns")
+def set_checkpoint_patterns_endpoint(body: _CheckpointPatterns, db: Session = Depends(get_db)):
+    save_checkpoint_patterns(db, body.patterns)
+    return {"ok": True}
 
 
 @router.post("/api/bridge/jobs/{job_id}/error")

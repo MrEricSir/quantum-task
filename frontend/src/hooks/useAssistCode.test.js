@@ -12,6 +12,7 @@ vi.mock('../api', () => ({
   queueCompanionJob: vi.fn(),
   getKnownBridgeRepos: vi.fn(),
   requestBranchRename: vi.fn(),
+  acknowledgeCheckpoint: vi.fn(),
 }))
 
 const taskNoSpec = { id: 3, title: 'Ship the thing', spec: null }
@@ -386,6 +387,40 @@ describe('useAssistCode — resuming jobs', () => {
 
     await waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalledTimes(2))
     expect(result.current.attemptStats).toEqual({ number: 2, prior_count: 1, prior_failed_count: 1 })
+  })
+
+  it('handleAcknowledgeCheckpoint replaces bridgeJob with the acknowledged (done) job', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 1, status: 'needs_confirmation', checkpoint_matched_paths: ['alembic/versions/0001_x.py'] },
+      companion: null,
+    })
+    api.acknowledgeCheckpoint.mockResolvedValue({ id: 1, status: 'done' })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob?.status).toBe('needs_confirmation'))
+
+    await act(() => result.current.handleAcknowledgeCheckpoint())
+
+    expect(api.acknowledgeCheckpoint).toHaveBeenCalledWith(1)
+    expect(result.current.bridgeJob.status).toBe('done')
+  })
+
+  it('handleAcknowledgeCheckpoint surfaces a failure without changing bridgeJob', async () => {
+    api.getBridgeJobChain.mockResolvedValue({ root: { id: 1, status: 'needs_confirmation' }, companion: null })
+    api.acknowledgeCheckpoint.mockRejectedValue(new Error('Job is not awaiting confirmation'))
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob?.status).toBe('needs_confirmation'))
+
+    await act(() => result.current.handleAcknowledgeCheckpoint())
+
+    expect(result.current.bridgeError).toBe('Job is not awaiting confirmation')
+    expect(result.current.bridgeJob.status).toBe('needs_confirmation')
+  })
+
+  it('branchFieldDisabled is true once a job needs confirmation', async () => {
+    api.getBridgeJobChain.mockResolvedValue({ root: { id: 1, status: 'needs_confirmation' }, companion: null })
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await waitFor(() => expect(result.current.bridgeJob?.status).toBe('needs_confirmation'))
+    expect(result.current.branchFieldDisabled).toBe(true)
   })
 
   it('handleResumeCompanionJob replaces companionJob with the resumed job', async () => {

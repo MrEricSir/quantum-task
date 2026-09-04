@@ -713,6 +713,20 @@ class TestBridgeJobsDashboardEndpoint:
         assert len(res["jobs"]) == 1
         assert res["jobs"][0]["status"] == "pending"
 
+    def test_needs_confirmation_job_included_regardless_of_age(self, client):
+        """A checkpoint-flagged job stays on the dashboard indefinitely until acknowledged --
+        it would defeat the point of flagging it if it just silently aged off after 24h."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/needs-confirmation", json={
+            "result": "done", "matched_paths": ["alembic/versions/0001_x.py"],
+        })
+        self._set_updated_at(job_id, datetime(2020, 1, 1))
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert len(res["jobs"]) == 1
+        assert res["jobs"][0]["status"] == "needs_confirmation"
+
     def test_old_finished_job_is_excluded(self, client):
         card_id = _make_card(spec="s")
         job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
