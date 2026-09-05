@@ -165,6 +165,24 @@ export default function AssistCodeTab({ code }) {
                 </button>
               </div>
             )}
+            {bridgeJob.preview_status && (
+              <div className="cdp-bridge-preview">
+                {bridgeJob.preview_status === 'starting' && <span>Preview starting…</span>}
+                {bridgeJob.preview_status === 'running' && bridgeJob.preview_url && (
+                  <a href={bridgeJob.preview_url} target="_blank" rel="noreferrer">🔗 Preview</a>
+                )}
+                {bridgeJob.preview_status === 'failed' && <span>Preview failed to start</span>}
+                {bridgeJob.preview_status === 'stopped' && <span>Preview stopped</span>}
+              </div>
+            )}
+            {bridgeJob.preview_status === 'running' && bridgeJob.screenshot_data && (
+              <div className="cdp-bridge-screenshot">
+                <img
+                  src={`data:image/png;base64,${bridgeJob.screenshot_data}`}
+                  alt="Preview screenshot"
+                />
+              </div>
+            )}
             {(bridgeJob.status === 'error' || bridgeJob.status === 'stalled') && bridgeJob.worktree_path && (
               <button
                 type="button"

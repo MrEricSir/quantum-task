@@ -29,9 +29,11 @@ import os
 import importlib.util
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import base64
 import http.server
 import io
 import json
+import signal
 import socket
 import subprocess
 import threading
@@ -1338,6 +1340,8 @@ run_cmd = "npm run dev"
 open_url = "http://localhost:3000"
 verify_acceptance = true
 self_review = true
+auto_preview = true
+visual_verify = true
 env_files = ["backend/.env"]
 """)
         cfg = agent_core.load_config()
@@ -1348,6 +1352,8 @@ env_files = ["backend/.env"]
         assert cfg["open_url"] == "http://localhost:3000"
         assert cfg["verify_acceptance"] is True
         assert cfg["self_review"] is True
+        assert cfg["auto_preview"] is True
+        assert cfg["visual_verify"] is True
         assert cfg["env_files"] == ["backend/.env"]
 
     def test_repos_and_repo_roots_still_load(self, tmp_path, monkeypatch):
@@ -1464,6 +1470,46 @@ self_review = "yes"
         agent_core.load_config()
         err = capsys.readouterr().err
         assert "self_review" in err
+        assert "expected true/false" in err
+
+    def test_flags_auto_preview_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+auto_preview = "true"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "auto_preview" in err
+        assert "expected true/false" in err
+
+    def test_flags_top_level_auto_preview_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+auto_preview = "yes"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "auto_preview" in err
+        assert "expected true/false" in err
+
+    def test_flags_visual_verify_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+visual_verify = "true"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "visual_verify" in err
+        assert "expected true/false" in err
+
+    def test_flags_top_level_visual_verify_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+visual_verify = "yes"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "visual_verify" in err
         assert "expected true/false" in err
 
     def test_flags_repo_entry_of_wrong_type(self, tmp_path, monkeypatch, capsys):
@@ -1587,7 +1633,8 @@ class TestAdapterGitignoreEntriesStaySynced:
         """The reverse check: every non-fixed entry in BRIDGE_IGNORE_ENTRIES should be
         traceable to a currently-configured adapter -- catches a leftover entry from an
         adapter that was since removed from _ADAPTER_FILES."""
-        fixed = {"BRIDGE_SPEC.md", ".env.qtask", ".qtask-worktree"}
+        fixed = {"BRIDGE_SPEC.md", ".env.qtask", ".qtask-worktree",
+                 ".qtask-preview.json", ".qtask-preview.log"}
         expected = set(fixed)
         for agent_name, filename in bridge_render._ADAPTER_FILES.items():
             module = self._load_adapter_module(agent_name, filename)
@@ -1679,6 +1726,8 @@ class TestRepoEntryVerificationFields:
         assert entry.run_cmd is None
         assert entry.env_files is None
         assert entry.open_url is None
+        assert entry.auto_preview is None
+        assert entry.visual_verify is None
 
     def test_plain_string_form_returns_none_for_new_fields(self):
         cfg = {"repos": {"owner/repo": "/x"}}
@@ -1690,15 +1739,29 @@ class TestRepoEntryVerificationFields:
         assert entry.run_cmd is None
         assert entry.env_files is None
         assert entry.open_url is None
+        assert entry.auto_preview is None
+        assert entry.visual_verify is None
 
     def test_unconfigured_repo_returns_all_none(self):
-        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None, None)
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None, None, None, None)
 
     def test_resolves_self_review_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "self_review": True}}}
         entry = agent_core._repo_entry(cfg, "owner/repo")
         assert entry.path == "/x"
         assert entry.self_review is True
+
+    def test_resolves_auto_preview_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {"path": "/x", "auto_preview": True}}}
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.auto_preview is True
+
+    def test_resolves_visual_verify_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {"path": "/x", "visual_verify": True}}}
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.visual_verify is True
 
     def test_resolves_run_cmd_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
@@ -2355,6 +2418,34 @@ class TestScanQtaskWorktrees:
         r = subprocess.run(["git", "branch", "--list", "cleanup-me"],
                            cwd=scratch_repo, capture_output=True, text=True)
         assert r.stdout.strip() == ""
+
+    def test_cleanup_kills_a_lingering_preview_before_removing_the_worktree(self, scratch_repo, monkeypatch):
+        """A worktree with an auto_preview process still running (recorded via its PID
+        file) must have that process torn down before -- not just incidentally as a side
+        effect of -- the worktree itself is removed. Confirms cmd_cleanup calls the shared
+        kill helper, not just that the directory disappears (which would happen either way
+        once git removes it)."""
+        cfg = self._cfg(scratch_repo)
+        job = {"id": 6, "card_id": 6, "card_title": "Whatever", "requested_branch_name": "preview-cleanup-me"}
+        wt, branch, push_info = agent_core._create_worktree(cfg, job, str(scratch_repo))
+        agent_core._git_teardown(str(scratch_repo), push_info)
+        with open(os.path.join(wt, agent_core.PREVIEW_PID_FILENAME), "w") as f:
+            json.dump({"job_id": 6, "pids": [999999], "started_at": 0}, f)
+        monkeypatch.setattr("builtins.input", lambda _: "1")
+        kill_calls = []
+        real_kill = agent_core._kill_preview_if_running
+        def spying_kill(cfg, worktree_path):
+            kill_calls.append(worktree_path)
+            return real_kill(cfg, worktree_path)
+        monkeypatch.setattr(agent_core, "_kill_preview_if_running", spying_kill)
+        # os.killpg on a pid this test made up would legitimately raise ProcessLookupError
+        # (nothing real to kill) -- that's fine, _kill_preview_if_running already tolerates
+        # it; this test only cares that the helper was invoked and the PID file is gone.
+
+        agent_core.cmd_cleanup(cfg)
+
+        assert kill_calls == [wt]
+        assert not os.path.isdir(wt)
 
 
 class TestMatchCheckpointPatterns:
@@ -3247,6 +3338,503 @@ class TestOpenUrlResolution:
         assert elapsed >= 0.3
 
 
+# ── Bridge-managed preview server (config.toml's auto_preview) ─────────────────
+
+class TestStartPreview:
+    """_start_preview -- the detached-launch half of auto_preview. subprocess.Popen is
+    monkeypatched throughout so nothing real gets spawned; _report_preview_when_ready is
+    monkeypatched out where irrelevant (it has its own dedicated test class below)."""
+
+    def _cfg(self):
+        return {"app_url": "http://fake", "token": "x"}
+
+    def _entry(self, **overrides):
+        fields = dict(path=None, setup_cmd=None, test_cmd=None, verify_acceptance=None,
+                      self_review=None, run_cmd=None, env_files=None, open_url=None,
+                      auto_preview=None, visual_verify=None)
+        fields.update(overrides)
+        return agent_core.RepoEntry(**fields)
+
+    def test_skips_with_warning_when_no_open_url_configured(self, tmp_path, monkeypatch, capsys):
+        popen_calls = []
+        monkeypatch.setattr(agent_core.subprocess, "Popen",
+                            lambda *a, **k: popen_calls.append(k) or None)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._start_preview(self._cfg(), self._entry(run_cmd="npm run dev"), str(tmp_path), 42)
+
+        assert popen_calls == []
+        assert api_calls == []
+        assert "no open_url" in capsys.readouterr().out.lower()
+        assert not os.path.exists(os.path.join(str(tmp_path), agent_core.PREVIEW_PID_FILENAME))
+
+    def test_skips_when_no_procfile_or_run_cmd(self, tmp_path, monkeypatch, capsys):
+        popen_calls = []
+        monkeypatch.setattr(agent_core.subprocess, "Popen",
+                            lambda *a, **k: popen_calls.append(k) or None)
+
+        agent_core._start_preview(
+            self._cfg(), self._entry(open_url="http://localhost:9999"), str(tmp_path), 42)
+
+        assert popen_calls == []
+        assert "no procfile/run_cmd" in capsys.readouterr().out.lower()
+
+    def test_skips_when_a_preview_pid_file_already_exists(self, tmp_path, monkeypatch, capsys):
+        pid_path = tmp_path / agent_core.PREVIEW_PID_FILENAME
+        pid_path.write_text(json.dumps({"job_id": 1, "pids": [123], "started_at": 0}))
+        popen_calls = []
+        monkeypatch.setattr(agent_core.subprocess, "Popen",
+                            lambda *a, **k: popen_calls.append(k) or None)
+
+        agent_core._start_preview(
+            self._cfg(),
+            self._entry(run_cmd="npm run dev", open_url="http://localhost:9999"),
+            str(tmp_path), 42,
+        )
+
+        assert popen_calls == []
+        assert "already running" in capsys.readouterr().out.lower()
+
+    def test_launches_run_cmd_detached_and_writes_pid_file(self, tmp_path, monkeypatch):
+        class FakeProc:
+            def __init__(self, pid):
+                self.pid = pid
+        popen_calls = []
+        def fake_popen(command, **kwargs):
+            popen_calls.append((command, kwargs))
+            return FakeProc(111)
+        monkeypatch.setattr(agent_core.subprocess, "Popen", fake_popen)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+        monkeypatch.setattr(agent_core, "_report_preview_when_ready", lambda *a, **k: None)
+        # _resolve_open_url shells out via subprocess.run internally (which itself uses
+        # Popen) -- mock it directly so the subprocess.Popen mock above only has to serve
+        # _start_preview's own launch calls, not get double-purposed for both.
+        monkeypatch.setattr(agent_core, "_resolve_open_url", lambda *a, **k: "http://localhost:9999")
+
+        agent_core._start_preview(
+            self._cfg(),
+            self._entry(run_cmd="npm run dev", open_url="http://localhost:9999"),
+            str(tmp_path), 42,
+        )
+
+        assert len(popen_calls) == 1
+        command, kwargs = popen_calls[0]
+        assert command == "npm run dev"
+        assert kwargs["start_new_session"] is True
+        assert kwargs["cwd"] == str(tmp_path)
+
+        pid_path = tmp_path / agent_core.PREVIEW_PID_FILENAME
+        assert pid_path.exists()
+        info = json.loads(pid_path.read_text())
+        assert info["job_id"] == 42
+        assert info["pids"] == [111]
+        assert "started_at" in info
+
+        assert api_calls == [
+            ("POST", "/api/bridge/jobs/42/preview", {"status": "starting", "url": None}),
+        ]
+
+    def test_launches_every_procfile_process_detached(self, tmp_path, monkeypatch):
+        (tmp_path / "Procfile.dev").write_text("web: npm run dev\nworker: npm run worker\n")
+        pids = iter([111, 222])
+        class FakeProc:
+            def __init__(self, pid):
+                self.pid = pid
+        popen_calls = []
+        def fake_popen(command, **kwargs):
+            popen_calls.append(command)
+            return FakeProc(next(pids))
+        monkeypatch.setattr(agent_core.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        monkeypatch.setattr(agent_core, "_report_preview_when_ready", lambda *a, **k: None)
+        monkeypatch.setattr(agent_core, "_resolve_open_url", lambda *a, **k: "http://localhost:9999")
+
+        agent_core._start_preview(
+            self._cfg(), self._entry(open_url="http://localhost:9999"), str(tmp_path), 43)
+
+        assert popen_calls == ["npm run dev", "npm run worker"]
+        info = json.loads((tmp_path / agent_core.PREVIEW_PID_FILENAME).read_text())
+        assert info["pids"] == [111, 222]
+
+    def test_prefers_procfile_over_run_cmd(self, tmp_path, monkeypatch):
+        (tmp_path / "Procfile.dev").write_text("web: from-procfile\n")
+        class FakeProc:
+            pid = 999
+        popen_calls = []
+        monkeypatch.setattr(agent_core.subprocess, "Popen",
+                            lambda command, **k: popen_calls.append(command) or FakeProc())
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        monkeypatch.setattr(agent_core, "_report_preview_when_ready", lambda *a, **k: None)
+        monkeypatch.setattr(agent_core, "_resolve_open_url", lambda *a, **k: "http://localhost:9999")
+
+        agent_core._start_preview(
+            self._cfg(),
+            self._entry(run_cmd="from-run-cmd", open_url="http://localhost:9999"),
+            str(tmp_path), 44,
+        )
+
+        assert popen_calls == ["from-procfile"]
+
+    def test_passes_visual_verify_true_from_entry_into_the_reporting_thread(self, tmp_path, monkeypatch):
+        class FakeProc:
+            pid = 999
+        monkeypatch.setattr(agent_core.subprocess, "Popen", lambda *a, **k: FakeProc())
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        monkeypatch.setattr(agent_core, "_resolve_open_url", lambda *a, **k: "http://localhost:9999")
+        captured = {}
+        def fake_thread(target, args, daemon):
+            captured["target"] = target
+            captured["args"] = args
+            class FakeThread:
+                def start(self):
+                    pass
+            return FakeThread()
+        monkeypatch.setattr(agent_core.threading, "Thread", fake_thread)
+
+        agent_core._start_preview(
+            self._cfg(),
+            self._entry(run_cmd="npm run dev", open_url="http://localhost:9999", visual_verify=True),
+            str(tmp_path), 45,
+        )
+
+        assert captured["target"] is agent_core._report_preview_when_ready
+        assert captured["args"] == (self._cfg(), 45, "http://localhost:9999", True)
+
+    def test_visual_verify_falls_back_to_cfg_when_entry_unset(self, tmp_path, monkeypatch):
+        class FakeProc:
+            pid = 999
+        monkeypatch.setattr(agent_core.subprocess, "Popen", lambda *a, **k: FakeProc())
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        monkeypatch.setattr(agent_core, "_resolve_open_url", lambda *a, **k: "http://localhost:9999")
+        captured = {}
+        def fake_thread(target, args, daemon):
+            captured["args"] = args
+            class FakeThread:
+                def start(self):
+                    pass
+            return FakeThread()
+        monkeypatch.setattr(agent_core.threading, "Thread", fake_thread)
+        cfg = {"app_url": "http://fake", "token": "x", "visual_verify": True}
+
+        agent_core._start_preview(
+            cfg, self._entry(run_cmd="npm run dev", open_url="http://localhost:9999"),
+            str(tmp_path), 46,
+        )
+
+        assert captured["args"] == (cfg, 46, "http://localhost:9999", True)
+
+    def test_visual_verify_defaults_false_when_unset_anywhere(self, tmp_path, monkeypatch):
+        class FakeProc:
+            pid = 999
+        monkeypatch.setattr(agent_core.subprocess, "Popen", lambda *a, **k: FakeProc())
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        monkeypatch.setattr(agent_core, "_resolve_open_url", lambda *a, **k: "http://localhost:9999")
+        captured = {}
+        def fake_thread(target, args, daemon):
+            captured["args"] = args
+            class FakeThread:
+                def start(self):
+                    pass
+            return FakeThread()
+        monkeypatch.setattr(agent_core.threading, "Thread", fake_thread)
+
+        agent_core._start_preview(
+            self._cfg(),
+            self._entry(run_cmd="npm run dev", open_url="http://localhost:9999"),
+            str(tmp_path), 47,
+        )
+
+        assert captured["args"][3] is False
+
+
+class TestReportPreviewWhenReady:
+    """_report_preview_when_ready -- the auto-preview health-check counterpart to
+    _open_when_ready: POSTs status back instead of opening a browser tab, since nothing
+    server-side can ever reach a localhost URL on this machine."""
+
+    def _cfg(self):
+        return {"app_url": "http://fake", "token": "x"}
+
+    def test_reports_running_once_the_url_responds(self, monkeypatch):
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", lambda url, timeout=1: None)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        start = time.time()
+        agent_core._report_preview_when_ready(self._cfg(), 42, "http://example.invalid", timeout=10)
+        elapsed = time.time() - start
+
+        assert api_calls == [
+            ("POST", "/api/bridge/jobs/42/preview", {"status": "running", "url": "http://example.invalid"}),
+        ]
+        assert elapsed < 1  # didn't wait for the full 10s timeout
+
+    def test_reports_failed_if_the_url_never_responds(self, monkeypatch):
+        def _always_fails(url, timeout=1):
+            raise ConnectionRefusedError()
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _always_fails)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        start = time.time()
+        agent_core._report_preview_when_ready(self._cfg(), 42, "http://example.invalid", timeout=0.3)
+        elapsed = time.time() - start
+
+        assert api_calls == [("POST", "/api/bridge/jobs/42/preview", {"status": "failed", "url": None})]
+        assert elapsed >= 0.3
+
+    def test_reports_failed_immediately_when_url_is_none(self, monkeypatch):
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._report_preview_when_ready(self._cfg(), 42, None)
+
+        assert api_calls == [("POST", "/api/bridge/jobs/42/preview", {"status": "failed", "url": None})]
+
+    def test_captures_a_screenshot_when_visual_verify_is_on_and_url_responds(self, monkeypatch):
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", lambda url, timeout=1: None)
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        capture_calls = []
+        monkeypatch.setattr(agent_core, "_capture_preview_screenshot",
+                            lambda cfg, job_id, url: capture_calls.append((job_id, url)))
+
+        agent_core._report_preview_when_ready(
+            self._cfg(), 42, "http://example.invalid", visual_verify=True, timeout=10)
+
+        assert capture_calls == [(42, "http://example.invalid")]
+
+    def test_does_not_capture_a_screenshot_when_visual_verify_is_off(self, monkeypatch):
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", lambda url, timeout=1: None)
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        capture_calls = []
+        monkeypatch.setattr(agent_core, "_capture_preview_screenshot",
+                            lambda cfg, job_id, url: capture_calls.append((job_id, url)))
+
+        agent_core._report_preview_when_ready(
+            self._cfg(), 42, "http://example.invalid", visual_verify=False, timeout=10)
+
+        assert capture_calls == []
+
+    def test_does_not_capture_a_screenshot_when_the_url_never_responds(self, monkeypatch):
+        def _always_fails(url, timeout=1):
+            raise ConnectionRefusedError()
+        monkeypatch.setattr(agent_core.urllib.request, "urlopen", _always_fails)
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+        capture_calls = []
+        monkeypatch.setattr(agent_core, "_capture_preview_screenshot",
+                            lambda cfg, job_id, url: capture_calls.append((job_id, url)))
+
+        agent_core._report_preview_when_ready(
+            self._cfg(), 42, "http://example.invalid", visual_verify=True, timeout=0.3)
+
+        assert capture_calls == []
+
+
+class TestCapturePreviewScreenshot:
+    """_capture_preview_screenshot -- shells out to `npx playwright screenshot`. Every
+    failure mode is skip-with-a-warning; never lets a real npx/network call happen in CI."""
+
+    def _cfg(self):
+        return {"app_url": "http://fake", "token": "x"}
+
+    def test_success_uploads_base64_and_cleans_up_the_temp_file(self, monkeypatch):
+        real_bytes = b"\x89PNG\r\n fake png bytes"
+        captured_path = {}
+        def fake_run(cmd, **kwargs):
+            output_path = cmd[-1]
+            captured_path["path"] = output_path
+            with open(output_path, "wb") as f:
+                f.write(real_bytes)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert len(api_calls) == 1
+        method, path, body = api_calls[0]
+        assert (method, path) == ("POST", "/api/bridge/jobs/42/screenshot")
+        assert base64.b64decode(body["image_base64"]) == real_bytes
+        assert not os.path.exists(captured_path["path"])  # temp file cleaned up
+
+    def test_non_zero_exit_skips_with_a_warning(self, monkeypatch, capsys):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="browser not installed")
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert api_calls == []
+        assert "screenshot capture failed" in capsys.readouterr().err.lower()
+
+    def test_timeout_skips_with_a_warning_and_does_not_hang(self, monkeypatch, capsys):
+        def fake_run(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        start = time.time()
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+        elapsed = time.time() - start
+
+        assert api_calls == []
+        assert "timed out" in capsys.readouterr().err.lower()
+        assert elapsed < 1  # the mock raises immediately -- confirms no real waiting happens here
+
+    def test_npx_not_found_skips_with_a_warning(self, monkeypatch, capsys):
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError()
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert api_calls == []
+        assert "npx' not found" in capsys.readouterr().err.lower()
+
+    def test_unexpected_exception_is_caught_and_never_escapes(self, monkeypatch, capsys):
+        def fake_run(cmd, **kwargs):
+            raise RuntimeError("boom")
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")  # must not raise
+
+        assert api_calls == []
+        assert "failed unexpectedly" in capsys.readouterr().err.lower()
+
+    def test_temp_file_is_removed_even_on_failure(self, monkeypatch):
+        removed = []
+        real_remove = agent_core.os.remove
+        def spying_remove(path):
+            removed.append(path)
+            real_remove(path)
+        monkeypatch.setattr(agent_core.os, "remove", spying_remove)
+        monkeypatch.setattr(agent_core.subprocess, "run",
+                            lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, stdout="", stderr=""))
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert len(removed) == 1
+
+
+class TestKillPreviewIfRunning:
+    """_kill_preview_if_running -- shared teardown for --stop-preview and --cleanup."""
+
+    def _cfg(self):
+        return {"app_url": "http://fake", "token": "x"}
+
+    def test_no_pid_file_is_a_quiet_noop(self, tmp_path):
+        assert agent_core._kill_preview_if_running(self._cfg(), str(tmp_path)) is False
+
+    def test_kills_process_groups_and_reports_stopped(self, tmp_path, monkeypatch):
+        pid_path = tmp_path / agent_core.PREVIEW_PID_FILENAME
+        pid_path.write_text(json.dumps({"job_id": 7, "pids": [111, 222], "started_at": 0}))
+        killpg_calls = []
+        def fake_killpg(pid, sig):
+            killpg_calls.append((pid, sig))
+            if sig == 0:
+                # Liveness check: pretend it's already gone, so the grace-period loop
+                # doesn't have to actually sleep out PREVIEW_KILL_GRACE_SECONDS in a test.
+                raise ProcessLookupError()
+        monkeypatch.setattr(agent_core.os, "killpg", fake_killpg)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        result = agent_core._kill_preview_if_running(self._cfg(), str(tmp_path))
+
+        assert result is True
+        assert (111, signal.SIGTERM) in killpg_calls
+        assert (222, signal.SIGTERM) in killpg_calls
+        assert not pid_path.exists()
+        assert api_calls == [("POST", "/api/bridge/jobs/7/preview", {"status": "stopped", "url": None})]
+
+    def test_sigkills_a_straggler_that_never_exits(self, tmp_path, monkeypatch):
+        pid_path = tmp_path / agent_core.PREVIEW_PID_FILENAME
+        pid_path.write_text(json.dumps({"job_id": 7, "pids": [111], "started_at": 0}))
+        # Zero grace period -- the liveness while-loop's condition is false on its very
+        # first check (a real clock only ever advances), so this stays deterministic and
+        # instant instead of needing to fake out the passage of time.
+        monkeypatch.setattr(agent_core, "PREVIEW_KILL_GRACE_SECONDS", 0)
+        killpg_calls = []
+        def fake_killpg(pid, sig):
+            killpg_calls.append((pid, sig))  # never raises -- pid "never dies" on its own
+        monkeypatch.setattr(agent_core.os, "killpg", fake_killpg)
+        monkeypatch.setattr(agent_core, "api", lambda *a, **k: {})
+
+        agent_core._kill_preview_if_running(self._cfg(), str(tmp_path))
+
+        assert (111, signal.SIGTERM) in killpg_calls
+        assert (111, signal.SIGKILL) in killpg_calls
+
+    def test_missing_job_id_in_pid_file_skips_the_api_call(self, tmp_path, monkeypatch):
+        pid_path = tmp_path / agent_core.PREVIEW_PID_FILENAME
+        pid_path.write_text(json.dumps({"pids": []}))
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        result = agent_core._kill_preview_if_running(self._cfg(), str(tmp_path))
+
+        assert result is True
+        assert api_calls == []
+
+
+class TestCmdStopPreview:
+    """cmd_stop_preview -- dispatch-level test, _resolve_worktree_target/
+    _kill_preview_if_running are exercised on their own elsewhere."""
+
+    def test_resolves_worktree_then_delegates_to_kill_helper(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target",
+                            lambda cfg, target: ("owner/repo", "/work", "/work/wt", "qtask/1-x"))
+        calls = []
+        monkeypatch.setattr(agent_core, "_kill_preview_if_running",
+                            lambda cfg, worktree_path: calls.append(worktree_path) or True)
+
+        agent_core.cmd_stop_preview({"app_url": "http://fake", "token": "x"}, "1-x")
+
+        assert calls == ["/work/wt"]
+
+    def test_prints_a_hint_when_nothing_was_running(self, monkeypatch, capsys):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target",
+                            lambda cfg, target: ("owner/repo", "/work", "/work/wt", "qtask/1-x"))
+        monkeypatch.setattr(agent_core, "_kill_preview_if_running", lambda cfg, worktree_path: False)
+
+        agent_core.cmd_stop_preview({"app_url": "http://fake", "token": "x"}, "1-x")
+
+        assert "no preview process recorded" in capsys.readouterr().out.lower()
+
+    def test_bails_cleanly_when_no_worktree_resolves(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target", lambda cfg, target: None)
+        calls = []
+        monkeypatch.setattr(agent_core, "_kill_preview_if_running",
+                            lambda cfg, worktree_path: calls.append(worktree_path))
+
+        agent_core.cmd_stop_preview({"app_url": "http://fake", "token": "x"}, None)
+
+        assert calls == []
+
+
 # ── Manual self-review (`qtask-bridge --review`) ────────────────────────────────
 
 class TestExtractCardIdFromBranch:
@@ -3840,6 +4428,42 @@ class TestAgentScriptFullFlow:
         start_call = next(c for c in api_calls if c[1] == f"/api/bridge/jobs/{job_id}/start")
         worktree_dir = start_call[2]["worktree_path"]
         return api_calls, worktree_dir
+
+    def test_run_job_warns_when_visual_verify_is_on_but_auto_preview_is_off(self, scratch_repo, monkeypatch, capsys):
+        """visual_verify has nothing to screenshot without a running preview -- _start_preview
+        is never even called when auto_preview resolves false, so this warning has to live in
+        run_job itself, at the same point auto_preview/self_review are resolved."""
+        ns = self._load_rendered_agent_module()
+        api_calls = []
+        ns["api"] = lambda cfg, method, path, body=None: api_calls.append((method, path, body)) or {}
+        real_run = ns["subprocess"].run
+        def fake_run(cmd, *a, **k):
+            if cmd[:1] == ["claude"]:
+                import subprocess as _sp
+                return _sp.CompletedProcess(cmd, 0)
+            return real_run(cmd, *a, **k)
+        monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+        cfg = {"app_url": "http://fake", "token": "x", "repos": {}, "repo_roots": [],
+               "name": "test-agent", "visual_verify": True}
+        job = {"id": 90, "card_id": 84, "card_title": "Some feature",
+               "prompt": "do the thing", "target_repo": None}
+
+        cwd_before = os.getcwd()
+        os.chdir(scratch_repo)
+        try:
+            capsys.readouterr()
+            ns["run_job"](cfg, job, streaming=False, prompt_note=False)
+            out = capsys.readouterr().out
+        finally:
+            os.chdir(cwd_before)
+
+        assert "visual_verify is on but auto_preview isn't" in out
+
+        # Clean up the real worktree this test created.
+        start_call = next(c for c in api_calls if c[1] == "/api/bridge/jobs/90/start")
+        real_run(["git", "worktree", "remove", "--force", start_call[2]["worktree_path"]],
+                  cwd=scratch_repo, capture_output=True)
 
     def test_run_job_reports_needs_confirmation_when_diff_matches_a_checkpoint_pattern(self, scratch_repo, monkeypatch):
         api_calls, worktree_dir = self._run_job_with_fake_agent_commit(

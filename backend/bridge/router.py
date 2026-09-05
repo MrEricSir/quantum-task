@@ -12,6 +12,7 @@ Install endpoint:
 
 Business logic lives in bridge.jobs, bridge.render, and bridge.stale.
 """
+import base64
 import json
 import os
 import secrets
@@ -46,6 +47,7 @@ from bridge.stale import check_stale_bridge_jobs
 from bridge.unblock import unblock_dependent_jobs
 from deps import get_db
 from settings import Settings
+from telegram.notify import send_photo
 
 router = APIRouter()
 
@@ -78,6 +80,13 @@ class _JobNeedsConfirmation(BaseModel):
 
 class _CheckpointPatterns(BaseModel):
     patterns: list[str] = []
+
+class _JobPreview(BaseModel):
+    status: str              # starting|running|failed|stopped
+    url: str | None = None
+
+class _JobScreenshot(BaseModel):
+    image_base64: str
 
 class _JobOutput(BaseModel):
     output: str        # chunk of stdout to append
@@ -472,6 +481,49 @@ def error_job(job_id: int, body: _JobComplete, db: Session = Depends(get_db)):
     job.result = body.result or "Unknown error"
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
+    return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/{job_id}/preview")
+def update_job_preview(job_id: int, body: _JobPreview, db: Session = Depends(get_db)):
+    """Bridge calls this at each auto-preview lifecycle transition (config.toml's
+    auto_preview) -- once immediately when the detached launch kicks off (status=starting,
+    url=None), once more when the health check confirms it's up (status=running, url=...) or
+    status=failed on a health-check timeout / unresolvable open_url; --stop-preview/--cleanup
+    call it again with status=stopped. Deliberately independent of the job's own `status` --
+    a job can be "done" while its preview keeps running, so this never touches job.status."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.preview_status = body.status
+    job.preview_url = body.url
+    db.commit()
+    return _job_response(job)
+
+
+@router.post("/api/bridge/jobs/{job_id}/screenshot")
+def post_job_screenshot(job_id: int, body: _JobScreenshot, db: Session = Depends(get_db)):
+    """Bridge calls this once, right after visual_verify's screenshot capture succeeds
+    (config.toml's visual_verify, requires auto_preview -- see agent_core.py's
+    _capture_preview_screenshot). Stores the base64 PNG on the job row AND, best-effort,
+    forwards it to Telegram inline as a side effect of this state-changing POST -- same
+    "inline, not scheduler-polled" posture complete_job/job_needs_confirmation already use for
+    unblock_dependent_jobs(db). send_photo already logs its own failures and never raises
+    (same posture as send_message), so this never fails the endpoint's own response even if
+    the Telegram send itself fails."""
+    job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.screenshot_data = body.image_base64
+    db.commit()
+
+    s = Settings(db)
+    if s.telegram_token and s.telegram_chat_id:
+        card = db.query(models.Card).filter_by(id=job.card_id).first()
+        caption = f"🔗 Preview: {card.title}" if card else "🔗 Preview"
+        send_photo(s.telegram_token, s.telegram_chat_id,
+                   base64.b64decode(body.image_base64), caption=caption)
+
     return _job_response(job)
 
 

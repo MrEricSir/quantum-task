@@ -28,6 +28,25 @@ def send_message(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def send_photo(bot_token: str, chat_id: str, image_bytes: bytes, caption: str | None = None) -> bool:
+    """Send a photo via a Telegram bot. Returns True on success, same posture as
+    send_message -- never raises, callers treat a False return the same way. Multipart via
+    requests' files= param -- no new dependency, no hand-rolled multipart encoding needed."""
+    url = _API_BASE.format(token=bot_token, method="sendPhoto")
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = "HTML"
+    files = {"photo": ("preview.png", image_bytes, "image/png")}
+    try:
+        r = requests.post(url, data=data, files=files, timeout=20)
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        log.warning("Telegram photo send failed: %s", e)
+        return False
+
+
 def set_webhook(bot_token: str, webhook_url: str, secret_token: str) -> dict:
     """Register a webhook URL with Telegram. Returns the API response dict."""
     url = _API_BASE.format(token=bot_token, method="setWebhook")

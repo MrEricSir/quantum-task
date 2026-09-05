@@ -905,6 +905,31 @@
   color: #f59e0b;
 }
 
+.cdp-bridge-preview {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.cdp-bridge-preview a {
+  color: #34d399;
+  text-decoration: none;
+}
+
+.cdp-bridge-preview a:hover {
+  text-decoration: underline;
+}
+
+.cdp-bridge-screenshot {
+  margin-top: 6px;
+}
+
+.cdp-bridge-screenshot img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  display: block;
+}
+
 .cdp-bridge-agent {
   opacity: 0.65;
 }

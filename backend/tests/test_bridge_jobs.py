@@ -604,6 +604,20 @@ class TestCardJobHistoryEndpoint:
         assert "prompt" not in entry
         assert "card_id" not in entry
         assert "card_title" not in entry
+        assert "screenshot_data" not in entry
+
+    def test_has_screenshot_is_a_boolean_not_the_blob(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        no_screenshot = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()["jobs"][0]
+        assert no_screenshot["has_screenshot"] is False
+
+        client.post(f"/api/bridge/jobs/{job_id}/screenshot", json={"image_base64": "Zm9v"})
+
+        with_screenshot = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()["jobs"][0]
+        assert with_screenshot["has_screenshot"] is True
+        assert "screenshot_data" not in with_screenshot
 
     def test_includes_result_diff_summary_and_checkpoint_fields(self, client):
         card_id = _make_card(spec="s")

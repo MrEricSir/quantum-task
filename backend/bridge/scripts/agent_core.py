@@ -87,13 +87,16 @@ different coding agent, write a new adapter file implementing the same six names
 IDE_SETTINGS_GITIGNORE_ENTRY value (if not None) to install.py's BRIDGE_IGNORE_ENTRIES.
 """
 import argparse
+import base64
 import fnmatch
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -127,6 +130,14 @@ PUSH_DISABLED_SENTINEL = "no_push"  # remote.origin.pushurl value while a job ho
 PROCFILE_NAMES = ("Procfile.dev", "Procfile")  # checked in this order; dev-specific wins
 PROCESS_COLORS = ("\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m", "\033[31m")  # cycled by index
 COLOR_RESET = "\033[0m"
+# Written into a worktree by _start_preview when auto_preview launches its Procfile/run_cmd
+# detached -- {"job_id": int, "pids": [int, ...], "started_at": float}. Read back by
+# _kill_preview_if_running (shared by --stop-preview and --cleanup) to know what to tear down.
+PREVIEW_PID_FILENAME = ".qtask-preview.json"
+# Combined stdout/stderr of a detached auto-preview process. Real file, not DEVNULL/inherited
+# -- these processes outlive the CLI invocation that launched them, so an inherited/closed
+# pipe would raise BrokenPipeError in the child once the parent's own stdout goes away.
+PREVIEW_LOG_FILENAME = ".qtask-preview.log"
 
 
 # Top-level config.toml keys that are either copied verbatim into cfg
@@ -135,13 +146,13 @@ COLOR_RESET = "\033[0m"
 # _validate_toml_structure can flag anything else as an unrecognized
 # top-level key -- almost always a typo.
 _TOML_SCALAR_FALLBACK_KEYS = {
-    "name", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "env_files", "run_cmd",
-    "open_url", "agent",
+    "name", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "auto_preview",
+    "visual_verify", "env_files", "run_cmd", "open_url", "agent",
 }
 _TOML_TOP_LEVEL_KEYS = _TOML_SCALAR_FALLBACK_KEYS | {"repos", "repo_roots"}
 _TOML_REPO_TABLE_KEYS = {
-    "path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "run_cmd", "env_files",
-    "open_url",
+    "path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "auto_preview",
+    "visual_verify", "run_cmd", "env_files", "open_url",
 }
 
 # See the "Coding-agent adapter contract" section of this file's module docstring.
@@ -205,6 +216,10 @@ def _validate_toml_structure(toml):
         problems.append(f'"verify_acceptance": expected true/false, got {type(toml["verify_acceptance"]).__name__}')
     if "self_review" in toml and toml["self_review"] is not None and not isinstance(toml["self_review"], bool):
         problems.append(f'"self_review": expected true/false, got {type(toml["self_review"]).__name__}')
+    if "auto_preview" in toml and toml["auto_preview"] is not None and not isinstance(toml["auto_preview"], bool):
+        problems.append(f'"auto_preview": expected true/false, got {type(toml["auto_preview"]).__name__}')
+    if "visual_verify" in toml and toml["visual_verify"] is not None and not isinstance(toml["visual_verify"], bool):
+        problems.append(f'"visual_verify": expected true/false, got {type(toml["visual_verify"]).__name__}')
     if "env_files" in toml and toml["env_files"] is not None and not isinstance(toml["env_files"], list):
         problems.append(f'"env_files": expected a list of paths, got {type(toml["env_files"]).__name__}')
 
@@ -232,6 +247,10 @@ def _validate_toml_structure(toml):
             problems.append(f'repos."{name}".verify_acceptance: expected true/false, got {type(entry["verify_acceptance"]).__name__}')
         if "self_review" in entry and entry["self_review"] is not None and not isinstance(entry["self_review"], bool):
             problems.append(f'repos."{name}".self_review: expected true/false, got {type(entry["self_review"]).__name__}')
+        if "auto_preview" in entry and entry["auto_preview"] is not None and not isinstance(entry["auto_preview"], bool):
+            problems.append(f'repos."{name}".auto_preview: expected true/false, got {type(entry["auto_preview"]).__name__}')
+        if "visual_verify" in entry and entry["visual_verify"] is not None and not isinstance(entry["visual_verify"], bool):
+            problems.append(f'repos."{name}".visual_verify: expected true/false, got {type(entry["visual_verify"]).__name__}')
 
     repo_roots = toml.get("repo_roots")
     if repo_roots is not None:
@@ -330,9 +349,9 @@ def _slugify(text, max_len=40):
 RepoEntry = namedtuple(
     "RepoEntry",
     ["path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "run_cmd",
-     "env_files", "open_url"],
+     "env_files", "open_url", "auto_preview", "visual_verify"],
 )
-_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None, None)
+_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None, None, None, None)
 
 
 def _repo_entry(cfg, target_repo):
@@ -356,6 +375,8 @@ def _repo_entry(cfg, target_repo):
         test_cmd = "npm test"
         verify_acceptance = true
         self_review = true
+        auto_preview = true
+        visual_verify = true
         run_cmd = "npm run dev"
         env_files = ["backend/.env", "frontend/.env"]
         open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
@@ -364,12 +385,13 @@ def _repo_entry(cfg, target_repo):
     if entry is None:
         return _EMPTY_REPO_ENTRY
     if isinstance(entry, str):
-        return RepoEntry(entry, None, None, None, None, None, None, None)
+        return RepoEntry(entry, None, None, None, None, None, None, None, None, None)
     if isinstance(entry, dict):
         return RepoEntry(
             entry.get("path"), entry.get("setup_cmd"),
             entry.get("test_cmd"), entry.get("verify_acceptance"), entry.get("self_review"),
             entry.get("run_cmd"), entry.get("env_files"), entry.get("open_url"),
+            entry.get("auto_preview"), entry.get("visual_verify"),
         )
     return _EMPTY_REPO_ENTRY
 
@@ -1143,7 +1165,8 @@ def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text, sel
 
 def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
                       test_cmd=None, verify_acceptance=False, self_review=False, spec_text=None,
-                      prompt_kind="normal", checkpoint_patterns=None):
+                      prompt_kind="normal", checkpoint_patterns=None,
+                      auto_preview=False, repo_entry=None):
     """Launch the coding agent as an interactive session the user can engage with.
 
     prompt_kind selects the wrapper wording: "fix" for _make_fix_prompt (resuming an existing
@@ -1191,12 +1214,15 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
     if verification:
         result_text = f"{verification}\n\n{result_text}" if result_text else verification
     _report_job_finished(cfg, job_id, cwd, result_text, checkpoint_patterns, review_flagged)
+    if auto_preview and repo_entry is not None:
+        _start_preview(cfg, repo_entry, cwd, job_id)
     return True
 
 
 def _run_streaming(cfg, job_id, branch, cwd,
                     test_cmd=None, verify_acceptance=False, self_review=False, spec_text=None,
-                    prompt_kind="normal", checkpoint_patterns=None):
+                    prompt_kind="normal", checkpoint_patterns=None,
+                    auto_preview=False, repo_entry=None):
     """Launch the coding agent non-interactively and stream stdout back to the app.
 
     prompt_kind selects the wrapper wording -- see _run_interactive's docstring."""
@@ -1258,6 +1284,8 @@ def _run_streaming(cfg, job_id, branch, cwd,
     print(f"\n[bridge] {AGENT_LABEL} finished (exit {proc.returncode})")
     if proc.returncode == 0:
         _report_job_finished(cfg, job_id, cwd, verification, checkpoint_patterns, review_flagged)
+        if auto_preview and repo_entry is not None:
+            _start_preview(cfg, repo_entry, cwd, job_id)
     else:
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/error",
             {"result": f"{AGENT_LABEL} exited with code {proc.returncode}"})
@@ -1363,6 +1391,15 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     self_review = entry.self_review
     if self_review is None:
         self_review = cfg.get("self_review", False)
+    auto_preview = entry.auto_preview
+    if auto_preview is None:
+        auto_preview = cfg.get("auto_preview", False)
+    visual_verify_cfg = entry.visual_verify
+    if visual_verify_cfg is None:
+        visual_verify_cfg = cfg.get("visual_verify", False)
+    if visual_verify_cfg and not auto_preview:
+        print("[bridge] visual_verify is on but auto_preview isn't — skipping "
+              "(nothing to screenshot)")
     env_files = entry.env_files or cfg.get("env_files")
     checkpoint_resp = api(cfg, "GET", "/api/bridge/checkpoint-patterns")
     checkpoint_patterns = (checkpoint_resp or {}).get("patterns") or []
@@ -1398,13 +1435,15 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
                             test_cmd=test_cmd, verify_acceptance=verify_acceptance,
                             self_review=self_review,
                             spec_text=spec_text, prompt_kind=prompt_kind,
-                            checkpoint_patterns=checkpoint_patterns)
+                            checkpoint_patterns=checkpoint_patterns,
+                            auto_preview=auto_preview, repo_entry=entry)
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
                               test_cmd=test_cmd, verify_acceptance=verify_acceptance,
                               self_review=self_review,
                               spec_text=spec_text, prompt_kind=prompt_kind,
-                              checkpoint_patterns=checkpoint_patterns)
+                              checkpoint_patterns=checkpoint_patterns,
+                              auto_preview=auto_preview, repo_entry=entry)
     except Exception as e:
         # Best-effort: run_streaming/run_interactive already report their
         # own outcome (claude not found, non-zero exit, etc.) via /complete
@@ -1712,6 +1751,70 @@ def cmd_list(cfg):
         print(f"    {wt_path}")
 
 
+PREVIEW_KILL_GRACE_SECONDS = 5  # module-level so tests can shrink it to 0 for a deterministic
+                                 # SIGKILL-path test instead of fighting the real clock
+
+
+def _kill_preview_if_running(cfg, worktree_path):
+    """Tear down an auto-preview process (if any) recorded for this worktree -- shared by
+    cmd_stop_preview and cmd_cleanup so the two teardown paths can't drift on how a leftover
+    preview gets killed. No-ops quietly (returns False) if there's no PID file: most
+    worktrees never had auto_preview on, and a prior --stop-preview/--cleanup already
+    removed it. Each pid is its own process-group leader (_start_preview's
+    start_new_session=True), so os.killpg reaches the whole process tree it spawned, not
+    just the top-level shell. SIGTERM first, brief grace period, SIGKILL any stragglers --
+    mirrors _run_procfile's own terminate-then-kill shutdown shape."""
+    pid_path = os.path.join(worktree_path, PREVIEW_PID_FILENAME)
+    if not os.path.isfile(pid_path):
+        return False
+    with open(pid_path) as f:
+        info = json.load(f)
+    pids = info.get("pids") or []
+
+    for pid in pids:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    deadline = time.time() + PREVIEW_KILL_GRACE_SECONDS
+    for pid in pids:
+        while time.time() < deadline:
+            try:
+                os.killpg(pid, 0)  # signal 0: check liveness without actually signaling
+            except ProcessLookupError:
+                break
+            time.sleep(0.2)
+        else:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    try:
+        os.remove(pid_path)
+    except OSError:
+        pass
+
+    print(f"[bridge] Stopped preview process(es) for {worktree_path}")
+    job_id = info.get("job_id")
+    if job_id is not None:
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/preview", {"status": "stopped", "url": None})
+    return True
+
+
+def cmd_stop_preview(cfg, target):
+    """Manually stop an auto-preview process for a resolved qtask worktree -- same target
+    resolution as --run/--review (cwd, last-used, or a branch fragment)."""
+    resolved = _resolve_worktree_target(cfg, target)
+    if resolved is None:
+        return
+    repo_name, work_dir, worktree_path, branch = resolved
+    print(f"[bridge] [{repo_name}] {branch}\n[bridge] {worktree_path}\n")
+    if not _kill_preview_if_running(cfg, worktree_path):
+        print("[bridge] No preview process recorded for this worktree.")
+
+
 def cmd_cleanup(cfg):
     """List qtask-created worktrees across every repo in [repos], and
     optionally remove some or all of them -- worktree AND branch. Doesn't
@@ -1751,6 +1854,8 @@ def cmd_cleanup(cfg):
         targets = [f for i, f in enumerate(found, 1) if i in indices]
 
     for repo_name, work_dir, wt_path, branch in targets:
+        _kill_preview_if_running(cfg, wt_path)
+
         print(f"[bridge] Removing worktree {wt_path}...")
         r = subprocess.run(["git", "worktree", "remove", "--force", wt_path],
                            cwd=work_dir, capture_output=True, text=True)
@@ -1946,6 +2051,140 @@ def _open_when_ready(url, timeout=10):
             time.sleep(0.3)
     webbrowser.open(url)
     print(f"[bridge] Opened {url}")
+
+
+def _start_preview(cfg, entry, worktree_path, job_id):
+    """Launch this worktree's Procfile/run_cmd detached, right after a job finishes
+    successfully (config.toml's auto_preview) -- the same Procfile-vs-run_cmd resolution
+    cmd_run uses, but non-interactive and non-blocking (start_new_session=True instead of a
+    foreground Popen this script waits on). Requires open_url to be configured: a detached
+    process this script loses all direct track of the moment it's launched is only useful if
+    there's a URL to hand back and show the user, so "no open_url" and "open_url configured
+    but unresolvable" both skip here with a warning, same posture as verify_acceptance's
+    missing-Acceptance-Criteria skip. Also skips (quietly logging why) if a preview is
+    already recorded for this worktree, so a resume/fix job hitting the same worktree doesn't
+    double-launch against whatever's still running from the original job."""
+    open_url_template = entry.open_url or cfg.get("open_url")
+    if not open_url_template:
+        print("[bridge] auto_preview is on but no open_url is configured for this repo — "
+              "skipping (nothing to report back)")
+        return
+
+    pid_path = os.path.join(worktree_path, PREVIEW_PID_FILENAME)
+    if os.path.exists(pid_path):
+        print("[bridge] Preview already running for this worktree — skipping auto-launch")
+        return
+
+    extra_env = _load_env_file(os.path.join(worktree_path, ENV_FILENAME))
+    env = {**os.environ, **extra_env}
+
+    procfile_path = _find_procfile(worktree_path)
+    if procfile_path:
+        commands = list(_parse_procfile(procfile_path).values())
+    else:
+        run_cmd = entry.run_cmd or cfg.get("run_cmd")
+        if not run_cmd:
+            print("[bridge] auto_preview is on but no Procfile/run_cmd found — skipping")
+            return
+        commands = [run_cmd]
+
+    log_path = os.path.join(worktree_path, PREVIEW_LOG_FILENAME)
+    pids = []
+    with open(log_path, "a") as log_f:
+        for command in commands:
+            proc = subprocess.Popen(
+                command, shell=True, cwd=worktree_path, env=env,
+                stdout=log_f, stderr=subprocess.STDOUT, start_new_session=True,
+            )
+            pids.append(proc.pid)
+
+    with open(pid_path, "w") as f:
+        json.dump({"job_id": job_id, "pids": pids, "started_at": time.time()}, f)
+
+    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/preview", {"status": "starting", "url": None})
+    print(f"[bridge] Preview starting ({len(pids)} process(es), logs at {PREVIEW_LOG_FILENAME})")
+
+    visual_verify = entry.visual_verify if entry.visual_verify is not None else cfg.get("visual_verify", False)
+    open_url = _resolve_open_url(worktree_path, extra_env, open_url_template)
+    threading.Thread(
+        target=_report_preview_when_ready,
+        args=(cfg, job_id, open_url, visual_verify), daemon=True,
+    ).start()
+
+
+def _report_preview_when_ready(cfg, job_id, url, visual_verify=False, timeout=30):
+    """Daemon-thread counterpart to _open_when_ready for the auto-preview path: instead of
+    opening a browser tab (nothing server-side can ever reach a localhost URL on this
+    machine -- this is purely a clickable link for whoever opens the Code tab), POSTs the
+    resolved URL back once the dev server actually responds. A longer timeout than
+    _open_when_ready's interactive 10s -- nobody's watching this run live, so there's no
+    reason to rush a possibly-slow-starting server toward "failed." Reports failed (not
+    silence) on an unresolvable URL or a health-check timeout, so preview_status never gets
+    stuck at "starting" forever with no explanation. If visual_verify is on, captures a
+    screenshot right after confirming the preview is reachable (config.toml's visual_verify,
+    requires auto_preview -- see _capture_preview_screenshot)."""
+    if not url:
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/preview", {"status": "failed", "url": None})
+        return
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(url, timeout=1)
+            api(cfg, "POST", f"/api/bridge/jobs/{job_id}/preview", {"status": "running", "url": url})
+            if visual_verify:
+                _capture_preview_screenshot(cfg, job_id, url)
+            return
+        except Exception:
+            time.sleep(0.3)
+    print(f"[bridge] Preview at {url} never responded within {timeout}s — marking failed")
+    api(cfg, "POST", f"/api/bridge/jobs/{job_id}/preview", {"status": "failed", "url": None})
+
+
+_SCREENSHOT_TIMEOUT = 40  # generous but bounded -- npx can hang trying to interactively
+                          # prompt if playwright/its browsers aren't installed, and this must
+                          # never block the daemon thread (or a future job) indefinitely
+
+
+def _capture_preview_screenshot(cfg, job_id, url):
+    """Best-effort: shell out to `npx playwright screenshot` against a confirmed-running
+    preview URL, then POST the PNG (base64) to the app (config.toml's visual_verify, requires
+    auto_preview). Every failure mode here -- npx/node missing, playwright not resolvable,
+    browsers not installed, a hung/slow render -- is skip-with-a-warning, mirroring
+    _start_preview's missing-open_url posture and _run_verification's missing-Acceptance-
+    Criteria posture. Never raises -- this runs inside _report_preview_when_ready's own
+    daemon thread, and an escaped exception there would look like (and get miscategorized as)
+    "the preview URL never responded" by that function's own broad except clause."""
+    fd, output_path = tempfile.mkstemp(suffix=".png", prefix="qtask-preview-")
+    os.close(fd)
+    try:
+        result = subprocess.run(
+            ["npx", "--yes", "playwright", "screenshot",
+             "--viewport-size=1280,800", "--wait-for-timeout=1000", url, output_path],
+            capture_output=True, text=True, timeout=_SCREENSHOT_TIMEOUT,
+        )
+        if result.returncode != 0:
+            print(f"[bridge] Screenshot capture failed (exit {result.returncode}): "
+                  f"{result.stderr.strip()[:500]} — skipping visual verification",
+                  file=sys.stderr)
+            return
+        with open(output_path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode("ascii")
+        api(cfg, "POST", f"/api/bridge/jobs/{job_id}/screenshot", {"image_base64": image_b64})
+        print("[bridge] Preview screenshot captured and uploaded")
+    except subprocess.TimeoutExpired:
+        print(f"[bridge] Screenshot capture timed out after {_SCREENSHOT_TIMEOUT}s "
+              f"(npx/playwright may be installing, or browsers missing) — skipping",
+              file=sys.stderr)
+    except FileNotFoundError:
+        print("[bridge] 'npx' not found on PATH — skipping visual verification "
+              "(requires Node.js)", file=sys.stderr)
+    except Exception as e:
+        print(f"[bridge] Screenshot capture failed unexpectedly: {e} — skipping", file=sys.stderr)
+    finally:
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
 
 
 def _run_procfile(worktree_path, procfile_path, extra_env, stop_event=None):
@@ -2474,6 +2713,9 @@ def main():
     group.add_argument("--review", nargs="?", const="", default=None, metavar="[BRANCH]",
                        help="Read-only lead-engineer-style review of a qtask worktree's "
                             "changes (cwd, last one, or a branch fragment)")
+    group.add_argument("--stop-preview", nargs="?", const="", default=None, metavar="[BRANCH]",
+                       help="Stop an auto_preview process previously started for a qtask "
+                            "worktree (cwd, last one, or a branch fragment)")
     group.add_argument("--unlock-push", action="store_true",
                        help="Clear a stuck no_push sentinel on the current repo's "
                             "remote.origin.pushurl, left behind by an interrupted job "
@@ -2509,6 +2751,8 @@ def main():
         cmd_run(cfg, args.run or None)
     elif args.review is not None:
         cmd_review(cfg, args.review or None)
+    elif args.stop_preview is not None:
+        cmd_stop_preview(cfg, args.stop_preview or None)
     elif args.unlock_push:
         cmd_unlock_push()
     elif args.lock_push:

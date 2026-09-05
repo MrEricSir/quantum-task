@@ -532,4 +532,39 @@ describe('useAssistCode — polling', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
     expect(api.getBridgeJob).not.toHaveBeenCalled()
   })
+
+  it('keeps polling a done job while its auto-preview is still starting', async () => {
+    // A preview launches AFTER /complete, so the job's own status is already terminal --
+    // without the preview_status check, this job would never be polled and the preview
+    // URL would never arrive.
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 1, status: 'done', preview_status: 'starting' }, companion: null,
+    })
+    api.getBridgeJob.mockResolvedValueOnce({
+      id: 1, status: 'done', preview_status: 'running', preview_url: 'http://localhost:20771',
+    })
+
+    const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await vi.waitFor(() => expect(result.current.bridgeJob?.preview_status).toBe('starting'))
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(result.current.bridgeJob.preview_status).toBe('running')
+    expect(result.current.bridgeJob.preview_url).toBe('http://localhost:20771')
+
+    // Stops polling once the preview leaves "starting" -- no further calls.
+    const callCountAtRunning = api.getBridgeJob.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(20000) })
+    expect(api.getBridgeJob.mock.calls.length).toBe(callCountAtRunning)
+  })
+
+  it('does not poll a done job with no preview activity', async () => {
+    api.getBridgeJobChain.mockResolvedValue({
+      root: { id: 1, status: 'done', preview_status: null }, companion: null,
+    })
+    renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
+    await vi.waitFor(() => expect(api.getBridgeJobChain).toHaveBeenCalled())
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(api.getBridgeJob).not.toHaveBeenCalled()
+  })
 })

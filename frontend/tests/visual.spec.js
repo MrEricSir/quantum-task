@@ -4067,6 +4067,119 @@ test.describe('card detail panel — github and spec', () => {
     await expect(page.getByRole('button', { name: /mark reviewed/i })).toBeVisible()
   })
 
+  test('a done job with an auto-preview starting shows "Preview starting…"', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      preview_status: 'starting', preview_url: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-preview')).toContainText(/preview starting/i)
+  })
+
+  test('a running preview shows a clickable link', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      preview_status: 'running', preview_url: 'http://localhost:20771',
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const link = page.locator('.cdp-bridge-preview a')
+    await expect(link).toHaveText('🔗 Preview')
+    await expect(link).toHaveAttribute('href', 'http://localhost:20771')
+    await expect(link).toHaveAttribute('target', '_blank')
+  })
+
+  test('a running preview with a screenshot shows the image', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      preview_status: 'running', preview_url: 'http://localhost:20771',
+      screenshot_data: 'aGVsbG8=',
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const img = page.locator('.cdp-bridge-screenshot img')
+    await expect(img).toHaveAttribute('src', 'data:image/png;base64,aGVsbG8=')
+  })
+
+  test('a starting preview with no screenshot yet shows no image', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      preview_status: 'starting', preview_url: null, screenshot_data: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-screenshot')).toHaveCount(0)
+  })
+
+  test('a failed preview shows a failure note', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      preview_status: 'failed', preview_url: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-preview')).toContainText(/preview failed to start/i)
+  })
+
+  test('a stopped preview shows a stopped note', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      preview_status: 'stopped', preview_url: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-preview')).toContainText(/preview stopped/i)
+  })
+
   test('clicking Resume queues a resume job and updates the status label', async ({ page }) => {
     const job = {
       id: 5, card_id: 99, status: 'stalled', target_repo: 'owner/repo',

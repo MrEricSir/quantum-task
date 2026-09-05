@@ -212,6 +212,9 @@ def _job_response(job: models.BridgeJob) -> dict:
         "diff_summary": job.diff_summary,
         "checkpoint_matched_paths": json.loads(job.checkpoint_matched_paths) if job.checkpoint_matched_paths else None,
         "self_review_flagged": job.self_review_flagged,
+        "preview_status": job.preview_status,
+        "preview_url": job.preview_url,
+        "screenshot_data": job.screenshot_data,
     }
 
 
@@ -353,7 +356,9 @@ def get_card_job_history(db: Session, card_id: int) -> list[dict]:
     fields for those use cases later; a list endpoint should enumerate what it selects so a
     future large field doesn't silently leak into every row of a list. Excludes
     spec_snapshot/prompt_snapshot/output/prompt (single-job-detail-only, and prompt/spec text
-    can be large) and card_id/card_title (the caller already knows which card this is)."""
+    can be large), card_id/card_title (the caller already knows which card this is), and the
+    full screenshot_data blob (a `has_screenshot` boolean stands in for it -- base64 image
+    data in a list of rows would be the largest field here by far)."""
     jobs = (
         db.query(models.BridgeJob)
         .filter_by(card_id=card_id)
@@ -371,6 +376,9 @@ def get_card_job_history(db: Session, card_id: int) -> list[dict]:
             "diff_summary": job.diff_summary,
             "checkpoint_matched_paths": json.loads(job.checkpoint_matched_paths) if job.checkpoint_matched_paths else None,
             "self_review_flagged": job.self_review_flagged,
+            "preview_status": job.preview_status,
+            "preview_url": job.preview_url,
+            "has_screenshot": bool(job.screenshot_data),
             "depends_on_job_id": job.depends_on_job_id,
             "resumes_job_id": job.resumes_job_id,
             "fix_comment_ids": json.loads(job.fix_comment_ids) if job.fix_comment_ids else None,

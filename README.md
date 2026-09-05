@@ -120,7 +120,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching)
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching), bridge-managed preview server (`auto_preview`, detached Procfile/`run_cmd` launch + PID-file teardown via `--stop-preview`/`--cleanup`), visual verification (`visual_verify`, `npx playwright screenshot` of a confirmed-running preview shown in the Code tab + Telegram)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -383,6 +383,46 @@ open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
 ```
 
 It's a shell-evaluated string, not a plain literal, so ordinary shell arithmetic against the reserved port from `.env.qtask` (see [Avoiding port and database collisions](#avoiding-port-and-database-collisions) above) works directly — `QTASK_PORT_BASE` alone usually isn't "the" port to guess automatically (in this repo's own `Procfile.dev`, the backend sits at `QTASK_PORT_BASE` and the frontend one above it), so this stays an explicit per-repo setting rather than something inferred.
+
+#### Preview server (auto_preview)
+
+Rather than running `--run` by hand every time a job finishes, set `auto_preview = true` (per-repo, or as a top-level fallback) and the bridge starts the worktree's Procfile/`run_cmd` itself, detached, right after a successful session — no extra command needed:
+
+```toml
+[repos."owner/api"]
+path = "~/folder_a/api"
+open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
+auto_preview = true
+```
+
+`auto_preview` **requires `open_url` to be configured** — a detached process this script loses direct track of the moment it launches is only useful if there's a URL to hand back and show you, so it's skipped (with a warning) if `open_url` isn't set, or if resolving it fails. Same Procfile-vs-`run_cmd` resolution as `--run` (Procfile.dev/Procfile first, then `run_cmd`), but launched detached instead of foreground — the process survives after the bridge moves on to the next job. A `.qtask-preview.json` PID file and a `.qtask-preview.log` combined-output log land in the worktree (both gitignored automatically, like `BRIDGE_SPEC.md`/`.env.qtask`); if a preview is already recorded for a worktree, a resume/fix job hitting that same worktree skips launching a second one.
+
+Once the dev server actually responds, the Code tab shows a clickable "🔗 Preview" link; a slow-starting server that never responds within 30s shows "Preview failed to start" instead. Stop one manually with:
+
+```bash
+qtask-bridge --stop-preview             # cwd if you're already in a qtask worktree, else the last one used
+qtask-bridge --stop-preview 84-ranking  # branch fragment, same resolution as --run/--review
+```
+
+`--cleanup` also kills any lingering preview automatically before removing a worktree, so a forgotten preview never outlives its worktree.
+
+**Deliberately simple for now, on purpose**: there's no webapp "Stop preview" button and no idle/lifetime auto-expiry — a preview just runs until `--stop-preview`, a `--cleanup`, or you kill it yourself. A webapp-driven stop would need to piggyback on `--watch`'s existing heartbeat poll loop to reach a running CLI process at all (the server can never reach a `localhost` URL on your machine directly), so it would only work while `--watch` is actually running — a real but more involved follow-up, not built here.
+
+#### Visual verification (visual_verify)
+
+Set `visual_verify = true` (requires `auto_preview` also be on) and, once the preview is confirmed reachable, the bridge shells out to `npx playwright screenshot` and shows the result right in the Code tab — and, if Telegram is configured, sends it there too:
+
+```toml
+[repos."owner/api"]
+path = "~/folder_a/api"
+open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
+auto_preview = true
+visual_verify = true
+```
+
+This is new operational surface for the machine running the bridge CLI, not just a config flag: it needs Node.js reachable, the `playwright` npm package resolvable via `npx` (globally, or via a target repo's own `node_modules` if it already uses Playwright for its own tests — the way this repo does), and Playwright's browser binaries already downloaded (`npx playwright install`, a one-time ~300MB fetch this script doesn't manage for you). Every failure mode — `npx` missing, browsers not installed, a slow/hung render — is skip-with-a-warning; it never blocks a job. The screenshot is stored as base64 on the job (this app already replicates its SQLite DB via litestream, so no separate object storage was added for this).
+
+**Deliberately out of scope for now**: a vision-capable LLM actually looking at the screenshot and flagging visual regressions — not even confirmed the model behind this app's configured LLM endpoint supports image input. This just gets a human-visible screenshot into the Code tab and Telegram; a human still looks at it.
 
 #### Reviewing a change
 

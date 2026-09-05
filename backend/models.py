@@ -537,6 +537,22 @@ class BridgeJob(Base):
     # flagged by one trigger, the other, or both, and merging them would lose "why." Null for
     # every other status, including a job that finished clean with self_review enabled.
     self_review_flagged = Column(Boolean, nullable=True)
+    # Bridge-managed preview server (config.toml's auto_preview) -- independent of `status`
+    # above: a job can be "done" while its preview process keeps running afterward.
+    # preview_status: starting|running|failed|stopped, or null if auto_preview never ran for
+    # this job. See agent_core.py's _start_preview/_report_preview_when_ready/
+    # _kill_preview_if_running.
+    preview_status = Column(String, nullable=True)
+    preview_url = Column(Text, nullable=True)
+    # Base64-encoded PNG screenshot of the confirmed-running auto_preview (config.toml's
+    # visual_verify), captured by agent_core.py's _capture_preview_screenshot right after
+    # _report_preview_when_ready confirms the preview is up. Stored inline as base64 text
+    # (not object storage) -- this app already replicates its whole SQLite DB via litestream,
+    # so no new infra is needed either way, and this is a single-user tool where the row-bloat
+    # tradeoff (roughly hundreds of KB of base64 text per screenshot) isn't worth avoiding with
+    # more infrastructure. Revisit only if that tradeoff ever actually matters. Null when
+    # visual_verify never ran for this job.
+    screenshot_data = Column(Text, nullable=True)
 
     card = relationship("Card")
 

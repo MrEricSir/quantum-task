@@ -39,8 +39,8 @@ TOML_TEMPLATE = textwrap.dedent("""\
 
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
-    # "verify_acceptance" / "self_review" / "run_cmd" / "env_files" keys. setup_cmd is a
-    # one-time command run in a fresh worktree before Claude launches, for
+    # "verify_acceptance" / "self_review" / "auto_preview" / "visual_verify" / "run_cmd" /
+    # "env_files" keys. setup_cmd is a one-time command run in a fresh worktree before Claude launches, for
     # repos that need dependencies installed (npm install, pip install, etc).
     #
     # [repos]
@@ -92,6 +92,26 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # frontend one above it -- so this is deliberately explicit per-repo,
     # not an automatic default.
 
+    # auto_preview: instead of running --run by hand, start the worktree's Procfile/
+    # run_cmd yourself automatically, detached, right after a successful job -- the
+    # Code tab shows a clickable "Preview" link once it responds. Requires open_url
+    # (above) to be set, or it's skipped with a warning -- a detached process this
+    # script loses direct track of is only useful if there's a URL to report back.
+    # Stop one manually with `qtask-bridge --stop-preview`; --cleanup also kills any
+    # lingering preview automatically before removing a worktree. Off by default:
+    #
+    # auto_preview = true
+
+    # visual_verify: once auto_preview confirms the preview is reachable, capture a
+    # screenshot of it (via `npx playwright screenshot`) and show it in the Code tab +
+    # forward it to Telegram. Requires auto_preview (above) to also be on -- skipped with a
+    # warning otherwise, since there's nothing to screenshot without a running preview. Also
+    # requires Node.js + a resolvable `playwright` npm package + its browser binaries already
+    # installed (`npx playwright install`) on the machine running the bridge CLI -- skipped
+    # with a warning, never blocks a job, if any of that isn't available. Off by default:
+    #
+    # visual_verify = true
+
     # Verification, run automatically after a session ends (before the job
     # is marked complete) -- all three are opt-in and off by default.
     #
@@ -138,6 +158,7 @@ TOML_TEMPLATE = textwrap.dedent("""\
 # adapter's entry here (if not None) when adding it to _ADAPTER_FILES, or that test fails.
 BRIDGE_IGNORE_ENTRIES = [
     "BRIDGE_SPEC.md", ".env.qtask", ".qtask-worktree", ".claude/settings.local.json",
+    ".qtask-preview.json", ".qtask-preview.log",
 ]
 
 
