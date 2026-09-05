@@ -328,6 +328,59 @@ def get_bridge_jobs_dashboard(db: Session) -> list[dict]:
     ]
 
 
+def get_card_job_history(db: Session, card_id: int) -> list[dict]:
+    """Every bridge job ever run against this card, newest first -- for the plain card
+    detail view's Bridge history section, not the Code tab's own current/latest chain
+    (get_card_job_chain above) or the Engineering page's fleet-wide dashboard
+    (get_bridge_jobs_dashboard above).
+
+    Deliberately flat and unfiltered, unlike both of those:
+    - No depends_on_job_id split into root/companion -- get_card_job_chain's root+companion
+      pairing answers "what's the CURRENT status," a different question from "what happened
+      over time." A cross-repo companion job did real work for this card (shares its spec),
+      so it's included inline here, not grouped away or excluded; the frontend can label a
+      row as a companion from its own target_repo/depends_on_job_id.
+    - No _ACTIVE_JOB_STATUSES/24h recency filter and no .limit() -- get_bridge_jobs_dashboard's
+      windowing exists so a FLEET view across every card doesn't get cluttered with ancient
+      history; a per-card history is already scoped to one card, and showing old jobs is the
+      whole point.
+    - No card-existence check -- returns [] for a card with no jobs (or an unknown card_id),
+      mirroring get_latest_card_job/get_card_job_chain's existing "200 + empty, never 404"
+      convention for this same family of per-card endpoints.
+
+    Builds its own explicit dict (like get_bridge_jobs_dashboard does) rather than reusing/
+    filtering _job_response() -- that function backs single-job-detail endpoints and may grow
+    fields for those use cases later; a list endpoint should enumerate what it selects so a
+    future large field doesn't silently leak into every row of a list. Excludes
+    spec_snapshot/prompt_snapshot/output/prompt (single-job-detail-only, and prompt/spec text
+    can be large) and card_id/card_title (the caller already knows which card this is)."""
+    jobs = (
+        db.query(models.BridgeJob)
+        .filter_by(card_id=card_id)
+        .order_by(models.BridgeJob.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": job.id,
+            "status": job.status,
+            "target_repo": job.target_repo,
+            "branch_name": job.branch_name,
+            "agent_name": job.agent_name,
+            "result": job.result,
+            "diff_summary": job.diff_summary,
+            "checkpoint_matched_paths": json.loads(job.checkpoint_matched_paths) if job.checkpoint_matched_paths else None,
+            "self_review_flagged": job.self_review_flagged,
+            "depends_on_job_id": job.depends_on_job_id,
+            "resumes_job_id": job.resumes_job_id,
+            "fix_comment_ids": json.loads(job.fix_comment_ids) if job.fix_comment_ids else None,
+            "created_at": job.created_at.isoformat(),
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        }
+        for job in jobs
+    ]
+
+
 def compute_attempt_stats(db: Session, card_id: int) -> dict | None:
     """How many times this card's primary job lineage has been attempted, and how many of
     the attempts before the current (latest) one failed -- the data behind the Code tab's

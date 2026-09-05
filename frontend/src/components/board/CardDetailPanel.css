@@ -964,6 +964,83 @@
   50%       { opacity: 0.3; }
 }
 
+/* ── Bridge history (every job ever run against this card, plain card detail view) ──
+   Dot colors mirror the existing cdp-bridge-status and card-bridge-dot status-color
+   modifiers so status colors agree across the Code tab, the board tile, and this list. */
+
+.cdp-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cdp-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.cdp-history-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+  margin-top: 5px;
+}
+
+.cdp-history-dot--pending { color: #fbbf24; }
+.cdp-history-dot--running { color: #34d399; }
+.cdp-history-dot--done    { color: #a78bfa; }
+.cdp-history-dot--error   { color: #f87171; }
+.cdp-history-dot--stalled { color: #94a3b8; }
+.cdp-history-dot--blocked { color: #8b949e; }
+.cdp-history-dot--needs_confirmation { color: #f59e0b; }
+
+.cdp-history-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cdp-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cdp-history-kind {
+  font-weight: 600;
+}
+
+.cdp-history-branch,
+.cdp-history-repo {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.cdp-history-time {
+  opacity: 0.65;
+}
+
+.cdp-history-result {
+  font-size: 12px;
+}
+
+.cdp-history-diff {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  opacity: 0.75;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
 /* ── Cross-repo companion job (BRIDGE_CROSS_REPO_JOBS.md Phase 3) ── */
 
 .cdp-companion-section {

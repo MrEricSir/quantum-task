@@ -117,6 +117,7 @@ async function mockAPIs(page) {
   await page.route('**/api/bridge/install-token', r => r.fulfill({ json: { token: 'test-install-token' } }))
   await page.route('**/api/bridge/jobs/status', r => r.fulfill({ json: { statuses: {} } }))
   await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [] } }))
+  await page.route('**/api/bridge/jobs/card/*/history', r => r.fulfill({ json: { jobs: [] } }))
   await page.route('**/api/bridge/checkpoint-patterns', r => {
     if (r.request().method() === 'PUT') return r.fulfill({ json: { ok: true } })
     return r.fulfill({ json: { patterns: [] } })
@@ -4301,6 +4302,103 @@ test.describe('card detail panel — github and spec', () => {
     await page.locator('.cdp-gh-actions').getByRole('button').last().click()
     // Content collapses
     await expect(page.locator('.cdp-gh-content')).not.toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bridge history section on the plain card detail view
+// ---------------------------------------------------------------------------
+test.describe('card detail panel — bridge history', () => {
+  const HISTORY_CARD = {
+    id: 150, title: 'Fix ranking bug',
+    description: 'Some notes', section: 'today', completed: false, archived: false, position: 5,
+    tags: [], updated_at: '2026-06-03T08:00:00Z', created_at: '2026-06-03T08:00:00Z',
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/cards', r => r.fulfill({ json: [...ALL_TODOS, HISTORY_CARD] }))
+    await page.route('**/api/cards/*/thread', r =>
+      r.fulfill({ json: { messages: [], context: '', output: null } }))
+  })
+
+  async function openHistoryCard(page) {
+    await page.goto('/board')
+    await waitForApp(page)
+    const card = page.locator('.event-card', { hasText: 'Fix ranking bug' })
+    await card.click()
+    await expect(page.locator('.card-detail-panel')).toBeVisible()
+  }
+
+  test('section is hidden when there is no bridge history', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/150/history', r => r.fulfill({ json: { jobs: [] } }))
+    await openHistoryCard(page)
+    await expect(page.locator('.cdp-history-list')).toHaveCount(0)
+  })
+
+  test('shows one row per job with status, branch, and timestamp', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/150/history', r => r.fulfill({ json: { jobs: [
+      {
+        id: 1, status: 'done', target_repo: null, branch_name: 'qtask/150-fix-ranking',
+        agent_name: 'claude', result: 'Fixed it', diff_summary: 'src/rank.py | 4 +-',
+        checkpoint_matched_paths: null, self_review_flagged: null,
+        depends_on_job_id: null, resumes_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-02T09:00:00Z', updated_at: '2026-06-02T09:10:00Z',
+      },
+    ] } }))
+    await openHistoryCard(page)
+
+    const rows = page.locator('.cdp-history-row')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first().locator('.cdp-history-dot--done')).toBeVisible()
+    await expect(rows.first()).toContainText('qtask/150-fix-ranking')
+    await expect(rows.first()).toContainText('Fresh run')
+  })
+
+  test('result markdown renders as real HTML, not literal ## text', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/150/history', r => r.fulfill({ json: { jobs: [
+      {
+        id: 1, status: 'done', target_repo: null, branch_name: 'qtask/150-fix-ranking',
+        agent_name: 'claude', result: '## Verification\n\n### Tests\n\n**passed**',
+        diff_summary: null, checkpoint_matched_paths: null, self_review_flagged: null,
+        depends_on_job_id: null, resumes_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-02T09:00:00Z', updated_at: '2026-06-02T09:10:00Z',
+      },
+    ] } }))
+    await openHistoryCard(page)
+
+    await expect(page.locator('.cdp-history-result h2', { hasText: 'Verification' })).toBeVisible()
+    await expect(page.locator('.cdp-history-result')).not.toContainText('##')
+  })
+
+  test("a companion job's row shows its target_repo", async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/150/history', r => r.fulfill({ json: { jobs: [
+      {
+        id: 2, status: 'running', target_repo: 'owner/web-repo', branch_name: 'qtask/150-fix-ranking',
+        agent_name: null, result: null, diff_summary: null,
+        checkpoint_matched_paths: null, self_review_flagged: null,
+        depends_on_job_id: 1, resumes_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-02T10:00:00Z', updated_at: null,
+      },
+    ] } }))
+    await openHistoryCard(page)
+
+    await expect(page.locator('.cdp-history-repo')).toContainText('owner/web-repo')
+    await expect(page.locator('.cdp-history-row')).toContainText('Companion')
+  })
+
+  test('diff_summary renders in a monospace block', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/card/150/history', r => r.fulfill({ json: { jobs: [
+      {
+        id: 1, status: 'done', target_repo: null, branch_name: 'qtask/150-fix-ranking',
+        agent_name: 'claude', result: null, diff_summary: 'src/rank.py | 4 +-',
+        checkpoint_matched_paths: null, self_review_flagged: null,
+        depends_on_job_id: null, resumes_job_id: null, fix_comment_ids: null,
+        created_at: '2026-06-02T09:00:00Z', updated_at: '2026-06-02T09:10:00Z',
+      },
+    ] } }))
+    await openHistoryCard(page)
+
+    await expect(page.locator('.cdp-history-diff')).toHaveText('src/rank.py | 4 +-')
   })
 })
 

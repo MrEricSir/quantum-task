@@ -854,6 +854,16 @@ export async function fetchBridgeJobsDashboard() {
   return jobs
 }
 
+// Every bridge job ever run against this card, newest first -- for the card detail panel's
+// Bridge history section (useBridgeJobHistory), not the Code tab's own current/latest chain
+// fetch (getBridgeJobChain elsewhere) or the fleet-wide dashboard above.
+export async function fetchBridgeJobHistory(cardId) {
+  const res = await apiFetch(`/api/bridge/jobs/card/${cardId}/history`)
+  if (!res.ok) throw new Error('Failed to fetch bridge job history')
+  const { jobs } = await res.json()
+  return jobs
+}
+
 export async function queueCompanionJob(cardId, targetRepo, dependsOnJobId) {
   const res = await apiFetch('/api/bridge/jobs', {
     method: 'POST',

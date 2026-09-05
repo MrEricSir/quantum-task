@@ -9,11 +9,22 @@ import descriptionToHtml from '../../lib/descriptionToHtml'
 import { parseGitHubUrl } from '../../lib/github'
 import { getBridgeJobChain, queueFixJob } from '../../api'
 import { useExtractActions } from '../../hooks/useExtractActions'
+import { useBridgeJobHistory } from '../../hooks/useBridgeJobHistory'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
   if (!text) return ''
   return DOMPurify.sanitize(marked.parse(text, { breaks: true }), { ADD_ATTR: ['target', 'rel'] })
+}
+
+// Fresh run / resumed / fix / companion -- resumes and fixes reuse the same branch as the
+// job they continue, so without a label multiple rows for one attempt could read as
+// confusing duplicates rather than the sequence they actually are.
+function bridgeJobKindLabel(job) {
+  if (job.depends_on_job_id) return 'Companion'
+  if (job.fix_comment_ids?.length > 0) return 'Fix applied'
+  if (job.resumes_job_id) return 'Resumed'
+  return 'Fresh run'
 }
 
 export default function CardDetailPanel({
@@ -42,6 +53,9 @@ export default function CardDetailPanel({
   // ── Saved output (view + assist) ──────────────────────────────────────────
   const [savedOutput,   setSavedOutput]   = useState(card?.thread_output ?? null)
   const [copiedOutput,  setCopiedOutput]  = useState(false)
+
+  // ── Bridge history (every job ever run against this card) ────────────────
+  const { jobs: bridgeHistory, refresh: refreshBridgeHistory } = useBridgeJobHistory(card?.id)
 
   // ── Edit / new form state ─────────────────────────────────────────────────
   const [editTitle,          setEditTitle]          = useState('')
@@ -481,6 +495,45 @@ export default function CardDetailPanel({
                 </div>
               )}
 
+              {/* Bridge history */}
+              {bridgeHistory.length > 0 && (
+                <div className="cdp-section">
+                  <div className="cdp-section-label">Bridge history</div>
+                  <div className="cdp-history-list">
+                    {bridgeHistory.map((job) => (
+                      <div key={job.id} className="cdp-history-row">
+                        <span className={`cdp-history-dot cdp-history-dot--${job.status}`} />
+                        <div className="cdp-history-row-body">
+                          <div className="cdp-history-meta">
+                            <span className="cdp-history-kind">{bridgeJobKindLabel(job)}</span>
+                            {job.branch_name && (
+                              <span className="cdp-history-branch">{job.branch_name}</span>
+                            )}
+                            {job.target_repo && (
+                              <span className="cdp-history-repo">→ {job.target_repo}</span>
+                            )}
+                            <span className="cdp-history-time">
+                              {new Date(job.created_at).toLocaleString(undefined, {
+                                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+                          {job.result && (
+                            <div
+                              className="cdp-gh-markdown cdp-history-result"
+                              dangerouslySetInnerHTML={{ __html: renderMarkdown(job.result) }}
+                            />
+                          )}
+                          {job.diff_summary && (
+                            <pre className="cdp-history-diff">{job.diff_summary}</pre>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Tags */}
               {(card.tags ?? []).length > 0 && (
                 <div className="cdp-section">
@@ -581,7 +634,7 @@ export default function CardDetailPanel({
         {mode === 'assist' && card && (
           <AssistModal
             open
-            onClose={() => setMode('view')}
+            onClose={() => { setMode('view'); refreshBridgeHistory() }}
             task={card}
             onBreakdown={onBreakdown}
             onOutputSaved={(output) => setSavedOutput(output)}

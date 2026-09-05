@@ -560,6 +560,124 @@ class TestJobChainAttemptStats:
         assert res["attempts"] == {"number": 1, "prior_count": 0, "prior_failed_count": 0}
 
 
+# ── GET /api/bridge/jobs/card/{id}/history ─────────────────────────────────────
+
+class TestCardJobHistoryEndpoint:
+    """The plain card detail view's Bridge history section -- deliberately flat/unfiltered,
+    unlike /chain (root+companion pairing for CURRENT status) and /dashboard (fleet-wide,
+    24h-windowed). See get_card_job_history's docstring."""
+
+    def _set_updated_at(self, job_id, when):
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.updated_at = when
+            db.commit()
+
+    def test_no_jobs_returns_empty(self, client):
+        card_id = _make_card(spec="s")
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/history")
+        assert res.status_code == 200
+        assert res.json() == {"jobs": []}
+
+    def test_unknown_card_id_returns_empty_not_404(self, client):
+        res = client.get("/api/bridge/jobs/card/999999/history")
+        assert res.status_code == 200
+        assert res.json() == {"jobs": []}
+
+    def test_single_job_appears(self, client):
+        card_id = _make_card(spec="s")
+        job = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()
+        assert len(res["jobs"]) == 1
+        assert res["jobs"][0]["id"] == job["id"]
+        assert res["jobs"][0]["status"] == "pending"
+
+    def test_excludes_large_text_fields(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        entry = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()["jobs"][0]
+        assert "spec_snapshot" not in entry
+        assert "prompt_snapshot" not in entry
+        assert "output" not in entry
+        assert "prompt" not in entry
+        assert "card_id" not in entry
+        assert "card_title" not in entry
+
+    def test_includes_result_diff_summary_and_checkpoint_fields(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/needs-confirmation", json={
+            "result": "Implemented the thing", "diff_summary": "1 file changed",
+            "matched_paths": ["alembic/versions/0001_x.py"], "self_review_flagged": True,
+        })
+
+        entry = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()["jobs"][0]
+        assert entry["result"] == "Implemented the thing"
+        assert entry["diff_summary"] == "1 file changed"
+        assert entry["checkpoint_matched_paths"] == ["alembic/versions/0001_x.py"]
+        assert entry["self_review_flagged"] is True
+
+    def test_newest_job_first(self, client):
+        card_id = _make_card(spec="s")
+        older = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{older}/complete", json={"result": "done"})
+        newer = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()
+        assert [j["id"] for j in res["jobs"]] == [newer, older]
+
+    def test_includes_old_jobs_regardless_of_age(self, client):
+        """Unlike /dashboard, history has no 24h recency window -- old jobs are the point."""
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/complete", json={"result": "done"})
+        self._set_updated_at(job_id, datetime(2020, 1, 1))
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()
+        assert len(res["jobs"]) == 1
+        assert res["jobs"][0]["id"] == job_id
+
+    def test_companion_job_is_included_inline(self, client):
+        card_id = _make_card(spec="s")
+        root = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()
+        companion = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo", "depends_on_job_id": root["id"],
+        }).json()
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()
+        ids = {j["id"] for j in res["jobs"]}
+        assert ids == {root["id"], companion["id"]}
+        companion_entry = next(j for j in res["jobs"] if j["id"] == companion["id"])
+        assert companion_entry["target_repo"] == "owner/web-repo"
+        assert companion_entry["depends_on_job_id"] == root["id"]
+
+    def test_resumed_job_appears_as_its_own_row(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start", json={
+            "branch": "qtask/1-fix", "agent": "work-mac", "worktree_path": "/tmp/wt/1",
+        })
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+        resume = client.post(f"/api/bridge/jobs/{job_id}/resume").json()
+
+        res = client.get(f"/api/bridge/jobs/card/{card_id}/history").json()
+        ids = [j["id"] for j in res["jobs"]]
+        assert job_id in ids
+        assert resume["id"] in ids
+        assert len(ids) == 2
+
+    def test_unrelated_cards_dont_bleed_into_each_others_history(self, client):
+        card_a = _make_card(spec="s")
+        card_b = _make_card(spec="s")
+        job_a = client.post("/api/bridge/jobs", json={"card_id": card_a}).json()["id"]
+        client.post("/api/bridge/jobs", json={"card_id": card_b})
+
+        res = client.get(f"/api/bridge/jobs/card/{card_a}/history").json()
+        assert [j["id"] for j in res["jobs"]] == [job_a]
+
+
 # ── GET /api/bridge/jobs/status ───────────────────────────────────────────────
 
 class TestBridgeJobStatusesEndpoint:

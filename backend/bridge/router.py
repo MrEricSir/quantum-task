@@ -36,6 +36,7 @@ from bridge.jobs import (
     compute_attempt_stats,
     get_bridge_job_statuses,
     get_bridge_jobs_dashboard,
+    get_card_job_history,
     get_checkpoint_patterns,
     save_checkpoint_patterns,
     validate_branch_name,
@@ -648,6 +649,15 @@ def get_card_job_chain(card_id: int, db: Session = Depends(get_db)):
         "companion": _job_response(companion) if companion else None,
         "attempts": compute_attempt_stats(db, card_id),
     }
+
+
+@router.get("/api/bridge/jobs/card/{card_id}/history")
+def get_card_job_history_endpoint(card_id: int, db: Session = Depends(get_db)):
+    """Every bridge job ever run against this card, newest first -- the plain card detail
+    view's Bridge history section, not the Code tab's own current/latest chain above. See
+    get_card_job_history's docstring for why this is flat and unfiltered rather than
+    root/companion-paired or windowed like /chain and /dashboard."""
+    return {"jobs": get_card_job_history(db, card_id)}
 
 
 @router.get("/api/bridge/repos")
