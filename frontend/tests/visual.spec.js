@@ -1413,6 +1413,48 @@ test.describe('engineering page', () => {
     await expect(page.locator('.eng-build-row', { hasText: 'owner/web-repo' })).toBeVisible()
     await expect(page.locator('.eng-build-row', { hasText: 'Blocked' })).toBeVisible()
   })
+
+  test('a build row shows a preview link and screenshot flag when present, and the preview link does not open the card', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [
+      { id: 1, card_id: 1, card_title: 'Daily Engineering Standup', status: 'running',
+        target_repo: null, branch_name: 'qtask/1-standup', agent_name: 'work-mac', result: null,
+        depends_on_job_id: null, resumes_job_id: null,
+        created_at: '2026-06-03T09:00:00Z', updated_at: '2026-06-03T09:05:00Z',
+        preview_status: 'running', preview_url: 'http://localhost:5173', has_screenshot: true },
+    ] } }))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    const row = page.locator('.eng-build-row', { hasText: 'Daily Engineering Standup' })
+    const previewLink = row.locator('.eng-build-preview-link')
+    await expect(previewLink).toBeVisible()
+    await expect(previewLink).toHaveAttribute('href', 'http://localhost:5173')
+    await expect(previewLink).toHaveAttribute('target', '_blank')
+    await expect(row.locator('.eng-build-screenshot-flag')).toBeVisible()
+
+    const [popup] = await Promise.all([
+      page.context().waitForEvent('page'),
+      previewLink.click(),
+    ])
+    await popup.close()
+    await expect(page.locator('.cdp-title')).toHaveCount(0)
+  })
+
+  test('a build row hides the preview link and screenshot flag when absent', async ({ page }) => {
+    await page.route('**/api/bridge/jobs/dashboard', r => r.fulfill({ json: { jobs: [
+      { id: 1, card_id: 1, card_title: 'Daily Engineering Standup', status: 'running',
+        target_repo: null, branch_name: 'qtask/1-standup', agent_name: 'work-mac', result: null,
+        depends_on_job_id: null, resumes_job_id: null,
+        created_at: '2026-06-03T09:00:00Z', updated_at: '2026-06-03T09:05:00Z',
+        preview_status: null, preview_url: null, has_screenshot: false },
+    ] } }))
+    await page.goto('/engineering')
+    await waitForApp(page)
+
+    const row = page.locator('.eng-build-row', { hasText: 'Daily Engineering Standup' })
+    await expect(row.locator('.eng-build-preview-link')).toHaveCount(0)
+    await expect(row.locator('.eng-build-screenshot-flag')).toHaveCount(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -4019,6 +4061,12 @@ test.describe('card detail panel — github and spec', () => {
     await expect(page.locator('.cdp-bridge-checkpoint-paths')).toContainText('alembic/versions/0001_add_x.py')
     await expect(page.getByRole('button', { name: /mark reviewed/i })).toBeVisible()
     await expect(page.locator('.cdp-bridge-resume-btn').filter({ hasText: /resume/i })).toHaveCount(0)
+
+    const reviewGroup = page.locator('.cdp-bridge-group--review')
+    await expect(reviewGroup).toBeVisible()
+    await expect(reviewGroup).toContainText(/needs review/i)
+    await expect(reviewGroup.locator('.cdp-bridge-checkpoint-paths')).toBeVisible()
+    await expect(reviewGroup.getByRole('button', { name: /mark reviewed/i })).toBeVisible()
   })
 
   test('clicking Mark reviewed acknowledges the job and updates the status', async ({ page }) => {

@@ -870,6 +870,40 @@
   min-width: 0;
 }
 
+.cdp-bridge-group {
+  margin-top: 6px;
+}
+
+.cdp-bridge-status-body > .cdp-bridge-group:first-child {
+  margin-top: 0;
+}
+
+.cdp-bridge-group-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #f59e0b;
+  opacity: 0.85;
+  margin-bottom: 3px;
+}
+
+.cdp-bridge-group--review {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 2px solid rgba(245, 158, 11, 0.5);
+}
+
+.cdp-bridge-group--review .cdp-bridge-checkpoint-paths,
+.cdp-bridge-group--review .cdp-bridge-self-review-flag {
+  margin-top: 0;
+}
+
+.cdp-bridge-group--review .cdp-bridge-checkpoint-paths + .cdp-bridge-self-review-flag {
+  margin-top: 4px;
+}
+
 .cdp-bridge-branch {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 10px;

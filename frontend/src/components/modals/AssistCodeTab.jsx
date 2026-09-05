@@ -106,104 +106,118 @@ export default function AssistCodeTab({ code }) {
         <div className={`cdp-bridge-status cdp-bridge-status--${bridgeJob.status}`}>
           <span className="cdp-bridge-dot" />
           <div className="cdp-bridge-status-body">
-            <span className="cdp-bridge-label">
-              {bridgeJob.status === 'pending'  && (
-                bridgeJob.fix_comment_ids?.length > 0 ? 'Queued — waiting for agent to apply fixes…'
-                : bridgeJob.resumes_job_id ? 'Queued — waiting for agent to resume…'
-                : 'Queued — waiting for agent…'
-              )}
-              {bridgeJob.status === 'running'  && (
-                bridgeJob.fix_comment_ids?.length > 0 ? 'Applying fixes…'
-                : bridgeJob.resumes_job_id ? 'Resuming previous session…'
-                : 'Claude Code running…'
-              )}
-              {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
-              {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
-              {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
-              {bridgeJob.status === 'blocked'  && 'Waiting on another job to finish…'}
-              {bridgeJob.status === 'needs_confirmation' && (
-                bridgeJob.result || (
-                  bridgeJob.self_review_flagged
-                    ? 'Finished — self-review flagged possible issues, needs your review'
-                    : 'Finished — touched a flagged path, needs your review'
-                )
-              )}
-            </span>
-            {formatAttemptStats(attemptStats) && (
-              <span
-                className={`cdp-bridge-attempts${attemptStats.prior_failed_count > 0 ? ' cdp-bridge-attempts--failed' : ''}`}
-              >
-                {formatAttemptStats(attemptStats)}
+            <div className="cdp-bridge-group cdp-bridge-group--status">
+              <span className="cdp-bridge-label">
+                {bridgeJob.status === 'pending'  && (
+                  bridgeJob.fix_comment_ids?.length > 0 ? 'Queued — waiting for agent to apply fixes…'
+                  : bridgeJob.resumes_job_id ? 'Queued — waiting for agent to resume…'
+                  : 'Queued — waiting for agent…'
+                )}
+                {bridgeJob.status === 'running'  && (
+                  bridgeJob.fix_comment_ids?.length > 0 ? 'Applying fixes…'
+                  : bridgeJob.resumes_job_id ? 'Resuming previous session…'
+                  : 'Claude Code running…'
+                )}
+                {bridgeJob.status === 'done'     && (bridgeJob.result || 'Complete')}
+                {bridgeJob.status === 'error'    && `Error: ${bridgeJob.result}`}
+                {bridgeJob.status === 'stalled'  && 'Agent went quiet — may have crashed or lost network'}
+                {bridgeJob.status === 'blocked'  && 'Waiting on another job to finish…'}
+                {bridgeJob.status === 'needs_confirmation' && (
+                  bridgeJob.result || (
+                    bridgeJob.self_review_flagged
+                      ? 'Finished — self-review flagged possible issues, needs your review'
+                      : 'Finished — touched a flagged path, needs your review'
+                  )
+                )}
               </span>
-            )}
-            {bridgeJob.status === 'needs_confirmation' && bridgeJob.checkpoint_matched_paths?.length > 0 && (
-              <ul className="cdp-bridge-checkpoint-paths">
-                {bridgeJob.checkpoint_matched_paths.map((path) => <li key={path}>{path}</li>)}
-              </ul>
-            )}
-            {bridgeJob.status === 'needs_confirmation' && bridgeJob.self_review_flagged && (
-              <div className="cdp-bridge-self-review-flag">⚠ Self-review flagged possible issues</div>
-            )}
-            {bridgeJob.branch_name && (
-              <span className="cdp-bridge-branch">
-                {bridgeJob.branch_name}
-                {bridgeJob.agent_name && <span className="cdp-bridge-agent"> · {bridgeJob.agent_name}</span>}
-              </span>
-            )}
-            {bridgeJob.worktree_path && (
-              <div className="cdp-bridge-worktree">
-                <span className="cdp-bridge-worktree-path" title={bridgeJob.worktree_path}>
-                  {bridgeJob.worktree_path}
+              {formatAttemptStats(attemptStats) && (
+                <span
+                  className={`cdp-bridge-attempts${attemptStats.prior_failed_count > 0 ? ' cdp-bridge-attempts--failed' : ''}`}
+                >
+                  {formatAttemptStats(attemptStats)}
                 </span>
+              )}
+              {(bridgeJob.status === 'error' || bridgeJob.status === 'stalled') && bridgeJob.worktree_path && (
                 <button
                   type="button"
-                  className="cdp-bridge-worktree-copy"
-                  onClick={handleCopyWorktreePath}
-                  title="Copy path"
+                  className="cdp-gh-btn cdp-bridge-resume-btn"
+                  onClick={handleResumeJob}
+                  disabled={resumeQueuing}
+                  title="Resume in the same worktree, picking up where the session left off"
                 >
-                  {copiedWorktree ? <CheckIcon /> : <CopyIcon />}
+                  {resumeQueuing ? 'Queuing…' : '↻ Resume'}
+                </button>
+              )}
+            </div>
+
+            {bridgeJob.status === 'needs_confirmation' && (
+              <div className="cdp-bridge-group cdp-bridge-group--review">
+                <div className="cdp-bridge-group-label">Needs review</div>
+                {bridgeJob.checkpoint_matched_paths?.length > 0 && (
+                  <ul className="cdp-bridge-checkpoint-paths">
+                    {bridgeJob.checkpoint_matched_paths.map((path) => <li key={path}>{path}</li>)}
+                  </ul>
+                )}
+                {bridgeJob.self_review_flagged && (
+                  <div className="cdp-bridge-self-review-flag">⚠ Self-review flagged possible issues</div>
+                )}
+                <button
+                  type="button"
+                  className="cdp-gh-btn cdp-bridge-resume-btn"
+                  onClick={handleAcknowledgeCheckpoint}
+                  disabled={acknowledging}
+                  title="I've reviewed the flagged changes — mark this job done"
+                >
+                  {acknowledging ? 'Marking…' : '✓ Mark reviewed'}
                 </button>
               </div>
             )}
-            {bridgeJob.preview_status && (
-              <div className="cdp-bridge-preview">
-                {bridgeJob.preview_status === 'starting' && <span>Preview starting…</span>}
-                {bridgeJob.preview_status === 'running' && bridgeJob.preview_url && (
-                  <a href={bridgeJob.preview_url} target="_blank" rel="noreferrer">🔗 Preview</a>
+
+            {(bridgeJob.branch_name || bridgeJob.worktree_path) && (
+              <div className="cdp-bridge-group cdp-bridge-group--location">
+                {bridgeJob.branch_name && (
+                  <span className="cdp-bridge-branch">
+                    {bridgeJob.branch_name}
+                    {bridgeJob.agent_name && <span className="cdp-bridge-agent"> · {bridgeJob.agent_name}</span>}
+                  </span>
                 )}
-                {bridgeJob.preview_status === 'failed' && <span>Preview failed to start</span>}
-                {bridgeJob.preview_status === 'stopped' && <span>Preview stopped</span>}
+                {bridgeJob.worktree_path && (
+                  <div className="cdp-bridge-worktree">
+                    <span className="cdp-bridge-worktree-path" title={bridgeJob.worktree_path}>
+                      {bridgeJob.worktree_path}
+                    </span>
+                    <button
+                      type="button"
+                      className="cdp-bridge-worktree-copy"
+                      onClick={handleCopyWorktreePath}
+                      title="Copy path"
+                    >
+                      {copiedWorktree ? <CheckIcon /> : <CopyIcon />}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
-            {bridgeJob.preview_status === 'running' && bridgeJob.screenshot_data && (
-              <div className="cdp-bridge-screenshot">
-                <img
-                  src={`data:image/png;base64,${bridgeJob.screenshot_data}`}
-                  alt="Preview screenshot"
-                />
+
+            {bridgeJob.preview_status && (
+              <div className="cdp-bridge-group cdp-bridge-group--preview">
+                <div className="cdp-bridge-preview">
+                  {bridgeJob.preview_status === 'starting' && <span>Preview starting…</span>}
+                  {bridgeJob.preview_status === 'running' && bridgeJob.preview_url && (
+                    <a href={bridgeJob.preview_url} target="_blank" rel="noreferrer">🔗 Preview</a>
+                  )}
+                  {bridgeJob.preview_status === 'failed' && <span>Preview failed to start</span>}
+                  {bridgeJob.preview_status === 'stopped' && <span>Preview stopped</span>}
+                </div>
+                {bridgeJob.preview_status === 'running' && bridgeJob.screenshot_data && (
+                  <div className="cdp-bridge-screenshot">
+                    <img
+                      src={`data:image/png;base64,${bridgeJob.screenshot_data}`}
+                      alt="Preview screenshot"
+                    />
+                  </div>
+                )}
               </div>
-            )}
-            {(bridgeJob.status === 'error' || bridgeJob.status === 'stalled') && bridgeJob.worktree_path && (
-              <button
-                type="button"
-                className="cdp-gh-btn cdp-bridge-resume-btn"
-                onClick={handleResumeJob}
-                disabled={resumeQueuing}
-                title="Resume in the same worktree, picking up where the session left off"
-              >
-                {resumeQueuing ? 'Queuing…' : '↻ Resume'}
-              </button>
-            )}
-            {bridgeJob.status === 'needs_confirmation' && (
-              <button
-                type="button"
-                className="cdp-gh-btn cdp-bridge-resume-btn"
-                onClick={handleAcknowledgeCheckpoint}
-                disabled={acknowledging}
-                title="I've reviewed the flagged changes — mark this job done"
-              >
-                {acknowledging ? 'Marking…' : '✓ Mark reviewed'}
-              </button>
             )}
           </div>
         </div>

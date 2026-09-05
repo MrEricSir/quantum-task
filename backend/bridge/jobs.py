@@ -26,6 +26,25 @@ _ACTIVE_JOB_STATUSES = ("pending", "running", "blocked", "needs_confirmation")
 _DASHBOARD_RECENT_WINDOW = timedelta(hours=24)
 
 
+def _claim_job_if_still_pending(db: Session, job_id: int) -> bool:
+    """Atomically flips one job pending -> running, conditioned on it still being
+    pending at the moment this UPDATE actually runs -- not just when it was read.
+
+    Two bridge instances (or two overlapping --watch/--tag/--card invocations) can
+    both SELECT the same pending job before either commits; without a WHERE guard
+    on the write itself, both would flip it to running and both would start work
+    on it. The `status="pending"` condition here makes the write a no-op (rowcount
+    0) for whichever caller loses the race, so GET /api/bridge/jobs/next/pending
+    can fall through to the next candidate instead of double-claiming."""
+    updated = (
+        db.query(models.BridgeJob)
+        .filter_by(id=job_id, status="pending")
+        .update({"status": "running", "updated_at": datetime.now(timezone.utc)})
+    )
+    db.commit()
+    return updated > 0
+
+
 def get_checkpoint_patterns(db: Session) -> list[str]:
     """Return the configured checkpoint glob patterns. Same newline-joined storage
     convention as github_sync.get_config's repos list. Empty list (the default) means
@@ -326,6 +345,9 @@ def get_bridge_jobs_dashboard(db: Session) -> list[dict]:
             "resumes_job_id": job.resumes_job_id,
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+            "preview_status": job.preview_status,
+            "preview_url": job.preview_url,
+            "has_screenshot": job.screenshot_data is not None,
         }
         for job in jobs
     ]

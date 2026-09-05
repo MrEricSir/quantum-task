@@ -28,6 +28,7 @@ import models
 import app_setting_keys as setting_keys
 from bridge.jobs import (
     _build_prompt,
+    _claim_job_if_still_pending,
     _get_bridge_install_token,
     _get_bridge_token,
     _job_response,
@@ -370,7 +371,18 @@ def get_next_pending(repos: str = Query(None), db: Session = Depends(get_db)):
                     models.BridgeJob.target_repo.is_(None),
                 )
             )
-    job = query.order_by(models.BridgeJob.created_at).first()
+    # Pre-fetch several candidates, then claim them one at a time with an atomic
+    # conditional UPDATE -- another poller may have grabbed the top candidate in
+    # the gap between this SELECT and our own claim attempt, so a plain "read
+    # then unconditionally write running" would risk two pollers both walking
+    # away with the same job. See _claim_job_if_still_pending.
+    candidates = query.order_by(models.BridgeJob.created_at).limit(20).all()
+    job = None
+    for candidate in candidates:
+        if _claim_job_if_still_pending(db, candidate.id):
+            db.refresh(candidate)
+            job = candidate
+            break
     if not job:
         return {"job": None}
 
@@ -386,11 +398,8 @@ def get_next_pending(repos: str = Query(None), db: Session = Depends(get_db)):
                 .first()
             )
         job.prompt_snapshot = _build_prompt(card, eng_item)
-
-    job.status = "running"
-    job.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(job)
+        db.commit()
+        db.refresh(job)
 
     return {
         "job": {

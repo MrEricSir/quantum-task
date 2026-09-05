@@ -66,6 +66,21 @@ function BuildRow({ job, card, onOpenCard }) {
         {job.branch_name && <span className="eng-build-branch">{job.branch_name}</span>}
         {job.target_repo && <span className="eng-build-repo">{job.target_repo}</span>}
         <span className="eng-build-time">{formatRelativeTime(job.updated_at || job.created_at)}</span>
+        {job.preview_status === 'running' && job.preview_url && (
+          <a
+            href={job.preview_url}
+            target="_blank"
+            rel="noreferrer"
+            className="eng-build-preview-link"
+            onClick={(e) => e.stopPropagation()}
+            title="Open live preview"
+          >
+            🔗 Preview
+          </a>
+        )}
+        {job.has_screenshot && (
+          <span className="eng-build-screenshot-flag" title="Screenshot captured">🖼</span>
+        )}
       </span>
     </div>
   )

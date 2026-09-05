@@ -398,3 +398,17 @@
   flex-shrink: 0;
   margin-left: auto;
 }
+
+.eng-build-preview-link {
+  flex-shrink: 0;
+  color: #34d399;
+  text-decoration: none;
+}
+
+.eng-build-preview-link:hover {
+  text-decoration: underline;
+}
+
+.eng-build-screenshot-flag {
+  flex-shrink: 0;
+}

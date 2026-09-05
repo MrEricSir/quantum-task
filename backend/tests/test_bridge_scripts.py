@@ -33,6 +33,7 @@ import base64
 import http.server
 import io
 import json
+import re
 import signal
 import socket
 import subprocess
@@ -541,6 +542,21 @@ class TestServedScriptsCompile:
         assert "command not found" not in result.stderr
         assert "syntax error" not in result.stderr
         assert "Config not found" in result.stdout or "Config not found" in result.stderr
+
+    def test_every_registered_flag_is_mentioned_in_the_usage_docstring(self, client):
+        """Regression guard: --stop-preview was registered in argparse but never added to
+        the module's own top-of-file Usage docstring, so `--help` documented it but a human
+        skimming the file header for "what commands exist" would never find it. Parses the
+        actual argparse setup in the served script (not a hardcoded list here, which would
+        just drift the same way the docstring itself did) and checks each --flag string
+        appears somewhere in the docstring."""
+        res = client.get("/api/bridge/agent.py")
+        text = res.text
+        docstring = text.split('"""')[1]
+        flags = re.findall(r'add_argument\("(--[a-z-]+)"', text)
+        assert flags, "no --flags found via add_argument -- regex likely stale"
+        missing = [f for f in flags if f not in docstring]
+        assert missing == [], f"flag(s) registered but missing from the Usage docstring: {missing}"
 
 
 class TestBridgeScriptsExemptFromAuth:

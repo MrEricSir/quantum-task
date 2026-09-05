@@ -19,6 +19,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import importlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -30,6 +31,12 @@ from sqlalchemy.pool import StaticPool
 import models
 from main import app
 from deps import get_db
+
+# bridge/__init__.py does `from bridge.router import router`, which reassigns the
+# `bridge.router` package attribute to the APIRouter instance itself -- a plain
+# `import bridge.router` would hand back that instance, not the module, once
+# `bridge` has been imported anywhere else first (it always has, via main.py).
+bridge_router = importlib.import_module("bridge.router")
 
 
 # ── In-memory DB ──────────────────────────────────────────────────────────────
@@ -916,6 +923,29 @@ class TestBridgeJobsDashboardEndpoint:
         titles = {j["card_title"] for j in res["jobs"]}
         assert titles == {"Card A", "Card B"}
 
+    def test_includes_preview_and_screenshot_fields_without_leaking_raw_screenshot_data(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/preview", json={
+            "status": "running", "url": "http://localhost:5173",
+        })
+        client.post(f"/api/bridge/jobs/{job_id}/screenshot", json={"image_base64": "aGVsbG8="})
+
+        entry = client.get("/api/bridge/jobs/dashboard").json()["jobs"][0]
+        assert entry["preview_status"] == "running"
+        assert entry["preview_url"] == "http://localhost:5173"
+        assert entry["has_screenshot"] is True
+        assert "screenshot_data" not in entry
+
+    def test_preview_fields_are_null_and_no_screenshot_when_neither_set(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        entry = client.get("/api/bridge/jobs/dashboard").json()["jobs"][0]
+        assert entry["preview_status"] is None
+        assert entry["preview_url"] is None
+        assert entry["has_screenshot"] is False
+
 
 # ── GET /api/bridge/repos ────────────────────────────────────────────────────
 
@@ -1114,6 +1144,71 @@ class TestGetNextPending:
 
         res = client.get("/api/bridge/jobs/next/pending")
         assert res.json()["job"] is None
+
+    def test_two_pollers_racing_the_same_job_do_not_double_claim(self, client, monkeypatch):
+        """Regression test for a real TOCTOU race: two bridge instances (or two
+        overlapping --watch/--tag/--card invocations) can both SELECT the same
+        pending job before either commits. Simulates a second poller's own DB
+        session winning that race and claiming the job first, via its own
+        independent session -- through its own independent session, right
+        between this request's candidate SELECT and its own claim attempt --
+        and asserts this request falls through cleanly (returns null) rather
+        than clobbering the other poller's claim or erroring."""
+        card_id = _make_card(spec="spec")
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+
+        real_claim = bridge_router._claim_job_if_still_pending
+        call_count = []
+
+        def racing_claim(db, claimed_job_id):
+            call_count.append(claimed_job_id)
+            with TestSession() as other_db:
+                other_db.query(models.BridgeJob).filter_by(
+                    id=claimed_job_id, status="pending",
+                ).update({"status": "running"})
+                other_db.commit()
+            return real_claim(db, claimed_job_id)
+
+        monkeypatch.setattr(bridge_router, "_claim_job_if_still_pending", racing_claim)
+
+        res = client.get("/api/bridge/jobs/next/pending")
+        assert res.json()["job"] is None
+        assert call_count == [job_id]
+
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            assert job.status == "running"
+
+    def test_claim_falls_through_to_the_next_candidate_if_the_first_is_already_taken(self, client, monkeypatch):
+        """Same race as above, but with a second pending job available -- this
+        poller should walk away with THAT job instead of returning null, proving
+        the fallthrough (not just the no-double-claim guard) actually works."""
+        card_a = _make_card("First", spec="s1")
+        card_b = _make_card("Second", spec="s2")
+        job_a_id = client.post("/api/bridge/jobs", json={"card_id": card_a}).json()["id"]
+        job_b_id = client.post("/api/bridge/jobs", json={"card_id": card_b}).json()["id"]
+
+        real_claim = bridge_router._claim_job_if_still_pending
+        stolen = []
+
+        def racing_claim(db, claimed_job_id):
+            if claimed_job_id == job_a_id and not stolen:
+                stolen.append(claimed_job_id)
+                with TestSession() as other_db:
+                    other_db.query(models.BridgeJob).filter_by(
+                        id=job_a_id, status="pending",
+                    ).update({"status": "running"})
+                    other_db.commit()
+            return real_claim(db, claimed_job_id)
+
+        monkeypatch.setattr(bridge_router, "_claim_job_if_still_pending", racing_claim)
+
+        res = client.get("/api/bridge/jobs/next/pending")
+        assert res.json()["job"]["id"] == job_b_id
+
+        with TestSession() as db:
+            assert db.query(models.BridgeJob).filter_by(id=job_a_id).first().status == "running"
+            assert db.query(models.BridgeJob).filter_by(id=job_b_id).first().status == "running"
 
     def test_lazy_prompt_build_for_telegram_queued_job(self, client):
         """Jobs queued via Telegram have no prompt_snapshot — it should be built lazily."""

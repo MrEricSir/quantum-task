@@ -19,6 +19,8 @@ Usage:
                               configured run_cmd
   qtask-bridge --review [NAME]  Read-only lead-engineer-style review of a resolved
                               qtask worktree's changes
+  qtask-bridge --stop-preview [NAME]  Stop an auto_preview process previously started for
+                              a resolved qtask worktree (cwd, last one, or a branch fragment)
   qtask-bridge --unlock-push Clear a stuck no_push sentinel on the current repo's
                               remote.origin.pushurl, left behind by an interrupted job
   qtask-bridge --lock-push   Manually set the no_push sentinel on the current repo,
