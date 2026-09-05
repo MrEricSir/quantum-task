@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs
+from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, utc_offset_minutes
 
 router = APIRouter()
 
@@ -282,9 +282,13 @@ def _health_insights(db: Session, today: date) -> list[dict]:
     return results
 
 
-def _completion_time_insight(db: Session) -> dict | None:
+def _completion_time_insight(db: Session, utc_offset_minutes: int) -> dict | None:
     """Surface the user's peak task-completion window (morning/afternoon/evening).
-    Requires 20+ completions to avoid noise."""
+    Requires 20+ completions to avoid noise.
+
+    `Card.completed_at` is stored as a UTC instant (see models.py's docstring) — bucketing
+    by its raw hour would use the SERVER's UTC hour, not the user's own clock, so every
+    completion is shifted to local time first via the client's UTC offset before bucketing."""
     ninety_ago = datetime.now(timezone.utc) - timedelta(days=90)
     completed = (
         db.query(models.Card.completed_at)
@@ -295,7 +299,8 @@ def _completion_time_insight(db: Session) -> dict | None:
         )
         .all()
     )
-    hours = [row.completed_at.hour for row in completed]
+    offset = timedelta(minutes=utc_offset_minutes)
+    hours = [(row.completed_at - offset).hour for row in completed]
     if len(hours) < 20:
         return None
 
@@ -399,7 +404,7 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
     health = _health_insights(db, today)
 
     # ── Completion time pattern (template text — no LLM) ─────────────────────
-    pattern = _completion_time_insight(db)
+    pattern = _completion_time_insight(db, utc_offset_minutes(request))
 
     if not stuck_cards and not low_habits and not health and not pattern:
         _response_cache[today_str] = (time.monotonic(), [])

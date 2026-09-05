@@ -3,18 +3,28 @@ Tests for routers/insights.py's _generate_texts -- previously had zero test cove
 anywhere in the codebase. Scoped to the LLM-reliability/error-handling fix applied here
 (reasoning_effort, and logging a failure instead of silently swallowing it) -- not a full
 audit of insights.py.
+
+TestCompletionTimeInsight covers a separate, later fix: _completion_time_insight bucketed
+Card.completed_at (a UTC-instant column, per models.py's own documented convention) by its
+raw hour, never converting to the client's local time -- so the morning/afternoon/evening
+label was computed from the wrong hours for any user not at UTC+0.
 """
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+import models
 import routers.insights as insights
-from routers.insights import _generate_texts
+from routers.insights import _completion_time_insight, _generate_texts
 
 
 @pytest.fixture(autouse=True)
@@ -89,3 +99,69 @@ class TestGenerateTexts:
             _generate_texts(["pattern A"])
 
         assert mock_client.chat.completions.create.call_count == 1
+
+
+# ── _completion_time_insight ────────────────────────────────────────────────────
+
+test_engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture(autouse=True)
+def setup_db():
+    models.Base.metadata.create_all(bind=test_engine)
+    yield
+    models.Base.metadata.drop_all(bind=test_engine)
+
+
+@pytest.fixture
+def db():
+    session = TestingSessionLocal()
+    yield session
+    session.close()
+
+
+def _add_completed_cards(db, utc_hours):
+    """One completed Card per hour in utc_hours, all well within the 90-day window."""
+    base_day = datetime.now(timezone.utc) - timedelta(days=1)
+    for i, hour in enumerate(utc_hours):
+        db.add(models.Card(
+            title=f"Task {i}",
+            completed=True,
+            completed_at=base_day.replace(hour=hour, minute=0, second=0, microsecond=0),
+        ))
+    db.commit()
+
+
+class TestCompletionTimeInsight:
+
+    def test_returns_none_with_fewer_than_20_completions(self, db):
+        _add_completed_cards(db, [20] * 19)
+        assert _completion_time_insight(db, utc_offset_minutes=0) is None
+
+    def test_zero_offset_buckets_by_raw_utc_hour(self, db):
+        """Baseline/regression check: a UTC+0 client's local hour IS the raw UTC hour, so
+        the fix must not change behavior for this case."""
+        _add_completed_cards(db, [20] * 20)  # 20:00 UTC, 20x -> "evening" bucket
+        result = _completion_time_insight(db, utc_offset_minutes=0)
+        assert result["peak_window"] == "evening"
+
+    def test_converts_to_local_time_before_bucketing(self, db):
+        """The actual bug: 20:00 UTC reads as evening (18-23) if bucketed raw, but for a
+        client 10 hours behind UTC (e.g. US Hawaii/UTC-10, offset=+600 per deps.py's
+        utc_offset_minutes convention) it's 10:00 local -- morning, not evening."""
+        _add_completed_cards(db, [20] * 20)
+        result = _completion_time_insight(db, utc_offset_minutes=600)
+        assert result["peak_window"] == "morning"
+
+    def test_local_time_conversion_can_cross_midnight(self, db):
+        """2:00 UTC is 21:00 (evening) the PREVIOUS local day for a client 5 hours behind
+        UTC (US Eastern/UTC-5, offset=+300 per deps.py's convention) -- the naive
+        subtraction must still land in the right bucket across the day boundary."""
+        _add_completed_cards(db, [2] * 20)
+        result = _completion_time_insight(db, utc_offset_minutes=300)
+        assert result["peak_window"] == "evening"

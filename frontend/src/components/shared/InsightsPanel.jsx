@@ -3,14 +3,14 @@ import { fetchInsights, updateCard } from '../../api'
 import { CollapseBody } from '../layout/Collapsible'
 import './InsightsPanel.css'
 
-// ── Habit snooze via localStorage ─────────────────────────────────────────────
+// ── Insight snooze via localStorage (habit_trend + completion_pattern) ────────
 const SNOOZE_KEY = 'insights_snooze'
 
 function getSnoozed() {
   try { return JSON.parse(localStorage.getItem(SNOOZE_KEY) || '{}') } catch { return {} }
 }
 
-function snoozeHabitInsight(key, days) {
+function snoozeInsight(key, days) {
   const map = getSnoozed()
   const d = new Date()
   d.setDate(d.getDate() + days)
@@ -18,11 +18,17 @@ function snoozeHabitInsight(key, days) {
   localStorage.setItem(SNOOZE_KEY, JSON.stringify(map))
 }
 
-function isHabitSnoozed(key) {
+function isSnoozed(key) {
   const exp = getSnoozed()[key]
   if (!exp) return false
   return exp >= new Date().toISOString().slice(0, 10)
 }
+
+// completion_pattern is a stable, slow-changing observation (90-day rolling window) with
+// no snooze-duration picker of its own -- dismissing it snoozes it directly for this long
+// rather than just hiding it for the current page session, which was the actual bug (it
+// reappeared on every reload since nothing was ever persisted for this insight type).
+const COMPLETION_PATTERN_SNOOZE_DAYS = 30
 
 const SNOOZE_OPTIONS = [
   { label: '3 days', days: 3 },
@@ -193,7 +199,7 @@ function HabitInsight({ insight, onDismiss }) {
   const [showSnooze, setShowSnooze] = useState(false)
 
   const handleSnooze = (days) => {
-    snoozeHabitInsight(key, days)
+    snoozeInsight(key, days)
     onDismiss(key)
   }
 
@@ -239,6 +245,12 @@ function HabitInsight({ insight, onDismiss }) {
 function CompletionPatternInsight({ insight, onDismiss }) {
   const { text, peak_window } = insight
   const key = insightKey(insight)
+
+  const handleDismiss = () => {
+    snoozeInsight(key, COMPLETION_PATTERN_SNOOZE_DAYS)
+    onDismiss(key)
+  }
+
   return (
     <div className="insight-card insight-card--pattern">
       <div className="insight-header">
@@ -249,7 +261,7 @@ function CompletionPatternInsight({ insight, onDismiss }) {
         </div>
         <button
           className="insight-dismiss"
-          onClick={() => onDismiss(key)}
+          onClick={handleDismiss}
           title="Dismiss"
         >
           &#10005;
@@ -321,7 +333,7 @@ export default function InsightsPanel({ refreshKey, onArchive, cards, habits }) 
   const visible = useMemo(() =>
     insights.filter((ins) => {
       if (dismissed.has(insightKey(ins))) return false
-      if (ins.type === 'habit_trend' && isHabitSnoozed(insightKey(ins))) return false
+      if ((ins.type === 'habit_trend' || ins.type === 'completion_pattern') && isSnoozed(insightKey(ins))) return false
       if (ins.type === 'stuck_task' && cards && !cards.some((c) => c.id === ins.card.id)) return false
       if (ins.type === 'habit_trend' && habits && !habits.some((h) => h.id === ins.habit_id)) return false
       return true

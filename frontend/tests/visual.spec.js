@@ -3446,29 +3446,56 @@ test.describe('insights panel — habit snooze', () => {
 // Insights panel — completion pattern insight
 // ---------------------------------------------------------------------------
 test.describe('insights panel — completion pattern', () => {
-  test('completion pattern insight is shown with green accent', async ({ page }) => {
-    await page.route('**/api/insights', r => r.fulfill({ json: [{
-      type: 'completion_pattern',
-      text: 'You finish most tasks before noon — protect your mornings from meetings.',
-      peak_window: 'morning',
-      peak_pct: 0.62,
-    }]}))
+  const PATTERN_INSIGHT = {
+    type: 'completion_pattern',
+    text: 'You finish most tasks before noon — protect your mornings from meetings.',
+    peak_window: 'morning',
+    peak_pct: 0.62,
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/insights', r => r.fulfill({ json: [PATTERN_INSIGHT] }))
+    await page.addInitScript(() => localStorage.removeItem('insights_snooze'))
     await page.goto('/today')
     await waitForApp(page)
+  })
+
+  test('completion pattern insight is shown with green accent', async ({ page }) => {
     await expect(page.locator('.insight-card--pattern')).toBeVisible()
     await expect(page.getByText(/protect your mornings/i)).toBeVisible()
   })
 
   test('completion pattern insight can be dismissed', async ({ page }) => {
-    await page.route('**/api/insights', r => r.fulfill({ json: [{
-      type: 'completion_pattern',
-      text: 'You finish most tasks before noon — protect your mornings from meetings.',
-      peak_window: 'morning',
-      peak_pct: 0.62,
-    }]}))
+    await page.locator('.insight-card--pattern .insight-dismiss').click()
+    await expect(page.locator('.insight-card--pattern')).toHaveCount(0)
+  })
+
+  test('dismissing persists a 30-day snooze to localStorage', async ({ page }) => {
+    await page.locator('.insight-card--pattern .insight-dismiss').click()
+    const stored = await page.evaluate(() => localStorage.getItem('insights_snooze'))
+    expect(stored).not.toBeNull()
+    const parsed = JSON.parse(stored)
+    expect(Object.keys(parsed)).toContain('pattern-morning')
+    // Compare against the app's frozen clock (2026-06-03T10:00:00, set in
+    // waitForApp), not the real wall-clock time -- Playwright's page.clock only
+    // fakes Date inside the page, not this test file's own Node-side `new Date()`.
+    const frozenNow = new Date('2026-06-03T10:00:00')
+    const expiry = new Date(parsed['pattern-morning'])
+    const daysOut = Math.round((expiry - frozenNow) / 86400000)
+    expect(daysOut).toBeGreaterThanOrEqual(29)
+    expect(daysOut).toBeLessThanOrEqual(30)
+  })
+
+  test('dismissed completion pattern insight does not reappear on page reload', async ({ page }) => {
+    const futureDate = new Date()
+    futureDate.setDate(futureDate.getDate() + 30)
+    const exp = futureDate.toISOString().slice(0, 10)
+    // Register AFTER the beforeEach removeItem script so it runs second and wins
+    await page.addInitScript((exp) => {
+      localStorage.setItem('insights_snooze', JSON.stringify({ 'pattern-morning': exp }))
+    }, exp)
     await page.goto('/today')
     await waitForApp(page)
-    await page.locator('.insight-card--pattern .insight-dismiss').click()
     await expect(page.locator('.insight-card--pattern')).toHaveCount(0)
   })
 })
