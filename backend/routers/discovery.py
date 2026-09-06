@@ -157,9 +157,13 @@ def _attach_geocoded_locations(events: list[dict]) -> None:
     """Mutate each event dict in place, adding location_lat/location_lon (float or None)."""
     for ev in events:
         location = (ev.get("location") or "").strip()
-        ev["location_lat"], ev["location_lon"] = (
-            _geocode_location(location) if location else (None, None)
-        )
+        # _geocode_location returns None (not a 2-tuple) when it can't resolve the address
+        # (Nominatim has no match, times out, errors, or is rate-limiting this server) --
+        # unpacking that bare None directly used to raise "cannot unpack non-iterable
+        # NoneType object" and abort processing for the ENTIRE feed over a single
+        # unresolvable location, not just leave that one event's coordinates blank.
+        coords = _geocode_location(location) if location else None
+        ev["location_lat"], ev["location_lon"] = coords if coords else (None, None)
 
 
 def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

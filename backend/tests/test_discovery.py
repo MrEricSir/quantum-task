@@ -784,6 +784,50 @@ class TestGeocodeLocation:
         assert mock_get.call_count == 1
 
 
+class TestAttachGeocodedLocations:
+    """_geocode_location returns a bare None (not a 2-tuple) whenever it can't resolve an
+    address -- no match, a timeout, a network error, or Nominatim rate-limiting this server.
+    _attach_geocoded_locations used to unpack that return value directly, which raised
+    "cannot unpack non-iterable NoneType object" and aborted processing for the entire feed
+    over a single unresolvable location, not just leave that one event's coordinates blank."""
+
+    def test_resolvable_location_gets_coordinates(self):
+        events = [_geo_event("Show", "San Francisco, CA")]
+        with patch("routers.discovery._geocode_location", return_value=(37.7749, -122.4194)):
+            discovery._attach_geocoded_locations(events)
+        assert events[0]["location_lat"] == 37.7749
+        assert events[0]["location_lon"] == -122.4194
+
+    def test_unresolvable_location_does_not_crash_and_leaves_coordinates_none(self):
+        events = [_geo_event("Show", "Somewhere Unresolvable")]
+        with patch("routers.discovery._geocode_location", return_value=None):
+            discovery._attach_geocoded_locations(events)  # must not raise
+        assert events[0]["location_lat"] is None
+        assert events[0]["location_lon"] is None
+
+    def test_one_unresolvable_location_does_not_abort_the_rest_of_the_feed(self):
+        events = [
+            _geo_event("Resolvable", "San Francisco, CA", uid="a"),
+            _geo_event("Unresolvable", "Nowhere", uid="b"),
+        ]
+
+        def fake_geocode(location):
+            return (37.7749, -122.4194) if location == "San Francisco, CA" else None
+
+        with patch("routers.discovery._geocode_location", side_effect=fake_geocode):
+            discovery._attach_geocoded_locations(events)  # must not raise
+        assert events[0]["location_lat"] == 37.7749
+        assert events[1]["location_lat"] is None
+
+    def test_no_location_gets_none_coordinates_without_calling_geocoder(self):
+        events = [_geo_event("Show", None)]
+        with patch("routers.discovery._geocode_location") as mock_geocode:
+            discovery._attach_geocoded_locations(events)
+        mock_geocode.assert_not_called()
+        assert events[0]["location_lat"] is None
+        assert events[0]["location_lon"] is None
+
+
 class TestDistanceFiltering:
     def setup_method(self):
         discovery._geocode_cache.clear()
