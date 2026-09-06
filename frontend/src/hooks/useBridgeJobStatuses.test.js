@@ -7,8 +7,14 @@ vi.mock('../api', () => ({
   fetchBridgeJobStatuses: vi.fn(),
 }))
 
+function setVisibility(state) {
+  Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
 beforeEach(() => {
   vi.resetAllMocks()
+  setVisibility('visible')
 })
 
 afterEach(() => {
@@ -38,17 +44,17 @@ describe('useBridgeJobStatuses', () => {
     expect(result.current.bridgeJobStatuses).toEqual({})
   })
 
-  it('polls on an interval while authed', async () => {
+  it('polls on an interval while authed and visible', async () => {
     vi.useFakeTimers()
     api.fetchBridgeJobStatuses.mockResolvedValue({})
     renderHook(() => useBridgeJobStatuses({ authed: true }))
 
     await vi.waitFor(() => expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(1))
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
     expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(2)
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
     expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(3)
   })
 
@@ -64,5 +70,36 @@ describe('useBridgeJobStatuses', () => {
     rerender({ authed: false })
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
     expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not poll while the tab is hidden', async () => {
+    vi.useFakeTimers()
+    setVisibility('hidden')
+    api.fetchBridgeJobStatuses.mockResolvedValue({})
+    renderHook(() => useBridgeJobStatuses({ authed: true }))
+
+    // The mount-time fetch still fires regardless of visibility -- only the
+    // recurring interval is visibility-gated.
+    await vi.waitFor(() => expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(1))
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+    expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(1)
+  })
+
+  it('pauses polling when the tab is hidden and refreshes immediately on becoming visible again', async () => {
+    vi.useFakeTimers()
+    api.fetchBridgeJobStatuses.mockResolvedValue({})
+    renderHook(() => useBridgeJobStatuses({ authed: true }))
+    await vi.waitFor(() => expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(1))
+
+    await act(async () => { setVisibility('hidden') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(300_000) })
+    expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(1)
+
+    await act(async () => { setVisibility('visible') })
+    expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(2)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(api.fetchBridgeJobStatuses).toHaveBeenCalledTimes(3)
   })
 })
