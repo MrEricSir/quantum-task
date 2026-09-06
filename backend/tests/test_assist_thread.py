@@ -142,6 +142,24 @@ class TestThreadCrud:
         assert res.status_code == 200
         assert res.json() == {"ok": True}
 
+    def test_deleting_a_card_with_a_thread_does_not_crash(self, client):
+        """Regression test: Card.thread had no cascade configured, so SQLAlchemy's default
+        relationship behavior (nullify the child's FK when the parent is deleted) violated
+        CardThread.card_id's NOT NULL constraint -- deleting ANY card that had ever been
+        chatted with via the assistant raised an unconditional IntegrityError, in production
+        as much as in tests. Found via a full-suite CI run surfacing an unrelated-looking
+        IntegrityError in a completely different test file that happened to hit this same
+        code path against a real (non-isolated) database."""
+        card_id = _make_card()
+        client.put(f"/api/cards/{card_id}/thread/context", json={"context": "some doc"})
+
+        res = client.delete(f"/api/cards/{card_id}")
+        assert res.status_code == 200
+
+        with TestSession() as db:
+            assert db.query(models.Card).filter_by(id=card_id).first() is None
+            assert db.query(models.CardThread).filter_by(card_id=card_id).first() is None
+
 
 # ── POST /thread/message ───────────────────────────────────────────────────────
 

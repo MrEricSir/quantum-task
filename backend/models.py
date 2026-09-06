@@ -90,7 +90,12 @@ class Card(Base):
     waiting_reason = Column(String, nullable=True)  # free-text context shown as a badge on the board
     today_since = Column(DateTime, nullable=True)   # when card last entered the 'today' section
     tags   = relationship("Tag", secondary="card_tags", lazy="joined")
-    thread = relationship("CardThread", uselist=False, back_populates="card", lazy="joined")
+    # cascade="all, delete-orphan": CardThread.card_id is NOT NULL, so without this SQLAlchemy's
+    # default relationship behavior (nullify the child's FK when the parent is deleted) violates
+    # that constraint -- deleting any card with a thread raised IntegrityError unconditionally
+    # until this was added. Matches the FK's own ondelete="CASCADE" (see CardThread.card_id).
+    thread = relationship("CardThread", uselist=False, back_populates="card", lazy="joined",
+                           cascade="all, delete-orphan")
 
     @property
     def thread_output(self):

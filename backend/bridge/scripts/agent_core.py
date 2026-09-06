@@ -562,6 +562,40 @@ def _disable_remote_push(work_dir):
     return (had_push_url, orig_push_url)
 
 
+def _ensure_local_exclude_entries(work_dir):
+    """Belt-and-suspenders alongside install.py's global gitignore setup (BRIDGE_IGNORE_ENTRIES):
+    that only takes effect once the installer has been (re-)run, so on a machine that created
+    worktrees before this existed -- or one that has simply never run the installer at all,
+    e.g. a fresh CI runner -- WORKTREE_MARKER_FILENAME/BRIDGE_SPEC.md would otherwise show up
+    as untracked, uncommitted files forever, silently swept into the very first
+    _commit_if_dirty auto-commit any session makes (confirmed the hard way: tests exercising
+    this passed on any real dev machine that's already run the installer, since these files
+    are globally ignored there, but failed the first time CI actually ran them, since a fresh
+    runner has no such global config). A LOCAL exclude (shared by every worktree of this repo,
+    since they share .git via --git-common-dir) doesn't depend on install-time setup at all.
+    Idempotent -- append-if-missing, same pattern as setup_global_gitignore's own check.
+    Called from both worktree creation AND job resumption, since a resumed worktree may have
+    been created by an older version of this script that predates one of these entries, or
+    (in tests) stand in for one that was never created via _create_worktree at all."""
+    exclude_path = os.path.join(work_dir, ".git", "info", "exclude")
+    try:
+        existing = ""
+        if os.path.isfile(exclude_path):
+            with open(exclude_path) as f:
+                existing = f.read()
+        to_add = [e for e in (WORKTREE_MARKER_FILENAME, SPEC_FILENAME) if e not in existing]
+        if to_add:
+            os.makedirs(os.path.dirname(exclude_path), exist_ok=True)
+            needs_leading_newline = existing and not existing.endswith("\n")
+            with open(exclude_path, "a") as f:
+                if needs_leading_newline:
+                    f.write("\n")
+                for entry in to_add:
+                    f.write(f"{entry}\n")
+    except OSError as e:
+        print(f"[bridge] WARNING: could not update {exclude_path}: {e}", file=sys.stderr)
+
+
 def _create_worktree(cfg, job, work_dir):
     """
     Prepare an isolated git worktree for this job, off a freshly fetched
@@ -637,29 +671,7 @@ def _create_worktree(cfg, job, work_dir):
     # Marker of provenance -- see WORKTREE_MARKER_FILENAME's own comment above.
     with open(os.path.join(worktree_path, WORKTREE_MARKER_FILENAME), "w"):
         pass
-    # Belt-and-suspenders alongside install.py's global gitignore setup (BRIDGE_IGNORE_ENTRIES):
-    # that only takes effect once the installer has been (re-)run, so on a machine that
-    # created worktrees before this marker existed, the marker would otherwise show up as an
-    # untracked, uncommitted file forever -- silently swept into the very first
-    # _commit_if_dirty auto-commit any session makes. A LOCAL exclude (shared by every
-    # worktree of this repo, since they share .git via --git-common-dir) doesn't depend on
-    # install-time setup at all. Idempotent -- append-if-missing, same pattern as
-    # setup_global_gitignore's own check.
-    exclude_path = os.path.join(work_dir, ".git", "info", "exclude")
-    try:
-        existing = ""
-        if os.path.isfile(exclude_path):
-            with open(exclude_path) as f:
-                existing = f.read()
-        if WORKTREE_MARKER_FILENAME not in existing:
-            os.makedirs(os.path.dirname(exclude_path), exist_ok=True)
-            needs_leading_newline = existing and not existing.endswith("\n")
-            with open(exclude_path, "a") as f:
-                if needs_leading_newline:
-                    f.write("\n")
-                f.write(f"{WORKTREE_MARKER_FILENAME}\n")
-    except OSError as e:
-        print(f"[bridge] WARNING: could not update {exclude_path}: {e}", file=sys.stderr)
+    _ensure_local_exclude_entries(work_dir)
 
     # 4. Disable remote push (safety — the coding agent must not push).
     push_url_info = _disable_remote_push(work_dir)
@@ -1365,7 +1377,10 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
         # Safety net for the case this resume exists to handle in the first place: the
         # ORIGINAL session may have ended uncleanly (crash, Ctrl-C, network loss) and never
         # reached its own end-of-session _commit_if_dirty call at all -- catch it here,
-        # before a fresh agent process starts working on top of it.
+        # before a fresh agent process starts working on top of it. Ensure the local exclude
+        # entries exist first (see _ensure_local_exclude_entries) -- this worktree may have
+        # been created by an older version of this script that predates one of them.
+        _ensure_local_exclude_entries(work_dir)
         _commit_if_dirty(worktree_path, job_id, "resuming a previous session")
         push_url_info = _disable_remote_push(work_dir)
         agent = cfg.get("name") or socket.gethostname().split(".")[0]
