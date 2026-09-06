@@ -29,7 +29,7 @@ from scipy.stats import pearsonr, ttest_ind
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs
+from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, to_local_date, utc_offset_minutes
 from routers.habits import check_habit_row
 
 router = APIRouter()
@@ -139,7 +139,9 @@ def check_workout_for_habit(db: Session, habit_id: int, today: date) -> models.W
 
 # ── Shared data loader ────────────────────────────────────────────────────────
 
-def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dict], list[dict]]:
+def _load_weekly_obs(
+    db: Session, today: date, days: int = 90, tz_offset_minutes: int = 0,
+) -> tuple[list[dict], list[dict]]:
     """Return (weight_obs, fat_obs) — weekly-binned observations."""
     start_str = (today - timedelta(days=days)).isoformat()
 
@@ -173,11 +175,9 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
         models.Card.completed_at.isnot(None),
         models.Card.completed_at >= start_str,
     ).all():
-        d = (
-            card.completed_at.strftime("%Y-%m-%d")
-            if hasattr(card.completed_at, "strftime")
-            else str(card.completed_at)[:10]
-        )
+        # completed_at is a UTC instant -- must convert to the client's local date
+        # before bucketing, or completions near local midnight land on the wrong day.
+        d = to_local_date(card.completed_at, tz_offset_minutes).isoformat()
         cards_done_by_date[d] = cards_done_by_date.get(d, 0) + 1
 
     # Food quality + calories: collect per-day scores to weekly-bin later
@@ -290,6 +290,7 @@ def _load_weekly_obs(db: Session, today: date, days: int = 90) -> tuple[list[dic
 def _established_habits(
     db: Session, today: date,
     min_age_days: int = 14, window_days: int = 21, min_rate: float = 0.6,
+    tz_offset_minutes: int = 0,
 ) -> list[dict]:
     """Non-archived, non-health_metric-linked habits old enough and being
     kept up consistently enough to be candidates for an incremental routine
@@ -308,7 +309,7 @@ def _established_habits(
     )
     results = []
     for h in habits:
-        created = h.created_at.date() if h.created_at else today
+        created = to_local_date(h.created_at, tz_offset_minutes) if h.created_at else today
         if (today - created).days < min_age_days:
             continue
         completed = (
@@ -712,14 +713,19 @@ provides no new information.\
 """
 
 
-def _generate_experiment(correlations: list[dict], db: Session, today: date | None = None) -> models.HealthExperiment:
+def _generate_experiment(
+    correlations: list[dict], db: Session, today: date | None = None,
+    tz_offset_minutes: int = 0,
+) -> models.HealthExperiment:
     """Generate a new experiment via LLM, persist to health_experiments table.
 
     `today` should be the caller's client-local date (deps.local_date(request)) so the
     week this experiment is stamped with agrees with check_habit_for_workout's own
     week lookup -- see _current_isoweek's docstring. Optional/defaults to server-UTC
     date.today() only so existing callers/tests that don't care about day-level
-    precision don't all need updating."""
+    precision don't all need updating. `tz_offset_minutes` is likewise the caller's
+    deps.utc_offset_minutes(request), threaded through to _established_habits so its
+    Habit.created_at (a UTC instant) comparison against `today` (local) is correct."""
     today = today or date.today()
     week = _current_isoweek(today)
 
@@ -748,7 +754,7 @@ def _generate_experiment(correlations: list[dict], db: Session, today: date | No
     ]
 
     recent = _recent_experiments(db)
-    established_habits = _established_habits(db, today)
+    established_habits = _established_habits(db, today, tz_offset_minutes=tz_offset_minutes)
     established_workouts = _established_workouts(db, today)
     established_workouts_by_type = {w["type"]: w for w in established_workouts}
     established_foods = _established_foods(db, today)
@@ -1160,9 +1166,11 @@ def _confound_summary(weight_obs: list[dict], fat_obs: list[dict], baseline_week
     return result
 
 
-def _record_outcome(exp: models.HealthExperiment, db: Session, today: date) -> None:
+def _record_outcome(
+    exp: models.HealthExperiment, db: Session, today: date, tz_offset_minutes: int = 0,
+) -> None:
     """Fill outcome fields on exp using the experiment week's health data."""
-    weight_obs, fat_obs = _load_weekly_obs(db, today)
+    weight_obs, fat_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset_minutes)
 
     # Experiment week delta
     def find_week(obs, wk):
@@ -1336,7 +1344,7 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
 @router.get("/api/health/correlations")
 def get_health_correlations(request: Request, db: Session = Depends(get_db)):
     today = local_date(request)
-    weight_obs, fat_obs = _load_weekly_obs(db, today)
+    weight_obs, fat_obs = _load_weekly_obs(db, today, tz_offset_minutes=utc_offset_minutes(request))
 
     if not weight_obs and not fat_obs:
         return {
@@ -1359,7 +1367,9 @@ def get_health_correlations(request: Request, db: Session = Depends(get_db)):
     }
 
 
-def auto_expire_stale_experiments(db: Session, current_week: str, today: date) -> None:
+def auto_expire_stale_experiments(
+    db: Session, current_week: str, today: date, tz_offset_minutes: int = 0,
+) -> None:
     """Archive habits and dismiss any active experiments from previous weeks.
 
     Called automatically when the frontend fetches the current experiment so
@@ -1375,7 +1385,7 @@ def auto_expire_stale_experiments(db: Session, current_week: str, today: date) -
         .all()
     )
     for exp in stale:
-        _record_outcome(exp, db, today)
+        _record_outcome(exp, db, today, tz_offset_minutes)
         exp.status       = "dismissed"
         exp.dismissed_at = datetime.now(timezone.utc)
         if exp.habit_id:
@@ -1392,10 +1402,11 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     """Return the active experiment for the current week, generating one if needed."""
     today = local_date(request)
     current_week = _current_isoweek(today)
+    tz_offset = utc_offset_minutes(request)
 
     # Archive habits and expire any active experiments from previous weeks so
     # week-rollover cleanup happens automatically (not just on explicit dismiss).
-    auto_expire_stale_experiments(db, current_week, today)
+    auto_expire_stale_experiments(db, current_week, today, tz_offset)
 
     # Check table for an active experiment this week
     exp = (
@@ -1407,9 +1418,9 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
         return _exp_to_dict(exp)
 
     # Generate a new experiment
-    weight_obs, fat_obs = _load_weekly_obs(db, today)
+    weight_obs, fat_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
-    exp = _generate_experiment(correlations, db, today)
+    exp = _generate_experiment(correlations, db, today, tz_offset)
     return _exp_to_dict(exp)
 
 
@@ -1424,7 +1435,7 @@ def dismiss_health_experiment(request: Request, db: Session = Depends(get_db)):
         .first()
     )
     if exp:
-        _record_outcome(exp, db, today)
+        _record_outcome(exp, db, today, utc_offset_minutes(request))
         exp.status       = "dismissed"
         exp.dismissed_at = datetime.now(timezone.utc)
 

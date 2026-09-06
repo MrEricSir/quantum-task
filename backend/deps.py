@@ -1,6 +1,6 @@
 """Shared FastAPI dependencies and app-wide configuration."""
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import Request
 from openai import OpenAI
@@ -91,3 +91,21 @@ def local_date(request: Request) -> date:
         return date.fromisoformat(raw)
     except ValueError:
         return date.today()
+
+
+def to_local_date(dt: datetime, tz_offset_minutes: int) -> date:
+    """Convert a UTC-instant DateTime column's value (Card.created_at,
+    Card.completed_at, Card.archived_at, Habit.created_at, HealthExperiment.created_at/
+    dismissed_at, WithingsCredentials.last_synced -- see models.py's docstring for the
+    full enumerated list) to the client's local calendar date, using the same
+    JS-convention offset as utc_offset_minutes().
+
+    This is the ONE place this conversion should happen. Comparing a UTC-instant
+    column's raw `.date()` against a local "today" (from local_date()) has been the
+    single most-repeated timezone bug in this codebase -- found and fixed independently
+    in gcal.py (twice), correlations.py, briefing/context.py, telegram/scheduler.py, and
+    insights.py, because each call site re-derived (or forgot) the same offset math.
+    tests/test_timezone_conventions.py mechanically checks that no other call site
+    bypasses this helper for one of the enumerated UTC-instant columns."""
+    naive_utc = dt.replace(tzinfo=None) if dt.tzinfo else dt
+    return (naive_utc - timedelta(minutes=tz_offset_minutes)).date()

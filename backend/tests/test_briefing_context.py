@@ -291,6 +291,22 @@ class TestComputeObservations:
         result = compute_observations(db, TODAY)
         assert result is None
 
+    def test_habit_age_uses_local_created_date_not_raw_utc(self, db):
+        """Regression test: `created = habit.created_at.date()` used to read the
+        SERVER's UTC date directly, with no offset conversion. 2026-05-20T15:00:00 UTC
+        is 2026-05-21 01:00 local for a client 10 hours ahead of UTC (offset=-600, e.g.
+        Sydney) -- one day YOUNGER than the raw UTC date suggests (13 vs 14 days old
+        relative to TODAY=2026-06-03), which is exactly enough to flip whether the
+        14-day minimum age gate is met."""
+        import models
+        habit = models.Habit(
+            name="Borderline habit", archived=False, created_at=datetime(2026, 5, 20, 15, 0),
+        )
+        db.add(habit)
+        db.commit()
+        result = compute_observations(db, TODAY, utc_offset_minutes=-600)
+        assert result is None
+
     def test_low_completion_rate_reported(self, db):
         import models
         # Use TODAY as reference so dates are consistent with compute_observations(db, TODAY)

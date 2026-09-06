@@ -18,12 +18,15 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import models
 import routers.insights as insights
+from main import app
+from deps import get_db
 from routers.insights import _completion_time_insight, _generate_texts
 
 
@@ -165,3 +168,49 @@ class TestCompletionTimeInsight:
         _add_completed_cards(db, [2] * 20)
         result = _completion_time_insight(db, utc_offset_minutes=300)
         assert result["peak_window"] == "evening"
+
+
+# ── GET /api/insights -- stuck_task days_stuck (real endpoint) ─────────────────
+
+def override_get_db():
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def client():
+    app.dependency_overrides[get_db] = override_get_db
+    insights._response_cache.clear()
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+    insights._response_cache.clear()
+
+
+class TestStuckTaskDaysStuck:
+
+    def test_days_stuck_uses_local_entry_date_not_raw_utc(self, db, client):
+        """Regression test: entry_date used to be (today_since or created_at).date() --
+        a raw UTC-instant .date() call with no offset conversion, the same bug class
+        just fixed in _completion_time_insight. today_since=2026-07-20T15:00:00 (UTC) is
+        2026-07-21 01:00 local for a client 10 hours ahead of UTC (offset=-600, e.g.
+        Sydney) -- the raw UTC date (Jul 20) and the correct local date (Jul 21) give
+        different days_stuck counts against a local "today" of 2026-08-19 (30 vs 29)."""
+        db.add(models.Card(
+            title="Stuck task", section="today", completed=False, archived=False,
+            today_since=datetime(2026, 7, 20, 15, 0),
+        ))
+        db.commit()
+
+        with patch("routers.insights.llm_client", side_effect=RuntimeError("no LLM in test")):
+            res = client.get("/api/insights", headers={
+                "X-Local-Date": "2026-08-19", "X-UTC-Offset": "-600",
+            })
+
+        assert res.status_code == 200
+        stuck = [i for i in res.json() if i["type"] == "stuck_task"]
+        assert len(stuck) == 1
+        assert stuck[0]["days_stuck"] == 29

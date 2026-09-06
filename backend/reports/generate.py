@@ -12,12 +12,13 @@ Telegram HTML) rather than sharing pre-rendered text.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 import models
+from deps import to_local_date
 
 PERIOD_CHOICES = [
     "today", "this_week", "last_week", "this_month", "last_month",
@@ -51,14 +52,6 @@ def resolve_period(period: str, today: date) -> tuple[date, date]:
     if period == "last_30_days":
         return today - timedelta(days=29), today
     raise ValueError(f"Unknown period: {period!r}")
-
-
-def _to_local_date(dt: datetime, tz_offset: int) -> date:
-    """SQLite datetimes come back naive (already UTC); tz_offset is the
-    JS-convention getTimezoneOffset() value, same convention used throughout
-    this codebase (see deps.utc_offset_minutes)."""
-    naive_utc = dt.replace(tzinfo=None) if dt.tzinfo else dt
-    return (naive_utc - timedelta(minutes=tz_offset)).date()
 
 
 def _fetch_candidates(db: Session, tag_id: int, mode: str) -> list[models.Card]:
@@ -97,7 +90,7 @@ def generate_tag_report(
     items: list[dict] = []
     if mode == "done":
         for c in candidates:
-            local_date = _to_local_date(c.completed_at, tz_offset)
+            local_date = to_local_date(c.completed_at, tz_offset)
             if start <= local_date <= end:
                 items.append({"id": c.id, "title": c.title, "date": local_date.isoformat()})
         items.sort(key=lambda i: i["date"])
@@ -106,7 +99,11 @@ def generate_tag_report(
             if c.scheduled_at is None:
                 items.append({"id": c.id, "title": c.title, "date": None})
                 continue
-            local_date = _to_local_date(c.scheduled_at, tz_offset)
+            # scheduled_at is already a naive LOCAL wall-clock value (see models.py's
+            # docstring) -- unlike completed_at, it must NOT go through the UTC-offset
+            # conversion above, or a card scheduled near local midnight gets shifted
+            # onto the wrong calendar day.
+            local_date = c.scheduled_at.date()
             if start <= local_date <= end:
                 items.append({"id": c.id, "title": c.title, "date": local_date.isoformat()})
         # Dated items first (chronological), undated backlog items last.
@@ -147,7 +144,10 @@ def count_by_period(
         if raw is None:
             undated_count += 1  # only reachable for mode="todo"
             continue
-        dated.append(_to_local_date(raw, tz_offset))
+        # completed_at is a UTC instant and needs the offset conversion; scheduled_at
+        # is already local wall-clock and must not be shifted again (see the matching
+        # comment in generate_tag_report above).
+        dated.append(to_local_date(raw, tz_offset) if mode == "done" else raw.date())
 
     counts: dict[str, int] = {}
     for period in PERIOD_CHOICES:

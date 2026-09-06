@@ -138,12 +138,15 @@ test() {
   echo "Installing test dependencies..."
   "$SCRIPT_DIR/backend/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements-dev.txt" -q
   cd "$SCRIPT_DIR/backend"
-  # Calendar, briefing, and bridge tests are pure unit tests (no Ollama required --
-  # the bridge tests use a stub `claude` binary, never a real LLM call).
-  # Parse tests call the live Ollama model and are skipped automatically if it is not running.
+  # Every backend test file runs here except test_parse.py, which calls the live
+  # Ollama model and self-skips (pytest.skip) if it isn't running -- run separately
+  # below purely for a clearer pass/skip header, not because anything else needs
+  # excluding. Previously this ran an explicit, hand-maintained file list that drifted
+  # out of sync with the actual test suite (new test files silently never ran locally
+  # or in CI) -- see PRODUCT_NOTES.md's 2026-09-05 timezone-bug-prevention entry.
   echo ""
   echo "==> Backend unit tests"
-  "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_calendar.py tests/test_briefing.py tests/test_plugins.py tests/test_localtime.py tests/test_bridge_jobs.py tests/test_bridge_scripts.py tests/test_bridge_stale.py -v
+  "$SCRIPT_DIR/backend/venv/bin/pytest" --ignore=tests/test_parse.py -v
   echo ""
   echo "==> Quick Add parse integration tests (requires Ollama)"
   "$SCRIPT_DIR/backend/venv/bin/pytest" tests/test_parse.py -v

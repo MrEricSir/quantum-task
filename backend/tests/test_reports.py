@@ -188,6 +188,29 @@ class TestGenerateTagReport:
             )
         assert report["count"] == 1
 
+    def test_todo_mode_scheduled_at_is_not_offset_shifted(self):
+        """Regression test: scheduled_at is already a naive LOCAL wall-clock value (see
+        models.py's docstring), unlike completed_at which is a UTC instant -- applying
+        the tz_offset conversion to it (as an earlier version of this code did, via a
+        _to_local_date() call shared with the "done" branch) shifts it onto the wrong
+        calendar day near midnight. A card scheduled for local Aug 16 must stay on Aug
+        16 regardless of tz_offset, since the value was never in UTC to begin with."""
+        with TestingSessionLocal() as db:
+            work = models.Tag(name="work")
+            db.add(work)
+            db.commit()
+            db.add(models.Card(
+                title="Scheduled near local midnight", section="week",
+                scheduled_at=datetime(2026, 8, 16, 23, 30), tags=[work],
+            ))
+            db.commit()
+
+            report = generate_tag_report(
+                db, work.id, "todo", date(2026, 8, 16), date(2026, 8, 16), tz_offset=-60,
+            )
+        assert report["count"] == 1
+        assert report["items"][0]["date"] == "2026-08-16"
+
 
 class TestCountByPeriod:
     TODAY = date(2026, 8, 19)  # a Wednesday; this_week starts 2026-08-17

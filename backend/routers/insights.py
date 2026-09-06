@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, utc_offset_minutes
+from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, to_local_date, utc_offset_minutes
 
 router = APIRouter()
 
@@ -339,6 +339,7 @@ def invalidate_insights_cache() -> None:
 def get_insights(request: Request, db: Session = Depends(get_db)):
     today = local_date(request)
     today_str = today.isoformat()
+    tz_offset = utc_offset_minutes(request)
 
     # ── Full-response cache (5-minute TTL) ────────────────────────────────────
     cached = _response_cache.get(today_str)
@@ -404,7 +405,7 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
     health = _health_insights(db, today)
 
     # ── Completion time pattern (template text — no LLM) ─────────────────────
-    pattern = _completion_time_insight(db, utc_offset_minutes(request))
+    pattern = _completion_time_insight(db, tz_offset)
 
     if not stuck_cards and not low_habits and not health and not pattern:
         _response_cache[today_str] = (time.monotonic(), [])
@@ -413,7 +414,7 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
     # ── LLM texts for task/habit patterns ────────────────────────────────────
     patterns = []
     for card in stuck_cards:
-        entry_date = (card.today_since or card.created_at).date()
+        entry_date = to_local_date(card.today_since or card.created_at, tz_offset)
         days = (today - entry_date).days
         patterns.append(f'Task "{card.title}" has been in Today for {days} days without progress')
     for habit, count in low_habits:
@@ -426,7 +427,7 @@ def get_insights(request: Request, db: Session = Depends(get_db)):
     idx = 0
 
     for card in stuck_cards:
-        entry_date = (card.today_since or card.created_at).date()
+        entry_date = to_local_date(card.today_since or card.created_at, tz_offset)
         days = (today - entry_date).days
         text = texts[idx] if idx < len(texts) else ""
         results.append({

@@ -1967,6 +1967,29 @@ class TestCheckHealthNudges:
 
         assert result == "skipped: nothing to flag"
 
+    def test_going_cold_age_gate_uses_local_created_date_not_raw_utc(self):
+        """Regression test: `if h.created_at.date() > age_cutoff` used to read the
+        SERVER's UTC date directly, with no offset conversion. A habit created at
+        15:00 UTC on (TODAY - 7 days) is 01:00 local the NEXT day for a client 10 hours
+        ahead of UTC (offset=-600, e.g. Sydney) -- only 6 days old locally, one day
+        short of the 7-day minimum-age gate. The raw UTC date (exactly 7 days old)
+        would wrongly flag it as old enough for a "going cold" nudge."""
+        _set_habit_reminder_time()
+        _neutralize_food_log()
+        with BotTestSession() as db:
+            db.add(models.Habit(
+                name="Borderline habit",
+                created_at=datetime.combine(TODAY - timedelta(days=7), datetime.min.time()).replace(hour=15),
+            ))
+            db.commit()
+
+        from telegram.scheduler import check_health_nudges
+        with patch("telegram.scheduler.send_message", return_value=True):
+            with BotTestSession() as db:
+                result = check_health_nudges(db, "tok", "123", EVENING_LOCAL, TODAY, tz_offset=-600)
+
+        assert result == "skipped: nothing to flag"
+
     def test_food_log_quiet_flags_when_nothing_logged(self):
         _set_habit_reminder_time()
         from telegram.scheduler import check_health_nudges

@@ -38,9 +38,13 @@ jobs:
                       -r backend/requirements-dev.txt
 
       - name: Run unit tests
-        run: cd backend && python -m pytest tests/test_calendar.py tests/test_briefing.py tests/test_plugins.py tests/test_localtime.py -v
-        # Note: test_parse.py requires a live Ollama instance and is intentionally
-        # skipped in CI. It can be run locally with: ./dev.sh test
+        run: cd backend && python -m pytest -v
+        # Runs the full backend suite. test_parse.py calls a live Ollama model and
+        # self-skips (pytest.skip) since no Ollama instance runs in CI -- it shows as
+        # skipped, not failed. Previously this ran an explicit, hand-maintained file
+        # list that had drifted badly out of sync with the actual test suite (whole
+        # files' worth of regression tests were never gating merges) -- see
+        # PRODUCT_NOTES.md's 2026-09-05 timezone-bug-prevention entry.
 
   # ── Frontend functional tests ─────────────────────────────────────────────────
   visual:

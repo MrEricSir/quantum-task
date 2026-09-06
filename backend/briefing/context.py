@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, time as dt_time
 from sqlalchemy.orm import Session
 
 import models
+from deps import to_local_date
 
 
 # ── Time / event helpers ──────────────────────────────────────────────────────
@@ -23,13 +24,12 @@ def event_local_date(e, utc_offset_minutes: int) -> date:
     """Return the calendar event's date in the client's local timezone."""
     if e.all_day:
         return e.start.date() if hasattr(e.start, "date") else e.start
-    local_dt = e.start.replace(tzinfo=None) - timedelta(minutes=utc_offset_minutes)
-    return local_dt.date()
+    return to_local_date(e.start, utc_offset_minutes)
 
 
 # ── Observations ──────────────────────────────────────────────────────────────
 
-def compute_observations(db: Session, today: date) -> str | None:
+def compute_observations(db: Session, today: date, utc_offset_minutes: int = 0) -> str | None:
     """Derive plain-text behavioral observations from the last 30 days."""
     cutoff_str = (today - timedelta(days=30)).isoformat()
     cutoff_dt  = datetime.combine(today - timedelta(days=30), dt_time.min)
@@ -37,7 +37,7 @@ def compute_observations(db: Session, today: date) -> str | None:
 
     habits = db.query(models.Habit).filter(models.Habit.archived == False).all()  # noqa: E712
     for habit in habits:
-        created = habit.created_at.date() if habit.created_at else today
+        created = to_local_date(habit.created_at, utc_offset_minutes) if habit.created_at else today
         days_old = (today - created).days
         if days_old < 14:
             continue

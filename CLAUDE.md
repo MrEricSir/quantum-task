@@ -69,16 +69,46 @@ feature/
 
 ### Timezone Handling
 
-The server runs UTC (Cloud Run). All date/time logic must use the client's local clock. 
+The server runs UTC (Cloud Run). All date/time logic must use the client's local clock.
 
 **Backend**: Always read timezone from the request via `deps.py` helpers — never from the request body:
-- `local_date(request)` → client's local `YYYY-MM-DD` (from `X-Local-Date` header)         
-- `utc_offset_minutes(request)` → JS-convention offset (UTC+10 → -600) (from `X-UTC-Offset` header)                                                                                   
+- `local_date(request)` → client's local `YYYY-MM-DD` (from `X-Local-Date` header)
+- `utc_offset_minutes(request)` → JS-convention offset (UTC+10 → -600) (from `X-UTC-Offset` header)
 
-**Frontend**: Always use `apiFetch` from `api.js` — it injects both headers automatically. 
-                                                                                        
-If raw `fetch` is needed (e.g. SSE streaming with `AbortController`), manually add:        
-```js                                                                                    
-headers: { ..., 'X-Local-Date': localDate(), 'X-UTC-Offset': String(new                    
-Date().getTimezoneOffset()) }                                                              
-where localDate is imported from api.js. Never inline the date formatting logic.
+**Frontend**: Always use `apiFetch` from `api.js` — it injects both headers automatically.
+
+If raw `fetch` is needed (e.g. SSE streaming with `AbortController`), manually add:
+```js
+headers: { ..., 'X-Local-Date': localDate(), 'X-UTC-Offset': String(new
+Date().getTimezoneOffset()) }
+```
+where `localDate` is imported from `api.js`. Never inline the date formatting logic.
+
+**Comparing a UTC-instant DB column against a local date — the single most-repeated
+timezone bug in this codebase.** `models.py`'s docstring documents which `DateTime`
+columns hold a UTC instant (`Card.created_at`/`completed_at`/`archived_at`/`today_since`,
+`Habit.created_at`, `HealthExperiment.created_at`/`dismissed_at`,
+`WithingsCredentials.last_synced`) versus a naive local wall-clock time
+(`Card.scheduled_at`, `FoodEntry.consumed_at`, `WorkoutEntry.logged_at`). A UTC-instant
+column's raw `.date()`/`.hour`/`.strftime()` is the **server's** UTC date/hour, not the
+client's — comparing or bucketing it directly against a local `today` (or against
+`date.today()`/`datetime.now()` instead of `local_date(request)`) has been found and
+fixed independently at least 6 times across `gcal.py`, `correlations.py`,
+`briefing/context.py`, `telegram/scheduler.py`, `insights.py`, and `reports/generate.py`
+(the last one is the mirror-image mistake — applying this same conversion to an
+already-local `scheduled_at` shifts it onto the wrong day). Always convert first via
+`deps.to_local_date(dt, utc_offset_minutes)` — never write this conversion inline, and
+never bucket a UTC-instant column's raw value by day/hour. `backend/tests/
+test_timezone_conventions.py` mechanically scans for the raw-access pattern and fails
+the build if a new instance appears — if it flags a genuinely-correct usage, add it to
+that test's own `_ALLOWLIST` with a reason rather than bypassing the check.
+
+**Non-request code paths (Telegram/cron/scheduled jobs) have no request to read a
+header from at all.** `telegram/scheduler.py`'s top-level `check_all()` resolves
+`tz_offset = Settings(db).tz_offset` — a stored offset kept in sync by `AuthMiddleware`
+opportunistically resyncing it from `X-UTC-Offset` on every authenticated webapp
+request — and threads it explicitly through every check function's own parameters.
+Any new scheduled/background function needing local time must accept an explicit
+`tz_offset`/`utc_offset_minutes` parameter from its caller (defaulting to `0` only for
+truly caller-agnostic maintenance endpoints, documented as such) — it must never default
+to reading the server's own clock.

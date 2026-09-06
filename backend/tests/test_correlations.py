@@ -114,6 +114,28 @@ class TestLoadWeeklyObsDateWindow:
         assert fat_obs == []
 
 
+class TestLoadWeeklyObsTimezone:
+
+    def test_cards_done_bucketed_by_local_date_not_raw_utc(self, db):
+        """Regression test: cards_done_by_date used to key on
+        card.completed_at.strftime(...) with no offset conversion -- completed_at is a
+        UTC instant. 2026-06-14T22:00:00 UTC (Sunday, same ISO week as RECENT_WEEK_DATE)
+        is 2026-06-15T08:00:00 local for a client 10 hours ahead of UTC (offset=-600,
+        e.g. Sydney) -- Monday, the FOLLOWING ISO week. The card must not be credited to
+        RECENT_WEEK_DATE's week just because its raw UTC date happens to still fall in it."""
+        _add_weight(db, RECENT_WEEK_DATE, 75.0)
+        _add_weight(db, OLDER_WEEK_DATE, 76.0)
+        db.add(models.Card(
+            title="Test card", section="today", position=0,
+            completed=True, completed_at=datetime.fromisoformat("2026-06-14T22:00:00"),
+        ))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, TODAY, tz_offset_minutes=-600)
+        assert len(weight_obs) == 1
+        assert weight_obs[0]["cards_done"] is None
+
+
 class TestMigrateAppsetting:
     """_migrate_appsetting moves a legacy AppSetting-backed experiment into
     the HealthExperiment table. It's now called once at startup (main.py's
@@ -252,6 +274,25 @@ class TestEstablishedHabits:
         db.commit()
 
         assert _established_habits(db, today) == []
+
+
+class TestEstablishedHabitsTimezone:
+
+    def test_habit_age_uses_local_created_date_not_raw_utc(self, db):
+        """Regression test: `created = h.created_at.date()` used to read the SERVER's
+        UTC date directly, with no offset conversion. 2026-08-05T15:00:00 UTC is
+        2026-08-06 01:00 local for a client 10 hours ahead of UTC (offset=-600, e.g.
+        Sydney) -- one day YOUNGER than the raw UTC date suggests, which is exactly
+        enough to flip whether a 14-day-min-age habit created on Aug 5 (UTC) already
+        qualifies as established when local "today" is Aug 19."""
+        today = date(2026, 8, 19)
+        habit = models.Habit(name="Borderline habit", created_at=datetime(2026, 8, 5, 15, 0))
+        db.add(habit)
+        db.commit()
+        _add_habit_completions(db, habit.id, today, n_days=15)
+        db.commit()
+
+        assert _established_habits(db, today, tz_offset_minutes=-600) == []
 
 
 class TestEstablishedWorkouts:

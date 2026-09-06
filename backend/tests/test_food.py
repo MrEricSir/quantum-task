@@ -275,7 +275,10 @@ class TestFoodQualityTrend:
     def test_averages_quality_by_day(self, client, db_session):
         self._seed(db_session, "2026-07-25T08:00:00", 2)
         self._seed(db_session, "2026-07-25T18:00:00", 4)
-        r = client.get("/api/food/quality-trend?days=30")
+        r = client.get(
+            "/api/food/quality-trend?days=30",
+            headers={"X-Local-Date": "2026-07-25"},
+        )
         assert r.status_code == 200
         data = r.json()
         assert len(data) == 1
@@ -290,13 +293,19 @@ class TestFoodQualityTrend:
         )
         db_session.add(entry)
         db_session.commit()
-        r = client.get("/api/food/quality-trend?days=30")
+        r = client.get(
+            "/api/food/quality-trend?days=30",
+            headers={"X-Local-Date": "2026-07-25"},
+        )
         assert r.json() == []
 
     def test_respects_days_param(self, client, db_session):
         self._seed(db_session, "2026-06-01T10:00:00", 5)  # old entry
         self._seed(db_session, "2026-07-25T10:00:00", 3)  # recent entry
-        r = client.get("/api/food/quality-trend?days=7")
+        r = client.get(
+            "/api/food/quality-trend?days=7",
+            headers={"X-Local-Date": "2026-07-25"},
+        )
         data = r.json()
         dates = [d["date"] for d in data]
         assert "2026-06-01" not in dates
@@ -306,8 +315,12 @@ class TestFoodQualityTrend:
         self._seed(db_session, "2026-07-25T10:00:00", 3)
         self._seed(db_session, "2026-07-23T10:00:00", 5)
         self._seed(db_session, "2026-07-24T10:00:00", 4)
-        data = client.get("/api/food/quality-trend?days=30").json()
+        data = client.get(
+            "/api/food/quality-trend?days=30",
+            headers={"X-Local-Date": "2026-07-25"},
+        ).json()
         dates = [d["date"] for d in data]
+        assert len(dates) == 3
         assert dates == sorted(dates)
 
     def test_cutoff_uses_client_local_date_not_server_clock(self, client, db_session):

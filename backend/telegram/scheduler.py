@@ -16,6 +16,7 @@ import app_setting_keys as keys
 import models
 from bridge.stale import STALE_THRESHOLD_MINUTES
 from database import SessionLocal
+from deps import to_local_date
 from settings import Settings
 from telegram.notify import send_message
 
@@ -603,7 +604,7 @@ def _streak_risk_signals(db: Session, today) -> list[tuple[str, str]]:
     return signals
 
 
-def _going_cold_signals(db: Session, today) -> list[tuple[str, str]]:
+def _going_cold_signals(db: Session, today, tz_offset_minutes: int = 0) -> list[tuple[str, str]]:
     """Habits with a low completion rate over the trailing window, regardless
     of streak status — catches a slipping pattern with no streak left to lose."""
     age_cutoff = today - timedelta(days=_GOING_COLD_MIN_HABIT_AGE_DAYS)
@@ -612,7 +613,7 @@ def _going_cold_signals(db: Session, today) -> list[tuple[str, str]]:
 
     signals = []
     for h in db.query(models.Habit).filter_by(archived=False).all():
-        if h.created_at.date() > age_cutoff:
+        if to_local_date(h.created_at, tz_offset_minutes) > age_cutoff:
             continue
         count = db.query(models.HabitCompletion).filter(
             models.HabitCompletion.habit_id == h.id,
@@ -673,7 +674,7 @@ def _withings_drift_signals(db: Session, today) -> list[tuple[str, str]]:
 
 
 def check_health_nudges(db: Session, token: str, chat_id: str,
-                         now_local: datetime, today) -> str:
+                         now_local: datetime, today, tz_offset: int = 0) -> str:
     """Bundle high-signal habit/health nudges into a single evening message:
     streak-at-risk, habits going cold, a quiet food log, and Withings goal
     drift. Runs at the same evening hour as the habit reminder. Deliberately
@@ -695,7 +696,7 @@ def check_health_nudges(db: Session, token: str, chat_id: str,
             lines.append(f"  • {msg}")
             fired_keys.append(k)
 
-    going_cold = [(k, m) for k, m in _going_cold_signals(db, today)
+    going_cold = [(k, m) for k, m in _going_cold_signals(db, today, tz_offset)
                   if _cooldown_ok(state, k, today, _GOING_COLD_COOLDOWN_DAYS)]
     if going_cold:
         lines.append("<b>📉 Slipping</b>")
@@ -876,6 +877,6 @@ def check_all(db: Session) -> dict:
         "overdue_nudge":      check_overdue_nudge(db, token, chat_id, now_local, today),
         "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
         "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),
-        "health_nudges":      check_health_nudges(db, token, chat_id, now_local, today),
+        "health_nudges":      check_health_nudges(db, token, chat_id, now_local, today, tz_offset),
         "bridge_jobs":        check_bridge_jobs(db, token, chat_id),
     }

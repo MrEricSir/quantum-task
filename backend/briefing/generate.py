@@ -279,7 +279,7 @@ def _fetch_briefing_data(today: date, tz_offset: int, lat: float | None = None, 
         ]
 
         # ── Supporting data ───────────────────────────────────────────────────
-        observations = compute_observations(db, today)
+        observations = compute_observations(db, today, tz_offset)
         health_data, health_ctx = build_health_context(db, today)
         steps_today = int(health_data["today"].get("steps", 0)) or None
 
