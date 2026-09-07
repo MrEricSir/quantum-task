@@ -2472,6 +2472,42 @@ test.describe('health page', () => {
     await expect.poll(() => habitsRequestCount).toBeGreaterThan(countBeforeDismiss)
   })
 
+  test('a freshly-generated experiment on initial page load also refreshes the habits list', async ({ page }) => {
+    // Regression test: the very first load of a new week has no active experiment yet, so
+    // this same GET lazily generates one server-side -- including a brand-new tracking
+    // habit, exactly like dismiss-and-regenerate above. This path was missing the cache
+    // invalidation the dismiss path already had, so the Habits list kept showing its stale
+    // pre-fetched state and never picked up the new habit -- a real user report ("got a new
+    // experiment this week, but no habit to go along with it") even though the habit had in
+    // fact been created correctly server-side.
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    // Track the plain (non-archived) habits query specifically, not the combined total --
+    // useHabits mounts BOTH the plain and archived habits queries unconditionally, so a
+    // naive combined count is already >= 2 on every page load regardless of any invalidation
+    // and can't distinguish fixed from buggy behavior. The plain query fires exactly once on
+    // a normal mount; the fix's invalidation fires it a second time, while the archived
+    // query (untouched by this fix) stays at one -- only counting the plain one isolates it.
+    let plainHabitsRequestCount = 0
+    await page.route(/\/api\/habits(\?|$)/, r => {
+      const url = r.request().url()
+      if (url.includes('archived=true')) return r.fulfill({ json: [] })
+      plainHabitsRequestCount += 1
+      return r.fulfill({ json: HABITS })
+    })
+    await page.route('**/api/health/experiment', r => r.fulfill({ json: {
+      id: 43, week: '2026-W22', text: 'Walk 10,000 steps every day',
+      hypothesis: null, needs_habit: true, habit_id: 11, health_metric: 'steps',
+    } }))
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.locator('.experiment-card')).toBeVisible()
+
+    // One request from mounting the habits list on page load, plus a second from the
+    // invalidation triggered by the experiment response's habit_id.
+    await expect.poll(() => plainHabitsRequestCount).toBeGreaterThanOrEqual(2)
+  })
+
   test('logging a manual measurement POSTs the entry and shows it in the list', async ({ page }) => {
     let postBody = null
     await page.route('**/api/health/measurements**', r => {

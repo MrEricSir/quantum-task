@@ -506,10 +506,20 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
 
   useEffect(() => {
     fetchHealthExperiment()
-      .then(setExp)
+      .then((data) => {
+        setExp(data)
+        // The very first load of a new week has nothing active yet, so this same GET
+        // lazily generates one server-side -- including a brand-new tracking habit, exactly
+        // like dismiss-and-regenerate below does. Without this, the Habits list (here and on
+        // the Today page) keeps showing its stale pre-fetched state and never picks up that
+        // new habit until some unrelated action happens to invalidate the cache -- a real
+        // report: "got a new experiment this week, but no habit to go along with it," when
+        // the habit had in fact been created correctly, just not reflected in the UI yet.
+        if (data?.habit_id) queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDismiss = async () => {
     setDismissing(true)
