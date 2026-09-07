@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   fetchEngineeringConfig, saveEngineeringConfig, syncEngineering,
@@ -27,11 +27,22 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
   const [savingCheckpoints, setSavingCheckpoints] = useState(false)
   const [checkpointsSaved, setCheckpointsSaved] = useState(false)
 
+  // Both repos and checkpointPatterns are free-text fields editable the instant the modal
+  // opens, before their own initial-load fetch below has necessarily resolved -- on a slow
+  // connection, a user who starts typing during that window would otherwise have their
+  // in-progress edit silently overwritten the moment the fetch finally comes back (real
+  // failure mode, not just a test timing artifact: CI's slower runners hit this window far
+  // more reliably than a fast local dev machine ever does). Refs, not state, since these are
+  // read from inside a fire-and-forget promise callback -- a state variable captured in the
+  // same effect's closure would be stale by the time the promise resolves.
+  const reposDirtyRef = useRef(false)
+  const checkpointPatternsDirtyRef = useRef(false)
+
   useEffect(() => {
     fetchEngineeringConfig()
       .then((cfg) => {
         setConfigured(cfg.configured)
-        setRepos(cfg.repos.join('\n'))
+        if (!reposDirtyRef.current) setRepos(cfg.repos.join('\n'))
         return Promise.all([
           fetchStatusConfig().then(setStatusConfig).catch(() => {}),
           fetchRepoTagsConfig()
@@ -43,7 +54,9 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
       .finally(() => setLoading(false))
     fetchBridgeInstallToken().then(setBridgeInstallToken).catch(() => {})
     fetchCheckpointPatterns()
-      .then((cfg) => setCheckpointPatterns((cfg.patterns || []).join('\n')))
+      .then((cfg) => {
+        if (!checkpointPatternsDirtyRef.current) setCheckpointPatterns((cfg.patterns || []).join('\n'))
+      })
       .catch(() => {})
   }, [])
 
@@ -164,7 +177,7 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
               className="gh-repos-input"
               placeholder={'owner/repo\nowner/another-repo'}
               value={repos}
-              onChange={(e) => setRepos(e.target.value)}
+              onChange={(e) => { setRepos(e.target.value); reposDirtyRef.current = true }}
               rows={4}
               spellCheck={false}
             />
@@ -337,7 +350,7 @@ export default function GithubSettings({ allTags = [], onClose, onSynced }) {
             className="gh-repos-input"
             placeholder={'alembic/versions/*\npackage.json'}
             value={checkpointPatterns}
-            onChange={(e) => setCheckpointPatterns(e.target.value)}
+            onChange={(e) => { setCheckpointPatterns(e.target.value); checkpointPatternsDirtyRef.current = true }}
             rows={3}
             spellCheck={false}
           />

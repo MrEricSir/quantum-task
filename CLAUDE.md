@@ -98,6 +98,18 @@ shouldn't take down every other item being processed in the same request. (Real 
 single unresolvable address crashed an entire Discovery feed's worth of events, because a
 helper's `None`-on-failure return value was unpacked without checking for it first.)
 
+**An editable field's initial-load fetch must not clobber an in-progress edit.** If a form
+field is interactive as soon as a modal opens, but its starting value loads via a separate
+async call in the same mount effect, that call's `.then(setX)` must check whether the user has
+already started typing before overwriting state — otherwise a slow connection can silently
+discard whatever the user typed in the window between opening the form and the fetch
+resolving. Use a `useRef` dirty flag set in the field's `onChange`, not a `useState` one — the
+fetch's callback closes over the effect's mount-time scope, so a state variable read there is
+stale by the time the promise actually resolves (same reasoning as `useBridgeJobHistory`'s
+ref-not-state fix for its own polling callback). (Real incident: `GithubSettings.jsx`'s
+`repos`/`checkpointPatterns` textareas — this is also why a related Playwright test was flaky
+specifically in CI, never locally: slower runners hit the vulnerable window far more often.)
+
 ### Timezone Handling
 
 The server runs UTC (Cloud Run). All date/time logic must use the client's local clock.

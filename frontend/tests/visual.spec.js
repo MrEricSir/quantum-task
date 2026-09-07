@@ -4725,4 +4725,41 @@ test.describe('github settings modal', () => {
     await expect.poll(() => putBody).not.toBeNull()
     expect(putBody).toEqual({ patterns: ['alembic/versions/*', 'package.json', 'Gemfile'] })
   })
+
+  test('typing before the initial patterns fetch resolves is not overwritten by it', async ({ page }) => {
+    /* Regression test: GithubSettings.jsx's initial fetchCheckpointPatterns().then(...) used
+       to call setCheckpointPatterns(...) unconditionally, with no check for whether the user
+       had already started typing -- on a slow connection, a user editing the field before
+       that fetch resolves would have their in-progress edit silently discarded the moment it
+       finally came back. This is exactly what made this test's own sibling ("saving
+       checkpoint patterns PUTs...") flaky in CI: GitHub Actions runners are slow/variable
+       enough that the initial GET sometimes resolved in the narrow window between the test's
+       own fill() and click(), wiping the typed value out from under it before Save ever read
+       it. Uses a manually-released promise to hold the GET open deterministically -- not a
+       real-timing race -- so this fails reliably on the old code and passes reliably on the
+       fix, regardless of how fast or slow the CI runner happens to be. */
+    let releaseGet
+    const getHeld = new Promise((resolve) => { releaseGet = resolve })
+    let putBody = null
+    await page.route('**/api/bridge/checkpoint-patterns', async (r) => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: { ok: true } })
+      }
+      await getHeld
+      return r.fulfill({ json: { patterns: [] } })
+    })
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /engineering.*github/i }).click()
+
+    // Type into the field while the initial GET is still deliberately held open.
+    await page.getByPlaceholder(/alembic\/versions/i).fill('custom-pattern/*')
+    // Now let the slow GET resolve, and confirm it did NOT clobber the typed value.
+    releaseGet()
+    await expect(page.getByPlaceholder(/alembic\/versions/i)).toHaveValue('custom-pattern/*')
+
+    await page.getByRole('button', { name: /save patterns/i }).click()
+    await expect.poll(() => putBody).not.toBeNull()
+    expect(putBody).toEqual({ patterns: ['custom-pattern/*'] })
+  })
 })
