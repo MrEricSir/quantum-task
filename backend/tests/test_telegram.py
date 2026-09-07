@@ -1282,6 +1282,21 @@ class TestBotWeather:
         assert "couldn't fetch" in reply.lower()
 
 
+class _FixedDatetime(datetime):
+    """A datetime subclass whose .now() always returns a fixed, safe mid-day moment --
+    used to make "something scheduled a bit from now" tests immune to real-world flakiness
+    when the actual wall-clock time happens to be close to UTC midnight. Real incident: a
+    test computed scheduled_at as `datetime.now(timezone.utc) + timedelta(hours=1)` with no
+    anchoring, which crossed into the next UTC day whenever run close enough to midnight --
+    _reply_ask_schedule's own `c.scheduled_at.date() == today` filter then correctly (per
+    its own logic) excluded the card as not-today, and the test failed in CI for no reason
+    related to the code under test."""
+    @classmethod
+    def now(cls, tz=None):
+        fixed = datetime(2026, 6, 15, 12, 0, 0)
+        return fixed.replace(tzinfo=tz) if tz else fixed
+
+
 class TestBotAskSchedule:
 
     def test_empty_question_prompts_for_one(self):
@@ -1321,11 +1336,12 @@ class TestBotAskSchedule:
         the comment above the duration-fit branch in _reply_ask_schedule) --
         the reply must come from Python arithmetic, and the LLM must never
         even be called."""
-        near_future = datetime.now(timezone.utc) + timedelta(hours=1)
+        near_future = _FixedDatetime.now(timezone.utc) + timedelta(hours=1)
         near_future_local = near_future.replace(tzinfo=None)
         _make_card("Team standup", section="today", scheduled_at=near_future_local)
         from telegram.bot import _reply_ask_schedule
-        with patch("telegram.bot.SessionLocal", BotTestSession), \
+        with patch("telegram.bot.datetime", _FixedDatetime), \
+             patch("telegram.bot.SessionLocal", BotTestSession), \
              patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
              patch("telegram.bot.llm_client") as mock_llm:
             reply = _reply_ask_schedule(
@@ -1334,11 +1350,12 @@ class TestBotAskSchedule:
         mock_llm.assert_not_called()
 
     def test_duration_fit_correctly_says_no_when_gap_too_small(self):
-        near_future = datetime.now(timezone.utc) + timedelta(minutes=10)
+        near_future = _FixedDatetime.now(timezone.utc) + timedelta(minutes=10)
         near_future_local = near_future.replace(tzinfo=None)
         _make_card("Team standup", section="today", scheduled_at=near_future_local)
         from telegram.bot import _reply_ask_schedule
-        with patch("telegram.bot.SessionLocal", BotTestSession), \
+        with patch("telegram.bot.datetime", _FixedDatetime), \
+             patch("telegram.bot.SessionLocal", BotTestSession), \
              patch("telegram.bot._fetch_cal_events_for_date", return_value=[]), \
              patch("telegram.bot.llm_client") as mock_llm:
             reply = _reply_ask_schedule(
