@@ -2459,7 +2459,7 @@ test.describe('health page', () => {
       if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } })
       return r.fulfill({ json: {
         id: 42, week: '2026-W22', text: 'Row 1.5 mi/day instead of 1 mi/day',
-        hypothesis: null, needs_habit: true, habit_id: 10, health_metric: null,
+        hypothesis: null, habit_id: 10, health_metric: null,
       } })
     })
     await page.goto('/health')
@@ -2497,7 +2497,7 @@ test.describe('health page', () => {
     })
     await page.route('**/api/health/experiment', r => r.fulfill({ json: {
       id: 43, week: '2026-W22', text: 'Walk 10,000 steps every day',
-      hypothesis: null, needs_habit: true, habit_id: 11, health_metric: 'steps',
+      hypothesis: null, habit_id: 11, health_metric: 'steps',
     } }))
     await page.goto('/health')
     await waitForApp(page)
@@ -2873,7 +2873,7 @@ test.describe('health page', () => {
       {
         id: 42, week: '2026-W22', text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
-        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: null, fat_delta: null, weight_baseline: null, fat_baseline: null,
         habit_completion_rate: null,
         workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
@@ -2901,7 +2901,7 @@ test.describe('health page', () => {
       {
         id: 42, week: '2026-W22', text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
-        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: null, fat_delta: null, weight_baseline: null, fat_baseline: null,
         habit_completion_rate: null,
         workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
@@ -2930,7 +2930,7 @@ test.describe('health page', () => {
       {
         id: 47, week: '2026-W27', text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
-        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: null,
         workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
@@ -2953,7 +2953,7 @@ test.describe('health page', () => {
       {
         id: 48, week: '2026-W28', text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
-        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: null,
         workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
@@ -2976,7 +2976,7 @@ test.describe('health page', () => {
       {
         id: 49, week: '2026-W29', text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
-        needs_habit: false, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: null,
         workout_type: 'row', workout_target_value: 2, workout_unit: 'mi',
@@ -3003,7 +3003,7 @@ test.describe('health page', () => {
       {
         id: 50, week: '2026-W30', text: 'Sleep 8 hours a night',
         hypothesis: null, action: 'Sleep 8 hours a night', status: 'dismissed',
-        needs_habit: true, habit_id: 12, health_metric: null, health_goal: null,
+        habit_id: 12, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: 0.86,
         confounds: { avg_steps: { baseline: 6000, experiment: 18000 } },
@@ -3024,7 +3024,7 @@ test.describe('health page', () => {
       {
         id: 43, week: '2026-W23', text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
-        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: null,
         food_name: 'coffee', food_target_frequency: 0,
@@ -3056,7 +3056,7 @@ test.describe('health page', () => {
       {
         id: 44, week: '2026-W24', text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
-        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         // Weight delta looks "better than usual" on paper, but adherence
         // was never actually achieved -- the verdict must not claim credit.
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3083,7 +3083,7 @@ test.describe('health page', () => {
       {
         id: 45, week: '2026-W25', text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
-        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: null,
         food_name: 'coffee', food_target_frequency: 0,
@@ -3105,7 +3105,7 @@ test.describe('health page', () => {
       {
         id: 46, week: '2026-W26', text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
-        needs_habit: true, habit_id: null, health_metric: null, health_goal: null,
+        habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
         habit_completion_rate: null,
         food_name: 'coffee', food_target_frequency: 0,

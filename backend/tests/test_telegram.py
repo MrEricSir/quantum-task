@@ -2312,7 +2312,7 @@ class TestGenerateWeeklyReview:
         with BotTestSession() as db:
             db.add(models.HealthExperiment(
                 week="2026-W01", text="Row 2 mi/day instead of 1 mi/day", status="dismissed",
-                dismissed_at=datetime.now(timezone.utc), needs_habit=False,
+                dismissed_at=datetime.now(timezone.utc),
                 weight_delta=-0.1, weight_baseline=0.05,
             ))
             db.commit()
@@ -2329,7 +2329,7 @@ class TestGenerateWeeklyReview:
         with BotTestSession() as db:
             db.add(models.HealthExperiment(
                 week="2025-W01", text="Old experiment", status="dismissed",
-                dismissed_at=datetime.now(timezone.utc) - timedelta(days=30), needs_habit=False,
+                dismissed_at=datetime.now(timezone.utc) - timedelta(days=30),
             ))
             db.commit()
         from telegram.scheduler import generate_weekly_review

@@ -63,7 +63,6 @@ def _experiment(db, habit_id: int, status: str = "active", **workout_fields) -> 
     exp = models.HealthExperiment(
         week="2026-W25",
         text="Test experiment",
-        needs_habit=True,
         habit_id=habit_id,
         status=status,
         **workout_fields,

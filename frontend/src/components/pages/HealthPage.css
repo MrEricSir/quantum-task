@@ -974,13 +974,6 @@
   color: var(--text-muted);
 }
 
-.experiment-habit-note {
-  font-size: 11px;
-  color: #a78bfa;
-  margin: 0 0 10px;
-  opacity: 0.85;
-}
-
 .experiment-footer {
   margin-top: 12px;
 }

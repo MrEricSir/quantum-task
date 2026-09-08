@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { fetchWithingsStatus, fetchWithingsHealthData, syncWithings, disconnectWithings, fetchWithingsGoals, saveWithingsGoals, createHealthMeasurement, deleteHealthMeasurement } from '../api'
+import { HABITS_QUERY_KEY } from './useHabits'
 
 export function useWithings({ authed }) {
+  const queryClient = useQueryClient()
   const [status, setStatus] = useState(null)      // { connected, last_synced }
   const [healthData, setHealthData] = useState(null) // { measurements, habit_completions }
   const [healthGoals, setHealthGoals] = useState(null) // { steps, fat_ratio, weight }
@@ -79,6 +82,10 @@ export function useWithings({ authed }) {
   const handleAddMeasurement = async (data) => {
     const result = await createHealthMeasurement(data)
     loadHealthData()
+    // A manually-entered value may satisfy a linked experiment habit's goal and get
+    // auto-checked server-side (see routers/health.py's auto_check_habits_for_date) --
+    // refetch so the Habits section reflects it immediately, same as WorkoutLog's onMutate.
+    queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
     return result
   }
 

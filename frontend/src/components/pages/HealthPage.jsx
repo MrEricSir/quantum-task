@@ -515,7 +515,10 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
         // new habit until some unrelated action happens to invalidate the cache -- a real
         // report: "got a new experiment this week, but no habit to go along with it," when
         // the habit had in fact been created correctly, just not reflected in the UI yet.
-        if (data?.habit_id) queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
+        // Unconditional (not gated on whether this particular response has a habit_id) to
+        // match every other habit-invalidating call site in this file -- cheap and
+        // idempotent, and one fewer place that has to reason about response shape correctly.
+        queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -586,11 +589,6 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
             )
           })}
         </div>
-      )}
-      {exp.needs_habit && exp.habit_id && !exp.health_metric && !showProgress && (
-        <p className="experiment-habit-note">
-          A tracking habit has been created for you — check it off each day you complete the experiment.
-        </p>
       )}
       <div className="experiment-footer">
         <button

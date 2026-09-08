@@ -153,7 +153,7 @@ class TestMigrateAppsetting:
         # the live model calls the field now.
         legacy = {
             "week": "2026-W25", "text": "Try more sleep", "hypothesis": "h",
-            "action": "sleep by 10pm", "needs_habit": True, "habit_id": 3,
+            "action": "sleep by 10pm", "habit_id": 3,
             "withings_metric": "steps", "withings_goal": 10000,
             "created_at": "2026-06-15T08:00:00+00:00",
         }
@@ -897,7 +897,7 @@ class TestGenerateExperimentRoutines:
 
         payload = {
             "text": "t", "hypothesis": "h", "action": "Row 2 miles every day",
-            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "health_metric": None, "health_goal": None,
             "routine_type": "workout", "workout_type": "row",
             "workout_target_value": 2.0, "workout_unit": "mi",
         }
@@ -914,7 +914,7 @@ class TestGenerateExperimentRoutines:
     def test_unestablished_workout_type_is_discarded(self, db):
         payload = {
             "text": "t", "hypothesis": "h", "action": "Cycle 5 miles",
-            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "health_metric": None, "health_goal": None,
             "routine_type": "workout", "workout_type": "cycle",
             "workout_target_value": 5.0, "workout_unit": "mi",
         }
@@ -962,7 +962,7 @@ class TestGenerateExperimentRoutines:
         mode also guards against stray prose/markdown fences around the JSON regardless."""
         payload = {
             "text": "t", "hypothesis": "h", "action": "Walk 8,000 steps every day",
-            "needs_habit": True, "health_metric": "steps", "health_goal": 8000,
+            "health_metric": "steps", "health_goal": 8000,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }
@@ -979,7 +979,7 @@ class TestGenerateExperimentRoutines:
     def test_habit_routine_clears_health_metric(self, db):
         payload = {
             "text": "t", "hypothesis": "h", "action": "Meditate 15 min",
-            "needs_habit": True, "health_metric": "steps", "health_goal": 9000,
+            "health_metric": "steps", "health_goal": 9000,
             "routine_type": "habit", "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }
@@ -999,7 +999,7 @@ class TestGenerateExperimentRoutines:
 
         payload = {
             "text": "t", "hypothesis": "h", "action": "Walk 8000 steps",
-            "needs_habit": True, "health_metric": "steps", "health_goal": 8000,
+            "health_metric": "steps", "health_goal": 8000,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }
@@ -1017,7 +1017,7 @@ class TestGenerateExperimentRoutines:
         db.commit()
 
         payload = {
-            "text": "t", "hypothesis": "h", "action": None, "needs_habit": False,
+            "text": "t", "hypothesis": "h", "action": None,
             "health_metric": None, "health_goal": None,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
@@ -1039,7 +1039,7 @@ class TestGenerateExperimentRoutines:
 
         payload = {
             "text": "t", "hypothesis": "h", "action": "Cut out coffee entirely this week",
-            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "health_metric": None, "health_goal": None,
             "routine_type": "food", "food_name": "coffee", "food_target_frequency": 0,
         }
         with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
@@ -1055,7 +1055,7 @@ class TestGenerateExperimentRoutines:
     def test_unestablished_food_name_is_discarded(self, db):
         payload = {
             "text": "t", "hypothesis": "h", "action": "Cut out donuts entirely this week",
-            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "health_metric": None, "health_goal": None,
             "routine_type": "food", "food_name": "donuts", "food_target_frequency": 0,
         }
         with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
@@ -1075,7 +1075,7 @@ class TestGenerateExperimentRoutines:
 
         payload = {
             "text": "t", "hypothesis": "h", "action": "Cut out coffee entirely this week",
-            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "health_metric": None, "health_goal": None,
             "routine_type": "food", "food_name": "coffee", "food_target_frequency": 0,
         }
         with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
@@ -1090,7 +1090,7 @@ class TestGenerateExperimentRoutines:
         db.commit()
 
         payload = {
-            "text": "t", "hypothesis": "h", "action": None, "needs_habit": False,
+            "text": "t", "hypothesis": "h", "action": None,
             "health_metric": None, "health_goal": None,
             "routine_type": None, "food_name": None, "food_target_frequency": None,
         }
@@ -1154,7 +1154,7 @@ class TestGenerateExperimentStepGoalFallback:
             "text": "t",
             "hypothesis": "More consistent movement should correlate with better weight outcomes.",
             "action": "Try increasing your daily step count by 10% compared to your recent average.",
-            "needs_habit": True, "health_metric": "steps", "health_goal": None,
+            "health_metric": "steps", "health_goal": None,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }
@@ -1171,7 +1171,7 @@ class TestGenerateExperimentStepGoalFallback:
         payload = {
             "text": "t", "hypothesis": "h",
             "action": "Hit a 9,000 step target every day.",
-            "needs_habit": True, "health_metric": None, "health_goal": None,
+            "health_metric": None, "health_goal": None,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }
@@ -1187,7 +1187,7 @@ class TestGenerateExperimentStepGoalFallback:
         payload = {
             "text": "t", "hypothesis": "No steps data on hand.",
             "action": "Try increasing your daily step count by 10% compared to your recent average.",
-            "needs_habit": True, "health_metric": "steps", "health_goal": None,
+            "health_metric": "steps", "health_goal": None,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }
@@ -1207,7 +1207,7 @@ class TestGenerateExperimentStepGoalFallback:
         payload = {
             "text": "t", "hypothesis": "h",
             "action": "Walk 8,000 steps every day (about 10% more than usual).",
-            "needs_habit": True, "health_metric": "steps", "health_goal": None,
+            "health_metric": "steps", "health_goal": None,
             "routine_type": None, "workout_type": None,
             "workout_target_value": None, "workout_unit": None,
         }

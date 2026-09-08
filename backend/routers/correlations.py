@@ -19,6 +19,7 @@ Factors
 """
 
 import json
+import re
 import time
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
@@ -637,7 +638,6 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "text": "2-3 sentence description of the experiment and why it's worth trying",
   "hypothesis": "If I [specific action with concrete number], I expect to see Y by end of week",
   "action": "The specific daily action with a CONCRETE NUMBER, e.g. '8,000 steps every day'",
-  "needs_habit": true or false,
   "health_metric": "steps" | "fat_ratio" | "weight" | null,
   "health_goal": numeric goal value or null,
   "routine_type": "workout" | "habit" | "food" | null,
@@ -652,9 +652,6 @@ CRITICAL: "action" must ALWAYS contain a specific measurable target — never va
 phrases like "increase my steps" or "walk more". Always include a concrete number: \
 "8,000 steps every day", "45 minutes of walking daily", "7 hours of sleep". \
 If the experiment is passive observation with no daily action, set action to null.
-
-needs_habit should be true only when the experiment requires a specific daily \
-effort to track (e.g. hitting a step target). Set false for passive observation.
 
 health_metric/health_goal: ONLY set these when the experiment's primary \
 measurable outcome is literally one of the three Withings-tracked metrics: step \
@@ -713,6 +710,89 @@ provides no new information.\
 """
 
 
+def _mine_step_goal_from_text(
+    db: Session, today: date, routine_type: str | None,
+    action: str | None, hypothesis: str | None,
+    health_metric: str | None, health_goal: float | None,
+) -> tuple[str | None, float | None]:
+    """Use prose text as authoritative source for step goals -- the LLM's JSON
+    numbers are less reliable than the numbers it writes in action/hypothesis.
+    Skipped entirely for routine-based experiments: this fallback exists only to
+    recover a Withings step goal, and firing it here risks misreading an
+    unrelated number in a workout/habit/food action string."""
+    if routine_type in ("workout", "habit", "food"):
+        return health_metric, health_goal
+
+    def _extract_steps(text: str | None) -> float | None:
+        """Extract a plausible daily step count from text (100-50,000). Accepts
+        singular "step" too (e.g. "9,000 step target"), not just "steps" -- still
+        requires the number immediately before it, same tight adjacency as before,
+        just not hardcoded to the plural."""
+        if not text:
+            return None
+        m = re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps?\b', text, re.I)
+        if m:
+            val = float(m.group(1).replace(",", ""))
+            return val if 100 <= val <= 50_000 else None
+        return None
+
+    def _extract_relative_step_increase(text: str | None) -> float | None:
+        """Extract a percentage-based relative step target, e.g. "increase your
+        daily step count by 10%" or "10% more steps than your recent average" --
+        returns the percentage as a fraction (10% -> 0.10). Despite the system
+        prompt's explicit "CRITICAL: always include a concrete number" instruction,
+        the LLM sometimes proposes a step goal this way instead -- rather than
+        discard the whole experiment, _resolve_step_goal below computes the actual
+        number from the user's own recent average, same as it should have."""
+        if not text:
+            return None
+        m = re.search(r'(\d+(?:\.\d+)?)\s*%', text)
+        if not m:
+            return None
+        pct = float(m.group(1))
+        return pct / 100 if 0 < pct <= 100 else None
+
+    def _resolve_step_goal(action_text: str | None, hypothesis_text: str | None) -> float | None:
+        goal = _extract_steps(action_text) or _extract_steps(hypothesis_text)
+        if goal is not None:
+            return goal
+        pct = (_extract_relative_step_increase(action_text)
+               or _extract_relative_step_increase(hypothesis_text))
+        if not pct:
+            return None
+        recent_avg = _recent_avg_steps(db, today)
+        return round(recent_avg * (1 + pct)) if recent_avg else None
+
+    def _mentions_steps(text: str | None) -> bool:
+        # Word-boundary match on "step"/"steps" -- a plain "steps" substring check
+        # missed phrasing like "increase your daily step count", which uses the
+        # singular.
+        return bool(text) and bool(re.search(r'\bsteps?\b', text, re.I))
+
+    if action and _mentions_steps(action):
+        # Action is explicitly about steps — metric must be "steps" regardless of
+        # what the LLM put in the JSON (catches fat_ratio/weight confusion).
+        health_metric = "steps"
+        health_goal = _resolve_step_goal(action, hypothesis)
+    elif health_metric == "steps":
+        # LLM said steps but no "steps" in action — correct goal from hypothesis
+        if health_goal is None or health_goal > 50_000:
+            health_goal = _resolve_step_goal(None, hypothesis)
+    elif health_metric is None and action:
+        # Fallback: action didn't mention "steps" explicitly but hypothesis might
+        _hypo_steps = _resolve_step_goal(None, hypothesis)
+        if _hypo_steps:
+            health_metric = "steps"
+            health_goal = _hypo_steps
+
+    # Final guard: clear any remaining implausible step goal
+    if health_metric == "steps" and not health_goal:
+        health_metric = None
+        health_goal = None
+
+    return health_metric, health_goal
+
+
 def _generate_experiment(
     correlations: list[dict], db: Session, today: date | None = None,
     tz_offset_minutes: int = 0,
@@ -740,7 +820,6 @@ def _generate_experiment(
             text="Keep logging your health data to unlock personalised experiments. You need at least 3 weeks of data.",
             hypothesis=None,
             action=None,
-            needs_habit=False,
             habit_id=None,
         )
         db.add(exp)
@@ -802,7 +881,6 @@ def _generate_experiment(
         text           = llm_data.get("text", "")
         hypothesis     = llm_data.get("hypothesis")
         action         = llm_data.get("action")
-        needs_habit    = bool(llm_data.get("needs_habit", False))
         health_metric = llm_data.get("health_metric") or None
         health_goal   = llm_data.get("health_goal")
         if health_goal is not None:
@@ -878,90 +956,9 @@ def _generate_experiment(
             food_target_frequency = None
             food_baseline_frequency = None
 
-        # Use prose text as authoritative source for step goals — the LLM's JSON
-        # numbers are less reliable than the numbers it writes in action/hypothesis.
-        # Skipped entirely for routine-based experiments: this fallback exists
-        # only to recover a Withings step goal, and firing it here risks
-        # misreading an unrelated number in a workout/habit/food action string.
-        if routine_type not in ("workout", "habit", "food"):
-            import re as _re
-
-            def _extract_steps(text: str | None) -> float | None:
-                """Extract a plausible daily step count from text (100–50,000). Accepts
-                singular "step" too (e.g. "9,000 step target"), not just "steps" -- still
-                requires the number immediately before it, same tight adjacency as before,
-                just not hardcoded to the plural."""
-                if not text:
-                    return None
-                m = _re.search(r'([\d,]+)\+?\s*(?:daily\s+)?steps?\b', text, _re.I)
-                if m:
-                    val = float(m.group(1).replace(",", ""))
-                    return val if 100 <= val <= 50_000 else None
-                return None
-
-            def _extract_relative_step_increase(text: str | None) -> float | None:
-                """Extract a percentage-based relative step target, e.g. "increase your
-                daily step count by 10%" or "10% more steps than your recent average" --
-                returns the percentage as a fraction (10% -> 0.10). Despite the system
-                prompt's explicit "CRITICAL: always include a concrete number" instruction,
-                the LLM sometimes proposes a step goal this way instead -- rather than
-                discard the whole experiment, _resolve_step_goal below computes the actual
-                number from the user's own recent average, same as it should have."""
-                if not text:
-                    return None
-                m = _re.search(r'(\d+(?:\.\d+)?)\s*%', text)
-                if not m:
-                    return None
-                pct = float(m.group(1))
-                return pct / 100 if 0 < pct <= 100 else None
-
-            def _resolve_step_goal(action_text: str | None, hypothesis_text: str | None) -> float | None:
-                goal = _extract_steps(action_text) or _extract_steps(hypothesis_text)
-                if goal is not None:
-                    return goal
-                pct = (_extract_relative_step_increase(action_text)
-                       or _extract_relative_step_increase(hypothesis_text))
-                if not pct:
-                    return None
-                recent_avg = _recent_avg_steps(db, today)
-                return round(recent_avg * (1 + pct)) if recent_avg else None
-
-            def _mentions_steps(text: str | None) -> bool:
-                # Word-boundary match on "step"/"steps" -- a plain "steps" substring check
-                # missed phrasing like "increase your daily step count", which uses the
-                # singular.
-                return bool(text) and bool(_re.search(r'\bsteps?\b', text, _re.I))
-
-            if action and _mentions_steps(action):
-                # Action is explicitly about steps — metric must be "steps" regardless of
-                # what the LLM put in the JSON (catches fat_ratio/weight confusion).
-                health_metric = "steps"
-                health_goal = _resolve_step_goal(action, hypothesis)
-            elif health_metric == "steps":
-                # LLM said steps but no "steps" in action — correct goal from hypothesis
-                if health_goal is None or health_goal > 50_000:
-                    health_goal = _resolve_step_goal(None, hypothesis)
-            elif health_metric is None and action:
-                # Fallback: action didn't mention "steps" explicitly but hypothesis might
-                _hypo_steps = _resolve_step_goal(None, hypothesis)
-                if _hypo_steps:
-                    health_metric = "steps"
-                    health_goal = _hypo_steps
-
-            # Final guard: clear any remaining implausible step goal
-            if health_metric == "steps" and not health_goal:
-                health_metric = None
-                health_goal = None
-
-        # If needs_habit is set but no concrete action was produced, the LLM was vague.
-        # Manufacture a sensible default so the experiment still gets a tracking habit.
-        if needs_habit and not action:
-            if health_metric == "steps":
-                action = "8,000 steps every day"
-                health_goal = health_goal or 8000.0
-            else:
-                # Can't auto-infer a goal for other metrics/routines — leave needs_habit False
-                needs_habit = False
+        health_metric, health_goal = _mine_step_goal_from_text(
+            db, today, routine_type, action, hypothesis, health_metric, health_goal,
+        )
 
         # Deterministic duplicate-avoidance backstop, regardless of whether the
         # LLM actually followed the "avoid repeating" prompt instruction above.
@@ -979,7 +976,6 @@ def _generate_experiment(
         text = "Try increasing your daily step count by 10% compared to your recent average."
         hypothesis = "More consistent movement should correlate with better weight outcomes."
         action = None
-        needs_habit = False
         health_metric = None
         health_goal = None
         routine_type = None
@@ -1013,7 +1009,6 @@ def _generate_experiment(
         text=text,
         hypothesis=hypothesis,
         action=action,
-        needs_habit=needs_habit,
         habit_id=habit_id,
         health_metric=health_metric,
         health_goal=health_goal,
@@ -1038,7 +1033,6 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
         "text":                 exp.text,
         "hypothesis":           exp.hypothesis,
         "action":               exp.action,
-        "needs_habit":          exp.needs_habit,
         "habit_id":             exp.habit_id,
         "health_metric":      exp.health_metric,
         "health_goal":        exp.health_goal,
@@ -1324,7 +1318,6 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
             text=data.get("text", ""),
             hypothesis=data.get("hypothesis"),
             action=data.get("action"),
-            needs_habit=data.get("needs_habit", False),
             habit_id=data.get("habit_id"),
             health_metric=data.get("withings_metric"),
             health_goal=data.get("withings_goal"),

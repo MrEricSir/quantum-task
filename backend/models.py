@@ -268,7 +268,6 @@ class HealthExperiment(Base):
     text       = Column(String, nullable=False)        # LLM description shown to user
     hypothesis = Column(String, nullable=True)
     action     = Column(String, nullable=True)         # specific daily action
-    needs_habit      = Column(Boolean, default=False)
     habit_id         = Column(Integer, nullable=True)  # linked 🧪 habit (no FK — habit may be archived)
     health_metric    = Column(String, nullable=True)
     health_goal      = Column(Float, nullable=True)
