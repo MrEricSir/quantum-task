@@ -138,6 +138,61 @@ def check_workout_for_habit(db: Session, habit_id: int, today: date) -> models.W
     return entry
 
 
+_FOOD_AVOID_LOOKBACK_DAYS = 3  # re-check this many trailing completed days, not just yesterday
+
+
+def check_food_avoidance_habits(db: Session, today: date) -> None:
+    """Auto-complete food-elimination habits for any trailing day the target food was NOT
+    logged. This is the mirror-image problem to check_habit_for_workout: a workout habit's
+    success is a positive event (logging the workout), so it can react to that event the
+    moment it happens. A food-elimination habit's success is an ABSENCE -- there's no event
+    to react to when nothing gets logged, so it can never be triggered from a food-log write
+    the way check_habit_for_workout reacts to a WorkoutEntry. Instead this is called from the
+    Health page's own GET (with the caller's real local date) and once a day from the
+    background scheduler as a backstop for whenever nobody visits that page. Only judges days
+    strictly BEFORE `today` -- today's log isn't finished yet, so its absence can't be judged
+    yet. Re-checks a trailing few days, not just yesterday, since a food entry can be logged
+    or corrected after the fact -- same rationale as _auto_check_habits' Withings lookback
+    window. No tz_offset parameter needed: `today` must already be the caller's local date
+    (see deps.local_date), and FoodEntry.consumed_at is stored as a naive local wall-clock
+    time already, not a UTC instant -- see models.py's timezone docstring."""
+    habits = (
+        db.query(models.Habit)
+        .filter(models.Habit.food_avoid_name.isnot(None), models.Habit.archived == False)  # noqa: E712
+        .all()
+    )
+    if not habits:
+        return
+
+    for habit in habits:
+        exp = (
+            db.query(models.HealthExperiment)
+            .filter_by(habit_id=habit.id)
+            .order_by(models.HealthExperiment.id.desc())
+            .first()
+        )
+        week_start = _week_start(exp.week) if exp else None
+
+        for days_back in range(1, _FOOD_AVOID_LOOKBACK_DAYS + 1):
+            day = today - timedelta(days=days_back)
+            if week_start and day < week_start:
+                break
+            day_str = day.isoformat()
+            if db.query(models.HabitCompletion).filter_by(habit_id=habit.id, date=day_str).first():
+                continue
+            day_start = day_str
+            day_end = (day + timedelta(days=1)).isoformat()
+            eaten = any(
+                e.name.strip().lower() == habit.food_avoid_name
+                for e in db.query(models.FoodEntry).filter(
+                    models.FoodEntry.consumed_at >= day_start,
+                    models.FoodEntry.consumed_at < day_end,
+                ).all()
+            )
+            if not eaten:
+                check_habit_row(db, habit.id, day, from_workout=True)
+
+
 # ── Shared data loader ────────────────────────────────────────────────────────
 
 def _load_weekly_obs(
@@ -994,11 +1049,18 @@ def _generate_experiment(
         # auto-checks it via check_habit_for_workout (matches on workout_type against
         # this experiment's row, not on hitting workout_target_value), in addition to
         # checking it off manually like any other habit.
+        # Food-elimination experiments also get one, auto-checked via
+        # check_food_avoidance_habits (a "did you eat it today" checkbox has no natural
+        # manual convention -- you'd have to guess whether checking it means you avoided
+        # the food or ate it -- so this one is never manually toggleable, same as a
+        # Withings-goal habit).
         habit_name = f"🧪 {action[:60]}"
         habit = models.Habit(
             name=habit_name,
             health_metric=health_metric,
             health_goal=health_goal,
+            food_avoid_name=food_name,
+            food_avoid_target=food_target_frequency,
         )
         db.add(habit)
         db.flush()
@@ -1396,6 +1458,12 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     today = local_date(request)
     current_week = _current_isoweek(today)
     tz_offset = utc_offset_minutes(request)
+
+    # Auto-check food-elimination habits for any trailing day the target food went
+    # unlogged, before the week-rollover cleanup below potentially archives one --
+    # see check_food_avoidance_habits' docstring for why this can't be triggered from
+    # a food-log write the way workout habits react to a WorkoutEntry.
+    check_food_avoidance_habits(db, today)
 
     # Archive habits and expire any active experiments from previous weeks so
     # week-rollover cleanup happens automatically (not just on explicit dismiss).

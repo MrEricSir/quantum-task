@@ -227,14 +227,17 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
                   >
                     {(() => {
-                      const isAuto = !!habit.health_metric
+                      const isAuto = !!habit.health_metric || !!habit.food_avoid_name
+                      const autoTitle = habit.food_avoid_name
+                        ? 'Tracked automatically from your food log'
+                        : 'Synced automatically from Withings'
                       return (
                         <button
                           type="button"
                           className={`today-habit-check${isAuto && !habit.completed_today ? ' today-habit-check--auto' : ''}`}
                           onClick={isAuto ? undefined : () => onToggleHabit(habit)}
                           disabled={isAuto}
-                          title={isAuto ? 'Synced automatically from Withings' : undefined}
+                          title={isAuto ? autoTitle : undefined}
                           aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
                         >
                           {habit.completed_today

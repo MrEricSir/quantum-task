@@ -373,11 +373,16 @@ async def _bridge_stale_scheduler() -> None:
 
 
 def _expire_stale_experiments() -> None:
-    """Archive habits and dismiss active experiments from previous weeks."""
+    """Archive habits and dismiss active experiments from previous weeks. Also backstops
+    check_food_avoidance_habits for whenever nobody visits the Health page (its primary
+    trigger) for a while -- see that function's docstring."""
     try:
         from datetime import date
-        from routers.correlations import auto_expire_stale_experiments, _current_isoweek
+        from routers.correlations import (
+            auto_expire_stale_experiments, check_food_avoidance_habits, _current_isoweek,
+        )
         with SessionLocal() as db:
+            check_food_avoidance_habits(db, date.today())
             auto_expire_stale_experiments(db, _current_isoweek(), date.today())
     except Exception as e:
         print(f"[experiments] cleanup error: {e}")

@@ -52,8 +52,12 @@ LOCAL_DATE = "2026-06-20"
 HEADERS = {"X-Local-Date": LOCAL_DATE}
 
 
-def _habit(db, name: str, health_metric=None, health_goal=None) -> models.Habit:
-    h = models.Habit(name=name, health_metric=health_metric, health_goal=health_goal)
+def _habit(db, name: str, health_metric=None, health_goal=None,
+           food_avoid_name=None, food_avoid_target=None) -> models.Habit:
+    h = models.Habit(
+        name=name, health_metric=health_metric, health_goal=health_goal,
+        food_avoid_name=food_avoid_name, food_avoid_target=food_avoid_target,
+    )
     db.add(h)
     db.flush()
     return h
@@ -84,6 +88,12 @@ class TestCheckHabit:
 
     def test_health_metric_habit_blocked(self, client, db_session):
         h = _habit(db_session, "Walk 10k steps", health_metric="steps", health_goal=10_000)
+        db_session.commit()
+        r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
+        assert r.status_code == 403
+
+    def test_food_avoid_habit_blocked(self, client, db_session):
+        h = _habit(db_session, "🧪 Limit protein bar", food_avoid_name="protein bar", food_avoid_target=1.0)
         db_session.commit()
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 403
@@ -143,6 +153,13 @@ class TestUncheckHabit:
 
     def test_health_metric_habit_blocked(self, client, db_session):
         h = _habit(db_session, "Walk 10k steps", health_metric="steps", health_goal=10_000)
+        db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
+        db_session.commit()
+        r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)
+        assert r.status_code == 403
+
+    def test_food_avoid_habit_blocked(self, client, db_session):
+        h = _habit(db_session, "🧪 Limit protein bar", food_avoid_name="protein bar", food_avoid_target=1.0)
         db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
         db_session.commit()
         r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)

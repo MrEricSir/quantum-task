@@ -129,6 +129,43 @@ describe('Withings-synced habit (health_metric set)', () => {
   })
 })
 
+// ── Food-avoidance habits ────────────────────────────────────────────────────
+
+describe('food-avoidance habit (food_avoid_name set)', () => {
+  const avoiding = {
+    ...base, id: 4, name: '🧪 Limit protein bar', food_avoid_name: 'protein bar', food_avoid_target: 1,
+  }
+
+  it('check button is disabled', () => {
+    renderHabits([avoiding])
+    const btn = document.querySelector('.habit-card-check')
+    expect(btn.disabled).toBe(true)
+  })
+
+  it('does not call onToggle when clicked', () => {
+    const onToggle = vi.fn()
+    renderHabits([avoiding], { onToggle })
+    fireEvent.click(document.querySelector('.habit-card-check'))
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  it('applies the auto-sync dashed style when not completed', () => {
+    renderHabits([avoiding])
+    const btn = document.querySelector('.habit-card-check')
+    expect(btn.className).toContain('--auto')
+  })
+
+  it('shows a badge with the food name and target frequency', () => {
+    renderHabits([avoiding])
+    expect(screen.getByText(/protein bar.*1x\/week/)).toBeTruthy()
+  })
+
+  it('shows an "avoid" badge when the target is full elimination (0)', () => {
+    renderHabits([{ ...avoiding, food_avoid_target: 0 }])
+    expect(screen.getByText(/avoid protein bar/)).toBeTruthy()
+  })
+})
+
 // ── Weekly tier badge ────────────────────────────────────────────────────────
 
 describe('weekly tier badge', () => {

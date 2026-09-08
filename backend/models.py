@@ -206,6 +206,12 @@ class Habit(Base):
     archived_at = Column(DateTime, nullable=True)
     health_metric = Column(String, nullable=True)   # 'steps' | 'fat_ratio' | None
     health_goal = Column(Float, nullable=True)       # target value (steps count or % body fat)
+    food_avoid_name = Column(String, nullable=True)   # set when auto-tracking a food-elimination
+                                                        # experiment (see correlations.py's
+                                                        # check_food_avoidance_habits) -- exact
+                                                        # same lowercased name as the linked
+                                                        # HealthExperiment.food_name
+    food_avoid_target = Column(Float, nullable=True)  # target occurrences/week, 0 = eliminate entirely
     tags = relationship("Tag", secondary="habit_tags", lazy="joined")
 
 

@@ -143,6 +143,12 @@ function metricBadgeText(metric, goal, isImperial) {
   return metric
 }
 
+function foodAvoidBadgeText(name, target) {
+  if (!target) return `avoid ${name}`
+  const freq = Number.isInteger(target) ? target : target.toFixed(1)
+  return `${name} ≤ ${freq}x/week`
+}
+
 export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagIds = new Set(), onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, onCreateTag, isImperial = false, moodToday = null, onLogMood = null }) {
   const navigate = useNavigate()
   const [editingId, setEditingId] = useState(null)
@@ -203,8 +209,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     ? habits
     : habits.filter((h) => (h.tags ?? []).some((t) => selectedTagIds.has(t.id)))
   ).slice().sort((a, b) => {
-    const aAuto = !!a.health_metric
-    const bAuto = !!b.health_metric
+    const aAuto = !!a.health_metric || !!a.food_avoid_name
+    const bAuto = !!b.health_metric || !!b.food_avoid_name
     if (aAuto !== bAuto) return aAuto ? 1 : -1
     return a.name.localeCompare(b.name)
   })
@@ -254,7 +260,10 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
           {visibleHabits.map((habit) => (
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
               {(() => {
-                const isAuto = !!habit.health_metric
+                const isAuto = !!habit.health_metric || !!habit.food_avoid_name
+                const autoTitle = habit.food_avoid_name
+                  ? 'Tracked automatically from your food log'
+                  : 'Synced automatically from Withings'
                 return (
                   <button
                     type="button"
@@ -266,7 +275,7 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                       onToggle(habit)
                     }}
                     disabled={isAuto}
-                    title={isAuto ? 'Synced automatically from Withings' : undefined}
+                    title={isAuto ? autoTitle : undefined}
                     aria-label={habit.completed_today ? 'Mark incomplete' : 'Mark complete'}
                   >
                     {habit.completed_today
@@ -336,6 +345,20 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                       {metricBadgeText(habit.health_metric, habit.health_goal, isImperial)}
                     </span>
                     <span className="habit-card-withings-auto">↻ synced</span>
+                  </button>
+                )}
+
+                {editingId !== habit.id && !habit.health_metric && habit.food_avoid_name && (
+                  <button
+                    type="button"
+                    className="habit-card-withings"
+                    onClick={() => navigate('/health')}
+                    title="View experiment progress"
+                  >
+                    <span className="habit-card-withings-badge">
+                      🚫 {foodAvoidBadgeText(habit.food_avoid_name, habit.food_avoid_target)}
+                    </span>
+                    <span className="habit-card-withings-auto">↻ from food log</span>
                   </button>
                 )}
 

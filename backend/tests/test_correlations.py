@@ -26,7 +26,7 @@ from routers.correlations import (
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
-    _recent_avg_steps,
+    check_food_avoidance_habits, _recent_avg_steps,
 )
 from routers.habits import check_habit_row
 
@@ -911,6 +911,26 @@ class TestGenerateExperimentRoutines:
         assert exp.habit_id is not None
         assert exp.routine_type == "workout"
 
+    def test_food_elimination_experiment_creates_auto_tracked_habit(self, db):
+        for i in range(4):
+            _add_food_named(db, "protein bar", days_ago=i * 5)  # 4 distinct days within 21
+        db.commit()
+
+        payload = {
+            "text": "t", "hypothesis": "h", "action": "Limit protein bar to 1x this week",
+            "health_metric": None, "health_goal": None,
+            "routine_type": "food", "food_name": "protein bar", "food_target_frequency": 1.0,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.food_name == "protein bar"
+        assert exp.habit_id is not None
+        habit = db.query(models.Habit).filter_by(id=exp.habit_id).first()
+        assert habit.food_avoid_name == "protein bar"
+        assert habit.food_avoid_target == 1.0
+        assert habit.health_metric is None
+
     def test_unestablished_workout_type_is_discarded(self, db):
         payload = {
             "text": "t", "hypothesis": "h", "action": "Cycle 5 miles",
@@ -1440,6 +1460,156 @@ class TestCheckWorkoutForHabit:
         result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
         assert result is not None
         assert db.query(models.WorkoutEntry).count() == 2
+
+
+class TestCheckFoodAvoidanceHabits:
+    """check_food_avoidance_habits is the mirror-image of check_habit_for_workout: it
+    auto-checks a food-elimination habit for trailing days the target food was NOT logged,
+    since absence can't be reacted to as an event the way a WorkoutEntry can be."""
+
+    def _habit(self, db, food_avoid_name="protein bar", food_avoid_target=1.0, archived=False):
+        habit = models.Habit(
+            name="🧪 Limit protein bar", archived=archived,
+            food_avoid_name=food_avoid_name, food_avoid_target=food_avoid_target,
+        )
+        db.add(habit)
+        db.commit()
+        return habit
+
+    def _experiment(self, db, habit_id, food_name="protein bar", week=None):
+        exp = models.HealthExperiment(
+            week=week or _current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            food_name=food_name, food_target_frequency=1.0, habit_id=habit_id,
+        )
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def _food_entry(self, db, name, on_date: date):
+        db.add(models.FoodEntry(
+            raw_input=name, name=name, category="food",
+            consumed_at=datetime.combine(on_date, datetime.min.time()).replace(hour=12),
+        ))
+        db.commit()
+
+    def test_checks_off_trailing_days_the_food_was_not_logged(self, db):
+        habit = self._habit(db)
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=5)  # comfortably within the week, 3 trailing days available
+
+        check_food_avoidance_habits(db, today)
+
+        for days_back in range(1, 4):
+            day_str = (today - timedelta(days=days_back)).isoformat()
+            assert db.query(models.HabitCompletion).filter_by(
+                habit_id=habit.id, date=day_str,
+            ).first() is not None
+
+    def test_does_not_check_today(self, db):
+        habit = self._habit(db)
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=5)
+
+        check_food_avoidance_habits(db, today)
+
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=today.isoformat(),
+        ).first() is None
+
+    def test_a_day_the_food_was_logged_is_not_checked(self, db):
+        habit = self._habit(db)
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=5)
+        ate_on = today - timedelta(days=1)
+        self._food_entry(db, "protein bar", ate_on)
+
+        check_food_avoidance_habits(db, today)
+
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=ate_on.isoformat(),
+        ).first() is None
+        # the other trailing days, with nothing logged, still get checked
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=(today - timedelta(days=2)).isoformat(),
+        ).first() is not None
+
+    def test_food_match_is_case_insensitive(self, db):
+        habit = self._habit(db, food_avoid_name="protein bar")
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=5)
+        ate_on = today - timedelta(days=1)
+        self._food_entry(db, "Protein Bar", ate_on)
+
+        check_food_avoidance_habits(db, today)
+
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=ate_on.isoformat(),
+        ).first() is None
+
+    def test_lookback_does_not_cross_into_the_prior_week(self, db):
+        habit = self._habit(db)
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=1)  # only 1 day into the experiment's week
+
+        check_food_avoidance_habits(db, today)
+
+        # today - 1 == the week's Monday: in-bounds, gets checked
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=ws.isoformat(),
+        ).first() is not None
+        # today - 2 / today - 3 fall in the prior week: must not be touched
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=(ws - timedelta(days=1)).isoformat(),
+        ).first() is None
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=(ws - timedelta(days=2)).isoformat(),
+        ).first() is None
+
+    def test_archived_habit_is_left_alone(self, db):
+        habit = self._habit(db, archived=True)
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=5)
+
+        check_food_avoidance_habits(db, today)
+
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_already_checked_day_is_left_alone(self, db):
+        habit = self._habit(db)
+        week = _current_isoweek(date(2026, 6, 20))
+        ws = _week_start(week)
+        self._experiment(db, habit.id, week=week)
+        today = ws + timedelta(days=5)
+        pre_checked = (today - timedelta(days=1)).isoformat()
+        db.add(models.HabitCompletion(habit_id=habit.id, date=pre_checked))
+        db.commit()
+
+        check_food_avoidance_habits(db, today)
+
+        assert db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date=pre_checked,
+        ).count() == 1
+
+    def test_regular_habit_without_food_avoid_name_is_untouched(self, db):
+        habit = models.Habit(name="Read 30 minutes")
+        db.add(habit)
+        db.commit()
+
+        check_food_avoidance_habits(db, date(2026, 6, 25))
+
+        assert db.query(models.HabitCompletion).count() == 0
 
 
 class TestCheckHabitRowWorkoutAutoLogWiring:

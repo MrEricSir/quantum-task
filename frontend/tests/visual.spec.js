@@ -514,6 +514,27 @@ test.describe('habits page', () => {
     await expect(btn).not.toHaveClass(/check--auto/)
   })
 
+  test('food-avoidance habit has a disabled check button and a food-log badge', async ({ page }) => {
+    await page.route(/\/api\/habits(\?|$)/, (r) => {
+      const url = r.request().url()
+      if (url.includes('archived=true')) return r.fulfill({ json: [] })
+      const habits = [...HABITS, {
+        id: 4, name: '🧪 Limit protein bar', completed_today: false, streak: 0, best_streak: 0,
+        tags: [], recurrence_rule: 'daily',
+        recent_completions: [false, false, false, false, false, false, false],
+        health_metric: null, is_experiment: true,
+        food_avoid_name: 'protein bar', food_avoid_target: 1,
+      }]
+      return r.fulfill({ json: habits })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+
+    const card = page.locator('.habit-card', { hasText: 'Limit protein bar' })
+    await expect(card.getByRole('button', { name: /mark complete/i })).toBeDisabled()
+    await expect(card.getByText(/protein bar.*1x\/week/)).toBeVisible()
+  })
+
   test('edit button is present on habit cards', async ({ page }) => {
     await expect(page.getByRole('button', { name: /edit habit/i }).first()).toBeVisible()
   })

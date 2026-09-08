@@ -55,6 +55,8 @@ def _habit_out(db: Session, habit: models.Habit, today: date) -> schemas.Habit:
         recent_completions=recent_completions,
         health_metric=habit.health_metric,
         health_goal=habit.health_goal,
+        food_avoid_name=habit.food_avoid_name,
+        food_avoid_target=habit.food_avoid_target,
         is_experiment=is_experiment,
     )
 
@@ -142,11 +144,12 @@ def delete_habit(habit_id: int, db: Session = Depends(get_db)):
 
 
 def _require_manual(habit_id: int, db: Session) -> models.Habit:
-    """Return the habit or raise if it is auto-tracked via Withings."""
+    """Return the habit or raise if it is auto-tracked via Withings or a food-elimination
+    experiment (see correlations.py's check_food_avoidance_habits)."""
     db_habit = db.query(models.Habit).filter(models.Habit.id == habit_id).first()
     if not db_habit:
         raise HTTPException(status_code=404, detail="Habit not found")
-    if db_habit.health_metric:
+    if db_habit.health_metric or db_habit.food_avoid_name:
         raise HTTPException(
             status_code=403,
             detail="This habit is tracked automatically and cannot be checked manually.",

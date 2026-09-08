@@ -33,6 +33,8 @@ class Habit(BaseModel):
     recent_completions: List[bool] = []
     health_metric: Optional[str] = None
     health_goal: Optional[float] = None
+    food_avoid_name: Optional[str] = None
+    food_avoid_target: Optional[float] = None
     is_experiment: bool = False
 
     model_config = {"from_attributes": True}
