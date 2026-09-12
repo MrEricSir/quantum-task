@@ -35,7 +35,6 @@ frontend.log
 !.env.example
 backend/credentials.json
 .gcp-config
-.github-actions-sa-key.json
 .firebase-sa-key.json
 
 # ── Editor / OS ───────────────────────────────────────────────────────────────

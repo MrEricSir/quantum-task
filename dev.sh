@@ -366,7 +366,6 @@ _build_and_push() {
     --exclude="backend/__pycache__" \
     --exclude="**/*.pyc" \
     --exclude=".gcp-config" \
-    --exclude=".github-actions-sa-key.json" \
     -C "$SCRIPT_DIR" .
 
   echo "==> Building and pushing image via Cloud Build ($primary)..."
