@@ -18,7 +18,7 @@ from bridge.stale import STALE_THRESHOLD_MINUTES
 from database import SessionLocal
 from deps import to_local_date
 from settings import Settings
-from telegram.notify import send_message
+from telegram.notify import send_message, esc
 
 
 def _hour_matches(time_str: str, now_local: datetime) -> bool:
@@ -380,7 +380,7 @@ def check_meeting_alerts(db: Session, token: str, chat_id: str,
 
     sent = 0
     for _, title, start_local, mins_away in to_alert:
-        text = f"📅 <b>{title}</b> in {mins_away} min ({start_local.strftime('%-I:%M %p')})"
+        text = f"📅 <b>{esc(title)}</b> in {mins_away} min ({start_local.strftime('%-I:%M %p')})"
         if send_message(token, chat_id, text):
             sent += 1
 

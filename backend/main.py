@@ -425,7 +425,17 @@ async def lifespan(app):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Quantum Task API", lifespan=lifespan)
+def _docs_kwargs_for(auth_password: str) -> dict:
+    """FastAPI docs_url/redoc_url/openapi_url overrides. AuthMiddleware only guards paths
+    under /api/ (the login page itself needs to load pre-auth) -- FastAPI's own /docs,
+    /redoc, /openapi.json live outside that prefix, so they'd otherwise be reachable by
+    anyone with the URL, no login, exposing the entire API schema. Disabled whenever a
+    real password is configured, mirroring the same AUTH_PASSWORD flag AuthMiddleware
+    itself uses to distinguish a real deployment from local dev with no auth at all."""
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None} if auth_password else {}
+
+
+app = FastAPI(title="Quantum Task API", lifespan=lifespan, **_docs_kwargs_for(AUTH_PASSWORD))
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(

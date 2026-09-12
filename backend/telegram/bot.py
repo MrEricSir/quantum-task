@@ -20,7 +20,7 @@ from database import SessionLocal
 from deps import llm_client, LLM_MODEL, reasoning_kwargs
 from gcal import get_personal_events
 from settings import Settings
-from telegram.notify import send_message
+from telegram.notify import send_message, esc
 
 
 # ── Intent prompt ─────────────────────────────────────────────────────────────
@@ -576,7 +576,7 @@ def _reply_today(tz_offset: int) -> str:
     if cal_events:
         lines.append("\n<b>📅 Calendar</b>")
         for ev in sorted(cal_events, key=lambda e: (e["all_day"], e["start"])):
-            lines.append(f"• {ev['title']} @ {ev['time_str']}")
+            lines.append(f"• {esc(ev['title'])} @ {ev['time_str']}")
 
     if timed:
         lines.append("\n<b>⏰ Scheduled tasks</b>")
@@ -623,7 +623,7 @@ def _reply_date(target_date, tz_offset: int) -> str:
     if cal_events:
         lines.append("\n<b>Calendar</b>")
         for ev in sorted(cal_events, key=lambda e: (e["all_day"], e["start"])):
-            lines.append(f"• {ev['title']} @ {ev['time_str']}")
+            lines.append(f"• {esc(ev['title'])} @ {ev['time_str']}")
 
     if day_cards:
         lines.append("\n<b>Tasks</b>")
@@ -1375,7 +1375,7 @@ def _reply_week(tz_offset: int) -> str:
         day_lines = [f"\n<b>{label}</b>"]
         items = by_day[d]
         for ev in sorted(items["events"], key=lambda e: (e["all_day"], e["start"])):
-            day_lines.append(f"  📅 {ev['title']} @ {ev['time_str']}")
+            day_lines.append(f"  📅 {esc(ev['title'])} @ {ev['time_str']}")
         for c in sorted(items["cards"], key=lambda x: x.scheduled_at):
             day_lines.append(f"  • {c.title} @ {c.scheduled_at.strftime('%-I:%M %p')}")
         lines.extend(day_lines)
@@ -1558,10 +1558,10 @@ def _reply_priority(tz_offset: int) -> str:
     except Exception as e:
         print(f"[telegram] priority LLM error: {e}")
         if overdue:
-            return f"🎯 Start with your most overdue task: <b>{overdue[0].title}</b>"
+            return f"🎯 Start with your most overdue task: <b>{esc(overdue[0].title)}</b>"
         if upcoming_events:
-            return f"🎯 You have <b>{upcoming_events[0]['title']}</b> coming up — prepare for that."
-        return f"🎯 Start with: <b>{today_cards[0].title}</b>"
+            return f"🎯 You have <b>{esc(upcoming_events[0]['title'])}</b> coming up — prepare for that."
+        return f"🎯 Start with: <b>{esc(today_cards[0].title)}</b>"
 
     return f"🎯 {suggestion}"
 

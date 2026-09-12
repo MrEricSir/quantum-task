@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import app_setting_keys as keys
+import models
 from deps import AUTH_PASSWORD, get_db
 from settings import Settings
 
@@ -25,6 +26,27 @@ LOCKOUT_MINUTES = 15
 
 class _LoginBody(BaseModel):
     password: str
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort real client IP for keying per-IP login lockout. Cloud Run terminates
+    the connection at Google's front end and forwards to this container over an internal
+    connection, so request.client.host reflects that internal hop, not the real caller --
+    every request would collapse to the same value, making a per-IP lockout a no-op.
+    Google's front end appends the real observed client IP as the LAST entry of
+    X-Forwarded-For (any earlier entries could be client-supplied and spoofed) -- taking
+    the first entry instead is a common mistake that would let an attacker set their own
+    X-Forwarded-For to a fresh fake IP on every request and never actually get locked out.
+    Falls back to request.client.host for local dev, where there's no proxy in front and
+    that value is already correct."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _get_login_attempt(db: Session, ip: str) -> models.LoginAttempt | None:
+    return db.query(models.LoginAttempt).filter_by(ip=ip).first()
 
 
 def _get_or_create_session_secret(s: Settings) -> str:
@@ -61,15 +83,15 @@ def auth_check(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/api/auth/login")
-def auth_login(body: _LoginBody, db: Session = Depends(get_db)):
+def auth_login(request: Request, body: _LoginBody, db: Session = Depends(get_db)):
     if not AUTH_PASSWORD:
         return JSONResponse({"ok": True})
 
-    s = Settings(db)
+    ip = _client_ip(request)
+    attempt = _get_login_attempt(db, ip)
     now = datetime.now(timezone.utc)
-    lockout_until_raw = s.auth_lockout_until
-    if lockout_until_raw:
-        lockout_until = datetime.fromisoformat(lockout_until_raw)
+    if attempt and attempt.lockout_until:
+        lockout_until = datetime.fromisoformat(attempt.lockout_until)
         if now < lockout_until:
             retry_minutes = int((lockout_until - now).total_seconds() // 60) + 1
             raise HTTPException(
@@ -78,17 +100,22 @@ def auth_login(body: _LoginBody, db: Session = Depends(get_db)):
             )
 
     if not _hmac.compare_digest(body.password, AUTH_PASSWORD):
-        attempts = s.auth_failed_attempts + 1
-        if attempts >= MAX_LOGIN_ATTEMPTS:
-            s.set(keys.AUTH_LOCKOUT_UNTIL, (now + timedelta(minutes=LOCKOUT_MINUTES)).isoformat())
-            s.set(keys.AUTH_FAILED_ATTEMPTS, "0")
-        else:
-            s.set(keys.AUTH_FAILED_ATTEMPTS, str(attempts))
+        if not attempt:
+            attempt = models.LoginAttempt(ip=ip, failed_attempts=0, lockout_until=None)
+            db.add(attempt)
+        attempt.failed_attempts += 1
+        if attempt.failed_attempts >= MAX_LOGIN_ATTEMPTS:
+            attempt.lockout_until = (now + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
+            attempt.failed_attempts = 0
         db.commit()
         raise HTTPException(status_code=401, detail="Wrong password")
 
-    s.set(keys.AUTH_FAILED_ATTEMPTS, "0")
-    s.set(keys.AUTH_LOCKOUT_UNTIL, "")
+    # A successful login means this IP is behaving -- drop its row (if any) rather than
+    # just zeroing it out, so the table only ever holds IPs currently mid-lockout or with
+    # recent failures, not a permanent record of every IP that's ever logged in.
+    if attempt:
+        db.delete(attempt)
+    s = Settings(db)
     session_secret = _get_or_create_session_secret(s)
     db.commit()
 

@@ -409,6 +409,19 @@ class AppSetting(Base):
     value = Column(String, nullable=False)
 
 
+class LoginAttempt(Base):
+    """Per-client-IP login failure tracking (see routers/auth.py's _client_ip). Keyed by IP
+    rather than a single global counter -- a single shared counter meant anyone who found
+    this app's public URL could lock the real owner out just by sending 5 wrong passwords,
+    repeatedly. Rows are deleted on a successful login from that IP, so this table only ever
+    holds IPs currently mid-lockout or with recent failures, not a permanent record."""
+    __tablename__ = "login_attempts"
+
+    ip              = Column(String, primary_key=True)
+    failed_attempts = Column(Integer, nullable=False, default=0)
+    lockout_until   = Column(String, nullable=True)  # ISO datetime string, or None
+
+
 class CardEmbedding(Base):
     """Semantic embedding vector for a card, used for natural-language search."""
     __tablename__ = "card_embeddings"

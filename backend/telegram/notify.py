@@ -3,6 +3,7 @@ Telegram Bot API HTTP calls.
 
 No third-party library — the Telegram Bot API is a simple HTTPS endpoint.
 """
+import html
 import logging
 
 import requests
@@ -10,6 +11,20 @@ import requests
 log = logging.getLogger(__name__)
 
 _API_BASE = "https://api.telegram.org/bot{token}/{method}"
+
+
+def esc(text: str) -> str:
+    """Escape a piece of externally-sourced text (a calendar event title from a
+    subscribed ICS feed, etc.) before interpolating it into an HTML parse_mode message.
+    send_message always uses parse_mode="HTML", and message text elsewhere in this
+    package deliberately mixes trusted structural tags (<b>...</b>) with values built
+    from external content -- escape only the interpolated value, never the whole
+    message, or the intentional formatting tags get escaped too. Without this, a
+    calendar feed with a title like "<b>fake</b>" or unbalanced markup can render as
+    live formatting/links inside otherwise-trusted bot output, or make the whole
+    sendMessage call fail outright on malformed HTML, silently dropping the
+    notification (e.g. a meeting alert)."""
+    return html.escape(str(text), quote=False)
 
 
 def send_message(bot_token: str, chat_id: str, text: str) -> bool:

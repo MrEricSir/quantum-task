@@ -18,11 +18,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app_setting_keys as keys
 import models
-from main import app
+from main import app, _docs_kwargs_for
 from deps import get_db
-from settings import Settings
 
 # ── In-memory DB fixture ──────────────────────────────────────────────────────
 
@@ -73,6 +71,30 @@ def auth_client(monkeypatch):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+# ── API docs exposure ────────────────────────────────────────────────────────────
+# _docs_kwargs_for is a pure function (not the `app` fixture) because `app` is a
+# module-level singleton already constructed at import time with whatever AUTH_PASSWORD
+# happened to be set then -- monkeypatching main.AUTH_PASSWORD afterward (as auth_client
+# does) can't retroactively change app.docs_url. This tests the same decision the real
+# app construction makes, without needing to reload the module.
+
+class TestDocsExposure:
+
+    def test_docs_disabled_when_password_configured(self):
+        kwargs = _docs_kwargs_for("s3cret")
+        assert kwargs == {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+    def test_docs_enabled_when_no_password_configured(self):
+        assert _docs_kwargs_for("") == {}
+
+    def test_docs_reachable_without_auth_in_the_no_password_test_app(self, client):
+        """Sanity check that the shared test `app` (built with AUTH_PASSWORD unset, matching
+        real local-dev-without-auth behavior) actually has docs enabled -- confirms this
+        suite's own default setup isn't accidentally masking the disabled-docs case."""
+        res = client.get("/openapi.json")
+        assert res.status_code == 200
 
 
 # ── GET /api/auth/check ────────────────────────────────────────────────────────
@@ -156,19 +178,63 @@ class TestAuthLoginLockout:
         res = auth_client.post("/api/auth/login", json={"password": "s3cret"})
         assert res.status_code == 200
 
-        s = Settings(db)
-        assert s.auth_failed_attempts == 0
+        # A successful login deletes the row entirely rather than just zeroing it.
+        assert db.query(models.LoginAttempt).count() == 0
 
     def test_lockout_expires_after_the_window(self, auth_client, db):
         for _ in range(5):
             auth_client.post("/api/auth/login", json={"password": "wrong"})
 
-        s = Settings(db)
-        s.set(keys.AUTH_LOCKOUT_UNTIL, (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
+        row = db.query(models.LoginAttempt).filter_by(ip="testclient").first()
+        row.lockout_until = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
         db.commit()
 
         res = auth_client.post("/api/auth/login", json={"password": "s3cret"})
         assert res.status_code == 200
+
+    def test_lockout_is_scoped_per_ip_not_global(self, auth_client):
+        """The whole point of this fix: a stranger sending 5 wrong passwords must not lock
+        out the real owner's own IP. Real caller IPs are simulated via X-Forwarded-For,
+        since TestClient's default request.client.host is the same fixed value for every
+        request otherwise."""
+        for _ in range(5):
+            res = auth_client.post(
+                "/api/auth/login", json={"password": "wrong"},
+                headers={"X-Forwarded-For": "203.0.113.1"},
+            )
+            assert res.status_code == 401
+
+        # The attacking IP is now locked out...
+        res = auth_client.post(
+            "/api/auth/login", json={"password": "s3cret"},
+            headers={"X-Forwarded-For": "203.0.113.1"},
+        )
+        assert res.status_code == 429
+
+        # ...but a different IP (the real owner) is completely unaffected.
+        res = auth_client.post(
+            "/api/auth/login", json={"password": "s3cret"},
+            headers={"X-Forwarded-For": "198.51.100.7"},
+        )
+        assert res.status_code == 200
+
+    def test_client_ip_takes_the_last_x_forwarded_for_entry_not_the_first(self, auth_client):
+        """Cloud Run's front end appends the real observed client IP as the LAST entry --
+        any earlier entries could be client-supplied and spoofed. Taking the first entry
+        would let an attacker send a fresh fake first-IP on every request and never
+        actually trip the lockout."""
+        for _ in range(5):
+            res = auth_client.post(
+                "/api/auth/login", json={"password": "wrong"},
+                headers={"X-Forwarded-For": f"1.2.3.{_}, 203.0.113.9"},
+            )
+            assert res.status_code == 401
+
+        res = auth_client.post(
+            "/api/auth/login", json={"password": "s3cret"},
+            headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.9"},
+        )
+        assert res.status_code == 429
 
 
 # ── POST /api/auth/logout ──────────────────────────────────────────────────────

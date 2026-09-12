@@ -11,13 +11,9 @@ explaining its value format and purpose.
 # session cookie at once. Deliberately independent of AUTH_PASSWORD -- see
 # deps.py's Auth config comment for why.
 SESSION_SECRET = "session_secret"
-# Integer string: consecutive failed /api/auth/login attempts since the last
-# success or lockout. Reset to "0" on a successful login.
-AUTH_FAILED_ATTEMPTS = "auth_failed_attempts"
-# ISO 8601 UTC timestamp: login is locked out until this time (set once
-# AUTH_FAILED_ATTEMPTS crosses the threshold in routers/auth.py). Empty/absent
-# means not currently locked out.
-AUTH_LOCKOUT_UNTIL = "auth_lockout_until"
+# Login failure/lockout tracking moved to the per-IP models.LoginAttempt table (see
+# routers/auth.py) -- a single global counter meant anyone who found this app's public
+# URL could lock the real owner out just by sending wrong passwords themselves.
 
 # ── Event discovery ────────────────────────────────────────────────────────────
 # Plain text describing the user's interests, used by the LLM event ranker.

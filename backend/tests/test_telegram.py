@@ -1412,6 +1412,88 @@ class TestRouteMessageCapabilityDispatch:
         assert "milk" in reply.lower() or "added" in reply.lower() or "captured" in reply.lower()
 
 
+class TestCalendarTitleHtmlEscaping:
+    """Calendar event titles come from external, subscribed ICS feeds -- not fully
+    trusted content -- and every send_message call uses parse_mode="HTML". A feed
+    title containing '<'/'>'/'&' must be escaped before landing in these f-strings, or
+    it can either render as unintended live formatting/links inside otherwise-trusted
+    bot output, or make the whole sendMessage call fail outright on malformed HTML,
+    silently dropping the notification."""
+
+    def test_reply_today_escapes_calendar_event_title(self):
+        from telegram.bot import _reply_today
+        malicious = {"title": "<b>evil</b>", "time_str": "2:00 PM", "all_day": False, "start": datetime.now()}
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[malicious]):
+            reply = _reply_today(0)
+        assert "<b>evil</b>" not in reply
+        assert "&lt;b&gt;evil&lt;/b&gt;" in reply
+
+    def test_reply_date_escapes_calendar_event_title(self):
+        from telegram.bot import _reply_date
+        malicious = {"title": "<script>x</script>", "time_str": "2:00 PM", "all_day": False, "start": datetime.now()}
+        target = datetime.now(timezone.utc).date() + timedelta(days=2)
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[malicious]):
+            reply = _reply_date(target, 0)
+        assert "<script>" not in reply
+        assert "&lt;script&gt;" in reply
+
+    def test_reply_week_escapes_calendar_event_title(self):
+        from telegram.bot import _reply_week
+        malicious = {"title": "<i>hi</i>", "time_str": "2:00 PM", "all_day": False, "start": datetime.now()}
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[malicious]):
+            reply = _reply_week(0)
+        assert "<i>hi</i>" not in reply
+        assert "&lt;i&gt;hi&lt;/i&gt;" in reply
+
+    def test_reply_priority_fallback_escapes_calendar_event_title(self):
+        """The LLM-error fallback path -- the one branch of _reply_priority that
+        interpolates a raw title directly into a <b> tag."""
+        from telegram.bot import _reply_priority
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        malicious = {
+            "title": "</b><a href=evil>click</a>", "time_str": "soon", "all_day": False,
+            "start": future,
+        }
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot._fetch_cal_events_for_date", return_value=[malicious]), \
+             patch("telegram.bot.llm_client", side_effect=Exception("LLM down")):
+            reply = _reply_priority(0)
+        assert "<a href=evil>" not in reply
+        assert "&lt;a href=evil&gt;" in reply
+
+    def test_meeting_alert_escapes_calendar_event_title(self):
+        """check_meeting_alerts (telegram/scheduler.py) is the one path that ALWAYS
+        interpolates a raw calendar title into a <b> tag, not just an error-fallback
+        branch -- the meeting-alert case the security review was specifically about."""
+        from telegram.scheduler import check_meeting_alerts
+        with BotTestSession() as db:
+            tag = models.Tag(name="calendar-test", color="#fff")
+            db.add(tag)
+            db.flush()
+            db.add(models.CalendarMapping(tag_id=tag.id, ical_url="https://example.com/feed.ics", name="Test"))
+            db.commit()
+
+        now_utc = datetime.now(timezone.utc)
+        now_local = now_utc.replace(tzinfo=None)
+        malicious_start = now_utc + timedelta(minutes=30)
+        malicious_event = {
+            "id": "evt-1", "title": "<b>fake</b>", "start": malicious_start,
+            "all_day": False, "is_ooo": False,
+        }
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send, \
+             patch("gcal._cached_fetch_events", return_value=[malicious_event]):
+            with BotTestSession() as db:
+                check_meeting_alerts(db, "tok", "123", 0, now_utc, now_local)
+
+        mock_send.assert_called_once()
+        sent_text = mock_send.call_args[0][2]
+        assert "<b>fake</b>" not in sent_text
+        assert "&lt;b&gt;fake&lt;/b&gt;" in sent_text
+
+
 class TestCaptureFromText:
     """_capture_from_text() is Telegram's 'capture' fallback, rebuilt to go
     through the exact same parse_bulk_text() the webapp's Quick Add uses --

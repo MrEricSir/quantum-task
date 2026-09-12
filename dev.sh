@@ -394,6 +394,7 @@ gcp_setup() {
   local GCS_BUCKET="${GCP_PROJECT_ID}-todo-db"
   local CLOUD_RUN_SA="cloud-run@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
   local GHA_SA="github-actions@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+  local WIF_PROVIDER=""
 
   echo ""
   echo "==> Project : $GCP_PROJECT_ID"
@@ -410,6 +411,8 @@ gcp_setup() {
     cloudbuild.googleapis.com \
     storage.googleapis.com \
     iam.googleapis.com \
+    iamcredentials.googleapis.com \
+    sts.googleapis.com \
     cloudresourcemanager.googleapis.com \
     --project "$GCP_PROJECT_ID" --quiet
 
@@ -488,11 +491,46 @@ TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
       --role="$role" --quiet
   done
 
-  # ── 8. Generate and save service account key ──────────────────────────────────
-  echo "==> Generating GitHub Actions service account key..."
-  rm -f "$SCRIPT_DIR/.github-actions-sa-key.json"
-  gcloud iam service-accounts keys create "$SCRIPT_DIR/.github-actions-sa-key.json" \
-    --iam-account "$GHA_SA" --project "$GCP_PROJECT_ID"
+  # ── 8. Workload Identity Federation (no long-lived downloadable key) ──────────
+  # GitHub Actions authenticates by minting a short-lived OIDC token for each workflow
+  # run, which GCP exchanges for a short-lived access token for $GHA_SA -- no JSON key
+  # ever exists on disk or in a GitHub secret. The provider's attribute-condition below
+  # restricts this to the exact repo the token came from, so no other repo (even one
+  # you own) could impersonate this service account.
+  local GITHUB_REPO
+  GITHUB_REPO="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null \
+    | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
+  if [[ -z "$GITHUB_REPO" ]]; then
+    echo "==> WARNING: could not determine the GitHub repo from 'git remote origin' --"
+    echo "    skipping Workload Identity Federation setup. Set it up manually or add"
+    echo "    an 'origin' remote pointing at your GitHub repo and re-run gcp-setup."
+  else
+    echo "==> Setting up Workload Identity Federation for $GITHUB_REPO..."
+    local PROJECT_NUMBER
+    PROJECT_NUMBER="$(gcloud projects describe "$GCP_PROJECT_ID" --format="value(projectNumber)")"
+
+    gcloud iam workload-identity-pools create "github-actions-pool" \
+      --project="$GCP_PROJECT_ID" --location="global" \
+      --display-name="GitHub Actions Pool" 2>/dev/null \
+      && echo "    Created pool." || echo "    Pool already exists — skipping."
+
+    gcloud iam workload-identity-pools providers create-oidc "github-actions-provider" \
+      --project="$GCP_PROJECT_ID" --location="global" \
+      --workload-identity-pool="github-actions-pool" \
+      --display-name="GitHub Actions Provider" \
+      --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner,attribute.ref=assertion.ref" \
+      --attribute-condition="assertion.repository == '$GITHUB_REPO'" \
+      --issuer-uri="https://token.actions.githubusercontent.com" 2>/dev/null \
+      && echo "    Created provider." || echo "    Provider already exists — skipping."
+
+    gcloud iam service-accounts add-iam-policy-binding "$GHA_SA" \
+      --project="$GCP_PROJECT_ID" \
+      --role="roles/iam.workloadIdentityUser" \
+      --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/$GITHUB_REPO" \
+      --quiet
+
+    WIF_PROVIDER="projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider"
+  fi
 
   # ── 9. Cloud Scheduler for Telegram ─────────────────────────────────
   gcp_setup_scheduler
@@ -507,16 +545,26 @@ TAVILY_API_KEY=${TAVILY_API_KEY:-}" \
   echo "  Settings > Secrets and variables > Actions"
   echo ""
   echo "  SECRETS (sensitive — use 'New repository secret'):"
-  echo "    GCP_SA_KEY              $(cat "$SCRIPT_DIR/.github-actions-sa-key.json" | tr -d '\n' | head -c 60)..."
   echo "    AUTH_PASSWORD           $AUTH_PASSWORD"
   echo ""
   echo "  VARIABLES (non-sensitive — use 'New repository variable'):"
   echo "    GCP_PROJECT_ID          $GCP_PROJECT_ID"
   echo ""
+  echo "  No GCP_SA_KEY secret needed -- .github/workflows/deploy.yml authenticates via"
+  echo "  Workload Identity Federation (workload_identity_provider/service_account are"
+  echo "  plain identifiers, not secrets, so they're committed directly in the workflow"
+  if [[ -n "${WIF_PROVIDER:-}" ]]; then
+    echo "  file). Confirm it matches what was just provisioned:"
+    echo "    workload_identity_provider: $WIF_PROVIDER"
+    echo "    service_account:            $GHA_SA"
+  else
+    echo "  file) -- WIF setup was skipped above (no git remote found), so you'll need"
+    echo "  to provision it manually before deploy will work. See PRODUCT_NOTES.md's"
+    echo "  Security Hardening section for the gcloud commands."
+  fi
+  echo ""
   echo "  LLM settings ($LLM_MODEL) are baked into the Cloud Run service."
   echo "  To change providers later, edit .gcp-config and run: ./dev.sh gcp-update-env"
-  echo ""
-  echo "  Key file saved (gitignored): .github-actions-sa-key.json"
   echo ""
   echo "  Once secrets are set, push to main to trigger automatic deployment."
 }
