@@ -481,13 +481,17 @@ class TestMergeCrossFeedDuplicates:
     """Unit tests for discovery._merge_cross_feed_duplicates -- Phase 4's fix for the same
     real-world event appearing twice because two different feeds (e.g. a city calendar and a
     local events aggregator) each mint their own uid for it, so the existing uid-based dedup
-    never sees them as related."""
+    never sees them as related. Requires an EXACT start-time match (not just "close"), plus
+    either an exact title match or a high similarity score -- calibrated against real feed
+    data where genuine duplicates always shared the identical instant, while a series reusing
+    near-identical title boilerplate for different time slots (e.g. numbered "session" listings)
+    scored just as high on title similarity alone but never at the same exact time."""
 
-    def test_same_title_close_start_times_are_merged(self):
+    def test_exact_title_same_start_time_is_merged(self):
         base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
         events = [
             _dup_event("Farmers Market", base),
-            _dup_event("Farmers Market", base + timedelta(minutes=30)),
+            _dup_event("Farmers Market", base),
         ]
         merged = discovery._merge_cross_feed_duplicates(events)
         assert len(merged) == 1
@@ -496,10 +500,23 @@ class TestMergeCrossFeedDuplicates:
         base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
         events = [
             _dup_event("Farmers Market!!", base),
-            _dup_event("  farmers   market", base + timedelta(minutes=10)),
+            _dup_event("  farmers   market", base),
         ]
         merged = discovery._merge_cross_feed_duplicates(events)
         assert len(merged) == 1
+
+    def test_exact_title_match_even_slightly_off_in_time_is_not_merged(self):
+        """A tighter guarantee than "far apart" below -- even a SMALL time difference (not
+        just hours apart) must not merge, since an exact title match at a different time is
+        more likely a same-named-but-different-instance event (e.g. two different bars each
+        running their own weekly "Trivia Night") than a duplicate listing of one real event."""
+        base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
+        events = [
+            _dup_event("Farmers Market", base),
+            _dup_event("Farmers Market", base + timedelta(minutes=30)),
+        ]
+        merged = discovery._merge_cross_feed_duplicates(events)
+        assert len(merged) == 2
 
     def test_same_title_far_apart_in_time_is_not_merged(self):
         base = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
@@ -519,11 +536,34 @@ class TestMergeCrossFeedDuplicates:
         merged = discovery._merge_cross_feed_duplicates(events)
         assert len(merged) == 2
 
+    def test_similar_but_not_exact_title_at_the_same_time_is_merged(self):
+        """Real example from production feed data: the same talk listed on two different
+        feeds, one including a price suffix the other omits."""
+        base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
+        events = [
+            _dup_event("A U.S. Diplomat's Hot Takes From Cold War Leningrad ($9/$18/$36)", base),
+            _dup_event("A U.S. Diplomat's Hot Takes From Cold War Leningrad", base),
+        ]
+        merged = discovery._merge_cross_feed_duplicates(events)
+        assert len(merged) == 1
+
+    def test_moderately_similar_title_at_the_same_time_is_not_merged(self):
+        """Real example from production feed data: two DIFFERENT museums each running their
+        own "free admission day" promo, worded almost identically -- similar enough that a
+        looser threshold would wrongly treat them as the same event, but genuinely distinct."""
+        base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
+        events = [
+            _dup_event("Free de Young Museum Day for Bay Area Residents (Every Saturday)", base),
+            _dup_event('Free "Legion of Honor" Museum Day for Bay Area Residents (Every Saturday)', base),
+        ]
+        merged = discovery._merge_cross_feed_duplicates(events)
+        assert len(merged) == 2
+
     def test_richer_copy_with_a_url_is_kept_over_one_without(self):
         base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
         events = [
             _dup_event("Farmers Market", base, url=None),
-            _dup_event("Farmers Market", base + timedelta(minutes=15), url="https://example.com/market"),
+            _dup_event("Farmers Market", base, url="https://example.com/market"),
         ]
         merged = discovery._merge_cross_feed_duplicates(events)
         assert len(merged) == 1
@@ -533,7 +573,7 @@ class TestMergeCrossFeedDuplicates:
         base = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
         events = [
             _dup_event("Farmers Market", base, description="Short."),
-            _dup_event("Farmers Market", base + timedelta(minutes=15),
+            _dup_event("Farmers Market", base,
                        description="A much longer and more detailed description."),
         ]
         merged = discovery._merge_cross_feed_duplicates(events)
@@ -545,7 +585,7 @@ class TestMergeCrossFeedDuplicates:
         events = [
             _dup_event("Morning Yoga", base - timedelta(hours=6)),
             _dup_event("Farmers Market", base),
-            _dup_event("Farmers Market", base + timedelta(minutes=20)),
+            _dup_event("Farmers Market", base),
             _dup_event("Evening Trivia", base + timedelta(hours=4)),
         ]
         merged = discovery._merge_cross_feed_duplicates(events)
@@ -565,7 +605,7 @@ class TestDuplicateDetectionEndToEnd:
         base = datetime.now(timezone.utc) + timedelta(days=2)
         city_event = _timed_event("Farmers Market", base, base + timedelta(hours=2), uid="city-1@example.com")
         aggregator_event = _timed_event(
-            "Farmers Market", base + timedelta(minutes=20), base + timedelta(hours=2),
+            "Farmers Market", base, base + timedelta(hours=2),
             uid="agg-1@example.com",
         )
 

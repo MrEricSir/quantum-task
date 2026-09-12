@@ -6,6 +6,7 @@ import html
 import json
 import math
 import re
+from difflib import SequenceMatcher
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -34,12 +35,27 @@ _ICAL_CACHE_TTL_SECONDS = 3 * 3600
 # discoverable. See DISCOVERY_IMPROVEMENTS.md's "shows events nearly over" Phase 2.
 _NEARLY_OVER_THRESHOLD = timedelta(minutes=60)
 
-# Two events with the same normalized title starting within this window of each other are
-# treated as the same real-world event listed by two different feeds (e.g. a city calendar
-# and a local "things to do" aggregator both carrying the same farmers market) -- the
-# uid-based dedup above only catches literal re-appearances of the same source event, not
-# this cross-feed case. See DISCOVERY_IMPROVEMENTS.md's "duplicates" Phase 4.
-_DUPLICATE_TIME_WINDOW = timedelta(hours=3)
+# Two events starting at the exact same instant, with sufficiently similar normalized titles
+# (see _DUPLICATE_TITLE_SIMILARITY below), are treated as the same real-world event listed by
+# two different feeds (e.g. a city calendar and a local "things to do" aggregator both
+# carrying the same farmers market) -- the uid-based dedup above only catches literal
+# re-appearances of the same source event, not this cross-feed case. See
+# DISCOVERY_IMPROVEMENTS.md's "duplicates" Phase 4.
+
+# Below exact-title equality, a normalized-title similarity ratio (difflib SequenceMatcher)
+# required -- together with an exact start-time match -- to also treat two differently-worded
+# listings as the same real event (e.g. "San Francisco Greek Food Festival" vs "2026 San
+# Francisco Greek Festival"). Calibrated conservatively against a real snapshot of production
+# feed data: genuine duplicate listings scored 0.94+ here, while the highest-scoring pair that
+# was actually two DIFFERENT events (two different museums both running a "free admission day"
+# promo, worded almost identically) scored 0.885 -- so this sits above that, deliberately
+# accepting that some subtler true duplicates worded further apart will still slip through,
+# rather than ever risk silently hiding a genuinely different event. Exact start-time
+# equality (not just "close") is the other required signal, not just a tiebreak: a series
+# that reuses near-identical title boilerplate for genuinely different time slots (e.g.
+# "Roller Disco - 2nd Session" vs "- 3rd Session") can score just as high on title similarity
+# alone, but those differ by 1-3 hours in practice, never zero.
+_DUPLICATE_TITLE_SIMILARITY = 0.90
 
 # LLM ranking results are keyed on a hash of (interests + feedback + event ids).
 # No TTL — entries are auto-invalidated when any input changes.
@@ -248,19 +264,22 @@ def _event_richness(e: dict) -> tuple:
 
 def _merge_cross_feed_duplicates(events: list[dict]) -> list[dict]:
     """Collapse events that are almost certainly the same real-world listing from two
-    different feeds -- same normalized title, starting within _DUPLICATE_TIME_WINDOW of each
-    other -- keeping the richer copy. `events` must already be sorted chronologically; the
-    window check only needs to look at recently-kept events since anything further back is
-    already outside the window. See DISCOVERY_IMPROVEMENTS.md Phase 4."""
+    different feeds -- starting at the exact same instant, with a similar-enough normalized
+    title (exact match, or scoring at least _DUPLICATE_TITLE_SIMILARITY) -- keeping the richer
+    copy. `events` must already be sorted chronologically; `merged` is built in that same
+    order (a replacement keeps its slot, never reorders), so once a scan backward from the end
+    hits a non-matching start, every entry further back has an even earlier start and none can
+    match either. See DISCOVERY_IMPROVEMENTS.md's "duplicates" Phase 4."""
     merged: list[dict] = []
     for ev in events:
         norm_title = _normalize_title(ev["title"])
         match_idx = None
         for i in range(len(merged) - 1, -1, -1):
             existing = merged[i]
-            if ev["start"] - existing["start"] > _DUPLICATE_TIME_WINDOW:
+            if existing["start"] != ev["start"]:
                 break
-            if _normalize_title(existing["title"]) == norm_title:
+            similarity = SequenceMatcher(None, _normalize_title(existing["title"]), norm_title).ratio()
+            if similarity >= _DUPLICATE_TITLE_SIMILARITY:
                 match_idx = i
                 break
         if match_idx is None:
