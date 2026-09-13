@@ -1,17 +1,27 @@
 """
-Aider adapter for the qtask-bridge agent -- the first non-Claude adapter (Phase 3 of
-BRIDGE_MULTI_AGENT_SUPPORT.md). Implements the same six-name contract agent_claude.py does
-(see agent_core.py's module docstring); every name here is suffixed `__aider`.
+Aider adapter for the qtask-bridge agent -- the first non-Claude adapter. Implements the same
+six-name contract agent_claude.py does (see agent_core.py's module docstring); every name here
+is suffixed `__aider`.
 
 Flags verified against aider's official docs (aider.chat/docs/config/options.html and
 aider.chat/docs/scripting.html) as of 2026-08, not just recalled from training data --
 aider's CLI surface has changed across versions before (older docs reference a bare `--yes`
 that current docs no longer list, only `--yes-always`), so this is worth re-checking against
 whatever aider version is actually installed if streaming jobs ever start hanging or
-prompting unexpectedly. This has NOT been hands-on tested against a real installed aider
-binary the way agent_claude.py's flow is covered by TestRealInstalledBinary -- see
-BRIDGE_MULTI_AGENT_SUPPORT.md's Phase 3 Open Questions for what that verification pass
-should check before this is fully trusted for unattended --watch/--tag use.
+prompting unexpectedly. Re-confirmed 2026-09-12 against a real installed aider 0.86.2 binary
+-- every flag below still matched exactly, no drift found.
+
+That same 2026-09-12 run surfaced a real operational prerequisite, not a bug in this adapter:
+aider's default per-turn payload (a repo-map scan plus whole-file context, since aider has no
+built-in metadata for an unrecognized model and falls back to the safest/most token-hungry
+"whole file" edit format) is large enough that a low-throughput LLM tier can reject even a
+single trivial one-file edit outright. Concretely: this app's own Groq key (`on_demand` tier,
+8000 tokens/minute) couldn't complete a one-sentence doc fix even after `--map-tokens 0` and
+`--edit-format diff` cut the request from ~37k down to ~9.7k tokens -- still over budget.
+Whichever provider/key backs `agent = "aider"` for real unattended use needs enough per-minute
+throughput to clear that floor; a key that works fine for this app's own lightweight per-
+feature LLM calls (a single short prompt, no repo context) is not automatically sufficient
+for a repo-aware coding agent's much heavier turns.
 
 Known real gap vs. agent_claude.py, partially mitigated: Claude Code's interactive_command
 seeds the session with the task prompt as a positional arg and then stays interactive
