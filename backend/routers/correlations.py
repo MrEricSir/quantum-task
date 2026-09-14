@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 import models
 from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, to_local_date, utc_offset_minutes
 from routers.habits import check_habit_row
+from streak import get_trip_date_set
 
 router = APIRouter()
 
@@ -198,8 +199,30 @@ def check_food_avoidance_habits(db: Session, today: date) -> None:
 def _load_weekly_obs(
     db: Session, today: date, days: int = 90, tz_offset_minutes: int = 0,
 ) -> tuple[list[dict], list[dict]]:
-    """Return (weight_obs, fat_obs) — weekly-binned observations."""
+    """Return (weight_obs, fat_obs) — weekly-binned observations.
+
+    Trip days (see streak.get_trip_date_set) are handled differently depending on what the
+    signal is actually for, not blanket-excluded everywhere:
+    - weight/fat_ratio (the outcome the experiment verdict is built on) skip trip days --
+      these are genuinely noisy measurements while traveling (different scale, water
+      retention, disrupted schedule), closer to measurement error than a real physiological
+      trend worth attributing to whatever routine is being tested.
+    - habit completions skip trip days too, for consistency with streak.py's own existing
+      rule that a trip day is a neutral non-event for a habit, not a miss -- the correlation/
+      experiment layer should agree with the streak layer about what a trip day means.
+    - steps, heart rate, sleep, spo2, food quality/calories, and workout days are
+      deliberately NOT excluded, even though travel affects all of them too -- these feed
+      _CONFOUND_VARS and the correlation factors, whose whole job is to catch "something
+      other than the tested routine explains this week's outcome." Excluding trip days from
+      these would hide exactly the disruption the confound check exists to surface (e.g. a
+      travel week's calorie/step shift should still trip the >15% confound caveat, not get
+      quietly averaged away). Card completions were never covered by trip mode and stay as-is.
+    A day is simply skipped where it applies, not replaced with anything -- a week that was
+    partly traveled still gets a real weight/fat average from its remaining non-trip days; a
+    week that was entirely traveled naturally drops out of week_avgs below with no special-
+    casing needed."""
     start_str = (today - timedelta(days=days)).isoformat()
+    trip_days = get_trip_date_set(db, today)
 
     measurements = (
         db.query(models.WithingsMeasurement)
@@ -207,8 +230,11 @@ def _load_weekly_obs(
         .order_by(models.WithingsMeasurement.date)
         .all()
     )
+    _TRIP_EXCLUDED_METRICS = {"weight", "fat_ratio"}
     by_date: dict[str, dict[str, float]] = {}
     for m in measurements:
+        if m.date in trip_days and m.metric in _TRIP_EXCLUDED_METRICS:
+            continue
         by_date.setdefault(m.date, {})[m.metric] = m.value
 
     active_habit_count = (
@@ -223,6 +249,8 @@ def _load_weekly_obs(
     for hc in db.query(models.HabitCompletion).filter(
         models.HabitCompletion.date >= start_str
     ).all():
+        if hc.date in trip_days:
+            continue
         completions_by_date[hc.date] = completions_by_date.get(hc.date, 0) + 1
 
     cards_done_by_date: dict[str, int] = {}
@@ -312,9 +340,17 @@ def _load_weekly_obs(
             delta_per_day = (
                 week_avgs[curr_wk][outcome_metric] - week_avgs[prev_wk][outcome_metric]
             ) / gap_days
+            # Denominator excludes trip days -- completions_by_date already skips them (see
+            # this function's docstring), so dividing by a flat 7 would understate a week's
+            # real habit rate any time part of it was travel, the same mismatch streak.py's
+            # own trip handling was built to avoid.
+            ws = _week_start(curr_wk)
+            eligible_days = sum(
+                1 for d in range(7) if (ws + timedelta(days=d)).isoformat() not in trip_days
+            )
             habit_rate = (
-                week_completions.get(curr_wk, 0) / (7 * active_habit_count)
-                if active_habit_count > 0 else None
+                week_completions.get(curr_wk, 0) / (eligible_days * active_habit_count)
+                if active_habit_count > 0 and eligible_days > 0 else None
             )
             fq = week_food_quality.get(curr_wk)
             rows.append({
@@ -343,6 +379,19 @@ def _load_weekly_obs(
 
 # ── Existing-routine detection (for incremental experiment proposals) ─────────
 
+def _trip_days_in_window(db: Session, today: date, window_start: str) -> int:
+    """How many days of [window_start, today] were inside a Trip -- used to shrink a
+    fixed-window rate/frequency denominator so a recent trip doesn't make an otherwise
+    well-established routine look less consistent than it really is. Unlike
+    _load_weekly_obs's confound signals (steps, food, workouts -- see that function's
+    docstring), "was this routine kept up enough to be worth an incremental experiment"
+    is a fairness question, not a confound-detection one: the trip itself, not the
+    routine, explains a gap during it, so it shouldn't count against the routine."""
+    trip_days = get_trip_date_set(db, today)
+    today_str = today.isoformat()
+    return sum(1 for d in trip_days if window_start <= d <= today_str)
+
+
 def _established_habits(
     db: Session, today: date,
     min_age_days: int = 14, window_days: int = 21, min_rate: float = 0.6,
@@ -355,6 +404,7 @@ def _established_habits(
     "Meditate 10 min") the same way this file already infers step goals from
     prose elsewhere in _generate_experiment."""
     window_start = (today - timedelta(days=window_days)).isoformat()
+    eligible_days = max(window_days - _trip_days_in_window(db, today, window_start), 0)
     habits = (
         db.query(models.Habit)
         .filter(
@@ -376,7 +426,7 @@ def _established_habits(
             )
             .count()
         )
-        rate = completed / window_days
+        rate = completed / eligible_days if eligible_days > 0 else 0
         if rate >= min_rate:
             results.append({"name": h.name, "completion_rate": round(rate, 2)})
     return results
@@ -390,8 +440,13 @@ def _established_workouts(
     incremental routine experiment ("row 2mi/day instead of 1mi"). `unit` is
     the most common one logged for that type -- WorkoutEntry.unit is free
     text/uninterpreted (per its own model comment), so this is best-effort,
-    not a normalized unit system."""
+    not a normalized unit system. sessions_per_week's denominator excludes trip days (see
+    _trip_days_in_window) -- a real logged session during a trip still counts toward it (that
+    really happened), but the window itself shouldn't include days you couldn't reasonably
+    have been keeping up the routine, or a recent trip would make an established routine
+    under-report its real frequency."""
     window_start = (today - timedelta(days=window_days)).isoformat()
+    eligible_weeks = max(window_days - _trip_days_in_window(db, today, window_start), 0) / 7
     entries = (
         db.query(models.WorkoutEntry)
         .filter(
@@ -413,7 +468,7 @@ def _established_workouts(
         unit = Counter(units).most_common(1)[0][0] if units else None
         results.append({
             "type": wtype,
-            "sessions_per_week": round(len(rows) / (window_days / 7), 1),
+            "sessions_per_week": round(len(rows) / eligible_weeks, 1) if eligible_weeks > 0 else 0,
             "avg_value": round(sum(values) / len(values), 2),
             "unit": unit,
         })
@@ -431,8 +486,10 @@ def _established_foods(
     "coffee" vs "black coffee") won't be merged. Counts distinct DAYS rather
     than raw entry count so multiple same-day mentions don't inflate the
     frequency. Capped to the 8 most frequent, mirroring the correlations
-    list's own [:6] capping elsewhere in this file."""
+    list's own [:6] capping elsewhere in this file. days_per_week's denominator excludes
+    trip days (see _trip_days_in_window), same reasoning as _established_workouts."""
     window_start = (today - timedelta(days=window_days)).isoformat()
+    eligible_weeks = max(window_days - _trip_days_in_window(db, today, window_start), 0) / 7
     entries = (
         db.query(models.FoodEntry)
         .filter(models.FoodEntry.consumed_at >= window_start)
@@ -444,7 +501,7 @@ def _established_foods(
         days_by_name.setdefault(key, set()).add(str(e.consumed_at)[:10])
 
     results = [
-        {"name": name, "days_per_week": round(len(days) / (window_days / 7), 1)}
+        {"name": name, "days_per_week": round(len(days) / eligible_weeks, 1) if eligible_weeks > 0 else 0}
         for name, days in days_by_name.items()
         if len(days) >= min_days
     ]
@@ -1253,19 +1310,27 @@ def _record_outcome(
     # weight_baseline/fat_baseline are.
     confound_baseline_weeks = other_weeks
 
-    # Habit completion rate during experiment week
+    # Habit completion rate during experiment week. Trip days are excluded from both sides
+    # (not just the denominator) -- same "not a miss" treatment streak.py already gives trip
+    # days for habit streaks generally, applied consistently here, matching
+    # _load_weekly_obs's own habit_rate fix. Excluding trip days from only the denominator
+    # would let a completion logged during a trip push the rate above 1.0.
     if exp.habit_id:
         ws = _week_start(exp.week)
         dates = [(ws + timedelta(days=i)).isoformat() for i in range(7)]
+        trip_days = get_trip_date_set(db, today)
+        eligible_dates = [d for d in dates if d not in trip_days]
         completed_days = (
             db.query(models.HabitCompletion)
             .filter(
                 models.HabitCompletion.habit_id == exp.habit_id,
-                models.HabitCompletion.date.in_(dates),
+                models.HabitCompletion.date.in_(eligible_dates),
             )
             .count()
         )
-        exp.habit_completion_rate = round(completed_days / 7, 3)
+        exp.habit_completion_rate = (
+            round(completed_days / len(eligible_dates), 3) if eligible_dates else None
+        )
 
     # Workout-routine outcome: a genuine before/after comparison with a real
     # p-value, using the exact same ttest_ind/unequal-variance pattern
@@ -1360,6 +1425,141 @@ def _record_outcome(
     exp.confounds = json.dumps(confounds) if (confounds := _confound_summary(
         weight_obs, fat_obs, confound_baseline_weeks, exp.week
     )) else None
+
+
+# ── Routine summary: which real-world routines actually helped ─────────────────
+
+# Same threshold experimentVerdict (HealthPage.jsx) already uses to call a weight/fat
+# delta-vs-baseline "better"/"worse" rather than noise -- kept in lockstep so a routine's
+# aggregate verdict here can never disagree with what its own dismissed experiments'
+# individual verdict badges already say.
+_ROUTINE_EFFECT_THRESHOLD = 0.002
+
+
+def _routine_identity(exp: models.HealthExperiment) -> tuple[str, str] | None:
+    """What real-world routine this experiment tested, as a stable (category, label) key
+    to group repeated attempts under -- or None if there's no stable identity to group by.
+    Deliberately excludes habit-routine experiments (routine_type == "habit"): unlike the
+    other three types, they have no persisted, matchable identity -- the LLM-generated
+    action text varies every time even for "the same" habit, and the established habit
+    itself is only prompt context at generation time (see _generate_experiment), not a
+    stored link this function could group on."""
+    if exp.health_metric:
+        return ("metric", exp.health_metric)
+    if exp.workout_type:
+        return ("workout", exp.workout_type)
+    if exp.food_name:
+        return ("food", exp.food_name)
+    return None
+
+
+def _routine_adhered(exp: models.HealthExperiment) -> bool | None:
+    """Was this experiment actually followed closely enough that week to credit any
+    weight/fat effect to it, rather than to chance? Mirrors HealthPage.jsx's existing
+    foodAdhered/workoutAdhered gating exactly, so the routine summary and the per-
+    experiment verdict badge never disagree about which weeks "count." Metric-type
+    experiments use their own linked habit's completion rate as the adherence signal --
+    auto-checked server-side from the real Withings goal being met (see
+    withings.auto_check_habits_for_date), so if anything it's a MORE reliable signal than
+    food/workout's proxies, not a weaker one. Returns None when there isn't enough data
+    to judge either way (excluded from the summary, same as "not enough adherence to
+    judge" already means for a single experiment's own verdict)."""
+    if exp.food_name is not None:
+        if exp.food_baseline_frequency is None or exp.food_experiment_count is None:
+            return None
+        return exp.food_experiment_count <= exp.food_baseline_frequency / 2
+    if exp.workout_type is not None:
+        if exp.workout_baseline_avg is None or exp.workout_experiment_avg is None:
+            return None
+        if exp.workout_p is not None and exp.workout_p < 0.05:
+            return True
+        if exp.workout_target_value is not None and exp.workout_experiment_avg >= exp.workout_target_value:
+            return True
+        return False
+    if exp.health_metric is not None:
+        if exp.habit_completion_rate is None:
+            return None
+        return exp.habit_completion_rate >= 0.5
+    return None
+
+
+def _routine_effect(exp: models.HealthExperiment) -> float | None:
+    """Weight/fat delta-vs-baseline, averaged across whichever of the two exist --
+    negative means the week trended better than usual (lower weight/body fat), positive
+    means worse. Identical calc to HealthPage.jsx's experimentVerdict, reused here (in
+    spirit -- can't literally share code across languages) so a routine's aggregate
+    verdict can never contradict what a single dismissed experiment's own badge says."""
+    diffs = []
+    if exp.weight_delta is not None and exp.weight_baseline is not None:
+        diffs.append(exp.weight_delta - exp.weight_baseline)
+    if exp.fat_delta is not None and exp.fat_baseline is not None:
+        diffs.append(exp.fat_delta - exp.fat_baseline)
+    if not diffs:
+        return None
+    return sum(diffs) / len(diffs)
+
+
+def get_routine_summary(db: Session) -> list[dict]:
+    """Aggregate every dismissed experiment with a stable routine identity (a Withings
+    metric, a workout type, or a food) into a per-routine leaderboard: of the weeks you
+    actually stuck with each one, how did they compare to your normal baseline? Built to
+    answer the actual question this feature exists for -- not just "did this specific
+    week look different" but "which routines are worth prioritizing" -- so a routine
+    tried more than once shows its full track record, not just its most recent result.
+
+    Only adhered weeks count (see _routine_adhered) -- a routine you never actually
+    followed through on doesn't get credited or blamed for that week's numbers. Sample
+    sizes here are typically tiny (n=1 or 2 is normal, not a bug) -- the verdict field is
+    a plain-language summary of direction and consistency, not a claim of statistical
+    significance the way workout_p is for a single experiment."""
+    experiments = (
+        db.query(models.HealthExperiment)
+        .filter(models.HealthExperiment.status == "dismissed")
+        .all()
+    )
+    groups: dict[tuple[str, str], list[float]] = {}
+    for exp in experiments:
+        identity = _routine_identity(exp)
+        if identity is None:
+            continue
+        if _routine_adhered(exp) is not True:
+            continue
+        effect = _routine_effect(exp)
+        if effect is None:
+            continue
+        groups.setdefault(identity, []).append(effect)
+
+    results = []
+    for (category, label), effects in groups.items():
+        n = len(effects)
+        avg_effect = sum(effects) / n
+        better_weeks = sum(1 for e in effects if e < -_ROUTINE_EFFECT_THRESHOLD)
+        worse_weeks = sum(1 for e in effects if e > _ROUTINE_EFFECT_THRESHOLD)
+        neutral_weeks = n - better_weeks - worse_weeks
+        if better_weeks and not worse_weeks:
+            verdict = "positive"
+        elif worse_weeks and not better_weeks:
+            verdict = "negative"
+        elif better_weeks and worse_weeks:
+            verdict = "mixed"
+        else:
+            verdict = "inconclusive"
+        results.append({
+            "category": category,
+            "label": label,
+            "n": n,
+            "better_weeks": better_weeks,
+            "worse_weeks": worse_weeks,
+            "neutral_weeks": neutral_weeks,
+            "avg_effect": round(avg_effect, 6),
+            "verdict": verdict,
+        })
+
+    # Strongest, most consistent positive signal first -- surfaces "what to prioritize"
+    # at the top, then mixed, then inconclusive, negative last.
+    _verdict_rank = {"positive": 0, "mixed": 1, "inconclusive": 2, "negative": 3}
+    results.sort(key=lambda r: (_verdict_rank[r["verdict"]], r["avg_effect"]))
+    return results
 
 
 # ── Migration: AppSetting → table ────────────────────────────────────────────
@@ -1520,6 +1720,13 @@ def get_health_experiments(db: Session = Depends(get_db)):
         .all()
     )
     return [_exp_to_dict(e) for e in exps]
+
+
+@router.get("/api/health/routine-summary")
+def get_routine_summary_endpoint(db: Session = Depends(get_db)):
+    """Per-routine leaderboard across every dismissed experiment -- see
+    get_routine_summary's own docstring."""
+    return get_routine_summary(db)
 
 
 @router.post("/api/health/experiments/recompute")

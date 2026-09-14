@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, updateWorkoutEntry, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, fetchRoutineSummary, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, updateWorkoutEntry, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import { isoToLocal } from '../modals/CardForm'
 import { useDailyLog } from '../../hooks/useDailyLog'
@@ -825,6 +825,70 @@ function ExperimentOutcomeCard({ exp }) {
   )
 }
 
+const ROUTINE_CATEGORY_ICON = { workout: '🏃', food: '🚫', metric: '📊' }
+
+const ROUTINE_VERDICT_TEXT = {
+  positive: 'Worth prioritizing',
+  negative: "Didn't help",
+  mixed: 'Mixed results',
+  inconclusive: 'No clear signal yet',
+}
+
+const ROUTINE_VERDICT_CLASS = {
+  positive: 'verdict--good',
+  negative: 'verdict--bad',
+  mixed: 'verdict--neutral',
+  inconclusive: 'verdict--neutral',
+}
+
+function routineDetailText(r) {
+  const weekWord = (n) => `${n} week${n === 1 ? '' : 's'}`
+  if (r.verdict === 'mixed') {
+    return `${r.better_weeks} better, ${r.worse_weeks} worse`
+  }
+  if (r.verdict === 'positive') {
+    return `trended better in ${r.better_weeks}/${r.n} ${r.n === 1 ? 'week' : 'weeks'} tried`
+  }
+  if (r.verdict === 'negative') {
+    return `trended worse in ${r.worse_weeks}/${r.n} ${r.n === 1 ? 'week' : 'weeks'} tried`
+  }
+  return `no clear effect across ${weekWord(r.n)}`
+}
+
+function RoutineSummary({ expKey }) {
+  const [summary, setSummary] = useState(null)
+
+  useEffect(() => {
+    fetchRoutineSummary().then(setSummary).catch(() => setSummary([]))
+  }, [expKey])
+
+  if (!summary?.length) return null
+
+  return (
+    <div className="analysis-subsection routine-summary">
+      <div className="analysis-subsection-header">
+        <span className="analysis-subsection-title">What's Working</span>
+      </div>
+      <p className="routine-summary-intro">
+        Across every routine you've actually stuck with for at least a week, ranked by what
+        seems to be helping most.
+      </p>
+      <div className="routine-summary-list">
+        {summary.map((r) => (
+          <div key={`${r.category}-${r.label}`} className="routine-summary-row">
+            <span className="routine-summary-icon">{ROUTINE_CATEGORY_ICON[r.category] ?? '•'}</span>
+            <span className="routine-summary-label">{capitalize(r.label)}</span>
+            <span className={`exp-verdict ${ROUTINE_VERDICT_CLASS[r.verdict]}`}>
+              {ROUTINE_VERDICT_TEXT[r.verdict]}
+            </span>
+            <span className="routine-summary-detail">{routineDetailText(r)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function RoutineOutcomeCards({ expKey }) {
   const [history, setHistory] = useState(null)
 
@@ -881,6 +945,8 @@ function AnalysisSection({ isImperial, habitCompletions }) {
         <ExperimentCard key={`exp-card-${expKey}`} onDismiss={() => setExpKey(k => k + 1)} habitCompletions={habitCompletions} />
         <ExperimentsHistory key={`exp-history-${expKey}`} isImperial={isImperial} />
       </div>
+
+      <RoutineSummary expKey={expKey} />
 
       <RoutineOutcomeCards expKey={expKey} />
 

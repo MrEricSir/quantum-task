@@ -27,6 +27,7 @@ from routers.correlations import (
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
     check_food_avoidance_habits, _recent_avg_steps,
+    _routine_identity, _routine_adhered, _routine_effect, get_routine_summary,
 )
 from routers.habits import check_habit_row
 
@@ -134,6 +135,93 @@ class TestLoadWeeklyObsTimezone:
         weight_obs, _ = _load_weekly_obs(db, TODAY, tz_offset_minutes=-600)
         assert len(weight_obs) == 1
         assert weight_obs[0]["cards_done"] is None
+
+
+class TestLoadWeeklyObsTripDays:
+    """Trip days affect different _load_weekly_obs signals differently -- see that
+    function's own docstring for the full reasoning. Weight/fat_ratio (the outcome) and
+    habit completions skip trip days; steps/food/workout data (confound signals) don't."""
+
+    def _weeks(self):
+        recent_ws = _week_start(_current_isoweek(TODAY)) - timedelta(days=7)
+        older_ws = recent_ws - timedelta(days=7)
+        return older_ws, recent_ws
+
+    def test_weight_on_a_trip_day_is_excluded_from_that_weeks_average(self, db):
+        older_ws, recent_ws = self._weeks()
+        _add_weight(db, older_ws.isoformat(), 70.0)
+        _add_weight(db, recent_ws.isoformat(), 70.0)
+        trip_day = recent_ws + timedelta(days=2)
+        _add_weight(db, trip_day.isoformat(), 100.0)  # would badly skew the average if counted
+        db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, TODAY)
+
+        assert len(weight_obs) == 1
+        # If the trip-day 100.0 reading were included, delta_per_day would be nonzero.
+        assert abs(weight_obs[0]["delta_per_day"]) < 1e-9
+
+    def test_habit_completion_on_a_trip_day_is_excluded_like_a_streak_day(self, db):
+        older_ws, recent_ws = self._weeks()
+        _add_weight(db, older_ws.isoformat(), 70.0)
+        _add_weight(db, recent_ws.isoformat(), 70.0)
+        habit = models.Habit(name="Meditate")
+        db.add(habit)
+        db.flush()
+        trip_day = recent_ws + timedelta(days=2)
+        db.add(models.HabitCompletion(habit_id=habit.id, date=recent_ws.isoformat()))
+        db.add(models.HabitCompletion(habit_id=habit.id, date=trip_day.isoformat()))
+        db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, TODAY)
+
+        # 1 real completion out of (7 - 1 trip day) = 6 eligible days, not 2 out of 7 --
+        # the trip-day completion itself doesn't count, and the denominator shrinks too.
+        assert abs(weight_obs[0]["habit_rate"] - (1 / 6)) < 1e-9
+
+    def test_steps_on_a_trip_day_are_not_excluded(self, db):
+        """Steps is a confound signal (_CONFOUND_VARS), not the outcome -- a travel-driven
+        step spike should stay visible so the confound check can actually catch it, not get
+        silently dropped."""
+        older_ws, recent_ws = self._weeks()
+        _add_weight(db, older_ws.isoformat(), 70.0)
+        _add_weight(db, recent_ws.isoformat(), 70.0)
+        trip_day = recent_ws + timedelta(days=2)
+        db.add(models.WithingsMeasurement(date=trip_day.isoformat(), metric="steps", value=20000))
+        db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, TODAY)
+
+        assert weight_obs[0]["avg_steps"] == 20000
+
+    def test_food_quality_on_a_trip_day_is_not_excluded(self, db):
+        older_ws, recent_ws = self._weeks()
+        _add_weight(db, older_ws.isoformat(), 70.0)
+        _add_weight(db, recent_ws.isoformat(), 70.0)
+        trip_day = recent_ws + timedelta(days=2)
+        _add_food_entry_on(db, trip_day.isoformat(), quality=9)
+        db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, TODAY)
+
+        assert weight_obs[0]["avg_food_quality"] == 9
+
+    def test_workout_on_a_trip_day_is_not_excluded(self, db):
+        older_ws, recent_ws = self._weeks()
+        _add_weight(db, older_ws.isoformat(), 70.0)
+        _add_weight(db, recent_ws.isoformat(), 70.0)
+        trip_day = recent_ws + timedelta(days=2)
+        _add_workout_on(db, trip_day.isoformat(), "row")
+        db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
+        db.commit()
+
+        weight_obs, _ = _load_weekly_obs(db, TODAY)
+
+        assert weight_obs[0]["workout_days"] == 1
 
 
 class TestMigrateAppsetting:
@@ -276,6 +364,30 @@ class TestEstablishedHabits:
         assert _established_habits(db, today) == []
 
 
+class TestEstablishedHabitsTripDays:
+
+    def test_a_trip_does_not_make_an_otherwise_consistent_habit_look_unestablished(self, db):
+        """10 completions out of 21 raw days (~48%) would fall below the 60% threshold and
+        wrongly exclude an otherwise-perfect habit -- but 7 of those 21 days were a trip, so
+        the real eligible window is 14 days, and 10/14 (~71%) correctly clears the bar."""
+        today = date(2026, 6, 20)
+        habit = models.Habit(name="Meditate 10 min", created_at=datetime(2026, 5, 1))
+        db.add(habit)
+        db.flush()
+        trip_start = today - timedelta(days=10)
+        trip_end = today - timedelta(days=4)  # days_ago 4..10, 7 days
+        db.add(models.Trip(start_date=trip_start.isoformat(), end_date=trip_end.isoformat()))
+        # 10 completions on non-trip days within the 21-day window (days_ago 0-2, 11-17).
+        for days_ago in list(range(0, 3)) + list(range(11, 18)):
+            db.add(models.HabitCompletion(habit_id=habit.id, date=(today - timedelta(days=days_ago)).isoformat()))
+        db.commit()
+
+        result = _established_habits(db, today)
+
+        assert len(result) == 1
+        assert abs(result[0]["completion_rate"] - (10 / 14)) < 0.01
+
+
 class TestEstablishedHabitsTimezone:
 
     def test_habit_age_uses_local_created_date_not_raw_utc(self, db):
@@ -330,6 +442,23 @@ class TestEstablishedWorkouts:
 
         result = _established_workouts(db, date.today())
         assert result[0]["unit"] == "mi"
+
+    def test_a_trip_does_not_understate_sessions_per_week(self, db):
+        """5 sessions over the full 42-day window would be ~0.83/week, but 7 of those days
+        were a trip -- the real eligible window is 35 days (5 weeks), so 5 sessions is
+        really a clean 1x/week, not diluted by days there was no reasonable chance to log one."""
+        today = date.today()
+        trip_start = today - timedelta(days=16)
+        trip_end = today - timedelta(days=10)  # 7-day trip, days_ago 10-16
+        db.add(models.Trip(start_date=trip_start.isoformat(), end_date=trip_end.isoformat()))
+        for days_ago in [0, 7, 21, 28, 35]:
+            _add_workout(db, "row", 1.5, "mi", days_ago=days_ago)
+        db.commit()
+
+        result = _established_workouts(db, today)
+
+        assert len(result) == 1
+        assert result[0]["sessions_per_week"] == 1.0
 
 
 class TestEstablishedFoods:
@@ -390,6 +519,21 @@ class TestEstablishedFoods:
         assert len(result) == 8
         assert result[0]["name"] == "food0"
         assert all(result[i]["days_per_week"] >= result[i + 1]["days_per_week"] for i in range(len(result) - 1))
+
+    def test_a_trip_does_not_understate_days_per_week(self, db):
+        today = date.today()
+        trip_start = today - timedelta(days=16)
+        trip_end = today - timedelta(days=10)  # 7-day trip, days_ago 10-16
+        db.add(models.Trip(start_date=trip_start.isoformat(), end_date=trip_end.isoformat()))
+        for days_ago in [0, 5, 19, 20]:
+            _add_food_named(db, "coffee", days_ago=days_ago)
+        db.commit()
+
+        result = _established_foods(db, today)
+
+        assert len(result) == 1
+        # eligible_weeks = (21 - 7) / 7 = 2; 4 distinct days / 2 weeks = 2.0/week
+        assert result[0]["days_per_week"] == 2.0
 
 
 class TestNudgeIfNearDuplicate:
@@ -648,6 +792,257 @@ class TestRecordOutcomeHabit:
         _record_outcome(exp, db, date.today())
 
         assert exp.confounds is None
+
+
+class TestRecordOutcomeHabitCompletionRateTripDays:
+
+    def test_trip_days_are_excluded_from_both_sides_of_the_rate(self, db):
+        week = "2026-W10"
+        ws = _week_start(week)
+        habit = models.Habit(name="Meditate")
+        db.add(habit)
+        db.flush()
+        exp = models.HealthExperiment(week=week, text="t", habit_id=habit.id)
+        db.add(exp)
+        trip_start = ws + timedelta(days=3)
+        trip_end = ws + timedelta(days=4)
+        db.add(models.Trip(start_date=trip_start.isoformat(), end_date=trip_end.isoformat()))
+        # Completed on days 0, 1, 2 (non-trip) -- 3 out of (7 - 2) = 5 eligible days.
+        for i in [0, 1, 2]:
+            db.add(models.HabitCompletion(habit_id=habit.id, date=(ws + timedelta(days=i)).isoformat()))
+        db.commit()
+
+        _record_outcome(exp, db, ws + timedelta(days=10))
+
+        assert abs(exp.habit_completion_rate - (3 / 5)) < 1e-9
+
+    def test_a_completion_during_a_trip_does_not_push_the_rate_above_one(self, db):
+        week = "2026-W10"
+        ws = _week_start(week)
+        habit = models.Habit(name="Meditate")
+        db.add(habit)
+        db.flush()
+        exp = models.HealthExperiment(week=week, text="t", habit_id=habit.id)
+        db.add(exp)
+        trip_day = ws + timedelta(days=3)
+        db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
+        for i in range(7):
+            db.add(models.HabitCompletion(habit_id=habit.id, date=(ws + timedelta(days=i)).isoformat()))
+        db.commit()
+
+        _record_outcome(exp, db, ws + timedelta(days=10))
+
+        assert exp.habit_completion_rate == 1.0
+
+
+class TestRoutineIdentity:
+
+    def test_metric_identity(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t", health_metric="steps")
+        assert _routine_identity(exp) == ("metric", "steps")
+
+    def test_workout_identity(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t", workout_type="row")
+        assert _routine_identity(exp) == ("workout", "row")
+
+    def test_food_identity(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t", food_name="coffee")
+        assert _routine_identity(exp) == ("food", "coffee")
+
+    def test_habit_routine_has_no_identity(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", action="screen-free time", routine_type="habit",
+        )
+        assert _routine_identity(exp) is None
+
+    def test_no_fields_set_has_no_identity(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t")
+        assert _routine_identity(exp) is None
+
+
+class TestRoutineAdhered:
+
+    def test_food_adhered_when_cut_to_half_or_less(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", food_name="coffee",
+            food_baseline_frequency=4.0, food_experiment_count=1,
+        )
+        assert _routine_adhered(exp) is True
+
+    def test_food_not_adhered_when_still_at_usual_frequency(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", food_name="coffee",
+            food_baseline_frequency=4.0, food_experiment_count=4,
+        )
+        assert _routine_adhered(exp) is False
+
+    def test_food_unknown_when_missing_data(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t", food_name="coffee")
+        assert _routine_adhered(exp) is None
+
+    def test_workout_adhered_via_significant_pvalue(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=1.05, workout_p=0.01,
+        )
+        assert _routine_adhered(exp) is True
+
+    def test_workout_adhered_via_target_met(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.5,
+        )
+        assert _routine_adhered(exp) is True
+
+    def test_workout_not_adhered_when_neither_condition_met(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=1.1,
+            workout_target_value=2.0, workout_p=0.5,
+        )
+        assert _routine_adhered(exp) is False
+
+    def test_workout_unknown_when_missing_data(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t", workout_type="row")
+        assert _routine_adhered(exp) is None
+
+    def test_metric_adhered_via_habit_completion_rate(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", health_metric="steps", habit_completion_rate=0.7,
+        )
+        assert _routine_adhered(exp) is True
+
+    def test_metric_not_adhered_below_half(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", health_metric="steps", habit_completion_rate=0.3,
+        )
+        assert _routine_adhered(exp) is False
+
+    def test_metric_unknown_when_no_habit(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t", health_metric="steps")
+        assert _routine_adhered(exp) is None
+
+
+class TestRoutineEffect:
+
+    def test_averages_weight_and_fat_when_both_present(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t",
+            weight_delta=-0.05, weight_baseline=-0.01,
+            fat_delta=-0.03, fat_baseline=-0.01,
+        )
+        assert abs(_routine_effect(exp) - ((-0.04 + -0.02) / 2)) < 1e-9
+
+    def test_uses_weight_only_when_no_fat_data(self):
+        exp = models.HealthExperiment(
+            week="2026-W10", text="t", weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert abs(_routine_effect(exp) - -0.04) < 1e-9
+
+    def test_none_when_neither_present(self):
+        exp = models.HealthExperiment(week="2026-W10", text="t")
+        assert _routine_effect(exp) is None
+
+
+class TestGetRoutineSummary:
+
+    def _dismissed(self, db, **kwargs):
+        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults.update(kwargs)
+        exp = models.HealthExperiment(**defaults)
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def test_groups_repeated_attempts_at_the_same_routine(self, db):
+        self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        self._dismissed(
+            db, week="2026-W15", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.06, weight_baseline=-0.01,
+        )
+        results = get_routine_summary(db)
+        assert len(results) == 1
+        assert results[0]["category"] == "workout"
+        assert results[0]["label"] == "row"
+        assert results[0]["n"] == 2
+        assert results[0]["verdict"] == "positive"
+        assert results[0]["better_weeks"] == 2
+
+    def test_excludes_non_adhered_experiments(self, db):
+        self._dismissed(
+            db, food_name="coffee", food_baseline_frequency=4.0, food_experiment_count=4,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert get_routine_summary(db) == []
+
+    def test_excludes_active_experiments(self, db):
+        self._dismissed(
+            db, status="active", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert get_routine_summary(db) == []
+
+    def test_excludes_habit_routine_experiments(self, db):
+        self._dismissed(
+            db, action="screen-free time", routine_type="habit",
+            habit_completion_rate=1.0,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert get_routine_summary(db) == []
+
+    def test_negative_verdict_when_effect_is_worse(self, db):
+        self._dismissed(
+            db, food_name="coffee", food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=0.05, weight_baseline=-0.01,
+        )
+        results = get_routine_summary(db)
+        assert results[0]["verdict"] == "negative"
+        assert results[0]["worse_weeks"] == 1
+
+    def test_mixed_verdict_when_effects_disagree(self, db):
+        self._dismissed(
+            db, food_name="coffee", food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        self._dismissed(
+            db, week="2026-W15", food_name="coffee",
+            food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=0.05, weight_baseline=-0.01,
+        )
+        results = get_routine_summary(db)
+        assert results[0]["verdict"] == "mixed"
+        assert results[0]["n"] == 2
+
+    def test_inconclusive_when_no_clear_effect(self, db):
+        self._dismissed(
+            db, food_name="coffee", food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=0.0, weight_baseline=0.0,
+        )
+        results = get_routine_summary(db)
+        assert results[0]["verdict"] == "inconclusive"
+
+    def test_positive_routines_sort_before_negative(self, db):
+        self._dismissed(
+            db, food_name="coffee", food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=0.05, weight_baseline=-0.01,
+        )
+        self._dismissed(
+            db, week="2026-W15", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        results = get_routine_summary(db)
+        assert [r["verdict"] for r in results] == ["positive", "negative"]
 
 
 class TestRecomputeExperimentOutcomes:

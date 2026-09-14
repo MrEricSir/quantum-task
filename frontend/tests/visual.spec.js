@@ -2378,6 +2378,7 @@ test.describe('health page', () => {
     await page.route('**/api/health/correlations', r => r.fulfill({ json: { correlations: [], segments: [], summary: null, weight_n: 0, fat_n: 0 } }))
     await page.route('**/api/health/experiment', r => r.fulfill({ json: null }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [] }))
+    await page.route('**/api/health/routine-summary', r => r.fulfill({ json: [] }))
     await page.route('**/api/food**', r => r.fulfill({ json: [] }))
     await page.route('**/api/workouts**', r => r.fulfill({ json: [] }))
     await page.goto('/health')
@@ -2913,6 +2914,48 @@ test.describe('health page', () => {
     await expect(card.getByText('1.10 mi')).toBeVisible()
     await expect(card.getByText('During experiment')).toBeVisible()
     await expect(card.getByText('1.90 mi')).toBeVisible()
+  })
+
+  test('routine summary shows a per-routine leaderboard ranked by verdict', async ({ page }) => {
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.route('**/api/health/routine-summary', r => r.fulfill({ json: [
+      {
+        category: 'workout', label: 'row', n: 2, better_weeks: 2, worse_weeks: 0,
+        neutral_weeks: 0, avg_effect: -0.05, verdict: 'positive',
+      },
+      {
+        category: 'food', label: 'coffee', n: 1, better_weeks: 0, worse_weeks: 1,
+        neutral_weeks: 0, avg_effect: 0.05, verdict: 'negative',
+      },
+    ]}))
+    await page.goto('/health')
+    await waitForApp(page)
+
+    const section = page.locator('.routine-summary')
+    await expect(section.getByText("What's Working")).toBeVisible()
+
+    const rows = section.locator('.routine-summary-row')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.nth(0)).toContainText('Row')
+    await expect(rows.nth(0)).toContainText('Worth prioritizing')
+    await expect(rows.nth(0)).toContainText('trended better in 2/2 weeks tried')
+    await expect(rows.nth(1)).toContainText('Coffee')
+    await expect(rows.nth(1)).toContainText("Didn't help")
+    await expect(rows.nth(1)).toContainText('trended worse in 1/1 week tried')
+  })
+
+  test('routine summary is hidden when there is nothing to show yet', async ({ page }) => {
+    // Withings connected (not just the describe block's default) so the surrounding
+    // Analysis section itself actually renders -- otherwise this would pass for the
+    // wrong reason (the whole section hidden by showCharts) rather than because
+    // RoutineSummary specifically renders nothing for an empty routine-summary list.
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.getByText('Analysis')).toBeVisible()
+    await expect(page.locator('.routine-summary')).toHaveCount(0)
   })
 
   test('past experiment history shows a workout-based verdict', async ({ page }) => {

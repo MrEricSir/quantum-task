@@ -569,6 +569,12 @@ export async function fetchHealthExperiments() {
   return res.json()
 }
 
+export async function fetchRoutineSummary() {
+  const res = await apiFetch('/api/health/routine-summary')
+  if (!res.ok) throw new Error('Failed to fetch routine summary')
+  return res.json()
+}
+
 export async function createFoodEntry(data) {
   const res = await apiFetch('/api/food', {
     method: 'POST',
