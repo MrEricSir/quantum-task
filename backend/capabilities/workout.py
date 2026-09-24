@@ -7,14 +7,14 @@ import json
 
 from deps import llm_client, LLM_MODEL, reasoning_kwargs
 
-WORKOUT_TYPES = {"run", "cycle", "row", "swim", "strength", "yoga", "sport", "other"}
+WORKOUT_TYPES = {"run", "cycle", "row", "swim", "strength", "yoga", "sport", "wellness", "mental", "other"}
 
 _PARSE_SYSTEM = """\
 You parse workout log entries into structured data.
 Respond with ONLY valid JSON (no markdown, no explanation).
 
 {
-  "type":  "run" | "cycle" | "row" | "swim" | "strength" | "yoga" | "sport" | "other",
+  "type":  "run" | "cycle" | "row" | "swim" | "strength" | "yoga" | "sport" | "wellness" | "mental" | "other",
   "value": numeric measurement or null (e.g. 5000 for "rowed 5000m", 185 for "bench 185 lbs", 3.1 for "ran 3.1 miles"),
   "unit":  short unit string or null (e.g. "m", "km", "miles", "lbs", "kg", "min"),
   "notes": "one brief sentence describing the workout, or null"
@@ -28,13 +28,15 @@ Type selection rules:
 - strength: weight lifting, resistance training, gym, bench, squat, deadlift, dumbbells
 - yoga: yoga, stretching, pilates, flexibility
 - sport: basketball, tennis, soccer, golf, climbing, or any named sport
+- wellness: recovery/relaxation treatments -- spa, massage, sauna, cold plunge, float tank/floatation/float therapy, red light therapy, acupuncture
+- mental: cognitive exercise sessions -- brain-training apps, puzzles (crossword, sudoku, chess problems), memory games
 - other: anything that doesn't fit above
 
 value/unit rules:
 - Extract the primary measurement if present (distance, weight, reps, time)
 - For strength, prefer the weight used (e.g. "bench pressed 185 lbs" → value=185, unit="lbs")
 - For rowing/running/cycling, prefer distance (e.g. "rowed 5k" → value=5, unit="km")
-- For yoga/sport/other with only time given, use minutes
+- For yoga/sport/wellness/mental/other with only time given, use minutes
 - If no measurement is present, set both to null
 - IMPORTANT: Never convert units. Preserve the exact value and unit the user provided.
   If the user says "1 mi", output value=1, unit="mi" — do not convert to meters or any other unit.
@@ -80,13 +82,17 @@ def parse_workout(raw: str) -> dict:
 
 
 PARSE_DESCRIPTION = """\
-workout = logging a physical workout or exercise session
-                          Use when the user describes performing exercise in first person
-                          (past, present, or imminent). Trigger on activity verbs:
-                          ran, run, running, rowed, row, cycled, biked, swam, lifted,
-                          worked out, did yoga, played (sport), went for a (run/ride/swim), etc.
+workout = logging a physical workout, wellness treatment, or mental exercise session
+                          Use when the user describes performing exercise, a spa/recovery
+                          treatment, or a cognitive exercise session in first person (past,
+                          present, or imminent). Trigger on activity verbs and session
+                          descriptions: ran, run, running, rowed, row, cycled, biked, swam,
+                          lifted, worked out, did yoga, played (sport), went for a
+                          (run/ride/swim), went to the spa, got a massage, sat in the sauna,
+                          did a brain-training session, worked on a crossword/sudoku, etc.
                           Examples: "ran 5 miles", "rowed 5000m", "did yoga for 30 min",
-                          "bench pressed 185 lbs", "played tennis", "went for a bike ride"
+                          "bench pressed 185 lbs", "played tennis", "went for a bike ride",
+                          "got a massage", "spa day", "did a brain-training session"
                           Do NOT use for habits like "run every morning" — that is type=habit.
                           Do NOT use for goal-setting like "run a marathon" — that is type=task.
                           When type is "workout", set title to a brief workout description\
@@ -95,11 +101,14 @@ workout = logging a physical workout or exercise session
 # Embedded in _TELEGRAM_INTENT_PROMPT as a top-level action block.
 TELEGRAM_DESCRIPTION = """\
   "log_workout"
-      User is logging a physical workout or exercise session (past, present, or
-      imminent). Trigger on activity verbs: ran, rowed, cycled, swam, lifted,
-      worked out, did yoga, played (sport), went for a (run/ride/swim), etc.
+      User is logging a physical workout, wellness treatment, or mental exercise
+      session (past, present, or imminent). Trigger on activity verbs and session
+      descriptions: ran, rowed, cycled, swam, lifted, worked out, did yoga, played
+      (sport), went for a (run/ride/swim), went to the spa, got a massage, did a
+      brain-training session, worked on a crossword/sudoku, etc.
       Also return:
         "raw_input" — exact workout description from the user's message
       Examples: "ran 5 miles", "rowed 5000m", "did yoga for 30 min",
-                "bench pressed 185 lbs", "played tennis", "went for a bike ride"\
+                "bench pressed 185 lbs", "played tennis", "went for a bike ride",
+                "got a massage", "did a brain-training session"\
 """

@@ -244,9 +244,6 @@ class Llama32Plugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
-        if parsed.type == "assist":
-            return parsed
-
         # Override task/habit → habit_check for past-tense completion verbs
         # Frontend resolves whether it's a habit or task via unified picker
         if parsed.type in ("task", "habit") and _HABIT_CHECK_RE.match(text.strip()):

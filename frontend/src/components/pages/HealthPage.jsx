@@ -1111,6 +1111,8 @@ const WORKOUT_COLORS = {
   strength: '#f97316',
   yoga:     '#a78bfa',
   sport:    '#22c55e',
+  wellness: '#ec4899',
+  mental:   '#6366f1',
   other:    '#6b7280',
 }
 
@@ -1221,7 +1223,7 @@ function WorkoutLog({ range, revision = 0 }) {
           ref={inputRef}
           type="text"
           className="workout-input"
-          placeholder="rowed 5000m · bench pressed 185 lbs · ran 3 miles · yoga 45 min…"
+          placeholder="rowed 5000m · bench pressed 185 lbs · yoga 45 min · spa day · brain training 15 min…"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && onAdd()}

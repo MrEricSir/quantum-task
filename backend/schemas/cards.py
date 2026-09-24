@@ -56,6 +56,18 @@ class ParsedCard(BaseModel):
             return None
         return v
 
+    @field_validator('recurrence_rule', mode='before')
+    @classmethod
+    def normalize_recurrence_rule(cls, v):
+        # Stray whitespace in the LLM's raw output (e.g. " daily") otherwise fails the
+        # Literal check outright and 503s the whole parse request instead of just
+        # dropping the one malformed field.
+        if isinstance(v, str):
+            v = v.strip().lower()
+            if v not in ('daily', 'weekly', 'monthly', 'yearly'):
+                return None
+        return v
+
 
 class BulkParseResponse(BaseModel):
     items: List[ParsedCard]

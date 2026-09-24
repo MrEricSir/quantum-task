@@ -110,6 +110,40 @@ ref-not-state fix for its own polling callback). (Real incident: `GithubSettings
 `repos`/`checkpointPatterns` textareas — this is also why a related Playwright test was flaky
 specifically in CI, never locally: slower runners hit the vulnerable window far more often.)
 
+### Capture (Quick Add) Has Two Independent Classification Layers
+
+**Adding a new classifiable value to a capability (e.g. a new `WorkoutEntry.type`) does
+not automatically make Capture route text to it.** Two separate LLM calls are involved:
+1. The top-level intent classifier (`model_plugins/base.py` + the per-model-family
+   plugin files) decides `task` vs. `habit` vs. `food` vs. `workout` vs. etc. It's built
+   from each capability's `PARSE_DESCRIPTION`/`TELEGRAM_DESCRIPTION` (`capabilities/*.py`,
+   assembled via `capabilities/registry.py`).
+2. Only once step 1 has already chosen a capability does that capability's own sub-parser
+   run (e.g. `capabilities/workout.py`'s `parse_workout`, which picks `run`/`yoga`/etc.).
+
+Updating step 2's prompt/type list alone leaves step 1 unaware anything changed — new
+phrasing can parse perfectly once it reaches the sub-parser but never get routed there at
+all, silently misclassified as `task`/`habit_check`/`food`/etc. instead. **Whenever you
+add or change what a capability recognizes, test it end-to-end through the actual
+`/api/cards/parse` endpoint (Capture), not just by calling the sub-parser directly** —
+also update `PARSE_DESCRIPTION`/`TELEGRAM_DESCRIPTION` with trigger examples for the new
+case.
+
+Weaker local-model plugins (`llama31_8b.py`, `llama32.py`, `llama33_70b.py`) additionally
+lean on deterministic regex backstops in `model_plugins/base.py` (e.g.
+`_WORKOUT_PAST_RE`) to correct step 1's misclassifications, since the LLM's own judgment
+is unreliable for rare/new terms — a new capability value usually needs that regex
+extended too. The fix must apply *before* any type-based early-return, including a
+model-plugin's own quirk-correction short-circuiting first (three plugins used to
+early-return on `type=="assist"` before ever reaching the base class's correction).
+
+(Real incident: adding `wellness`/`mental` workout types worked perfectly when calling
+`capabilities.workout.parse_workout` directly, but phrases like "floatation" and "did red
+light therapy" were silently misrouted by Capture's top-level classifier to
+`habit_check`/`food`/`assist` and never reached the sub-parser at all — until
+`_WORKOUT_PAST_RE` was extended with the new trigger phrases and moved ahead of three
+plugins' own early-returns.)
+
 ### Timezone Handling
 
 The server runs UTC (Cloud Run). All date/time logic must use the client's local clock.

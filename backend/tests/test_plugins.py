@@ -28,6 +28,33 @@ def _pp(text: str, **kwargs) -> ParsedCard:
     return plugin.post_process(_parsed(**kwargs), text=text)
 
 
+# ── recurrence_rule normalization (schema-level) ───────────────────────────────
+
+class TestRecurrenceRuleNormalization:
+    """ParsedCard.recurrence_rule must tolerate the LLM's raw formatting quirks rather
+    than 500ing the whole parse request -- a stray space around an otherwise-valid
+    value used to fail Literal validation outright."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        (" daily", "daily"),
+        ("Weekly", "weekly"),
+        ("monthly ", "monthly"),
+        ("YEARLY", "yearly"),
+    ])
+    def test_strips_and_lowercases_valid_values(self, raw, expected):
+        card = ParsedCard(type="habit", title="Test", recurrence_rule=raw)
+        assert card.recurrence_rule == expected
+
+    @pytest.mark.parametrize("raw", ["", "none", "biweekly", "not-a-rule"])
+    def test_invalid_values_become_none_instead_of_raising(self, raw):
+        card = ParsedCard(type="habit", title="Test", recurrence_rule=raw)
+        assert card.recurrence_rule is None
+
+    def test_none_stays_none(self):
+        card = ParsedCard(type="task", title="Test", recurrence_rule=None)
+        assert card.recurrence_rule is None
+
+
 # ── Section overrides from input text ────────────────────────────────────────
 
 class TestSectionOverrides:
@@ -481,3 +508,55 @@ class TestTaskCompleteDetection:
         result = _habit_pipeline(_llama, _task(type="task"), text=text)
         assert result.type not in ("task_complete", "habit_check"), \
             f"Unexpected completion type for {text!r}: {result.type!r}"
+
+
+# ── Workout type override (including wellness/mental sessions) ────────────────
+
+class TestWorkoutTypeOverride:
+    """
+    _WORKOUT_PAST_RE in BaseModelPlugin.post_process() must force type="workout"
+    for physical exercise, wellness treatments, and mental-exercise sessions,
+    regardless of what type the LLM guessed -- including "assist"/"food"/"mood",
+    which weaker local models have been observed to guess for rare activity nouns
+    like "floatation" that have no strong exercise association in their training
+    data. This must hold even when a model-specific plugin's own post_process
+    (e.g. Llama32Plugin's habit_check override) runs first and reassigns type
+    before delegating to the base class.
+    """
+
+    @pytest.mark.parametrize("text,wrong_type", [
+        ("rowed 5000m", "task"),
+        ("floatation", "assist"),
+        ("floatation", "food"),
+        ("float therapy", "habit_check"),
+        ("did a float therapy session", "habit_check"),
+        ("red light therapy", "assist"),
+        ("did red light therapy", "habit_check"),
+        ("brain training", "habit_check"),
+        ("did some brain training", "habit_check"),
+        ("did a crossword", "habit_check"),
+        ("did a sudoku", "task"),
+    ])
+    def test_forces_workout_regardless_of_llm_guess(self, text, wrong_type):
+        result = _pp(text, type=wrong_type)
+        assert result.type == "workout", \
+            f"Expected workout for {text!r} (LLM guessed {wrong_type!r}), got {result.type!r}"
+
+    @pytest.mark.parametrize("plugin_cls", [Llama32Plugin, Llama31_8bPlugin])
+    def test_forces_workout_even_through_plugin_specific_post_process(self, plugin_cls):
+        """A plugin's own post_process (e.g. llama32's habit_check override firing on
+        "did ...") must not shadow the base class's workout correction -- both used to
+        short-circuit on type="assist" before ever reaching it."""
+        p = plugin_cls()
+        parsed = p.post_process(_parsed(type="assist"), text="did red light therapy")
+        assert parsed.type == "workout"
+
+    @pytest.mark.parametrize("text,expected_type", [
+        ("help me plan my week", "assist"),
+        ("ate a banana", "food"),
+        ("feeling great today", "mood"),
+    ])
+    def test_unrelated_types_not_overridden(self, text, expected_type):
+        """The workout regex must not false-positive on genuinely unrelated intents."""
+        result = _pp(text, type=expected_type)
+        assert result.type == expected_type

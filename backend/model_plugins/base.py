@@ -462,12 +462,21 @@ class BaseModelPlugin:
         re.I,
     )
 
-    # Past-tense exercise verbs — deterministically force type=workout when matched.
-    # Only covers unambiguously completed-activity forms, not future/habitual ("run daily").
+    # Past-tense exercise verbs, wellness treatments, and mental-exercise sessions —
+    # deterministically force type=workout when matched. Only covers unambiguously
+    # completed-activity forms, not future/habitual ("run daily"). Needed because these
+    # weaker local models tend to misroute "did <activity>" phrasing to habit_check (see
+    # Llama32Plugin's _HABIT_CHECK_RE) and bare nouns for less common activities (e.g.
+    # "floatation", "brain training") to task/habit_check/food instead of workout —
+    # this regex runs after those overrides and wins.
     _WORKOUT_PAST_RE = re.compile(
         r'\b(?:rowed|ran|cycled|biked|swam|swum|lifted|benched|squatted|deadlifted|'
         r'did\s+(?:yoga|pilates|stretching|weights)|worked\s+out|played\s+\w+|'
-        r'went\s+for\s+a\s+(?:run|ride|swim|bike|jog)|jogged|hiked|sprinted)\b',
+        r'went\s+for\s+a\s+(?:run|ride|swim|bike|jog)|jogged|hiked|sprinted|'
+        r'did\s+(?:some\s+)?(?:brain[- ]training|a\s+crossword|a\s+sudoku|'
+        r'a\s+float(?:ation)?(?:\s+therapy)?(?:\s+session)?|red\s+light\s+therapy)|'
+        r'brain[- ]training|crossword|sudoku|floatation|'
+        r'float\s+(?:tank|therapy)|red\s+light\s+therapy)\b',
         re.I,
     )
 
@@ -476,17 +485,23 @@ class BaseModelPlugin:
         Called on the validated ParsedCard after Pydantic.
         `text` is the original user input — use it to check what was actually stated.
         """
-        # These types need no further post-processing.
-        if parsed.type in ("assist", "mood", "food", "workout"):
-            return parsed
-
         lowered = text.strip().lower()
 
-        # Deterministically correct workout misclassification.
-        # LLMs sometimes return "habit" for past-tense exercise ("rowed 2 mi").
+        # Deterministically correct workout misclassification -- runs before the
+        # type-based early-outs below because this signal is authoritative regardless
+        # of what type the LLM guessed. Needed even against "assist"/"food"/"mood":
+        # a weaker local model sometimes guesses one of those for a rare activity noun
+        # with no strong exercise association in its training data (e.g. "floatation"
+        # has landed on both "food" and "assist" across runs) -- none of these regex
+        # phrases plausibly appear in genuine assist/food/mood input, so overriding
+        # unconditionally is safe.
         if self._WORKOUT_PAST_RE.search(lowered):
             parsed.type = "workout"
             parsed.recurrence_rule = None
+            return parsed
+
+        # These types need no further post-processing.
+        if parsed.type in ("assist", "mood", "food", "workout"):
             return parsed
 
         # Enforce section from explicit temporal phrases in the input text.

@@ -165,9 +165,6 @@ class Llama33_70bPlugin(BaseModelPlugin):
     ]
 
     def post_process(self, parsed, *, text: str = ""):
-        if parsed.type == "assist":
-            return parsed
-
         # llama-family models fabricate a scheduled_at for vague day phrases
         # ("next week", "this Friday") when no clock time is stated — clear it.
         if parsed.scheduled_at and parsed.section in ("week", "month"):

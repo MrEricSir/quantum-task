@@ -242,7 +242,7 @@ class WorkoutEntry(Base):
 
     id          = Column(Integer, primary_key=True, index=True)
     raw_input   = Column(String, nullable=False)   # original text from user
-    type        = Column(String, nullable=False)   # normalized: run|cycle|row|swim|strength|yoga|sport|other
+    type        = Column(String, nullable=False)   # normalized: run|cycle|row|swim|strength|yoga|sport|wellness|mental|other
     value       = Column(Float,  nullable=True)    # e.g. 5000 (distance), 185 (weight), 45 (minutes)
     unit        = Column(String, nullable=True)    # e.g. "m", "lbs", "min" — display only, not interpreted
     notes       = Column(String, nullable=True)    # brief LLM note

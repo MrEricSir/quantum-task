@@ -62,6 +62,12 @@ def _mock_parse_strength(raw: str) -> dict:
 def _mock_parse_yoga(raw: str) -> dict:
     return {"type": "yoga", "value": None, "unit": None, "notes": None}
 
+def _mock_parse_wellness(raw: str) -> dict:
+    return {"type": "wellness", "value": None, "unit": None, "notes": None}
+
+def _mock_parse_mental(raw: str) -> dict:
+    return {"type": "mental", "value": 15.0, "unit": "min", "notes": None}
+
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
@@ -95,6 +101,23 @@ class TestWorkoutCRUD:
         assert data["type"] == "yoga"
         assert data["value"] is None
         assert data["unit"] is None
+
+    def test_create_wellness_entry(self, client, monkeypatch):
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_wellness)
+        r = client.post("/api/workouts", json={"raw_input": "got a massage"})
+        assert r.status_code == 201
+        data = r.json()[0]
+        assert data["type"] == "wellness"
+        assert data["value"] is None
+
+    def test_create_mental_entry(self, client, monkeypatch):
+        monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_mental)
+        r = client.post("/api/workouts", json={"raw_input": "did a brain-training session"})
+        assert r.status_code == 201
+        data = r.json()[0]
+        assert data["type"] == "mental"
+        assert data["value"] == 15.0
+        assert data["unit"] == "min"
 
     def test_create_requires_raw_input(self, client, monkeypatch):
         monkeypatch.setattr(workouts_router, "parse_workout", _mock_parse_row)
@@ -153,6 +176,18 @@ class TestWorkoutUpdate:
         r = client.put(f"/api/workouts/{entry['id']}", json={"type": "run"})
         assert r.status_code == 200
         assert r.json()["type"] == "run"
+
+    def test_updates_type_to_wellness(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"type": "wellness"})
+        assert r.status_code == 200
+        assert r.json()["type"] == "wellness"
+
+    def test_updates_type_to_mental(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/workouts/{entry['id']}", json={"type": "mental"})
+        assert r.status_code == 200
+        assert r.json()["type"] == "mental"
 
     def test_invalid_type_is_ignored(self, client, monkeypatch):
         entry = self._create(client, monkeypatch)
