@@ -120,7 +120,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching), bridge-managed preview server (`auto_preview`, detached Procfile/`run_cmd` launch + PID-file teardown via `--stop-preview`/`--cleanup`), visual verification (`visual_verify`, `npx playwright screenshot` of a confirmed-running preview shown in the Code tab + Telegram)
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching), bridge-managed preview server (`auto_preview`, detached Procfile/`run_cmd` launch + PID-file teardown via `--stop-preview`/`--cleanup`), visual verification (`visual_verify`, `npx playwright screenshot` of a confirmed-running preview shown in the Code tab + Telegram), PR/issue-comment opt-out (`allow_pr_comments`, off by default, part of the shared job prompt tail)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -194,7 +194,7 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
 4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
 5. The local bridge agent picks up the job, fetches the repo, and creates an isolated `git worktree` on a fresh `qtask/<id>-<slug>` branch off the latest primary branch — your own working directory is never touched, so this works even if you have uncommitted changes there
-6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them
+6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them, and by default it's told not to comment on the PR/issue itself either (see [Commenting on GitHub](#commenting-on-github-allow_pr_comments) below)
 7. When the session ends, the branch, machine, and full worktree path are shown in the Code tab and sent via Telegram (with a copy button in the UI); the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
 
 You never have to go hunting for where a job's code landed — see [Finding your worktree](#finding-your-worktree) below for every way it's surfaced.
@@ -438,6 +438,23 @@ This is the deliberately scoped-down first step of the self-review pass: manual 
 `BRIDGE_SPEC.md` is deleted from the worktree once a job finishes, but the original spec text isn't lost — it's recovered from the server (matched back to this worktree by branch name) and given to the review as context, along with any `test_cmd`/`verify_acceptance` results from the original run, so the review can focus on real problems instead of re-deriving what's already known. If no matching job record is found, the review still runs — just without that context.
 
 Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining leaves the worktree untouched, same as before. Accepting launches an interactive session in the same worktree with the review's own findings handed back as context, so applying them doesn't mean re-explaining what was just found from scratch — you can then also redirect it, push back on any individual suggestion, or ask it to stop partway through. A failed review (agent crashed, network error) skips the prompt entirely rather than asking you to act on an incomplete result. Like every other agent session the bridge launches, an interrupted apply (crash, Ctrl-C) auto-commits whatever was in progress rather than losing it.
+
+#### Commenting on GitHub (allow_pr_comments)
+
+A coding agent with unattended shell access (any `--tag`/`--card`/`--watch` job) has `gh` on its PATH like any other command, and left to its own judgment will sometimes decide on its own to `gh pr comment` or `gh issue comment` — e.g. to summarize what it did, or respond to existing review feedback. That reads as your own tooling talking on a shared surface your reviewers and coworkers also read, not something that should happen without you deciding it should.
+
+Every job's prompt (`--card`/`--tag`/`--watch`, fix jobs, resumed jobs) explicitly tells the agent not to comment on the PR, issue, or any other GitHub thread — off by default, alongside the existing "don't push" instruction. Set `allow_pr_comments = true` (per-repo, or as a top-level fallback in `config.toml`) to lift that restriction:
+
+```toml
+[repos."owner/api"]
+path = "~/folder_a/api"
+allow_pr_comments = true
+
+# top-level fallback, same as setup_cmd/test_cmd
+allow_pr_comments = true
+```
+
+This only covers the main implementation/fix/resume session — the only one that runs unattended with full write access for an extended period. The read-only `verify_acceptance`, automatic `self_review`, and manual `--review` passes are already explicitly instructed not to change anything at all, so they're a much less likely source of a surprise comment; `--review`'s own "apply these changes" follow-up is always interactive and requires you to explicitly say yes first.
 
 #### Needs confirmation: checkpoint patterns and automatic self-review
 

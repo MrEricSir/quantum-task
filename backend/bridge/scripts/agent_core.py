@@ -149,12 +149,12 @@ PREVIEW_LOG_FILENAME = ".qtask-preview.log"
 # top-level key -- almost always a typo.
 _TOML_SCALAR_FALLBACK_KEYS = {
     "name", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "auto_preview",
-    "visual_verify", "env_files", "run_cmd", "open_url", "agent",
+    "visual_verify", "allow_pr_comments", "env_files", "run_cmd", "open_url", "agent",
 }
 _TOML_TOP_LEVEL_KEYS = _TOML_SCALAR_FALLBACK_KEYS | {"repos", "repo_roots"}
 _TOML_REPO_TABLE_KEYS = {
     "path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "auto_preview",
-    "visual_verify", "run_cmd", "env_files", "open_url",
+    "visual_verify", "allow_pr_comments", "run_cmd", "env_files", "open_url",
 }
 
 # See the "Coding-agent adapter contract" section of this file's module docstring.
@@ -222,6 +222,8 @@ def _validate_toml_structure(toml):
         problems.append(f'"auto_preview": expected true/false, got {type(toml["auto_preview"]).__name__}')
     if "visual_verify" in toml and toml["visual_verify"] is not None and not isinstance(toml["visual_verify"], bool):
         problems.append(f'"visual_verify": expected true/false, got {type(toml["visual_verify"]).__name__}')
+    if "allow_pr_comments" in toml and toml["allow_pr_comments"] is not None and not isinstance(toml["allow_pr_comments"], bool):
+        problems.append(f'"allow_pr_comments": expected true/false, got {type(toml["allow_pr_comments"]).__name__}')
     if "env_files" in toml and toml["env_files"] is not None and not isinstance(toml["env_files"], list):
         problems.append(f'"env_files": expected a list of paths, got {type(toml["env_files"]).__name__}')
 
@@ -253,6 +255,8 @@ def _validate_toml_structure(toml):
             problems.append(f'repos."{name}".auto_preview: expected true/false, got {type(entry["auto_preview"]).__name__}')
         if "visual_verify" in entry and entry["visual_verify"] is not None and not isinstance(entry["visual_verify"], bool):
             problems.append(f'repos."{name}".visual_verify: expected true/false, got {type(entry["visual_verify"]).__name__}')
+        if "allow_pr_comments" in entry and entry["allow_pr_comments"] is not None and not isinstance(entry["allow_pr_comments"], bool):
+            problems.append(f'repos."{name}".allow_pr_comments: expected true/false, got {type(entry["allow_pr_comments"]).__name__}')
 
     repo_roots = toml.get("repo_roots")
     if repo_roots is not None:
@@ -351,9 +355,9 @@ def _slugify(text, max_len=40):
 RepoEntry = namedtuple(
     "RepoEntry",
     ["path", "setup_cmd", "test_cmd", "verify_acceptance", "self_review", "run_cmd",
-     "env_files", "open_url", "auto_preview", "visual_verify"],
+     "env_files", "open_url", "auto_preview", "visual_verify", "allow_pr_comments"],
 )
-_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None, None, None, None)
+_EMPTY_REPO_ENTRY = RepoEntry(None, None, None, None, None, None, None, None, None, None, None)
 
 
 def _repo_entry(cfg, target_repo):
@@ -379,6 +383,7 @@ def _repo_entry(cfg, target_repo):
         self_review = true
         auto_preview = true
         visual_verify = true
+        allow_pr_comments = true
         run_cmd = "npm run dev"
         env_files = ["backend/.env", "frontend/.env"]
         open_url = "http://localhost:$((QTASK_PORT_BASE + 1))"
@@ -387,13 +392,13 @@ def _repo_entry(cfg, target_repo):
     if entry is None:
         return _EMPTY_REPO_ENTRY
     if isinstance(entry, str):
-        return RepoEntry(entry, None, None, None, None, None, None, None, None, None)
+        return RepoEntry(entry, None, None, None, None, None, None, None, None, None, None)
     if isinstance(entry, dict):
         return RepoEntry(
             entry.get("path"), entry.get("setup_cmd"),
             entry.get("test_cmd"), entry.get("verify_acceptance"), entry.get("self_review"),
             entry.get("run_cmd"), entry.get("env_files"), entry.get("open_url"),
-            entry.get("auto_preview"), entry.get("visual_verify"),
+            entry.get("auto_preview"), entry.get("visual_verify"), entry.get("allow_pr_comments"),
         )
     return _EMPTY_REPO_ENTRY
 
@@ -439,17 +444,18 @@ def _resolve_work_dir(cfg, target_repo):
     return None
 
 
-def _make_prompt(branch, worktree_path):
+def _make_prompt(branch, worktree_path, allow_pr_comments=False):
     return _make_agent_prompt(
         branch, worktree_path,
         action=(
             f"Please implement the feature described in {SPEC_FILENAME} "
             f"(already written to your working directory)."
         ),
+        allow_pr_comments=allow_pr_comments,
     )
 
 
-def _make_fix_prompt(branch, worktree_path):
+def _make_fix_prompt(branch, worktree_path, allow_pr_comments=False):
     """Wrapper prompt for a fix job (run_job's resumes_job_id branch) -- deliberately framed
     as "apply these specific fixes," not a general invitation to refactor, per
     CLAUDE_CODE_INTEGRATION.md's "CodeRabbit feedback integration" plan. The actual fix
@@ -463,10 +469,11 @@ def _make_fix_prompt(branch, worktree_path):
             f"comments (file, line, and a suggested change where one was given), not a "
             f"general invitation to refactor. Only address what's listed there."
         ),
+        allow_pr_comments=allow_pr_comments,
     )
 
 
-def _make_resume_prompt(branch, worktree_path):
+def _make_resume_prompt(branch, worktree_path, allow_pr_comments=False):
     """Wrapper prompt for a resume job (run_job's resumes_job_id branch, no fix_comment_ids) --
     picking up an interrupted session in an existing worktree rather than starting fresh. The
     actual task content lives in SPEC_FILENAME same as any other job -- built server-side by
@@ -481,13 +488,14 @@ def _make_resume_prompt(branch, worktree_path):
             f"against the base branch first to see what's already been done, then pick up "
             f"from there instead of starting over."
         ),
+        allow_pr_comments=allow_pr_comments,
     )
 
 
-def _make_agent_prompt(branch, worktree_path, action):
-    """Shared tail (branch/push/env-file/Procfile instructions) between _make_prompt and
-    _make_fix_prompt -- only the opening action line differs between "implement a feature"
-    and "apply specific fixes."""
+def _make_agent_prompt(branch, worktree_path, action, allow_pr_comments=False):
+    """Shared tail (branch/push/comment/env-file/Procfile instructions) between _make_prompt
+    and _make_fix_prompt -- only the opening action line differs between "implement a
+    feature" and "apply specific fixes."""
     prompt = (
         f"{action} "
         f"You are working on branch {branch} — commit your changes locally as you go. "
@@ -497,6 +505,16 @@ def _make_agent_prompt(branch, worktree_path, action):
         f"databases you start instead of framework defaults, so this session can't "
         f"collide with anything else already running on this machine."
     )
+    if not allow_pr_comments:
+        # Off by default -- a coding agent with unattended shell access will otherwise
+        # decide on its own initiative to `gh pr comment`/`gh issue comment`, which reads as
+        # the developer's own AI tool talking on a shared surface coworkers/reviewers also
+        # read. Enable via config.toml's allow_pr_comments if you want that.
+        prompt += (
+            f" Do NOT comment on the pull request, issue, or any GitHub thread for this "
+            f"work — the developer will handle any external communication. If you want to "
+            f"leave notes about what you did, put them in your commit messages instead."
+        )
     # If the repo has a Procfile.dev/Procfile, tell the agent about it directly --
     # otherwise it has to rediscover "this app has a separate frontend/backend,
     # here's how to start each" on its own mid-session. Same file _run_procfile
@@ -1180,7 +1198,7 @@ def _run_verification(worktree_path, test_cmd, verify_acceptance, spec_text, sel
 def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
                       test_cmd=None, verify_acceptance=False, self_review=False, spec_text=None,
                       prompt_kind="normal", checkpoint_patterns=None,
-                      auto_preview=False, repo_entry=None):
+                      auto_preview=False, repo_entry=None, allow_pr_comments=False):
     """Launch the coding agent as an interactive session the user can engage with.
 
     prompt_kind selects the wrapper wording: "fix" for _make_fix_prompt (resuming an existing
@@ -1198,7 +1216,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
         prompt_kind, _make_prompt)
     try:
         try:
-            subprocess.run(interactive_command(make_prompt(branch, cwd)), cwd=cwd, check=False)
+            subprocess.run(interactive_command(make_prompt(branch, cwd, allow_pr_comments)), cwd=cwd, check=False)
         except FileNotFoundError:
             print(f"[bridge] ERROR: '{AGENT_LABEL}' not found.", file=sys.stderr)
             print(f"[bridge]   {AGENT_NOT_FOUND_HINT}", file=sys.stderr)
@@ -1236,7 +1254,7 @@ def _run_interactive(cfg, job_id, branch, cwd, prompt_note=True,
 def _run_streaming(cfg, job_id, branch, cwd,
                     test_cmd=None, verify_acceptance=False, self_review=False, spec_text=None,
                     prompt_kind="normal", checkpoint_patterns=None,
-                    auto_preview=False, repo_entry=None):
+                    auto_preview=False, repo_entry=None, allow_pr_comments=False):
     """Launch the coding agent non-interactively and stream stdout back to the app.
 
     prompt_kind selects the wrapper wording -- see _run_interactive's docstring."""
@@ -1245,7 +1263,7 @@ def _run_streaming(cfg, job_id, branch, cwd,
         prompt_kind, _make_prompt)
     try:
         proc = subprocess.Popen(
-            streaming_command(make_prompt(branch, cwd)),
+            streaming_command(make_prompt(branch, cwd, allow_pr_comments)),
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1417,6 +1435,9 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     if visual_verify_cfg and not auto_preview:
         print("[bridge] visual_verify is on but auto_preview isn't — skipping "
               "(nothing to screenshot)")
+    allow_pr_comments = entry.allow_pr_comments
+    if allow_pr_comments is None:
+        allow_pr_comments = cfg.get("allow_pr_comments", False)
     env_files = entry.env_files or cfg.get("env_files")
     checkpoint_resp = api(cfg, "GET", "/api/bridge/checkpoint-patterns")
     checkpoint_patterns = (checkpoint_resp or {}).get("patterns") or []
@@ -1453,14 +1474,16 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
                             self_review=self_review,
                             spec_text=spec_text, prompt_kind=prompt_kind,
                             checkpoint_patterns=checkpoint_patterns,
-                            auto_preview=auto_preview, repo_entry=entry)
+                            auto_preview=auto_preview, repo_entry=entry,
+                            allow_pr_comments=allow_pr_comments)
         else:
             _run_interactive(cfg, job_id, branch, worktree_path, prompt_note=prompt_note,
                               test_cmd=test_cmd, verify_acceptance=verify_acceptance,
                               self_review=self_review,
                               spec_text=spec_text, prompt_kind=prompt_kind,
                               checkpoint_patterns=checkpoint_patterns,
-                              auto_preview=auto_preview, repo_entry=entry)
+                              auto_preview=auto_preview, repo_entry=entry,
+                              allow_pr_comments=allow_pr_comments)
     except Exception as e:
         # Best-effort: run_streaming/run_interactive already report their
         # own outcome (claude not found, non-zero exit, etc.) via /complete

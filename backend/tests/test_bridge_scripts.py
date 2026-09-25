@@ -1528,6 +1528,26 @@ visual_verify = "yes"
         assert "visual_verify" in err
         assert "expected true/false" in err
 
+    def test_flags_allow_pr_comments_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+[repos."owner/repo"]
+path = "/x"
+allow_pr_comments = "true"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "allow_pr_comments" in err
+        assert "expected true/false" in err
+
+    def test_flags_top_level_allow_pr_comments_wrong_type(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path, monkeypatch, toml_text="""
+allow_pr_comments = "yes"
+""")
+        agent_core.load_config()
+        err = capsys.readouterr().err
+        assert "allow_pr_comments" in err
+        assert "expected true/false" in err
+
     def test_flags_repo_entry_of_wrong_type(self, tmp_path, monkeypatch, capsys):
         self._write_config(tmp_path, monkeypatch, toml_text="""
 [repos]
@@ -1744,6 +1764,7 @@ class TestRepoEntryVerificationFields:
         assert entry.open_url is None
         assert entry.auto_preview is None
         assert entry.visual_verify is None
+        assert entry.allow_pr_comments is None
 
     def test_plain_string_form_returns_none_for_new_fields(self):
         cfg = {"repos": {"owner/repo": "/x"}}
@@ -1757,9 +1778,10 @@ class TestRepoEntryVerificationFields:
         assert entry.open_url is None
         assert entry.auto_preview is None
         assert entry.visual_verify is None
+        assert entry.allow_pr_comments is None
 
     def test_unconfigured_repo_returns_all_none(self):
-        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None, None, None, None)
+        assert agent_core._repo_entry({"repos": {}}, "owner/repo") == (None, None, None, None, None, None, None, None, None, None, None)
 
     def test_resolves_self_review_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "self_review": True}}}
@@ -1778,6 +1800,12 @@ class TestRepoEntryVerificationFields:
         entry = agent_core._repo_entry(cfg, "owner/repo")
         assert entry.path == "/x"
         assert entry.visual_verify is True
+
+    def test_resolves_allow_pr_comments_from_table_form(self):
+        cfg = {"repos": {"owner/repo": {"path": "/x", "allow_pr_comments": True}}}
+        entry = agent_core._repo_entry(cfg, "owner/repo")
+        assert entry.path == "/x"
+        assert entry.allow_pr_comments is True
 
     def test_resolves_run_cmd_from_table_form(self):
         cfg = {"repos": {"owner/repo": {"path": "/x", "run_cmd": "npm run dev"}}}
@@ -1932,6 +1960,34 @@ class TestMakeResumePrompt:
         prompt = agent_core._make_resume_prompt("qtask/1-foo", str(tmp_path))
         assert "Procfile.dev" in prompt
         assert "web: npm run dev" in prompt
+
+
+class TestMakeAgentPromptPrComments:
+    """config.toml's allow_pr_comments (default off) -- every job prompt tells the agent
+    not to comment on the PR/issue/any GitHub thread unless explicitly opted in, the same
+    default-off posture as the existing 'Do NOT push' instruction. Covers all three prompt
+    builders since they share _make_agent_prompt's tail."""
+
+    @pytest.mark.parametrize("make_prompt", [
+        agent_core._make_prompt, agent_core._make_fix_prompt, agent_core._make_resume_prompt,
+    ])
+    def test_default_forbids_pr_comments(self, tmp_path, make_prompt):
+        prompt = make_prompt("qtask/1-foo", str(tmp_path))
+        assert "Do NOT comment on the pull request" in prompt
+
+    @pytest.mark.parametrize("make_prompt", [
+        agent_core._make_prompt, agent_core._make_fix_prompt, agent_core._make_resume_prompt,
+    ])
+    def test_allow_pr_comments_true_omits_the_restriction(self, tmp_path, make_prompt):
+        prompt = make_prompt("qtask/1-foo", str(tmp_path), allow_pr_comments=True)
+        assert "Do NOT comment on the pull request" not in prompt
+
+    def test_still_shares_push_and_procfile_instructions_when_allowed(self, tmp_path):
+        """allow_pr_comments=True only lifts the PR-comment restriction -- the rest of the
+        shared tail (push safety, env file, Procfile awareness) is untouched."""
+        prompt = agent_core._make_prompt("qtask/1-foo", str(tmp_path), allow_pr_comments=True)
+        assert "Do NOT push to the remote repository" in prompt
+        assert "collide with anything else already running on this machine." in prompt
 
 
 class TestCommitIfDirty:
@@ -3367,7 +3423,7 @@ class TestStartPreview:
     def _entry(self, **overrides):
         fields = dict(path=None, setup_cmd=None, test_cmd=None, verify_acceptance=None,
                       self_review=None, run_cmd=None, env_files=None, open_url=None,
-                      auto_preview=None, visual_verify=None)
+                      auto_preview=None, visual_verify=None, allow_pr_comments=None)
         fields.update(overrides)
         return agent_core.RepoEntry(**fields)
 

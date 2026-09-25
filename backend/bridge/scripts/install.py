@@ -39,9 +39,10 @@ TOML_TEMPLATE = textwrap.dedent("""\
 
     # Map repo slugs to local checkout paths. Either a plain path string,
     # or a table with "path" and optional "setup_cmd" / "test_cmd" /
-    # "verify_acceptance" / "self_review" / "auto_preview" / "visual_verify" / "run_cmd" /
-    # "env_files" keys. setup_cmd is a one-time command run in a fresh worktree before Claude launches, for
-    # repos that need dependencies installed (npm install, pip install, etc).
+    # "verify_acceptance" / "self_review" / "auto_preview" / "visual_verify" /
+    # "allow_pr_comments" / "run_cmd" / "env_files" keys. setup_cmd is a one-time
+    # command run in a fresh worktree before Claude launches, for repos that need
+    # dependencies installed (npm install, pip install, etc).
     #
     # [repos]
     # "owner/myapp" = "/Users/you/code/myapp"
@@ -138,6 +139,15 @@ TOML_TEMPLATE = textwrap.dedent("""\
     # call per job, so it's off unless set (per-repo, or as a fallback here):
     #
     # self_review = true
+
+    # allow_pr_comments: by default, every job's prompt explicitly tells the coding agent
+    # not to comment on the pull request, issue, or any other GitHub thread it can see --
+    # a coding agent with unattended shell access will otherwise sometimes decide on its
+    # own to `gh pr comment`/`gh issue comment`, which reads as your own tooling talking on
+    # a shared surface your reviewers/coworkers also read. Set this to true to lift that
+    # restriction and let the agent comment if it judges that useful. Off by default:
+    #
+    # allow_pr_comments = true
 
     # Alternatively, list root directories and the bridge will discover repos by
     # scanning for matching .git remotes automatically. Auto-discovered repos
