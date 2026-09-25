@@ -231,12 +231,20 @@ def _withings_get(creds_data: dict, path: str, params: dict) -> dict:
 # ── Pure API fetch (no DB access) ───────────────────────────────────────────────
 # Withings numeric measurement-type codes -> canonical metric name + rounding precision.
 _MEASURE_TYPE_MAP = {
-    6:  ("fat_ratio",    2),  # FAT_RATIO
-    1:  ("weight",       2),  # WEIGHT (kg)
-    9:  ("bp_diastolic", 1),  # DIASTOLIC BP (mmHg)
-    10: ("bp_systolic",  1),  # SYSTOLIC BP (mmHg)
-    11: ("heart_rate",   1),  # HEART RATE (bpm)
-    54: ("spo2",         1),  # SPO2 (%)
+    6:   ("fat_ratio",          2),  # FAT_RATIO (%)
+    1:   ("weight",             2),  # WEIGHT (kg)
+    9:   ("bp_diastolic",       1),  # DIASTOLIC BP (mmHg)
+    10:  ("bp_systolic",        1),  # SYSTOLIC BP (mmHg)
+    11:  ("heart_rate",         1),  # HEART RATE (bpm)
+    54:  ("spo2",               1),  # SPO2 (%)
+    5:   ("fat_free_mass",      2),  # FAT_FREE_MASS (kg)
+    8:   ("fat_mass_weight",    2),  # FAT_MASS_WEIGHT (kg)
+    76:  ("muscle_mass",        2),  # MUSCLE_MASS (kg)
+    77:  ("hydration",          2),  # HYDRATION -- water weight (kg)
+    88:  ("bone_mass",          2),  # BONE_MASS (kg)
+    91:  ("pulse_wave_velocity", 1),  # PULSE_WAVE_VELOCITY (m/s)
+    155: ("vascular_age",       1),  # VASCULAR_AGE (years)
+    170: ("visceral_fat",       1),  # VISCERAL_FAT_INDEX (unitless)
 }
 
 
@@ -473,7 +481,12 @@ def _do_sync_impl(db: Session) -> dict:
         pass
     today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
     start = today - timedelta(days=89)
-    synced = {"steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0, "heart_rate": 0, "spo2": 0, "sleep_score": 0, "sleep_minutes": 0, "sleep_deep_minutes": 0}
+    synced = {
+        "steps": 0, "fat_ratio": 0, "weight": 0, "bp_systolic": 0, "bp_diastolic": 0,
+        "heart_rate": 0, "spo2": 0, "sleep_score": 0, "sleep_minutes": 0, "sleep_deep_minutes": 0,
+        "fat_free_mass": 0, "fat_mass_weight": 0, "muscle_mass": 0, "hydration": 0,
+        "bone_mass": 0, "pulse_wave_velocity": 0, "vascular_age": 0, "visceral_fat": 0,
+    }
 
     # Requires USER_SLEEP_EVENTS scope for the sleep portion; silently skipped if not granted
     # (fetch_measurements catches that section's failure independently of the other two).

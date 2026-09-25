@@ -2557,6 +2557,32 @@ test.describe('health page', () => {
     await expect(section.locator('.food-entry', { hasText: 'Weight' })).toBeVisible()
   })
 
+  test('logging a manual body-composition measurement (water weight) POSTs the entry', async ({ page }) => {
+    let postBody = null
+    await page.route('**/api/health/measurements**', r => {
+      if (r.request().method() === 'POST') {
+        postBody = r.request().postDataJSON()
+        return r.fulfill({ status: 201, json: { id: 55, ...postBody, source: 'manual' } })
+      }
+      return r.fulfill({ json: { ok: true } })
+    })
+    await page.route('**/api/withings/health-data**', r =>
+      r.fulfill({ json: {
+        measurements: postBody ? [{ id: 55, ...postBody, source: 'manual' }] : [],
+        habit_completions: {},
+      } }))
+
+    const section = page.locator('.health-section', { hasText: 'Log a measurement' })
+    await section.locator('select').selectOption('hydration')
+    await section.locator('input[type="number"]').fill('42.5')
+    await section.getByRole('button', { name: /^log$/i }).click()
+
+    await expect.poll(() => postBody).not.toBeNull()
+    expect(postBody.metric).toBe('hydration')
+    expect(postBody.value).toBe(42.5)
+    await expect(section.locator('.food-entry', { hasText: 'Water weight' })).toBeVisible()
+  })
+
   test('deleting a manual measurement entry calls DELETE with its id', async ({ page }) => {
     await page.route('**/api/withings/health-data**', r =>
       r.fulfill({ json: {

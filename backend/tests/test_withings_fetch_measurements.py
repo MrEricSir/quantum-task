@@ -49,6 +49,14 @@ class TestFetchBodyMeasurements:
                 {"type": 10, "value": 1200, "unit": -1},   # bp_systolic -> 120.0
                 {"type": 11, "value": 650, "unit": -1},    # heart_rate -> 65.0
                 {"type": 54, "value": 970, "unit": -1},    # spo2 -> 97.0
+                {"type": 5, "value": 54321, "unit": -3},   # fat_free_mass -> 54.32
+                {"type": 8, "value": 15789, "unit": -3},   # fat_mass_weight -> 15.79
+                {"type": 76, "value": 48765, "unit": -3},  # muscle_mass -> 48.77 (round-half-to-even)
+                {"type": 77, "value": 42123, "unit": -3},  # hydration -> 42.12
+                {"type": 88, "value": 3210, "unit": -3},   # bone_mass -> 3.21
+                {"type": 91, "value": 82, "unit": -1},     # pulse_wave_velocity -> 8.2
+                {"type": 155, "value": 340, "unit": -1},   # vascular_age -> 34.0
+                {"type": 170, "value": 95, "unit": -1},    # visceral_fat -> 9.5
             ]},
         ]}
         with patch.object(withings, "_withings_get", return_value=body):
@@ -59,6 +67,14 @@ class TestFetchBodyMeasurements:
         assert result["bp_systolic"][0].value == 120.0
         assert result["heart_rate"][0].value == 65.0
         assert result["spo2"][0].value == 97.0
+        assert result["fat_free_mass"][0].value == 54.32
+        assert result["fat_mass_weight"][0].value == 15.79
+        assert result["muscle_mass"][0].value == 48.77
+        assert result["hydration"][0].value == 42.12
+        assert result["bone_mass"][0].value == 3.21
+        assert result["pulse_wave_velocity"][0].value == 8.2
+        assert result["vascular_age"][0].value == 34.0
+        assert result["visceral_fat"][0].value == 9.5
 
     def test_ignores_unmapped_types(self):
         body = {"measuregrps": [

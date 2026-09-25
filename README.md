@@ -10,7 +10,7 @@ A personal productivity dashboard with AI-powered quick add, calendar integratio
 - **AI**: Ollama locally, or any OpenAI-compatible API (Gemini, Groq, etc.)
 - **Calendar**: iCal/ICS feed integration
 - **Weather**: Open-Meteo (no API key required)
-- **Health**: Withings API (step count, body fat %, weight) — optional
+- **Health**: Withings API (step count, weight, body composition) — optional
 
 ## Prerequisites
 
@@ -173,10 +173,11 @@ Tests that call Ollama are skipped automatically when Ollama is not running — 
 - **Trip mode**: a "Travel mode" toggle in **Settings** (shown alongside Withings while on the Health page) starts an open-ended trip the moment you flip it on — no need to guess a return date — to keep habit/health logging fully on while traveling, without a trip breaking your streaks. Days inside the trip window are skipped by streak accounting entirely (neither break nor inflate the count), while completions and health data logged during the trip are still recorded normally for analysis. Toggle it back off when you're back; a short "welcome back" retrospective (tasks completed, habit activity, health data logged while away, confirmation streaks were preserved) is generated and sent via Telegram, the same way the weekly review is — see [Telegram Integration](#telegram-integration). If you toggle it back off within an hour of turning it on, that's treated as an accidental toggle rather than a real trip — the trip still ends immediately (no lingering "active" state), just without generating or sending a retrospective.
 
 ### Health
-- Connect a Withings account (watch + smart scale) to sync step count, body fat %, and weight
-- **No smart scale? Log any metric by hand** — a "Log a measurement" form on the Health page covers all ten tracked metrics (steps, weight, body fat, blood pressure, heart rate, SpO2, sleep score/duration/deep-sleep) with a date picker; manually-entered readings feed charts, habit goal auto-completion, insights, and Telegram identically to a synced Withings reading, and stay editable/deletable from a small recent-entries list. If a device later syncs the same date/metric, its reading takes over as the source of truth.
+- Connect a Withings account (watch + smart scale) to sync step count, body fat %, weight, and full body-scan composition (fat-free mass, fat mass, muscle mass, water weight/hydration, bone mass, visceral fat, vascular age, pulse wave velocity) for scales that report it
+- **No smart scale? Log any metric by hand** — a "Log a measurement" form on the Health page covers all eighteen tracked metrics (steps, weight, body fat, blood pressure, heart rate, SpO2, sleep score/duration/deep-sleep, fat-free mass, fat mass, muscle mass, water weight, bone mass, visceral fat, vascular age, pulse wave velocity) with a date picker; manually-entered readings feed charts, habit goal auto-completion, insights, and Telegram identically to a synced Withings reading, and stay editable/deletable from a small recent-entries list. If a device later syncs the same date/metric, its reading takes over as the source of truth.
 - Set a numeric goal per metric; step habits auto-check when the daily goal is synced
 - Charts showing steps (bar) and body fat % (line) over the past 90 days
+- **Body Composition**: a dedicated chart section for the full body-scan set (muscle mass, water weight, fat mass, fat-free mass, bone mass, visceral fat, vascular age, pulse wave velocity) — each sub-chart only appears once you have data for it, same pattern as the Sleep section
 - Habit completion overlay on each chart to see how habits track with progress
 - **Workout log**: log any workout in plain English ("rowed 5000m", "bench pressed 185 lbs"); also covers wellness/recovery treatments ("got a massage", "spa day") and mental exercise sessions ("did a brain-training session", "worked on a crossword") as their own types alongside run/cycle/row/swim/strength/yoga/sport; entries appear on the day's log and on a 30/60/90-day type-presence chart
 - **Food quality trend**: daily average food quality score plotted over the selected range, averaged from individual food log ratings

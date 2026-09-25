@@ -25,6 +25,8 @@ MANUAL_METRICS = {
     "steps", "weight", "fat_ratio",
     "bp_systolic", "bp_diastolic", "heart_rate", "spo2",
     "sleep_score", "sleep_minutes", "sleep_deep_minutes",
+    "fat_free_mass", "fat_mass_weight", "muscle_mass", "hydration",
+    "bone_mass", "pulse_wave_velocity", "vascular_age", "visceral_fat",
 }
 
 

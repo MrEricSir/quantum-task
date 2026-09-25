@@ -1009,6 +1009,14 @@ const MANUAL_METRIC_OPTIONS = [
   { metric: 'sleep_score',        label: 'Sleep score',    unit: ''     },
   { metric: 'sleep_minutes',      label: 'Sleep duration', unit: 'min'  },
   { metric: 'sleep_deep_minutes', label: 'Deep sleep',     unit: 'min'  },
+  { metric: 'fat_free_mass',      label: 'Fat-free mass',  unit: 'kg'   },
+  { metric: 'fat_mass_weight',    label: 'Fat mass',       unit: 'kg'   },
+  { metric: 'muscle_mass',        label: 'Muscle mass',    unit: 'kg'   },
+  { metric: 'hydration',          label: 'Water weight',   unit: 'kg'   },
+  { metric: 'bone_mass',          label: 'Bone mass',      unit: 'kg'   },
+  { metric: 'pulse_wave_velocity', label: 'Pulse wave velocity', unit: 'm/s' },
+  { metric: 'vascular_age',       label: 'Vascular age',   unit: 'yrs'  },
+  { metric: 'visceral_fat',       label: 'Visceral fat',   unit: ''     },
 ]
 const MANUAL_METRIC_LABELS = Object.fromEntries(MANUAL_METRIC_OPTIONS.map(o => [o.metric, o.label]))
 
@@ -1538,6 +1546,15 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
   const sleepDeepMinData  = measurements.filter(m => m.metric === 'sleep_deep_minutes').slice(-range)
   const spo2Data          = measurements.filter(m => m.metric === 'spo2').slice(-range)
 
+  const fatFreeMassData      = measurements.filter(m => m.metric === 'fat_free_mass').slice(-range)
+  const fatMassWeightData    = measurements.filter(m => m.metric === 'fat_mass_weight').slice(-range)
+  const muscleMassData       = measurements.filter(m => m.metric === 'muscle_mass').slice(-range)
+  const hydrationData        = measurements.filter(m => m.metric === 'hydration').slice(-range)
+  const boneMassData         = measurements.filter(m => m.metric === 'bone_mass').slice(-range)
+  const pulseWaveVelocityData = measurements.filter(m => m.metric === 'pulse_wave_velocity').slice(-range)
+  const vascularAgeData      = measurements.filter(m => m.metric === 'vascular_age').slice(-range)
+  const visceralFatData      = measurements.filter(m => m.metric === 'visceral_fat').slice(-range)
+
   const stepsHabits  = habits.filter(h => h.health_metric === 'steps'    && !h.archived)
   const fatHabits    = habits.filter(h => h.health_metric === 'fat_ratio' && !h.archived)
   const weightHabits = habits.filter(h => h.health_metric === 'weight'    && !h.archived)
@@ -1859,6 +1876,67 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
               unit="%" emptyMsg="No SpO2 data." ariaLabel="SpO2 line chart"
             />
             <ChartLegend items={[{ color: 'var(--color-week)', label: 'SpO2 (%)' }]} />
+          </section>
+        )}
+
+        {/* Body Composition */}
+        {(fatFreeMassData.length > 0 || fatMassWeightData.length > 0 || muscleMassData.length > 0 ||
+          hydrationData.length > 0 || boneMassData.length > 0 || pulseWaveVelocityData.length > 0 ||
+          vascularAgeData.length > 0 || visceralFatData.length > 0) && (
+          <section className="health-section">
+            <div className="health-section-header">
+              <h3 className="health-section-title">Body Composition</h3>
+            </div>
+            {muscleMassData.length > 0 && (<>
+              <p className="health-chart-sublabel">Muscle mass</p>
+              <LineChart data={muscleMassData} goal={null} completionDates={[]}
+                unit=" kg" emptyMsg="" ariaLabel="Muscle mass line chart" />
+            </>)}
+            {hydrationData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Water weight</p>
+              <LineChart data={hydrationData} goal={null} completionDates={[]}
+                unit=" kg" emptyMsg="" ariaLabel="Water weight line chart" />
+            </>)}
+            {fatMassWeightData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Fat mass</p>
+              <LineChart data={fatMassWeightData} goal={null} completionDates={[]}
+                unit=" kg" emptyMsg="" ariaLabel="Fat mass line chart" />
+            </>)}
+            {fatFreeMassData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Fat-free mass</p>
+              <LineChart data={fatFreeMassData} goal={null} completionDates={[]}
+                unit=" kg" emptyMsg="" ariaLabel="Fat-free mass line chart" />
+            </>)}
+            {boneMassData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Bone mass</p>
+              <LineChart data={boneMassData} goal={null} completionDates={[]}
+                unit=" kg" emptyMsg="" ariaLabel="Bone mass line chart" />
+            </>)}
+            {visceralFatData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Visceral fat</p>
+              <LineChart data={visceralFatData} goal={null} completionDates={[]}
+                unit="" emptyMsg="" ariaLabel="Visceral fat line chart" />
+            </>)}
+            {vascularAgeData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Vascular age</p>
+              <LineChart data={vascularAgeData} goal={null} completionDates={[]}
+                unit=" yrs" emptyMsg="" ariaLabel="Vascular age line chart" />
+            </>)}
+            {pulseWaveVelocityData.length > 0 && (<>
+              <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Pulse wave velocity</p>
+              <LineChart data={pulseWaveVelocityData} goal={null} completionDates={[]}
+                unit=" m/s" emptyMsg="" ariaLabel="Pulse wave velocity line chart" />
+            </>)}
+            <ChartLegend items={[
+              ...(muscleMassData.length > 0        ? [{ color: 'var(--color-week)', label: 'Muscle mass (kg)' }] : []),
+              ...(hydrationData.length > 0          ? [{ color: 'var(--color-week)', label: 'Water weight (kg)' }] : []),
+              ...(fatMassWeightData.length > 0      ? [{ color: 'var(--color-week)', label: 'Fat mass (kg)' }] : []),
+              ...(fatFreeMassData.length > 0        ? [{ color: 'var(--color-week)', label: 'Fat-free mass (kg)' }] : []),
+              ...(boneMassData.length > 0           ? [{ color: 'var(--color-week)', label: 'Bone mass (kg)' }] : []),
+              ...(visceralFatData.length > 0        ? [{ color: 'var(--color-week)', label: 'Visceral fat' }] : []),
+              ...(vascularAgeData.length > 0        ? [{ color: 'var(--color-week)', label: 'Vascular age (yrs)' }] : []),
+              ...(pulseWaveVelocityData.length > 0  ? [{ color: 'var(--color-week)', label: 'Pulse wave velocity (m/s)' }] : []),
+            ]} />
           </section>
         )}
 
