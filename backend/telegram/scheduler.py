@@ -223,7 +223,7 @@ def generate_weekly_review(today: date, tz_offset: int) -> str | None:
                 None,
             )
 
-            weight_obs, fat_obs = _load_weekly_obs(db, today)
+            weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today)
             corr_summary = None
             if weight_obs or fat_obs:
                 correlations = _compute_correlations(weight_obs, fat_obs)

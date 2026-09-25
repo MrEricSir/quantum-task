@@ -262,6 +262,7 @@ class FoodEntry(Base):
     notes       = Column(String, nullable=True)            # brief LLM nutritional assessment
     quality     = Column(Integer, nullable=True)           # 1–10 (10 = highly nutritious)
     calories    = Column(Integer, nullable=True)           # estimated kcal
+    sodium_mg   = Column(Integer, nullable=True)           # estimated milligrams of sodium
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

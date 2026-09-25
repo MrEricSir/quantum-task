@@ -28,6 +28,7 @@ from routers.correlations import (
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
     check_food_avoidance_habits, _recent_avg_steps,
     _routine_identity, _routine_adhered, _routine_effect, get_routine_summary,
+    _compute_correlations, _compute_segments,
 )
 from routers.habits import check_habit_row
 
@@ -66,6 +67,17 @@ def _add_food_entry_on(db, date_str, quality):
     ))
 
 
+def _add_sodium_on(db, date_str, sodium_mg):
+    db.add(models.FoodEntry(
+        raw_input="test", name="test", category="food",
+        consumed_at=datetime.fromisoformat(f"{date_str}T12:00:00"), sodium_mg=sodium_mg,
+    ))
+
+
+def _add_hydration(db, date_str, value):
+    db.add(models.WithingsMeasurement(date=date_str, metric="hydration", value=value))
+
+
 def _add_workout_on(db, date_str, workout_type):
     db.add(models.WorkoutEntry(
         raw_input="test", type=workout_type,
@@ -82,7 +94,7 @@ class TestLoadWeeklyObsDateWindow:
         _add_card_completed_on(db, OUT_OF_WINDOW_DATE)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
         assert len(weight_obs) == 1
         assert weight_obs[0]["cards_done"] == 1
 
@@ -93,7 +105,7 @@ class TestLoadWeeklyObsDateWindow:
         _add_food_entry_on(db, OUT_OF_WINDOW_DATE, quality=1)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
         assert len(weight_obs) == 1
         assert weight_obs[0]["avg_food_quality"] == 8.0
 
@@ -104,15 +116,85 @@ class TestLoadWeeklyObsDateWindow:
         _add_workout_on(db, OUT_OF_WINDOW_DATE, "run")
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
         assert len(weight_obs) == 1
         assert weight_obs[0]["workout_days"] == 1
         assert weight_obs[0]["cardio_days"] == 1
 
     def test_no_entries_produces_no_observations(self, db):
-        weight_obs, fat_obs = _load_weekly_obs(db, TODAY)
+        weight_obs, fat_obs, _ = _load_weekly_obs(db, TODAY)
         assert weight_obs == []
         assert fat_obs == []
+
+
+class TestHydrationSodiumCorrelation:
+    """hydration_obs (water weight) and avg_sodium -- added so the passive Correlation
+    Scatter Plots feature can surface a sodium-vs-hydration relationship once enough data
+    exists. Deliberately NOT wired into the active Health Experiments system -- see
+    _load_weekly_obs's docstring."""
+
+    # Five consecutive weekly Mondays -- wk0 only ever serves as the "previous" week for
+    # wk1's delta, so it never gets its own row; wk1-wk4 give exactly 4 output rows, enough
+    # to clear both _compute_correlations' (>=3) and _compute_segments' (>=4) thresholds.
+    WK0, WK1, WK2, WK3, WK4 = (
+        "2026-05-04", "2026-05-11", "2026-05-18", "2026-05-25", "2026-06-01",
+    )
+
+    def _seed(self, db):
+        # Hydration trends up more in weeks with higher sodium intake that week.
+        _add_hydration(db, self.WK0, 40.0)
+        _add_hydration(db, self.WK1, 40.0)
+        _add_sodium_on(db, self.WK1, 1000)
+        _add_hydration(db, self.WK2, 40.5)
+        _add_sodium_on(db, self.WK2, 2000)
+        _add_hydration(db, self.WK3, 41.5)
+        _add_sodium_on(db, self.WK3, 3500)
+        _add_hydration(db, self.WK4, 40.0)
+        _add_sodium_on(db, self.WK4, 800)
+        db.commit()
+
+    def test_load_weekly_obs_returns_hydration_as_a_third_series(self, db):
+        self._seed(db)
+        weight_obs, fat_obs, hydration_obs = _load_weekly_obs(db, TODAY)
+        assert weight_obs == []
+        assert fat_obs == []
+        assert len(hydration_obs) == 4
+
+    def test_avg_sodium_is_attached_to_every_outcome_series(self, db):
+        _add_weight(db, self.WK0, 75.0)
+        _add_weight(db, self.WK1, 75.0)
+        _add_sodium_on(db, self.WK1, 1234)
+        db.commit()
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
+        assert weight_obs[0]["avg_sodium"] == 1234.0
+
+    def test_compute_correlations_finds_sodium_hydration_relationship(self, db):
+        self._seed(db)
+        _, _, hydration_obs = _load_weekly_obs(db, TODAY)
+        correlations = _compute_correlations([], [], hydration_obs)
+        sodium_hydration = next(
+            c for c in correlations
+            if c["factor"] == "Daily sodium" and c["outcome"] == "Water weight change"
+        )
+        assert sodium_hydration["n"] == 4
+        assert sodium_hydration["r"] > 0.5
+
+    def test_compute_correlations_omits_hydration_outcome_by_default(self, db):
+        """The active Health Experiments call site relies on this default -- passing no
+        hydration_obs must never surface a "Water weight change" outcome."""
+        self._seed(db)
+        weight_obs, fat_obs, _ = _load_weekly_obs(db, TODAY)
+        correlations = _compute_correlations(weight_obs, fat_obs)
+        assert not any(c["outcome"] == "Water weight change" for c in correlations)
+
+    def test_compute_segments_includes_hydration_when_passed(self, db):
+        self._seed(db)
+        _, _, hydration_obs = _load_weekly_obs(db, TODAY)
+        segments = _compute_segments([], [], hydration_obs)
+        assert any(
+            s["factor"] == "Daily sodium" and s["outcome"] == "Water weight change"
+            for s in segments
+        )
 
 
 class TestLoadWeeklyObsTimezone:
@@ -132,7 +214,7 @@ class TestLoadWeeklyObsTimezone:
         ))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY, tz_offset_minutes=-600)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY, tz_offset_minutes=-600)
         assert len(weight_obs) == 1
         assert weight_obs[0]["cards_done"] is None
 
@@ -156,7 +238,7 @@ class TestLoadWeeklyObsTripDays:
         db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
 
         assert len(weight_obs) == 1
         # If the trip-day 100.0 reading were included, delta_per_day would be nonzero.
@@ -175,7 +257,7 @@ class TestLoadWeeklyObsTripDays:
         db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
 
         # 1 real completion out of (7 - 1 trip day) = 6 eligible days, not 2 out of 7 --
         # the trip-day completion itself doesn't count, and the denominator shrinks too.
@@ -193,7 +275,7 @@ class TestLoadWeeklyObsTripDays:
         db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
 
         assert weight_obs[0]["avg_steps"] == 20000
 
@@ -206,7 +288,7 @@ class TestLoadWeeklyObsTripDays:
         db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
 
         assert weight_obs[0]["avg_food_quality"] == 9
 
@@ -219,7 +301,7 @@ class TestLoadWeeklyObsTripDays:
         db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, TODAY)
+        weight_obs, _, _ = _load_weekly_obs(db, TODAY)
 
         assert weight_obs[0]["workout_days"] == 1
 
@@ -637,7 +719,7 @@ class TestRecordOutcomeWorkout:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         assert len(weight_obs) == 4
         exp_week = weight_obs[-1]["date"]
 
@@ -667,7 +749,7 @@ class TestRecordOutcomeWorkout:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
 
         db.add(models.WorkoutEntry(
@@ -695,7 +777,7 @@ class TestRecordOutcomeWorkout:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
 
         for offset, cals in ((7, 2000), (21, 2200)):
@@ -730,7 +812,7 @@ class TestRecordOutcomeWorkout:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
 
         for offset, steps in ((7, 6000), (21, 6400)):
@@ -772,7 +854,7 @@ class TestRecordOutcomeHabit:
             ))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
 
         exp = models.HealthExperiment(week=exp_week, text="t")
@@ -1076,7 +1158,7 @@ class TestRecomputeExperimentOutcomes:
             ))
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, old_base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, old_base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
         exp = models.HealthExperiment(week=exp_week, text="t", status="dismissed")
         db.add(exp)
@@ -1164,7 +1246,7 @@ class TestRecordOutcomeFood:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         assert len(weight_obs) == 4
         exp_week = weight_obs[-1]["date"]
 
@@ -1200,7 +1282,7 @@ class TestRecordOutcomeFood:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
 
         for offset, cals in ((7, 2000), (21, 2200)):  # the two food-present weeks
@@ -1247,7 +1329,7 @@ class TestRecordOutcomeFood:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _ = _load_weekly_obs(db, base + timedelta(days=35))
+        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
         exp_week = weight_obs[-1]["date"]
 
         # Food logged in only ONE other week -- below the 2-week minimum for a

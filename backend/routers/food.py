@@ -30,6 +30,7 @@ def _entry_dict(e: models.FoodEntry) -> dict:
         "notes":       e.notes,
         "quality":     e.quality,
         "calories":    e.calories,
+        "sodium_mg":   e.sodium_mg,
     }
 
 
@@ -112,6 +113,9 @@ def update_food_entry(entry_id: int, payload: dict, db: Session = Depends(get_db
     if "calories" in payload:
         calories = payload["calories"]
         entry.calories = max(0, int(calories)) if calories is not None else None
+    if "sodium_mg" in payload:
+        sodium_mg = payload["sodium_mg"]
+        entry.sodium_mg = max(0, int(sodium_mg)) if sodium_mg is not None else None
     if "consumed_at" in payload and payload["consumed_at"]:
         try:
             entry.consumed_at = datetime.fromisoformat(payload["consumed_at"])

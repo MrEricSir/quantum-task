@@ -342,6 +342,7 @@ function formatThreshold(factor, threshold) {
   if (factor === 'Tasks completed') return `${Math.round(threshold)} tasks`
   if (factor === 'Workout days' || factor === 'Cardio days' || factor === 'Strength days')
     return `${Math.round(threshold)} days`
+  if (factor === 'Daily sodium') return `${Math.round(threshold).toLocaleString()} mg`
   return threshold
 }
 
@@ -951,8 +952,8 @@ function AnalysisSection({ isImperial, habitCompletions }) {
       <RoutineOutcomeCards expKey={expKey} />
 
       {hasCorr && (() => {
-        const { correlations = [], segments = [], summary, weight_n, fat_n } = corrData
-        const n = Math.max(weight_n, fat_n)
+        const { correlations = [], segments = [], summary, weight_n, fat_n, hydration_n = 0 } = corrData
+        const n = Math.max(weight_n, fat_n, hydration_n)
         return (
           <div className="analysis-subsection">
             <div className="analysis-subsection-header">
@@ -1351,6 +1352,7 @@ function FoodLog({ range = 30, revision = 0 }) {
     buildEditForm: (entry) => ({
       name: entry.name,
       calories: entry.calories != null ? String(entry.calories) : '',
+      sodium_mg: entry.sodium_mg != null ? String(entry.sodium_mg) : '',
       quality: entry.quality != null ? String(entry.quality) : '',
       notes: entry.notes || '',
       consumed_at: isoToLocal(entry.consumed_at),
@@ -1361,6 +1363,7 @@ function FoodLog({ range = 30, revision = 0 }) {
       return {
         name,
         calories: editForm.calories !== '' ? parseInt(editForm.calories, 10) : null,
+        sodium_mg: editForm.sodium_mg !== '' ? parseInt(editForm.sodium_mg, 10) : null,
         quality: editForm.quality !== '' ? parseInt(editForm.quality, 10) : null,
         notes: editForm.notes.trim() || null,
         consumed_at: editForm.consumed_at || null,
@@ -1438,6 +1441,14 @@ function FoodLog({ range = 30, revision = 0 }) {
               />
               <input
                 type="number"
+                className="food-entry-edit-sodium"
+                value={editForm.sodium_mg}
+                onChange={e => setEditForm({ ...editForm, sodium_mg: e.target.value })}
+                placeholder="sodium mg"
+                min="0"
+              />
+              <input
+                type="number"
                 className="food-entry-edit-quality"
                 value={editForm.quality}
                 onChange={e => setEditForm({ ...editForm, quality: e.target.value })}
@@ -1468,6 +1479,11 @@ function FoodLog({ range = 30, revision = 0 }) {
             {entry.calories != null && (
               <span className="food-entry-calories" title="Estimated calories">
                 {entry.calories} kcal
+              </span>
+            )}
+            {entry.sodium_mg != null && (
+              <span className="food-entry-sodium" title="Estimated sodium">
+                {entry.sodium_mg} mg sodium
               </span>
             )}
             {entry.quality != null && (

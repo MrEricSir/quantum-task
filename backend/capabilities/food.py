@@ -55,7 +55,8 @@ someone would describe as one thing (e.g. "chicken salad", "coffee with oat milk
       "source_text": "verbatim fragment of the input this item was parsed from",
       "notes":       "1-2 sentence honest nutritional assessment — be specific, not preachy",
       "quality":     integer 1-10 (10 = highly nutritious whole foods; 1 = pure junk with no redeeming value),
-      "calories":    integer estimated kcal — best estimate for a typical serving; null only if truly impossible
+      "calories":    integer estimated kcal — best estimate for a typical serving; null only if truly impossible,
+      "sodium_mg":   integer estimated milligrams of sodium — best estimate for a typical serving; null only if truly impossible
     }}
   ]
 }}
@@ -86,10 +87,23 @@ calories examples:
 - pizza slice → 285
 - chicken salad (large) → 450
 - bag of chips (regular) → 150
+
+sodium (mg) examples:
+- banana → 1
+- plain tea, black coffee → 5
+- oatmeal with fruit (no added salt) → 10
+- coffee with oat milk → 40
+- grilled salmon, plain → 60
+- chicken salad (large, dressed) → 700
+- pizza slice → 640
+- bag of chips (regular) → 180
+- fast food burger → 950
+- instant ramen (whole packet) → 1800
 """
 
 _FALLBACK_ENTRY_TEMPLATE = {
     "category": "food", "source_text": None, "notes": None, "quality": None, "calories": None,
+    "sodium_mg": None,
 }
 
 
@@ -112,16 +126,22 @@ def _normalize_item(item: dict, raw: str) -> dict:
             calories = max(0, int(calories))
         except (TypeError, ValueError):
             calories = None
+    sodium_mg = item.get("sodium_mg")
+    if sodium_mg is not None:
+        try:
+            sodium_mg = max(0, int(sodium_mg))
+        except (TypeError, ValueError):
+            sodium_mg = None
     return {
         "name": name, "category": category, "source_text": source_text,
-        "notes": notes, "quality": quality, "calories": calories,
+        "notes": notes, "quality": quality, "calories": calories, "sodium_mg": sodium_mg,
     }
 
 
 def parse_food_entries(raw: str) -> list[dict]:
     """Split raw food-log text into one structured dict per distinct item:
     name, category, source_text (the verbatim fragment for that item), notes,
-    quality, calories. The single source of truth for turning free text into
+    quality, calories, sodium_mg. The single source of truth for turning free text into
     food entries -- both the webapp's food log (routers/food.py) and
     Telegram's log_food handler (telegram/bot.py) call this, so a message
     logging multiple items splits and gets enriched the same way regardless

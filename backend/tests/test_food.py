@@ -60,6 +60,7 @@ _PARSED = {
     "notes": "High in sugar and refined carbs.",
     "quality": 3,
     "calories": 300,
+    "sodium_mg": 240,
 }
 
 
@@ -85,6 +86,7 @@ class TestFoodCRUD:
         assert entry["name"] == "I ate a donut"
         assert entry["category"] == "food"
         assert entry["quality"] == 3
+        assert entry["sodium_mg"] == 240
         assert "id" in entry
         assert "consumed_at" in entry
 
@@ -152,6 +154,17 @@ class TestFoodUpdate:
         data = r.json()
         assert data["calories"] is None
         assert data["quality"] is None
+
+    def test_updates_sodium(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/food/{entry['id']}", json={"sodium_mg": 850})
+        assert r.status_code == 200
+        assert r.json()["sodium_mg"] == 850
+
+    def test_can_clear_sodium(self, client, monkeypatch):
+        entry = self._create(client, monkeypatch)
+        r = client.put(f"/api/food/{entry['id']}", json={"sodium_mg": None})
+        assert r.json()["sodium_mg"] is None
 
     def test_updates_notes(self, client, monkeypatch):
         entry = self._create(client, monkeypatch)
@@ -379,7 +392,8 @@ class TestParseFoodEntriesInternals:
             result = food_mod.parse_food_entries("grilled chicken and rice")
 
         assert result == [{"name": "grilled chicken and rice", "category": "food",
-                            "source_text": None, "notes": None, "quality": None, "calories": None}]
+                            "source_text": None, "notes": None, "quality": None, "calories": None,
+                            "sodium_mg": None}]
         assert "parse error" in capsys.readouterr().out
 
     def test_malformed_json_falls_back_to_raw_text_and_is_logged(self, capsys):

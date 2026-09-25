@@ -198,8 +198,12 @@ def check_food_avoidance_habits(db: Session, today: date) -> None:
 
 def _load_weekly_obs(
     db: Session, today: date, days: int = 90, tz_offset_minutes: int = 0,
-) -> tuple[list[dict], list[dict]]:
-    """Return (weight_obs, fat_obs) — weekly-binned observations.
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Return (weight_obs, fat_obs, hydration_obs) — weekly-binned observations. hydration_obs
+    (water weight, kg) only feeds the passive Correlation Scatter Plots feature
+    (_compute_correlations/_compute_segments via GET /api/health/correlations) -- unlike
+    weight/fat_ratio, it is NOT used by the active weekly Health Experiments system
+    (_record_outcome, _generate_experiment), which stays scoped to weight/fat outcomes only.
 
     Trip days (see streak.get_trip_date_set) are handled differently depending on what the
     signal is actually for, not blanket-excluded everywhere:
@@ -264,9 +268,10 @@ def _load_weekly_obs(
         d = to_local_date(card.completed_at, tz_offset_minutes).isoformat()
         cards_done_by_date[d] = cards_done_by_date.get(d, 0) + 1
 
-    # Food quality + calories: collect per-day scores to weekly-bin later
+    # Food quality + calories + sodium: collect per-day scores to weekly-bin later
     food_quality_by_date: dict[str, list[float]] = {}
     food_calories_by_date: dict[str, list[float]] = {}
+    food_sodium_by_date: dict[str, list[float]] = {}
     for entry in db.query(models.FoodEntry).filter(
         models.FoodEntry.consumed_at >= start_str
     ).all():
@@ -275,6 +280,8 @@ def _load_weekly_obs(
             food_quality_by_date.setdefault(d_str, []).append(float(entry.quality))
         if entry.calories is not None:
             food_calories_by_date.setdefault(d_str, []).append(float(entry.calories))
+        if entry.sodium_mg is not None:
+            food_sodium_by_date.setdefault(d_str, []).append(float(entry.sodium_mg))
 
     # Weekly binning
     week_vals: dict[str, dict[str, list[float]]] = {}
@@ -307,6 +314,11 @@ def _load_weekly_obs(
     for d, cals in food_calories_by_date.items():
         wk = _isoweek(d)
         week_food_calories.setdefault(wk, []).extend(cals)
+
+    week_food_sodium: dict[str, list[float]] = {}
+    for d, sods in food_sodium_by_date.items():
+        wk = _isoweek(d)
+        week_food_sodium.setdefault(wk, []).extend(sods)
 
     # Workout days: keyed by date, value is set of workout types logged that day
     workout_days_by_date: dict[str, set[str]] = {}
@@ -368,13 +380,14 @@ def _load_weekly_obs(
                 "avg_spo2":         week_avgs[curr_wk].get("spo2"),
                 "avg_food_quality":  sum(fq) / len(fq) if fq else None,
                 "avg_calories":      sum(fc) / len(fc) if (fc := week_food_calories.get(curr_wk)) else None,
+                "avg_sodium":        sum(fs) / len(fs) if (fs := week_food_sodium.get(curr_wk)) else None,
                 "workout_days":      week_workout_days.get(curr_wk) or None,
                 "cardio_days":       week_cardio_days.get(curr_wk)  or None,
                 "strength_days":     week_strength_days.get(curr_wk) or None,
             })
         return rows
 
-    return build_obs("weight"), build_obs("fat_ratio")
+    return build_obs("weight"), build_obs("fat_ratio"), build_obs("hydration")
 
 
 # ── Existing-routine detection (for incremental experiment proposals) ─────────
@@ -580,6 +593,7 @@ FACTORS = [
     ("avg_spo2",         "Blood oxygen (SpO2)"),
     ("avg_food_quality", "Diet quality"),
     ("avg_calories",     "Daily calories"),
+    ("avg_sodium",       "Daily sodium"),
     ("habit_rate",       "Habit completion rate"),
     ("cards_done",       "Tasks completed"),
     ("workout_days",     "Workout days"),
@@ -588,11 +602,17 @@ FACTORS = [
 ]
 
 
-def _compute_correlations(weight_obs: list[dict], fat_obs: list[dict]) -> list[dict]:
+def _compute_correlations(
+    weight_obs: list[dict], fat_obs: list[dict], hydration_obs: list[dict] | None = None,
+) -> list[dict]:
+    """hydration_obs defaults to None/empty so the active Health Experiments generation call
+    site (which reuses this function but must not consider water-weight outcomes) is
+    unaffected -- only GET /api/health/correlations passes it."""
     correlations = []
     for obs, outcome_label, outcome_unit in [
         (weight_obs, "Weight change",   "kg/day"),
         (fat_obs,    "Body fat change", "%/day"),
+        (hydration_obs or [], "Water weight change", "kg/day"),
     ]:
         for fkey, flabel in FACTORS:
             pairs = [
@@ -632,7 +652,9 @@ def _compute_correlations(weight_obs: list[dict], fat_obs: list[dict]) -> list[d
     return correlations
 
 
-def _compute_segments(weight_obs: list[dict], fat_obs: list[dict]) -> list[dict]:
+def _compute_segments(
+    weight_obs: list[dict], fat_obs: list[dict], hydration_obs: list[dict] | None = None,
+) -> list[dict]:
     def _segment(obs, fkey, flabel, outcome_label, outcome_unit):
         pairs = sorted(
             [(row[fkey], row["delta_per_day"], row["date"]) for row in obs if row.get(fkey) is not None],
@@ -675,6 +697,7 @@ def _compute_segments(weight_obs: list[dict], fat_obs: list[dict]) -> list[dict]
     for obs, outcome_label, outcome_unit in [
         (weight_obs, "Weight change",   "kg/day"),
         (fat_obs,    "Body fat change", "%/day"),
+        (hydration_obs or [], "Water weight change", "kg/day"),
     ]:
         for fkey, flabel in FACTORS:
             s = _segment(obs, fkey, flabel, outcome_label, outcome_unit)
@@ -1283,7 +1306,7 @@ def _record_outcome(
     exp: models.HealthExperiment, db: Session, today: date, tz_offset_minutes: int = 0,
 ) -> None:
     """Fill outcome fields on exp using the experiment week's health data."""
-    weight_obs, fat_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset_minutes)
+    weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset_minutes)
 
     # Experiment week delta
     def find_week(obs, wk):
@@ -1599,19 +1622,20 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
 @router.get("/api/health/correlations")
 def get_health_correlations(request: Request, db: Session = Depends(get_db)):
     today = local_date(request)
-    weight_obs, fat_obs = _load_weekly_obs(db, today, tz_offset_minutes=utc_offset_minutes(request))
+    weight_obs, fat_obs, hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=utc_offset_minutes(request))
 
-    if not weight_obs and not fat_obs:
+    if not weight_obs and not fat_obs and not hydration_obs:
         return {
             "correlations": [],
             "segments": [],
             "summary": "Not enough weekly data yet — keep logging to enable correlation analysis.",
             "weight_n": 0,
             "fat_n": 0,
+            "hydration_n": 0,
         }
 
-    correlations = _compute_correlations(weight_obs, fat_obs)
-    segments     = _compute_segments(weight_obs, fat_obs)
+    correlations = _compute_correlations(weight_obs, fat_obs, hydration_obs)
+    segments     = _compute_segments(weight_obs, fat_obs, hydration_obs)
 
     return {
         "correlations": correlations,
@@ -1619,6 +1643,7 @@ def get_health_correlations(request: Request, db: Session = Depends(get_db)):
         "summary":      _llm_summary(correlations),
         "weight_n":     len(weight_obs),
         "fat_n":        len(fat_obs),
+        "hydration_n":  len(hydration_obs),
     }
 
 
@@ -1678,8 +1703,10 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     if exp:
         return _exp_to_dict(exp)
 
-    # Generate a new experiment
-    weight_obs, fat_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset)
+    # Generate a new experiment -- deliberately weight/fat only (no hydration_obs): experiment
+    # generation proposes a routine to change and evaluates it against weight/fat, and isn't
+    # scoped to consider water-weight as a target outcome (see _load_weekly_obs's docstring).
+    weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
     exp = _generate_experiment(correlations, db, today, tz_offset)
     return _exp_to_dict(exp)
