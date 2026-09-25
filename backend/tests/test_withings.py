@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from database import Base
 import models
-from routers.withings import _auto_check_habits
+from routers.withings import _auto_check_habits, upsert_measurement
 from model_plugins.base import BaseModelPlugin
 from schemas import ParsedCard
 
@@ -56,6 +56,44 @@ def _completed_today(db, habit_id: int, date_str: str) -> bool:
     return db.query(models.HabitCompletion).filter_by(
         habit_id=habit_id, date=date_str
     ).first() is not None
+
+
+# ── upsert_measurement ───────────────────────────────────────────────────────
+
+class TestUpsertMeasurement:
+
+    def test_inserts_new_row(self, db):
+        row = upsert_measurement(db, "2026-06-20", "steps", 5000.0)
+        assert row.value == 5000.0
+        assert row.source == "withings"
+
+    def test_overwrites_existing_by_default(self, db):
+        upsert_measurement(db, "2026-06-20", "weight", 80.0)
+        row = upsert_measurement(db, "2026-06-20", "weight", 79.0)
+        assert row.value == 79.0
+
+    def test_manual_source_can_lower_a_value(self, db):
+        """A manual correction must always take effect, including downward --
+        no_regress is never set on this path (routers/health.py)."""
+        upsert_measurement(db, "2026-06-20", "steps", 8000.0)
+        row = upsert_measurement(db, "2026-06-20", "steps", 500.0, source="manual")
+        assert row.value == 500.0
+        assert row.source == "manual"
+
+    def test_no_regress_keeps_the_higher_existing_value(self, db):
+        upsert_measurement(db, "2026-06-20", "steps", 8000.0, no_regress=True)
+        row = upsert_measurement(db, "2026-06-20", "steps", 0.0, no_regress=True)
+        assert row.value == 8000.0
+        assert row.source == "withings"
+
+    def test_no_regress_still_allows_an_increase(self, db):
+        upsert_measurement(db, "2026-06-20", "steps", 3000.0, no_regress=True)
+        row = upsert_measurement(db, "2026-06-20", "steps", 8000.0, no_regress=True)
+        assert row.value == 8000.0
+
+    def test_no_regress_has_no_effect_on_a_first_write(self, db):
+        row = upsert_measurement(db, "2026-06-20", "steps", 0.0, no_regress=True)
+        assert row.value == 0.0
 
 
 # ── _auto_check_habits ────────────────────────────────────────────────────────

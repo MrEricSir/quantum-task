@@ -219,3 +219,42 @@ class TestReauthNotification:
         with patch("telegram.scheduler.send_message", return_value=True) as mock_send2:
             withings.do_sync(db)
         mock_send2.assert_called_once()
+
+
+# ── Steps no_regress wiring ──────────────────────────────────────────────────
+
+class TestDoSyncStepsNoRegress:
+    """_do_sync_impl passes no_regress=True only for the steps metric when upserting synced
+    readings -- locks in the call-site wiring itself (upsert_measurement's own no_regress
+    behavior is unit-tested directly in test_withings.py::TestUpsertMeasurement). Real
+    incident: a device that uploads its daily step total in batches returned a lower/zero
+    reading on a later sync than an earlier one already had, silently erasing the real count."""
+
+    def test_steps_does_not_regress_but_other_metrics_do(self, db, monkeypatch):
+        # Force the token-refresh branch off deterministically -- main.py's unconditional
+        # load_dotenv() means these module constants can be genuinely non-empty by the time
+        # this test runs, depending on which other test files already imported main this
+        # session (see test_integrations_health.py for the same pattern).
+        monkeypatch.setattr(withings, "WITHINGS_CLIENT_ID", "")
+        monkeypatch.setattr(withings, "WITHINGS_SECRET", "")
+        _add_credentials(db)
+        db.add(models.WithingsMeasurement(date="2026-06-20", metric="steps", value=8000.0))
+        db.add(models.WithingsMeasurement(date="2026-06-20", metric="weight", value=80.0))
+        db.commit()
+
+        fake_readings = {
+            "steps": [withings.Measurement(date="2026-06-20", value=0.0)],
+            "weight": [withings.Measurement(date="2026-06-20", value=79.0)],
+        }
+        monkeypatch.setattr(withings, "fetch_measurements",
+                             lambda creds, start, end: (fake_readings, {}))
+
+        result = withings._do_sync_impl(db)
+        assert result["ok"] is True
+
+        steps_row = db.query(models.WithingsMeasurement).filter_by(
+            date="2026-06-20", metric="steps").first()
+        weight_row = db.query(models.WithingsMeasurement).filter_by(
+            date="2026-06-20", metric="weight").first()
+        assert steps_row.value == 8000.0  # not regressed to the lower synced value
+        assert weight_row.value == 79.0   # non-steps metrics still overwrite normally

@@ -71,6 +71,9 @@ class TestFetchBodyMeasurements:
 
 class TestFetchSleep:
     def test_maps_all_four_fields(self):
+        """total_sleep_time/deep_sleep_duration come back from Withings in SECONDS --
+        27000.4s/5400.6s here are realistic ~7.5h/1.5h durations, converted to minutes
+        (450.0/90.0), not passed through raw."""
         body = {"series": [
             {"date": "2026-05-01", "data": {
                 "sleep_score": 82,
@@ -82,8 +85,8 @@ class TestFetchSleep:
         with patch.object(withings, "_withings_get", return_value=body):
             result = withings._fetch_sleep(_CREDS, _START, _END)
         assert result["sleep_score"][0].value == 82.0
-        assert result["sleep_minutes"][0].value == 27000.0
-        assert result["sleep_deep_minutes"][0].value == 5401.0
+        assert result["sleep_minutes"][0].value == 450.0
+        assert result["sleep_deep_minutes"][0].value == 90.0
         assert result["spo2"][0].value == 96.7
 
     def test_skips_entries_with_no_date(self):

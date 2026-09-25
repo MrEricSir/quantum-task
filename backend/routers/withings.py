@@ -120,15 +120,26 @@ def _load_credentials(db: Session):
 # ── Sync logic ────────────────────────────────────────────────────────────────
 
 def upsert_measurement(
-    db: Session, date_str: str, metric: str, value: float, source: str = "withings"
+    db: Session, date_str: str, metric: str, value: float, source: str = "withings",
+    no_regress: bool = False,
 ) -> models.WithingsMeasurement:
     """Insert or update the (date, metric) row. `source` is overwritten on every write --
     whichever caller wrote most recently (device sync or manual entry) is the current source
-    of truth for that reading; see migration 00038 for why that's the intended behavior."""
+    of truth for that reading; see migration 00038 for why that's the intended behavior.
+
+    `no_regress`: if True and a higher value is already stored for this (date, metric), keep
+    the higher one instead of overwriting downward. Withings devices can upload a day's
+    activity total in batches rather than continuously (see _auto_check_habits's docstring),
+    so a later sync returning a lower or zero count for a day already synced higher is more
+    likely a device-upload-lag artifact than a real correction -- do_sync sets this for steps.
+    Never set by the manual-entry endpoint, since a manual edit (including a downward one) is
+    an intentional correction that must always take effect."""
     existing = db.query(models.WithingsMeasurement).filter_by(
         date=date_str, metric=metric
     ).first()
     if existing:
+        if no_regress and value < existing.value:
+            return existing
         existing.value = value
         existing.source = source
         existing.synced_at = datetime.now(timezone.utc)
@@ -283,9 +294,12 @@ def _fetch_sleep(creds_data: dict, start: date, end: date) -> dict[str, list[Mea
         if data.get("sleep_score") is not None:
             readings.setdefault("sleep_score", []).append(Measurement(date=d, value=float(data["sleep_score"])))
         if data.get("total_sleep_time") is not None:
-            readings.setdefault("sleep_minutes", []).append(Measurement(date=d, value=round(float(data["total_sleep_time"]), 0)))
+            # Withings returns total_sleep_time/deep_sleep_duration in SECONDS -- convert to
+            # minutes to match the sleep_minutes/sleep_deep_minutes column names and the
+            # frontend's "min" unit label.
+            readings.setdefault("sleep_minutes", []).append(Measurement(date=d, value=round(float(data["total_sleep_time"]) / 60, 0)))
         if data.get("deep_sleep_duration") is not None:
-            readings.setdefault("sleep_deep_minutes", []).append(Measurement(date=d, value=round(float(data["deep_sleep_duration"]), 0)))
+            readings.setdefault("sleep_deep_minutes", []).append(Measurement(date=d, value=round(float(data["deep_sleep_duration"]) / 60, 0)))
         if data.get("spo2_average") is not None:
             readings.setdefault("spo2", []).append(Measurement(date=d, value=round(float(data["spo2_average"]), 1)))
     return readings
@@ -466,7 +480,7 @@ def _do_sync_impl(db: Session) -> dict:
     readings, errors = fetch_measurements(creds_data, start, today)
     for metric, points in readings.items():
         for m in points:
-            upsert_measurement(db, m.date, metric, m.value)
+            upsert_measurement(db, m.date, metric, m.value, no_regress=(metric == "steps"))
             synced[metric] = synced.get(metric, 0) + 1
 
     db.commit()
