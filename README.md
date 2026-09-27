@@ -711,6 +711,8 @@ Configured in **Settings → Telegram** — set a send time for each:
 
 **iOS:** The app works well as a home screen PWA (Safari → Share → Add to Home Screen), but iOS does not allow web apps to integrate into the Share Sheet or appear as Shortcuts targets without user-configured automation. No setup is required beyond adding to the home screen.
 
+**iOS status bar note:** `index.html`'s `apple-mobile-web-app-status-bar-style` is set to `black` (opaque), not `black-translucent` — iOS 26+ lays a "Liquid Glass" progressive blur over the safe-area-inset-top region for standalone PWAs using `black-translucent`, which iOS 27 made visibly obvious (a blur/shadow band across the header). This meta tag is read once at install time, so if you already have the app on your home screen from before this changed, delete it and re-add it (Safari → Share → Add to Home Screen) to pick up the fix — reloading the page alone won't do it.
+
 **API extension point:** `POST /api/shortcut/add` accepts `{"text": "..."}` with an `Authorization: Bearer <password>` header and handles parse + card creation in one step. This is intentionally left as an open endpoint for power users or future native app integration (e.g. a Capacitor build with a Share Extension, or an email-to-task pipeline).
 
 ## Configuration
