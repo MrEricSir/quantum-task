@@ -727,7 +727,10 @@ export default function App() {
     <ModalContext.Provider value={modalContextValue}>
     <RefreshContext.Provider value={{ refreshAll }}>
     <div className="app">
-      <video className="app-bg-video" autoPlay muted loop playsInline disablePictureInPicture>
+      <video
+        className="app-bg-video" autoPlay muted loop playsInline disablePictureInPicture
+        onContextMenu={(e) => e.preventDefault()}
+      >
         <source src="/bg.webm" type="video/webm" />
       </video>
       {!isOnline && (
