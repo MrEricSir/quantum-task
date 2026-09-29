@@ -26,7 +26,7 @@ from routers.correlations import (
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
-    check_food_avoidance_habits, _recent_avg_steps,
+    check_food_avoidance_habits, _recent_avg_steps, _food_logging_days,
     _routine_identity, _routine_adhered, _routine_effect, get_routine_summary,
     _compute_correlations, _compute_segments,
 )
@@ -616,6 +616,26 @@ class TestEstablishedFoods:
         assert len(result) == 1
         # eligible_weeks = (21 - 7) / 7 = 2; 4 distinct days / 2 weeks = 2.0/week
         assert result[0]["days_per_week"] == 2.0
+
+
+class TestFoodLoggingDays:
+
+    def test_counts_distinct_days_across_different_foods(self, db):
+        _add_food_named(db, "coffee", days_ago=0)
+        _add_food_named(db, "toast", days_ago=0)  # same day as coffee -- still 1 distinct day
+        _add_food_named(db, "pizza", days_ago=5)
+        db.commit()
+
+        assert _food_logging_days(db, date.today()) == 2
+
+    def test_excludes_entries_outside_window(self, db):
+        _add_food_named(db, "coffee", days_ago=30)
+        db.commit()
+
+        assert _food_logging_days(db, date.today(), window_days=21) == 0
+
+    def test_zero_when_no_food_logged(self, db):
+        assert _food_logging_days(db, date.today()) == 0
 
 
 class TestNudgeIfNearDuplicate:
@@ -1598,6 +1618,58 @@ class TestGenerateExperimentRoutines:
         sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         assert "Frequently eaten foods" in sent_content
         assert "coffee" in sent_content
+
+
+class TestGenerateExperimentFoodVolumeGate:
+    """A calorie-target experiment with no real food-logging baseline behind it is
+    misleading -- see PRODUCT_NOTES.md's 2026-09-29 entry. avg_calories/avg_food_quality
+    correlations must be dropped from the prompt entirely unless the user has actually
+    logged food on enough distinct recent days, even if the correlation itself looks
+    statistically strong (built from a thin week-level average, not real daily volume)."""
+
+    CORR_WITH_CALORIES = [
+        {"factor": "Daily calories", "factor_key": "avg_calories",
+         "outcome": "Weight change", "outcome_unit": "kg/day",
+         "r": -0.8, "p": 0.01, "n": 5, "scatter": []},
+        {"factor": "Daily steps", "factor_key": "avg_steps",
+         "outcome": "Weight change", "outcome_unit": "kg/day",
+         "r": 0.3, "p": 0.2, "n": 10, "scatter": []},
+    ]
+
+    PAYLOAD = {
+        "text": "t", "hypothesis": "h", "action": "Walk 8,000 steps every day",
+        "health_metric": "steps", "health_goal": 8000,
+        "routine_type": None, "workout_type": None,
+        "workout_target_value": None, "workout_unit": None,
+    }
+
+    def test_calorie_correlation_dropped_with_no_food_logging_baseline(self, db):
+        fake_client = _fake_llm_client(self.PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR_WITH_CALORIES, db, today=date.today())
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Daily calories" not in sent_content
+        assert "Daily steps" in sent_content
+
+    def test_calorie_correlation_kept_with_a_real_food_logging_baseline(self, db):
+        for i in range(4):
+            _add_food_named(db, f"meal{i}", days_ago=i * 5)  # 4 distinct logged days
+        db.commit()
+
+        fake_client = _fake_llm_client(self.PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR_WITH_CALORIES, db, today=date.today())
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Daily calories" in sent_content
+
+    def test_dropping_the_only_correlation_falls_back_to_the_canned_experiment(self, db):
+        corr = [self.CORR_WITH_CALORIES[0]]  # avg_calories only, no other factor to fall back to
+        exp = _generate_experiment(corr, db, today=date.today())
+
+        assert exp.action is None
+        assert "at least 3 weeks of data" in exp.text
 
 
 class TestRecentAvgSteps:

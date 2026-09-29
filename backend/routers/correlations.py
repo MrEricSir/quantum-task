@@ -522,6 +522,31 @@ def _established_foods(
     return results[:8]
 
 
+# Correlation factors that describe an aggregate over ALL food logged that day,
+# rather than one specific named food -- these need a real overall food-logging
+# habit behind them (see _food_logging_days below), not just 3 weekly averages
+# that could each be built from a single stray entry.
+_FOOD_VOLUME_FACTOR_KEYS = {"avg_calories", "avg_food_quality"}
+_FOOD_VOLUME_MIN_DAYS = 4
+
+
+def _food_logging_days(db: Session, today: date, window_days: int = 21) -> int:
+    """Distinct days ANY food was logged in the trailing window_days. Unlike
+    _established_foods (which counts distinct days PER food name, to find
+    candidates for a "cut out X" experiment), this measures whether the user
+    keeps a food diary at all -- used to gate calorie/diet-quality-based
+    experiment proposals on a real logging habit, since _load_weekly_obs's
+    avg_calories/avg_food_quality otherwise go non-null off a single logged
+    entry in an entire week with no minimum-day requirement of its own."""
+    window_start = (today - timedelta(days=window_days)).isoformat()
+    rows = (
+        db.query(models.FoodEntry.consumed_at)
+        .filter(models.FoodEntry.consumed_at >= window_start)
+        .all()
+    )
+    return len({str(consumed_at)[:10] for (consumed_at,) in rows})
+
+
 def _recent_avg_steps(db: Session, today: date, days: int = 28) -> float | None:
     """Average daily step count over the trailing `days` window, queried straight from
     WithingsMeasurement -- independent of _load_weekly_obs's weekly weight/fat-metric
@@ -948,6 +973,10 @@ def _generate_experiment(
     existing = db.query(models.HealthExperiment).filter_by(week=week, status="active").first()
     if existing:
         return existing
+
+    if any(c.get("factor_key") in _FOOD_VOLUME_FACTOR_KEYS for c in correlations):
+        if _food_logging_days(db, today) < _FOOD_VOLUME_MIN_DAYS:
+            correlations = [c for c in correlations if c.get("factor_key") not in _FOOD_VOLUME_FACTOR_KEYS]
 
     if not correlations:
         exp = models.HealthExperiment(
