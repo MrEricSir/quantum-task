@@ -21,6 +21,9 @@ Usage:
                               qtask worktree's changes
   qtask-bridge --stop-preview [NAME]  Stop an auto_preview process previously started for
                               a resolved qtask worktree (cwd, last one, or a branch fragment)
+  qtask-bridge --open [NAME] Open the card, linked GitHub issue, and GitHub PR (if any)
+                              for a resolved qtask worktree in your browser (cwd, last
+                              one, or a branch fragment)
   qtask-bridge --unlock-push Clear a stuck no_push sentinel on the current repo's
                               remote.origin.pushurl, left behind by an interrupted job
   qtask-bridge --lock-push   Manually set the no_push sentinel on the current repo,
@@ -2659,6 +2662,41 @@ def cmd_review(cfg, target):
         _git_teardown(work_dir, push_url_info)
 
 
+def cmd_open(cfg, target):
+    """Open the card, linked GitHub issue, and GitHub PR (if any) for a resolved qtask
+    worktree in the default browser. The card id comes straight out of the branch name
+    (qtask/<id>-...), same recovery _fetch_job_context_for_branch uses for --review --
+    no separate job lookup needed just to find the card. The issue/PR URLs themselves
+    come from the server (GET .../links), since a PR opened against this branch is
+    often a GitHub object the card's own external_id never points to (a card started
+    from an issue keeps that link even after a PR is opened) -- see get_card_links's
+    docstring in bridge/jobs.py."""
+    resolved = _resolve_worktree_target(cfg, target)
+    if resolved is None:
+        return
+    _repo_name, _work_dir, _worktree_path, branch = resolved
+    card_id = _extract_card_id_from_branch(branch)
+    if card_id is None:
+        print(f"[bridge] Branch '{branch}' doesn't look like a qtask branch -- no card to open.")
+        return
+
+    card_url = f"{cfg['app_url'].rstrip('/')}/?card={card_id}"
+    print(f"[bridge] Opening card #{card_id}: {card_url}")
+    webbrowser.open(card_url)
+
+    links = api(cfg, "GET", f"/api/bridge/jobs/card/{card_id}/links") or {}
+    issue_url = links.get("issue_url")
+    pr_url = links.get("pr_url")
+    if issue_url:
+        print(f"[bridge] Opening linked issue: {issue_url}")
+        webbrowser.open(issue_url)
+    if pr_url:
+        print(f"[bridge] Opening linked PR: {pr_url}")
+        webbrowser.open(pr_url)
+    if not issue_url and not pr_url:
+        print("[bridge] No linked GitHub issue or PR found for this card.")
+
+
 def cmd_rename_branch(cfg, new_name):
     """Rename the git branch for the current (cwd) or last-used qtask worktree, and update
     the app's recorded branch_name to match -- for when you forgot to set a branch name at
@@ -2756,6 +2794,9 @@ def main():
     group.add_argument("--stop-preview", nargs="?", const="", default=None, metavar="[BRANCH]",
                        help="Stop an auto_preview process previously started for a qtask "
                             "worktree (cwd, last one, or a branch fragment)")
+    group.add_argument("--open", nargs="?", const="", default=None, metavar="[BRANCH]",
+                       help="Open the card, linked GitHub issue, and GitHub PR (if any) for "
+                            "a qtask worktree in your browser (cwd, last one, or a branch fragment)")
     group.add_argument("--unlock-push", action="store_true",
                        help="Clear a stuck no_push sentinel on the current repo's "
                             "remote.origin.pushurl, left behind by an interrupted job "
@@ -2793,6 +2834,8 @@ def main():
         cmd_review(cfg, args.review or None)
     elif args.stop_preview is not None:
         cmd_stop_preview(cfg, args.stop_preview or None)
+    elif args.open is not None:
+        cmd_open(cfg, args.open or None)
     elif args.unlock_push:
         cmd_unlock_push()
     elif args.lock_push:

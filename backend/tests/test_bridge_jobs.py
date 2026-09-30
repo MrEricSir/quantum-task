@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import importlib
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -475,6 +476,105 @@ class TestJobChainEndpoint:
         res = client.get(f"/api/bridge/jobs/card/{card_a}/chain").json()
         assert res["root"]["id"] == job_a["id"]
         assert res["companion"] is None
+
+
+class TestGetCardLinksEndpoint:
+    """GET /api/bridge/jobs/card/{id}/links -- bridge.jobs.get_card_links, used by
+    the bridge CLI's --open command to open the card's issue/PR in a browser."""
+
+    def test_no_card_returns_no_links(self, client):
+        res = client.get("/api/bridge/jobs/card/99999/links")
+        assert res.status_code == 200
+        assert res.json() == {"issue_url": None, "pr_url": None}
+
+    def test_issue_linked_card_returns_issue_url_with_no_live_lookup(self, client):
+        # No BridgeJob exists for this card at all, so the PR lookup must never fire.
+        card_id = _make_card(external_id="github:owner/repo/issues/42")
+        with patch("bridge.jobs.requests.get") as mock_get:
+            res = client.get(f"/api/bridge/jobs/card/{card_id}/links")
+        assert res.json() == {"issue_url": "https://github.com/owner/repo/issues/42", "pr_url": None}
+        mock_get.assert_not_called()
+
+    def test_pull_linked_card_returns_pr_url_directly_with_no_live_lookup(self, client):
+        card_id = _make_card(external_id="github:owner/repo/pull/7")
+        with patch("bridge.jobs.requests.get") as mock_get:
+            res = client.get(f"/api/bridge/jobs/card/{card_id}/links")
+        assert res.json() == {"issue_url": None, "pr_url": "https://github.com/owner/repo/pull/7"}
+        mock_get.assert_not_called()
+
+    def test_issue_linked_card_with_a_bridge_job_finds_pr_by_branch(self, client):
+        """The normal workflow this feature exists for: a card started from an issue
+        keeps that link even after a PR is opened for the job's branch -- the PR is
+        found via a live GitHub lookup, never through the card's own external_id."""
+        card_id = _make_card(external_id="github:owner/repo/issues/42", spec="s")
+        job_id = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/repo",
+        }).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start",
+                    json={"branch": "qtask/42-fix", "agent": "work-mac"})
+        with TestSession() as db:
+            db.add(models.AppSetting(key="github_token", value="fake_token"))
+            db.commit()
+
+        fake_resp = MagicMock()
+        fake_resp.json.return_value = [{"html_url": "https://github.com/owner/repo/pull/99"}]
+        with patch("bridge.jobs.requests.get", return_value=fake_resp) as mock_get:
+            res = client.get(f"/api/bridge/jobs/card/{card_id}/links")
+
+        assert res.json() == {
+            "issue_url": "https://github.com/owner/repo/issues/42",
+            "pr_url": "https://github.com/owner/repo/pull/99",
+        }
+        mock_get.assert_called_once()
+        assert mock_get.call_args.kwargs["params"] == {"head": "owner:qtask/42-fix", "state": "all"}
+
+    def test_no_github_token_configured_skips_pr_lookup_without_crashing(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/repo",
+        }).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start",
+                    json={"branch": "qtask/42-fix", "agent": "work-mac"})
+
+        with patch("bridge.jobs.requests.get") as mock_get:
+            res = client.get(f"/api/bridge/jobs/card/{card_id}/links")
+
+        assert res.json() == {"issue_url": None, "pr_url": None}
+        mock_get.assert_not_called()
+
+    def test_no_open_pr_found_returns_none(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/repo",
+        }).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start",
+                    json={"branch": "qtask/42-fix", "agent": "work-mac"})
+        with TestSession() as db:
+            db.add(models.AppSetting(key="github_token", value="fake_token"))
+            db.commit()
+        fake_resp = MagicMock()
+        fake_resp.json.return_value = []
+        with patch("bridge.jobs.requests.get", return_value=fake_resp):
+            res = client.get(f"/api/bridge/jobs/card/{card_id}/links")
+
+        assert res.json() == {"issue_url": None, "pr_url": None}
+
+    def test_pr_lookup_failure_degrades_to_none_without_crashing(self, client):
+        card_id = _make_card(spec="s")
+        job_id = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/repo",
+        }).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/start",
+                    json={"branch": "qtask/42-fix", "agent": "work-mac"})
+        with TestSession() as db:
+            db.add(models.AppSetting(key="github_token", value="fake_token"))
+            db.commit()
+
+        with patch("bridge.jobs.requests.get", side_effect=TimeoutError("network down")):
+            res = client.get(f"/api/bridge/jobs/card/{card_id}/links")
+
+        assert res.status_code == 200
+        assert res.json() == {"issue_url": None, "pr_url": None}
 
 
 class TestJobChainAttemptStats:

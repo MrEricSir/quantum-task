@@ -7,6 +7,7 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
@@ -132,6 +133,68 @@ def _repo_from_external_id(external_id: str | None) -> str | None:
         return None
     parsed = github_sync._parse_external_id(external_id)
     return f"{parsed[0]}/{parsed[1]}" if parsed else None
+
+
+def _find_open_pr_url(db: Session, repo: str, branch: str) -> str | None:
+    """Live GitHub lookup for a PR opened against `branch` in `repo`. Not backed by
+    EngineeringItem (that table only mirrors issues/PRs assigned to the user, has no
+    head-branch column, and isn't refreshed on any cron -- a PR opened seconds ago
+    wouldn't show up yet). Queried live instead, the same way GET /api/engineering/
+    {item_id}/refresh does a synchronous GitHub GET rather than trusting the mirror.
+    Prefers an open PR but falls back to the most recent closed/merged one (state=all)
+    so --open still finds something once a PR has already been merged."""
+    token, _ = github_sync.get_config(db)
+    if not token:
+        return None
+    owner = repo.split("/")[0]
+    try:
+        resp = requests.get(
+            f"{github_sync.GITHUB_API}/repos/{repo}/pulls",
+            headers=github_sync._headers(token),
+            params={"head": f"{owner}:{branch}", "state": "all"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = resp.json()
+    except Exception as e:
+        print(f"[bridge] PR lookup failed for {repo}@{branch}: {e}")
+        return None
+    return results[0]["html_url"] if results else None
+
+
+def get_card_links(db: Session, card_id: int) -> dict:
+    """Resolve the GitHub issue/PR URLs associated with a card, for the bridge CLI's
+    --open command. issue_url comes straight from the card's own external_id (a card
+    links to at most one GitHub item at a time -- never both). pr_url is resolved
+    independently via a live lookup against the card's latest bridge job's branch/
+    repo: a card started from an issue keeps that issue link even after a PR is later
+    opened against the job's branch, so the PR is never reachable via external_id at
+    all in that (the normal) workflow."""
+    card = db.query(models.Card).filter_by(id=card_id).first()
+    issue_url = None
+    pr_url = None
+    if card and card.external_id:
+        parsed = github_sync._parse_external_id(card.external_id)
+        if parsed:
+            owner, repo, gql_type, number = parsed
+            kind = "pull" if gql_type == "pullRequest" else "issues"
+            url = f"https://github.com/{owner}/{repo}/{kind}/{number}"
+            if kind == "pull":
+                pr_url = url
+            else:
+                issue_url = url
+
+    if pr_url is None:
+        job = (
+            db.query(models.BridgeJob)
+            .filter_by(card_id=card_id)
+            .order_by(models.BridgeJob.created_at.desc())
+            .first()
+        )
+        if job and job.branch_name and job.target_repo:
+            pr_url = _find_open_pr_url(db, job.target_repo, job.branch_name)
+
+    return {"issue_url": issue_url, "pr_url": pr_url}
 
 
 def _build_prompt(card: models.Card, eng_item: models.EngineeringItem | None) -> str:

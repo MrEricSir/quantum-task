@@ -3907,6 +3907,68 @@ class TestCmdStopPreview:
         assert calls == []
 
 
+class TestCmdOpen:
+    """cmd_open (`qtask-bridge --open`) -- opens the card, then whatever links
+    GET .../links returns, in the browser. _resolve_worktree_target and the
+    branch->card-id extraction are exercised on their own elsewhere."""
+
+    def _cfg(self):
+        return {"app_url": "http://fake.example", "token": "x"}
+
+    def test_opens_card_issue_and_pr_urls(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target",
+                            lambda cfg, target: ("owner/repo", "/work", "/work/wt", "qtask/84-fix"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "issue_url": "https://github.com/owner/repo/issues/1",
+            "pr_url": "https://github.com/owner/repo/pull/2",
+        })
+        opened = []
+        monkeypatch.setattr(agent_core.webbrowser, "open", lambda u: opened.append(u))
+
+        agent_core.cmd_open(self._cfg(), "84-fix")
+
+        assert opened == [
+            "http://fake.example/?card=84",
+            "https://github.com/owner/repo/issues/1",
+            "https://github.com/owner/repo/pull/2",
+        ]
+
+    def test_opens_only_the_card_when_no_links_exist(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target",
+                            lambda cfg, target: ("owner/repo", "/work", "/work/wt", "qtask/84-fix"))
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: {
+            "issue_url": None, "pr_url": None,
+        })
+        opened = []
+        monkeypatch.setattr(agent_core.webbrowser, "open", lambda u: opened.append(u))
+
+        agent_core.cmd_open(self._cfg(), "84-fix")
+
+        assert opened == ["http://fake.example/?card=84"]
+
+    def test_bails_cleanly_when_no_worktree_resolves(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target", lambda cfg, target: None)
+        opened = []
+        monkeypatch.setattr(agent_core.webbrowser, "open", lambda u: opened.append(u))
+
+        agent_core.cmd_open(self._cfg(), None)
+
+        assert opened == []
+
+    def test_bails_cleanly_for_a_non_qtask_branch(self, monkeypatch):
+        monkeypatch.setattr(agent_core, "_resolve_worktree_target",
+                            lambda cfg, target: ("owner/repo", "/work", "/work/wt", "main"))
+        calls = []
+        monkeypatch.setattr(agent_core, "api", lambda cfg, method, path, body=None: calls.append(1) or {})
+        opened = []
+        monkeypatch.setattr(agent_core.webbrowser, "open", lambda u: opened.append(u))
+
+        agent_core.cmd_open(self._cfg(), None)
+
+        assert opened == []
+        assert calls == [], "should not call the API for a branch with no recoverable card id"
+
+
 # ── Manual self-review (`qtask-bridge --review`) ────────────────────────────────
 
 class TestExtractCardIdFromBranch:

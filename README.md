@@ -120,7 +120,7 @@ for the failure mode this guards against.
 - AppSetting constants + `WithingsCredentials` model save/load
 - Daily plan helpers, recurring card scheduling, food entry parsing
 - Plugin post-processing: section/type overrides, tag suggestions, workout type detection
-- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching), bridge-managed preview server (`auto_preview`, detached Procfile/`run_cmd` launch + PID-file teardown via `--stop-preview`/`--cleanup`), visual verification (`visual_verify`, `npx playwright screenshot` of a confirmed-running preview shown in the Code tab + Telegram), PR/issue-comment opt-out (`allow_pr_comments`, off by default, part of the shared job prompt tail)
+- Claude Code bridge: job create/start/complete/error, agent script endpoints, `?repos=` filtering, heartbeat + stale-job detection, post-implementation verification (`test_cmd` + `verify_acceptance` + `self_review`), manual verification (`--run`, with built-in Procfile support), manual self-review (`--review`, read-only, spec context recovered server-side), automatic self-review (`self_review`, same checklist as `--review`, escalates to `needs_confirmation` instead of fixing), checkpoint gate for unattended jobs (`needs_confirmation` status, config-driven pattern matching), bridge-managed preview server (`auto_preview`, detached Procfile/`run_cmd` launch + PID-file teardown via `--stop-preview`/`--cleanup`), visual verification (`visual_verify`, `npx playwright screenshot` of a confirmed-running preview shown in the Code tab + Telegram), PR/issue-comment opt-out (`allow_pr_comments`, off by default, part of the shared job prompt tail), open card/issue/PR in browser (`--open`, issue link from the card's own GitHub link, PR link via a live GitHub lookup against the worktree's branch)
 - Workout log: CRUD, date filtering, timezone handling, batch chart endpoint
 - Food quality trend: daily averages, null-quality exclusion, date range filtering
 
@@ -261,6 +261,7 @@ qtask-bridge --cleanup        # list finished qtask worktrees and remove the one
 qtask-bridge --adopt          # detach a worktree from its branch and check the branch out in your primary checkout instead
 qtask-bridge --run [branch]   # run the app in a qtask worktree (cwd, last one, or a branch fragment)
 qtask-bridge --review [branch] # lead-engineer-style review of a worktree's changes, offers to apply fixes after
+qtask-bridge --open [branch]  # open the card, linked GitHub issue, and GitHub PR (if any) for a worktree in your browser
 qtask-bridge --unlock-push    # clear a stuck no_push sentinel left by an interrupted job
 qtask-bridge --lock-push      # manually set that same no_push sentinel on demand
 qtask-bridge --rename-branch new-name  # rename the branch for a worktree (cwd or last one), syncs the app's record too
@@ -439,6 +440,17 @@ This is the deliberately scoped-down first step of the self-review pass: manual 
 `BRIDGE_SPEC.md` is deleted from the worktree once a job finishes, but the original spec text isn't lost — it's recovered from the server (matched back to this worktree by branch name) and given to the review as context, along with any `test_cmd`/`verify_acceptance` results from the original run, so the review can focus on real problems instead of re-deriving what's already known. If no matching job record is found, the review still runs — just without that context.
 
 Once the review finishes, it asks `Apply these changes now? [y/N]`. Declining leaves the worktree untouched, same as before. Accepting launches an interactive session in the same worktree with the review's own findings handed back as context, so applying them doesn't mean re-explaining what was just found from scratch — you can then also redirect it, push back on any individual suggestion, or ask it to stop partway through. A failed review (agent crashed, network error) skips the prompt entirely rather than asking you to act on an incomplete result. Like every other agent session the bridge launches, an interrupted apply (crash, Ctrl-C) auto-commits whatever was in progress rather than losing it.
+
+#### Opening the card, issue, and PR in your browser
+
+`--open` resolves a worktree the same way `--run`/`--review` do (cwd, the last one used, or a branch fragment) and opens up to three pages in your default browser: the card itself in the webapp, the GitHub issue it's linked to (if any), and the GitHub PR for that branch (if one has been opened):
+
+```bash
+qtask-bridge --open             # cwd if you're already in a qtask worktree, else the last one used
+qtask-bridge --open 84-ranking  # branch fragment, same resolution as --run/--review
+```
+
+The card id comes straight from the branch name, so no job lookup is needed just to find it. The issue link comes from the card's own GitHub link if it has one; the PR link is found separately via a live GitHub lookup against the worktree's branch — a card started from an issue keeps that issue link even after a PR is later opened for the job's branch, so the PR is usually not something the card's own link ever points to. Anything not found (no linked issue, no PR yet) is silently skipped rather than erroring.
 
 #### Commenting on GitHub (allow_pr_comments)
 

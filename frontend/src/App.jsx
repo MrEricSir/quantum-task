@@ -473,6 +473,21 @@ export default function App() {
     setPanelInitialMode('edit')
   }
 
+  // Deep-link support for ?card=<id> (used by qtask-bridge's --open command). Waits for
+  // cards to finish loading rather than firing on the empty initial array, and only ever
+  // consumes the param once (deepLinkConsumedRef) so closing the panel afterward doesn't
+  // reopen it if something else re-runs this effect.
+  const deepLinkConsumedRef = useRef(false)
+  useEffect(() => {
+    if (deepLinkConsumedRef.current || cardsLoading) return
+    const cardId = Number(new URLSearchParams(location.search).get('card'))
+    if (!cardId || !cards.some((c) => c.id === cardId)) return
+    deepLinkConsumedRef.current = true
+    setSelectedCardId(cardId)
+    setPanelInitialMode('view')
+    navigate(location.pathname, { replace: true })
+  }, [cardsLoading, cards, location.search, location.pathname, navigate])
+
   const openNewCard = (section = 'today') => {
     if (window.matchMedia('(max-width: 640px)').matches) { openNewCardSheet(section); return }
     setSelectedCardId(null)

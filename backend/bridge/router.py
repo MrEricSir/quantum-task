@@ -39,6 +39,7 @@ from bridge.jobs import (
     get_bridge_job_statuses,
     get_bridge_jobs_dashboard,
     get_card_job_history,
+    get_card_links,
     get_checkpoint_patterns,
     save_checkpoint_patterns,
     validate_branch_name,
@@ -678,6 +679,12 @@ def get_latest_card_job(card_id: int, db: Session = Depends(get_db)):
     if not job:
         return {"job": None}
     return {"job": _job_response(job)}
+
+
+@router.get("/api/bridge/jobs/card/{card_id}/links")
+def get_card_links_endpoint(card_id: int, db: Session = Depends(get_db)):
+    """GitHub issue/PR URLs for a card, for the bridge CLI's --open command."""
+    return get_card_links(db, card_id)
 
 
 @router.get("/api/bridge/jobs/card/{card_id}/chain")

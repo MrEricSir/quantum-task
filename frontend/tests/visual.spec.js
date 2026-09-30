@@ -4620,6 +4620,34 @@ test.describe('card detail panel — github and spec', () => {
 })
 
 // ---------------------------------------------------------------------------
+// ?card=<id> deep link (used by qtask-bridge's --open command)
+// ---------------------------------------------------------------------------
+test.describe('card deep link via ?card= query param', () => {
+  test('opens the card detail panel for the id in the query param', async ({ page }) => {
+    await page.goto('/today?card=1')
+    await waitForApp(page)
+
+    await expect(page.locator('.card-detail-panel')).toBeVisible()
+    await expect(page.locator('.card-detail-panel')).toContainText('Daily Engineering Standup')
+  })
+
+  test('strips the query param from the URL once consumed', async ({ page }) => {
+    await page.goto('/today?card=1')
+    await waitForApp(page)
+    await expect(page.locator('.card-detail-panel')).toBeVisible()
+
+    expect(page.url()).not.toContain('card=1')
+  })
+
+  test('is a no-op for an id that matches no card', async ({ page }) => {
+    await page.goto('/today?card=999999')
+    await waitForApp(page)
+
+    await expect(page.locator('.card-detail-panel')).not.toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Bridge history section on the plain card detail view
 // ---------------------------------------------------------------------------
 test.describe('card detail panel — bridge history', () => {
