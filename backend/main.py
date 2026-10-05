@@ -375,15 +375,33 @@ async def _bridge_stale_scheduler() -> None:
 def _expire_stale_experiments() -> None:
     """Archive habits and dismiss active experiments from previous weeks. Also backstops
     check_food_avoidance_habits for whenever nobody visits the Health page (its primary
-    trigger) for a while -- see that function's docstring."""
+    trigger) for a while -- see that function's docstring.
+
+    Like telegram/scheduler.py's check_all(), this has no request to read a local date
+    from -- it's a background scheduler, not a webapp call -- so it resolves "today" from
+    the stored tz_offset (Settings(db).tz_offset, kept in sync by
+    _sync_tz_offset_from_headers above) rather than the server's own UTC clock. Server-UTC
+    date.today() used to be passed here directly, which disagreed with the correct
+    client-local week right at the Sunday/Monday boundary for anyone west of UTC: this
+    cron would see "Monday" in UTC while the user's real local day was still Sunday,
+    auto-dismiss (and record a same-day outcome for) the still-legitimately-active
+    Sunday-week experiment, and the next real page visit would then generate a genuinely
+    new one for the (correct, still-current) week -- surfacing as a weekly experiment that
+    appears to get generated, "ditched", and immediately replaced, with a verdict recorded
+    on barely any data. Same bug class as the 2026-08-30 fix to
+    check_habit_for_workout/get_health_experiment/dismiss_health_experiment, just in a
+    background-scheduler call site that fix never touched."""
     try:
-        from datetime import date
+        from settings import Settings
         from routers.correlations import (
             auto_expire_stale_experiments, check_food_avoidance_habits, _current_isoweek,
         )
         with SessionLocal() as db:
-            check_food_avoidance_habits(db, date.today())
-            auto_expire_stale_experiments(db, _current_isoweek(), date.today())
+            tz_offset = Settings(db).tz_offset
+            now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
+            today = now_local.date()
+            check_food_avoidance_habits(db, today)
+            auto_expire_stale_experiments(db, _current_isoweek(today), today, tz_offset_minutes=tz_offset)
     except Exception as e:
         print(f"[experiments] cleanup error: {e}")
 
