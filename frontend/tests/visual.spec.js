@@ -124,6 +124,10 @@ async function mockAPIs(page) {
   })
   await page.route('**/api/settings/navigation', r =>
     r.fulfill({ json: { order: ['today', 'board', 'calendar', 'health', 'engineering'], default_page: 'today' } }))
+  await page.route('**/api/settings/health-experiment-categories', r => {
+    if (r.request().method() === 'PUT') return r.fulfill({ json: r.request().postDataJSON() })
+    return r.fulfill({ json: { enabled: ['activity', 'diet', 'habits'] } })
+  })
 
   await page.route('**/api/cards/*/thread/context-from', r =>
     r.fulfill({ json: { context_text: '### Today\n- Buy milk\n- Call dentist', label: 'Today', count: 2 } }))
@@ -3208,6 +3212,75 @@ test.describe('health page', () => {
     await waitForApp(page)
     const card = page.locator('.seg-card', { hasText: 'Coffee' })
     await expect(card.locator('.seg-caveat')).toHaveCount(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Experiment category settings modal
+// ---------------------------------------------------------------------------
+test.describe('experiment category settings modal', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /experiment categories/i }).click()
+  })
+
+  test('opens from the settings menu with all categories checked by default', async ({ page }) => {
+    const modal = page.locator('.exp-cat-settings-modal')
+    await expect(modal).toBeVisible()
+    for (const label of ['Activity', 'Diet', 'Habits']) {
+      const row = modal.locator('.exp-cat-settings-row', { hasText: label })
+      await expect(row.locator('input[type="checkbox"]')).toBeChecked()
+    }
+  })
+
+  test('loads saved preferences with a category unchecked', async ({ page }) => {
+    await page.route('**/api/settings/health-experiment-categories', r => {
+      if (r.request().method() === 'PUT') return r.fulfill({ json: r.request().postDataJSON() })
+      return r.fulfill({ json: { enabled: ['activity', 'habits'] } })
+    })
+    await page.reload()
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /experiment categories/i }).click()
+
+    const modal = page.locator('.exp-cat-settings-modal')
+    await expect(modal.locator('.exp-cat-settings-row', { hasText: 'Diet' }).locator('input')).not.toBeChecked()
+    await expect(modal.locator('.exp-cat-settings-row', { hasText: 'Activity' }).locator('input')).toBeChecked()
+  })
+
+  test('unchecking a category and saving PUTs the remaining enabled list', async ({ page }) => {
+    let putBody = null
+    await page.route('**/api/settings/health-experiment-categories', r => {
+      if (r.request().method() === 'PUT') {
+        putBody = r.request().postDataJSON()
+        return r.fulfill({ json: putBody })
+      }
+      return r.fulfill({ json: { enabled: ['activity', 'diet', 'habits'] } })
+    })
+
+    const modal = page.locator('.exp-cat-settings-modal')
+    await modal.locator('.exp-cat-settings-row', { hasText: 'Diet' }).locator('input').click()
+    await modal.getByRole('button', { name: /^save$/i }).click()
+
+    await expect(modal).not.toBeVisible()
+    expect(putBody.enabled.sort()).toEqual(['activity', 'habits'])
+  })
+
+  test('closing without saving does not call the save endpoint', async ({ page }) => {
+    let putCalled = false
+    await page.route('**/api/settings/health-experiment-categories', r => {
+      if (r.request().method() === 'PUT') { putCalled = true; return r.fulfill({ json: { enabled: [] } }) }
+      return r.fulfill({ json: { enabled: ['activity', 'diet', 'habits'] } })
+    })
+
+    const modal = page.locator('.exp-cat-settings-modal')
+    await modal.locator('.exp-cat-settings-row', { hasText: 'Diet' }).locator('input').click()
+    await modal.getByRole('button', { name: /cancel/i }).click()
+
+    await expect(modal).not.toBeVisible()
+    expect(putCalled).toBe(false)
   })
 })
 

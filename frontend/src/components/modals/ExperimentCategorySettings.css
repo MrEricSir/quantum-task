@@ -1,0 +1,62 @@
+.exp-cat-settings-modal {
+  max-width: 420px;
+}
+
+.exp-cat-settings-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+.exp-cat-settings-loading {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.exp-cat-settings-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+}
+
+.exp-cat-settings-row {
+  border-radius: 7px;
+  transition: background 0.1s;
+}
+
+.exp-cat-settings-row:hover {
+  background: var(--bg);
+}
+
+.exp-cat-settings-row-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.exp-cat-settings-row-label input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.exp-cat-settings-row-title {
+  display: block;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.exp-cat-settings-row-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}

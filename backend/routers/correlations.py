@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 import models
 from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, to_local_date, utc_offset_minutes
 from routers.habits import check_habit_row
+from settings import Settings
 from streak import get_trip_date_set
 
 router = APIRouter()
@@ -194,6 +195,13 @@ def check_food_avoidance_habits(db: Session, today: date) -> None:
                 check_habit_row(db, habit.id, day, from_workout=True)
 
 
+# Workout-type -> category, shared between _load_weekly_obs's cardio_days/strength_days
+# correlation factors and _established_workout_categories' "which category is the user
+# neglecting" check (both need the same categorization, so it's defined once here rather
+# than duplicated).
+CARDIO_TYPES = {"run", "cycle", "row", "swim", "sport"}
+
+
 # ── Shared data loader ────────────────────────────────────────────────────────
 
 def _load_weekly_obs(
@@ -327,8 +335,6 @@ def _load_weekly_obs(
     ).all():
         d_str = str(entry.logged_at)[:10]
         workout_days_by_date.setdefault(d_str, set()).add(entry.type)
-
-    CARDIO_TYPES = {"run", "cycle", "row", "swim", "sport"}
 
     week_workout_days: dict[str, int] = {}
     week_cardio_days:  dict[str, int] = {}
@@ -488,6 +494,23 @@ def _established_workouts(
     return results
 
 
+def _neglected_workout_category(established_workouts: list[dict]) -> str | None:
+    """Which broad workout category (cardio vs. strength) is completely absent from the
+    user's established routines while the OTHER one is well-represented -- a candidate
+    for "introduce something new" rather than only ever proposing an incremental change
+    to what's already established (see _EXPERIMENT_SYSTEM's category-gap guidance).
+    Returns the MISSING category name, or None when both or neither are represented --
+    "neither" isn't a clear enough gap to single out one over the other."""
+    types = {w["type"] for w in established_workouts}
+    has_cardio = bool(types & CARDIO_TYPES)
+    has_strength = "strength" in types
+    if has_cardio and not has_strength:
+        return "strength"
+    if has_strength and not has_cardio:
+        return "cardio"
+    return None
+
+
 def _established_foods(
     db: Session, today: date,
     window_days: int = 21, min_days: int = 4,
@@ -627,6 +650,50 @@ def _nudge_if_near_duplicate(
         if abs(workout_target_value - prev.workout_target_value) / max(abs(prev.workout_target_value), 1e-9) < 0.05:
             workout_target_value = round(prev.workout_target_value * 1.2, 2)
     return health_goal, workout_target_value
+
+
+# ── Health experiment category preferences ───────────────────────────────────
+#
+# User-facing categories a weekly experiment can draw from (Settings > Health >
+# routers/preferences.py's GET/PUT /api/settings/health-experiment-categories). Based
+# on OUTPUT mechanism, not correlation factor, since that's the only thing reliably
+# enforceable in code without trusting free-text LLM judgment:
+#   - "activity": health_metric (steps/fat_ratio/weight) or routine_type="workout"
+#   - "diet":     routine_type="food" (food-elimination -- the only actionable diet
+#                 mechanism left; see _UNSUPPORTED_EXPERIMENT_FACTOR_KEYS above for why
+#                 calorie/diet-quality targets aren't one)
+#   - "habits":   routine_type="habit", the generic catch-all for anything with no
+#                 structured mechanism (screen time, meditation, sleep timing, etc.)
+#
+# "habits" is enforced more loosely than the other two (prompt-data removal only, no
+# post-generation hard block) because routine_type="habit" is ALSO the mechanism idea
+# 2's missing-workout-category suggestion uses (introducing a brand-new activity has no
+# established baseline to validate a structured workout_type/unit against) -- there's no
+# way to tell from the persisted record alone whether a "habit" response is a genuine
+# Habits-category suggestion or secretly fulfilling an enabled Activity-category gap-fill,
+# so hard-blocking all routine_type="habit" responses whenever "habits" is disabled would
+# also wrongly kill that legitimate Activity-category path.
+EXPERIMENT_CATEGORIES = ["activity", "diet", "habits"]
+
+# _routine_identity's internal category labels ("metric"/"workout"/"food") mapped to the
+# user-facing ones above, for filtering last_week_win/top_past_winner by category.
+_ROUTINE_CATEGORY_TO_EXPERIMENT_CATEGORY = {
+    "metric": "activity", "workout": "activity", "food": "diet",
+}
+
+# Correlation factors that are unambiguously about movement/activity -- stripped from
+# the prompt's correlation lines when "activity" is disabled, same soft-exclusion
+# treatment established_workouts/established_habits/established_foods already get.
+_ACTIVITY_FACTOR_KEYS = {"avg_steps", "workout_days", "cardio_days", "strength_days"}
+
+
+def _enabled_experiment_categories(db: Session) -> set[str]:
+    """Categories the user hasn't explicitly disabled. The stored setting is a
+    DISABLED list, not an enabled one, so a category added to EXPERIMENT_CATEGORIES
+    after this was last saved -- including one that didn't exist yet -- is enabled by
+    default (opt-out), never silently excluded just because it's new."""
+    disabled = set(json.loads(Settings(db).disabled_experiment_categories or "[]"))
+    return set(EXPERIMENT_CATEGORIES) - disabled
 
 
 # ── Correlation + segment computation ────────────────────────────────────────
@@ -811,8 +878,16 @@ experiment to try for the next 7 days. Prioritise factors with lower p-values \
 (stronger evidence). The experiment should be actionable, measurable, and \
 directly connected to the data.
 
-The user message may also include a "Recently tried experiments" section and an \
-"Established routines" section — see the rules below for how to use each.
+The user message may also include a "Last week's experiment succeeded" section, a \
+"Worth revisiting" section, a "Recently tried experiments" section, an "Established \
+routines" section, and a missing-category note — see the rules below for how to use \
+each. When more than one applies, follow this priority order: (1) "Last week's \
+experiment succeeded" — strongly prefer scaling that same routine up; (2) "Worth \
+revisiting" — prefer proposing that past winner again; (3) the missing-category note — \
+consider introducing a brand-new routine to fill the gap; (4) otherwise, fall back to \
+the correlation data / established routines / frequently eaten foods as normal. Only \
+drop down a priority level when the one above it isn't present in the user message, or \
+genuinely doesn't fit (e.g. the user has clearly moved on from that routine).
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
@@ -886,7 +961,20 @@ Recently tried experiments: avoid proposing the same metric/routine/food with \
 the same or a near-identical target as one just tried — either pick a different \
 factor/routine/food, or a meaningfully different target (a genuinely bigger \
 step, not a token +1%). Repeating the exact same experiment back-to-back \
-provides no new information.
+provides no new information. EXCEPTION: this does NOT apply when "Last week's \
+experiment succeeded" or "Worth revisiting" names that same routine below — \
+those are deliberate, intentional repeats, not accidental ones, and should get \
+a bigger/renewed target rather than being avoided.
+
+Missing-category note: if the user message says a workout category (cardio or \
+strength) has no established activity while the other does, you may propose \
+trying a single NEW session in that category this week as a first attempt — \
+e.g. "Do one 20-minute strength session this week" or "Go for one 20-minute \
+run or bike ride this week." There's no established baseline for a brand-new \
+category, so set routine_type="habit" (not "workout") and leave workout_*/food_* \
+null, same as any other habit-type experiment — the action field just states \
+the new activity and a modest, approachable target (frequency or duration), not \
+an incremental increase over a prior average that doesn't exist yet.
 
 NEVER propose a bare calorie-intake or "diet quality" target (e.g. "consume \
 1,800 kcal daily", "cut 300 calories a day", "improve diet quality") as the \
@@ -1006,7 +1094,11 @@ def _generate_experiment(
     if existing:
         return existing
 
+    enabled_categories = _enabled_experiment_categories(db)
+
     correlations = [c for c in correlations if c.get("factor_key") not in _UNSUPPORTED_EXPERIMENT_FACTOR_KEYS]
+    if "activity" not in enabled_categories:
+        correlations = [c for c in correlations if c.get("factor_key") not in _ACTIVITY_FACTOR_KEYS]
 
     if not correlations:
         exp = models.HealthExperiment(
@@ -1027,13 +1119,68 @@ def _generate_experiment(
     ]
 
     recent = _recent_experiments(db)
-    established_habits = _established_habits(db, today, tz_offset_minutes=tz_offset_minutes)
-    established_workouts = _established_workouts(db, today)
+    established_habits = (
+        _established_habits(db, today, tz_offset_minutes=tz_offset_minutes)
+        if "habits" in enabled_categories else []
+    )
+    established_workouts = (
+        _established_workouts(db, today) if "activity" in enabled_categories else []
+    )
     established_workouts_by_type = {w["type"]: w for w in established_workouts}
-    established_foods = _established_foods(db, today)
+    established_foods = (
+        _established_foods(db, today) if "diet" in enabled_categories else []
+    )
     established_foods_by_name = {f["name"]: f for f in established_foods}
 
+    last_week_win = _last_week_win(db)
+    if last_week_win:
+        identity = _routine_identity(last_week_win)
+        if identity and _ROUTINE_CATEGORY_TO_EXPERIMENT_CATEGORY.get(identity[0]) not in enabled_categories:
+            last_week_win = None
+    top_winner = (
+        None if last_week_win
+        else _top_past_winner(db, enabled_categories=enabled_categories)
+    )
+    neglected_category = (
+        _neglected_workout_category(established_workouts)
+        if "activity" in enabled_categories else None
+    )
+
     user_parts = ["Correlation data:"] + lines
+    disabled_categories = set(EXPERIMENT_CATEGORIES) - enabled_categories
+    if disabled_categories:
+        user_parts.append(
+            "\nDisabled by user preference this week -- do NOT propose an experiment in "
+            + ", ".join(sorted(disabled_categories))
+            + ":"
+        )
+        if "activity" in disabled_categories:
+            user_parts.append('- "activity" = any health_metric target, or routine_type="workout"')
+        if "diet" in disabled_categories:
+            user_parts.append('- "diet" = routine_type="food"')
+        if "habits" in disabled_categories:
+            user_parts.append(
+                '- "habits" = routine_type="habit", UNLESS it is specifically fulfilling '
+                "the missing-category note below (that one stays allowed even if habits "
+                "are otherwise disabled, since it's really an activity suggestion)"
+            )
+    if last_week_win:
+        user_parts.append(
+            "\nLast week's experiment succeeded (trended better than baseline) -- "
+            "strongly prefer proposing a BIGGER version of this SAME routine this week "
+            "over switching to something unrelated:"
+        )
+        user_parts.append(f"- {_format_recent_experiment(last_week_win)}")
+    elif top_winner:
+        plural = "s" if top_winner["n"] != 1 else ""
+        user_parts.append(
+            "\nWorth revisiting -- trended positive across past attempts, not tried "
+            "again recently; consider proposing it again instead of something novel:"
+        )
+        user_parts.append(
+            f'- {top_winner["category"]}: "{top_winner["label"]}" '
+            f'({top_winner["n"]} week{plural} tried, trended better each time)'
+        )
     if recent:
         user_parts.append(
             "\nRecently tried experiments (avoid repeating; propose something meaningfully different):"
@@ -1050,6 +1197,13 @@ def _generate_experiment(
             user_parts.append(
                 f'- Workout type "{w["type"]}" — {w["sessions_per_week"]}x/week, avg {w["avg_value"]}{unit_part}'
             )
+    if neglected_category:
+        user_parts.append(
+            f'\nNo established {neglected_category} activity among the routines above, while the '
+            f'other category is established -- consider proposing a brand-new {neglected_category} '
+            'habit this week (routine_type="habit") instead of only scaling up what already exists:'
+        )
+        user_parts.append(f'- Missing category: {neglected_category}')
     if established_foods:
         user_parts.append(
             "\nFrequently eaten foods you could propose reducing or eliminating instead of a fresh goal:"
@@ -1171,6 +1325,21 @@ def _generate_experiment(
         # canned experiment instead of persisting something nobody can act on or verify.
         if _mentions_unsupported_calorie_target(action, hypothesis, health_metric, routine_type):
             raise ValueError(f"LLM proposed an unsupported calorie-target experiment: {action!r}")
+
+        # Hard-enforce the "activity" category toggle. Only health_metric needs an
+        # explicit check here: routine_type="workout"/"food" are already structurally
+        # blocked above whenever "activity"/"diet" is disabled, since
+        # established_workouts_by_type/established_foods_by_name are built empty in
+        # that case and the branches that persist a real workout_type/food_name both
+        # require a match against them -- but health_metric (steps/fat_ratio/weight)
+        # has no such established-data gate, and _mine_step_goal_from_text can mine one
+        # out of free text independently of anything shown in the prompt, so it's the
+        # one path that can still slip a real, trackable experiment through a disabled
+        # category without an explicit check.
+        if "activity" not in enabled_categories and health_metric is not None:
+            raise ValueError(
+                f"LLM proposed an 'activity' experiment with that category disabled: {health_metric!r}"
+            )
     except Exception as e:
         # Was a silent `except Exception: <canned fallback>` with no logging at all -- meant
         # a real, deterministically-repeating failure (see the reasoning_effort/max_tokens
@@ -1653,6 +1822,59 @@ def get_routine_summary(db: Session) -> list[dict]:
     _verdict_rank = {"positive": 0, "mixed": 1, "inconclusive": 2, "negative": 3}
     results.sort(key=lambda r: (_verdict_rank[r["verdict"]], r["avg_effect"]))
     return results
+
+
+def _last_week_win(db: Session) -> models.HealthExperiment | None:
+    """The single most recently DISMISSED experiment, if it was both adhered-to and
+    trended better than baseline -- a candidate for proposing a bigger version of the
+    SAME routine this week instead of switching to something unrelated (see
+    _EXPERIMENT_SYSTEM's continuation guidance). Reuses the exact adherence/effect
+    definitions get_routine_summary's leaderboard uses, just applied to one experiment
+    rather than aggregated across many, so "last week won" can never disagree with what
+    the leaderboard would eventually say about the same week."""
+    recent = _recent_experiments(db, limit=1)
+    if not recent or recent[0].status != "dismissed":
+        return None
+    exp = recent[0]
+    if _routine_identity(exp) is None:
+        return None
+    if _routine_adhered(exp) is not True:
+        return None
+    effect = _routine_effect(exp)
+    if effect is None or not (effect < -_ROUTINE_EFFECT_THRESHOLD):
+        return None
+    return exp
+
+
+def _top_past_winner(
+    db: Session, exclude_recent: int = 4, enabled_categories: set[str] | None = None,
+) -> dict | None:
+    """The strongest-trending-positive routine from the full dismissed-experiment
+    history (get_routine_summary's leaderboard) that hasn't been tried again in the last
+    `exclude_recent` experiments -- a candidate for "revisit a known winner" instead of
+    always proposing something novel (see _EXPERIMENT_SYSTEM's revisit guidance). None
+    if there's no eligible positive-verdict routine.
+
+    `enabled_categories` (the user-facing activity/diet/habits set, not
+    _routine_identity's internal metric/workout/food labels) skips PAST a winner in a
+    disabled category to the next-best one, rather than the caller discarding the whole
+    result just because the single top winner happened to be disallowed -- None/omitted
+    means no category filtering, for standalone callers/tests."""
+    summary = get_routine_summary(db)
+    recent_identities = {
+        identity for exp in _recent_experiments(db, limit=exclude_recent)
+        if (identity := _routine_identity(exp)) is not None
+    }
+    for routine in summary:
+        if routine["verdict"] != "positive":
+            continue
+        if (routine["category"], routine["label"]) in recent_identities:
+            continue
+        if (enabled_categories is not None
+                and _ROUTINE_CATEGORY_TO_EXPERIMENT_CATEGORY.get(routine["category"]) not in enabled_categories):
+            continue
+        return routine
+    return None
 
 
 # ── Migration: AppSetting → table ────────────────────────────────────────────

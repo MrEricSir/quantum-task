@@ -692,6 +692,22 @@ export async function saveNavPreferences(prefs) {
   return res.json()
 }
 
+export async function fetchExperimentCategoryPreferences() {
+  const res = await apiFetch('/api/settings/health-experiment-categories')
+  if (!res.ok) throw new Error('Failed to fetch experiment category preferences')
+  return res.json()
+}
+
+export async function saveExperimentCategoryPreferences(prefs) {
+  const res = await apiFetch('/api/settings/health-experiment-categories', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(prefs),
+  })
+  if (!res.ok) throw new Error('Failed to save experiment category preferences')
+  return res.json()
+}
+
 export async function fetchTelegramConfig() {
   const res = await apiFetch('/api/telegram/config')
   if (!res.ok) throw new Error('Failed to fetch Telegram config')

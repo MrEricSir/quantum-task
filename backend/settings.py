@@ -147,3 +147,9 @@ class Settings:
     @property
     def default_page(self) -> str:
         return self.get(keys.DEFAULT_PAGE, "today")
+
+    # ── Health experiment category preferences ──────────────────────────────
+
+    @property
+    def disabled_experiment_categories(self) -> str:
+        return self.get(keys.HEALTH_EXPERIMENT_DISABLED_CATEGORIES, "[]")

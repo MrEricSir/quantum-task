@@ -1,5 +1,6 @@
 """
-Unit tests for GET/PUT /api/settings/navigation (routers/preferences.py).
+Unit tests for GET/PUT /api/settings/navigation and
+GET/PUT /api/settings/health-experiment-categories (routers/preferences.py).
 
 Uses FastAPI's TestClient with an in-memory SQLite database — no server required.
 """
@@ -15,6 +16,7 @@ from database import Base
 from main import app
 from deps import get_db
 from routers.preferences import NAV_PAGE_IDS
+from routers.correlations import EXPERIMENT_CATEGORIES
 
 TEST_DB_URL = "sqlite://"
 
@@ -128,3 +130,44 @@ class TestSetNavigationPreferences:
             "default_page": "today",
         })
         assert res.status_code == 400
+
+
+class TestGetExperimentCategoryPreferences:
+
+    def test_all_enabled_by_default(self, client):
+        res = client.get("/api/settings/health-experiment-categories")
+        assert res.status_code == 200
+        assert sorted(res.json()["enabled"]) == sorted(EXPERIMENT_CATEGORIES)
+
+    def test_a_newly_added_category_is_enabled_by_default_not_silently_excluded(self, client):
+        # Simulates a disabled-list saved before "habits" existed as a category --
+        # opt-OUT means anything missing from the stored list (including something
+        # that didn't exist yet) is enabled, never silently excluded just because it's
+        # new. Bypasses PUT directly since PUT always validates against the CURRENT
+        # category list.
+        from settings import Settings
+        with TestingSessionLocal() as db:
+            Settings(db).set("health_experiment_disabled_categories", '["diet"]')
+            db.commit()
+        res = client.get("/api/settings/health-experiment-categories")
+        assert sorted(res.json()["enabled"]) == sorted(set(EXPERIMENT_CATEGORIES) - {"diet"})
+
+
+class TestSetExperimentCategoryPreferences:
+
+    def test_roundtrip(self, client):
+        res = client.put("/api/settings/health-experiment-categories", json={"enabled": ["activity"]})
+        assert res.status_code == 200
+        assert res.json()["enabled"] == ["activity"]
+
+        res = client.get("/api/settings/health-experiment-categories")
+        assert res.json()["enabled"] == ["activity"]
+
+    def test_rejects_an_unknown_category(self, client):
+        res = client.put("/api/settings/health-experiment-categories", json={"enabled": ["activity", "sleep"]})
+        assert res.status_code == 400
+
+    def test_empty_list_disables_everything(self, client):
+        res = client.put("/api/settings/health-experiment-categories", json={"enabled": []})
+        assert res.status_code == 200
+        assert res.json()["enabled"] == []

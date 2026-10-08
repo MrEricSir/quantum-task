@@ -30,6 +30,8 @@ from routers.correlations import (
     _mentions_unsupported_calorie_target,
     _routine_identity, _routine_adhered, _routine_effect, get_routine_summary,
     _compute_correlations, _compute_segments,
+    _neglected_workout_category, _last_week_win, _top_past_winner,
+    EXPERIMENT_CATEGORIES, _enabled_experiment_categories,
 )
 from routers.habits import check_habit_row
 
@@ -1128,6 +1130,183 @@ class TestGetRoutineSummary:
         assert [r["verdict"] for r in results] == ["positive", "negative"]
 
 
+class TestNeglectedWorkoutCategory:
+
+    def test_missing_strength_when_only_cardio_established(self):
+        established = [{"type": "row", "sessions_per_week": 3, "avg_value": 1.5, "unit": "mi"}]
+        assert _neglected_workout_category(established) == "strength"
+
+    def test_missing_cardio_when_only_strength_established(self):
+        established = [{"type": "strength", "sessions_per_week": 2, "avg_value": 1, "unit": None}]
+        assert _neglected_workout_category(established) == "cardio"
+
+    def test_none_when_both_established(self):
+        established = [
+            {"type": "row", "sessions_per_week": 3, "avg_value": 1.5, "unit": "mi"},
+            {"type": "strength", "sessions_per_week": 2, "avg_value": 1, "unit": None},
+        ]
+        assert _neglected_workout_category(established) is None
+
+    def test_none_when_neither_established(self):
+        established = [{"type": "yoga", "sessions_per_week": 2, "avg_value": 1, "unit": None}]
+        assert _neglected_workout_category(established) is None
+
+    def test_none_when_nothing_established(self):
+        assert _neglected_workout_category([]) is None
+
+
+class TestLastWeekWin:
+
+    def _dismissed(self, db, **kwargs):
+        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults.update(kwargs)
+        exp = models.HealthExperiment(**defaults)
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def test_returns_the_experiment_when_adhered_and_better_than_baseline(self, db):
+        exp = self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert _last_week_win(db).id == exp.id
+
+    def test_none_when_the_most_recent_experiment_is_still_active(self, db):
+        self._dismissed(
+            db, status="active", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert _last_week_win(db) is None
+
+    def test_none_when_not_adhered(self, db):
+        self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=1.0,
+            workout_target_value=2.0, workout_p=0.9,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert _last_week_win(db) is None
+
+    def test_none_when_effect_is_not_better(self, db):
+        self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=0.05, weight_baseline=-0.01,
+        )
+        assert _last_week_win(db) is None
+
+    def test_none_when_no_stable_identity(self, db):
+        self._dismissed(
+            db, routine_type="habit", action="screen-free time", habit_completion_rate=1.0,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        assert _last_week_win(db) is None
+
+    def test_none_when_no_experiments_exist(self, db):
+        assert _last_week_win(db) is None
+
+
+class TestTopPastWinner:
+
+    def _dismissed(self, db, **kwargs):
+        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults.update(kwargs)
+        exp = models.HealthExperiment(**defaults)
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def test_returns_the_top_positive_routine(self, db):
+        self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        # exclude_recent=0 isolates "finds the top positive routine" from the separate
+        # recency-exclusion behavior covered by the tests below.
+        result = _top_past_winner(db, exclude_recent=0)
+        assert result["category"] == "workout"
+        assert result["label"] == "row"
+
+    def test_none_when_nothing_positive(self, db):
+        self._dismissed(
+            db, food_name="coffee", food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=0.05, weight_baseline=-0.01,
+        )
+        assert _top_past_winner(db) is None
+
+    def test_excludes_a_winner_tried_again_recently(self, db):
+        self._dismissed(
+            db, week="2026-W05", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        # Tried again more recently (any status/outcome) -- shouldn't be resurfaced as
+        # "not tried again recently" when it literally was.
+        self._dismissed(db, week="2026-W09", workout_type="row", action="Row 2.2 mi")
+
+        assert _top_past_winner(db, exclude_recent=4) is None
+
+    def test_includes_a_winner_not_tried_in_a_while(self, db):
+        self._dismissed(
+            db, week="2026-W01", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        # 3 unrelated experiments created after the win. _recent_experiments orders by
+        # created_at, so with exclude_recent=4 all 4 rows (including the row win itself)
+        # count as "recent"; with exclude_recent=3 only the 3 newest do, leaving the row
+        # win outside the window and eligible again.
+        for i in range(3):
+            self._dismissed(db, week=f"2026-W1{i}", health_metric="steps", health_goal=8000)
+
+        assert _top_past_winner(db, exclude_recent=4) is None
+        assert _top_past_winner(db, exclude_recent=3)["label"] == "row"
+
+    def test_skips_a_winner_in_a_disabled_category_to_the_next_best(self, db):
+        self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.08, weight_baseline=-0.01,  # stronger effect than the food one
+        )
+        self._dismissed(
+            db, week="2026-W11", food_name="coffee",
+            food_baseline_frequency=4.0, food_experiment_count=0,
+            weight_delta=-0.03, weight_baseline=-0.01,
+        )
+
+        result = _top_past_winner(db, exclude_recent=0, enabled_categories={"diet", "habits"})
+        assert result["category"] == "food"
+        assert result["label"] == "coffee"
+
+
+class TestEnabledExperimentCategories:
+
+    def _set_disabled(self, db, categories):
+        db.add(models.AppSetting(
+            key="health_experiment_disabled_categories", value=json.dumps(categories),
+        ))
+        db.commit()
+
+    def test_all_enabled_by_default(self, db):
+        assert _enabled_experiment_categories(db) == set(EXPERIMENT_CATEGORIES)
+
+    def test_respects_a_disabled_category(self, db):
+        self._set_disabled(db, ["diet"])
+        assert _enabled_experiment_categories(db) == set(EXPERIMENT_CATEGORIES) - {"diet"}
+
+    def test_a_category_absent_from_the_stored_list_is_enabled(self, db):
+        # Simulates a disabled-list saved before some category existed -- opt-OUT means
+        # anything missing (including something new) is enabled, not silently excluded.
+        self._set_disabled(db, ["diet"])
+        assert "habits" in _enabled_experiment_categories(db)
+
+
 class TestRecomputeExperimentOutcomes:
     """POST /api/health/experiments/recompute -- re-runs _record_outcome for every
     already-completed experiment, so the habit/steps confound check (and any future analysis
@@ -1713,6 +1892,274 @@ class TestGenerateExperimentUnsupportedCalorieTarget:
 
         assert exp.action == "Walk 8,000 steps every day"
         assert exp.health_metric == "steps"
+
+
+class TestGenerateExperimentVarietySignals:
+    """Integration coverage for the three new prompt sections _generate_experiment
+    builds from _last_week_win/_top_past_winner/_neglected_workout_category -- each
+    should appear in what's actually sent to the LLM under the right conditions, and
+    stay out of each other's way (last-week-win takes priority over a past winner)."""
+
+    CORR = [{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}]
+
+    STEPS_PAYLOAD = {
+        "text": "t", "hypothesis": "h", "action": "Walk 8,000 steps every day",
+        "health_metric": "steps", "health_goal": 8000,
+        "routine_type": None, "workout_type": None,
+        "workout_target_value": None, "workout_unit": None,
+    }
+
+    def _dismissed(self, db, **kwargs):
+        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults.update(kwargs)
+        exp = models.HealthExperiment(**defaults)
+        db.add(exp)
+        db.commit()
+        return exp
+
+    def test_prompt_includes_last_week_win_section(self, db):
+        self._dismissed(
+            db, workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01, workout_unit="mi",
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR, db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Last week's experiment succeeded" in sent_content
+        assert "row" in sent_content
+
+    def test_prompt_includes_worth_revisiting_when_no_last_week_win(self, db):
+        self._dismissed(
+            db, week="2026-W01", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        # 4 unrelated, more recent experiments -- pushes the row win outside
+        # _top_past_winner's default exclude_recent=4 window, and the most recent one
+        # (what _last_week_win checks) isn't itself a win, so "row" should surface
+        # as a past winner worth revisiting instead.
+        for i in range(4):
+            self._dismissed(db, week=f"2026-W1{i}", health_metric="steps", health_goal=8000)
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR, db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Worth revisiting" in sent_content
+        assert "row" in sent_content
+
+    def test_worth_revisiting_omitted_when_last_week_already_won(self, db):
+        """Priority: don't clutter the prompt with an older win when a fresher,
+        stronger signal (last week's own success) already applies."""
+        self._dismissed(
+            db, week="2026-W01", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        )
+        self._dismissed(
+            db, week="2026-W15", health_metric="steps", health_goal=8000,
+            habit_completion_rate=1.0, weight_delta=-0.05, weight_baseline=-0.01,
+        )
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR, db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Last week's experiment succeeded" in sent_content
+        assert "Worth revisiting" not in sent_content
+
+    def test_prompt_includes_missing_category_note(self, db):
+        for i in range(4):
+            _add_workout(db, "row", 1.5, "mi", days_ago=i * 7)
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR, db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "No established strength activity" in sent_content
+
+    def test_missing_category_note_omitted_when_both_represented(self, db):
+        for i in range(4):
+            _add_workout(db, "row", 1.5, "mi", days_ago=i * 7)
+            _add_workout(db, "strength", 1, None, days_ago=i * 7 + 1)
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment(self.CORR, db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "No established" not in sent_content
+
+
+class TestGenerateExperimentCategoryPreferences:
+    """Integration coverage for the activity/diet/habits category toggle: disabled
+    categories' source data must be stripped from the prompt (soft), an explicit
+    prohibition note must name them, and a disabled "activity" experiment the LLM
+    proposes anyway must still be discarded (hard backstop) -- see
+    EXPERIMENT_CATEGORIES's docstring for why "habits" only gets the soft treatment."""
+
+    CORR_WITH_ACTIVITY = [
+        {"factor": "Daily steps", "factor_key": "avg_steps",
+         "outcome": "Weight change", "outcome_unit": "kg/day",
+         "r": 0.5, "p": 0.01, "n": 10, "scatter": []},
+    ]
+
+    STEPS_PAYLOAD = {
+        "text": "t", "hypothesis": "h", "action": "Walk 8,000 steps every day",
+        "health_metric": "steps", "health_goal": 8000,
+        "routine_type": None, "workout_type": None,
+        "workout_target_value": None, "workout_unit": None,
+    }
+
+    def _disable(self, db, *categories):
+        db.add(models.AppSetting(
+            key="health_experiment_disabled_categories", value=json.dumps(list(categories)),
+        ))
+        db.commit()
+
+    def test_activity_correlation_factor_dropped_when_disabled(self, db):
+        self._disable(db, "activity")
+        fake_client = _fake_llm_client({
+            "text": "t", "hypothesis": "h", "action": None,
+            "health_metric": None, "health_goal": None, "routine_type": None,
+        })
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            exp = _generate_experiment(self.CORR_WITH_ACTIVITY, db)
+
+        # The only correlation factor was activity-only and got dropped -- same "nothing
+        # left" fallback as having no correlations at all.
+        assert exp.action is None
+        assert "at least 3 weeks of data" in exp.text
+
+    def test_established_workouts_hidden_when_activity_disabled(self, db):
+        self._disable(db, "activity")
+        for i in range(4):
+            _add_workout(db, "row", 1.5, "mi", days_ago=i * 7)
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Workout type" not in sent_content
+        assert "No established strength activity" not in sent_content  # the gap note too
+
+    def test_established_foods_hidden_when_diet_disabled(self, db):
+        self._disable(db, "diet")
+        for i in range(4):
+            _add_food_named(db, "coffee", days_ago=i * 5)
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Frequently eaten foods" not in sent_content
+
+    def test_established_habits_hidden_when_habits_disabled(self, db):
+        self._disable(db, "habits")
+        habit = models.Habit(name="Meditate 10 min", created_at=datetime.now(timezone.utc) - timedelta(days=30))
+        db.add(habit)
+        db.commit()
+        for i in range(10):
+            check_habit_row(db, habit.id, date.today() - timedelta(days=i))
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Meditate 10 min" not in sent_content
+
+    def test_disabled_categories_note_lists_the_right_categories(self, db):
+        self._disable(db, "diet", "habits")
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "do NOT propose an experiment in diet, habits" in sent_content
+
+    def test_no_disabled_categories_note_when_nothing_disabled(self, db):
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Disabled by user preference" not in sent_content
+
+    def test_activity_proposed_anyway_is_discarded_when_disabled(self, db):
+        """Defense in depth: an LLM proposing a health_metric target despite activity
+        being disabled (and no established-workout data ever shown to justify one)
+        must still be discarded, not persisted -- same posture as the calorie backstop."""
+        self._disable(db, "activity")
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)  # health_metric="steps" anyway
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            exp = _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        assert exp.action is None
+        assert exp.health_metric is None
+        assert exp.habit_id is None
+
+    def test_last_week_win_skipped_when_its_category_is_disabled(self, db):
+        self._disable(db, "activity")
+        db.add(models.HealthExperiment(
+            week="2026-W10", text="t", status="dismissed",
+            workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+            weight_delta=-0.05, weight_baseline=-0.01,
+        ))
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Last week's experiment succeeded" not in sent_content
+
+    def test_missing_category_note_requires_activity_enabled(self, db):
+        self._disable(db, "activity")
+        for i in range(4):
+            _add_workout(db, "row", 1.5, "mi", days_ago=i * 7)
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "No established strength activity" not in sent_content
+
+    def test_habit_type_response_still_allowed_when_only_habits_disabled(self, db):
+        """"habits" is soft-enforced only -- a routine_type="habit" response must still
+        persist even with "habits" disabled, since that mechanism also serves the
+        (enabled) activity-category gap-fill suggestion and the two can't be reliably
+        told apart from the persisted record alone (see EXPERIMENT_CATEGORIES's
+        docstring)."""
+        self._disable(db, "habits")
+        fake_client = _fake_llm_client({
+            "text": "t", "hypothesis": "h", "action": "Do one 20-minute strength session this week",
+            "health_metric": None, "health_goal": None, "routine_type": "habit",
+            "workout_type": None, "workout_target_value": None, "workout_unit": None,
+        })
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            exp = _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        assert exp.action == "Do one 20-minute strength session this week"
+        assert exp.habit_id is not None
 
 
 class TestRecentAvgSteps:

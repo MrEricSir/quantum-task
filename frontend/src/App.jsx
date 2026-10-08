@@ -31,6 +31,7 @@ import EngineeringPage from './components/pages/EngineeringPage'
 import HealthPage from './components/pages/HealthPage'
 import LoginPage from './components/pages/LoginPage'
 import WithingsSettings from './components/modals/WithingsSettings'
+import ExperimentCategorySettings from './components/modals/ExperimentCategorySettings'
 import TelegramSettings from './components/modals/TelegramSettings'
 import NavigationSettings from './components/modals/NavigationSettings'
 import QueueIndicator from './components/shared/QueueIndicator'
@@ -124,6 +125,7 @@ export default function App() {
     showWithingsSettings, setShowWithingsSettings,
     showTelegramSettings, setShowTelegramSettings,
     showNavSettings, setShowNavSettings,
+    showExperimentCategorySettings, setShowExperimentCategorySettings,
     showShortcuts, setShowShortcuts,
     defaultSection, showNewSheet, setShowNewSheet,
     openNewCard: openNewCardSheet,
@@ -852,6 +854,9 @@ export default function App() {
                       <DropdownMenu.Item key="withings" className="settings-dropdown-item" onSelect={() => setShowWithingsSettings(true)}>
                         &#10084;&#65039; Withings{withingsStatus?.connected ? '' : ' (not connected)'}
                       </DropdownMenu.Item>,
+                      <DropdownMenu.Item key="experiment-categories" className="settings-dropdown-item" onSelect={() => setShowExperimentCategorySettings(true)}>
+                        &#129514; Experiment categories
+                      </DropdownMenu.Item>,
                       <DropdownMenu.Item
                         key="travel-mode"
                         className="settings-dropdown-item settings-dropdown-notif"
@@ -1178,6 +1183,10 @@ export default function App() {
 
       {showTelegramSettings && (
         <TelegramSettings onClose={() => setShowTelegramSettings(false)} />
+      )}
+
+      {showExperimentCategorySettings && (
+        <ExperimentCategorySettings onClose={() => setShowExperimentCategorySettings(false)} />
       )}
 
       {showTagManager && (

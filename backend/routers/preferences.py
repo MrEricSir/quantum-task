@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 import app_setting_keys as keys
 import schemas
 from deps import get_db
+from routers.correlations import EXPERIMENT_CATEGORIES, _enabled_experiment_categories
 from settings import Settings
 
 router = APIRouter()
@@ -45,3 +46,23 @@ def set_navigation_preferences(prefs: schemas.NavPreferences, db: Session = Depe
     settings.set(keys.DEFAULT_PAGE, prefs.default_page)
     db.commit()
     return prefs
+
+
+@router.get("/api/settings/health-experiment-categories", response_model=schemas.ExperimentCategoryPreferences)
+def get_experiment_category_preferences(db: Session = Depends(get_db)):
+    enabled = sorted(_enabled_experiment_categories(db))
+    return schemas.ExperimentCategoryPreferences(enabled=enabled)
+
+
+@router.put("/api/settings/health-experiment-categories", response_model=schemas.ExperimentCategoryPreferences)
+def set_experiment_category_preferences(
+    prefs: schemas.ExperimentCategoryPreferences, db: Session = Depends(get_db),
+):
+    if not set(prefs.enabled) <= set(EXPERIMENT_CATEGORIES):
+        raise HTTPException(status_code=400, detail="enabled must be a subset of the known categories")
+
+    settings = Settings(db)
+    disabled = sorted(set(EXPERIMENT_CATEGORIES) - set(prefs.enabled))
+    settings.set(keys.HEALTH_EXPERIMENT_DISABLED_CATEGORIES, json.dumps(disabled))
+    db.commit()
+    return schemas.ExperimentCategoryPreferences(enabled=sorted(prefs.enabled))

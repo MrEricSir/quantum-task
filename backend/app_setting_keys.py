@@ -142,3 +142,11 @@ STREAK_DAYS_V1 = "streak_days_v1"
 NAV_ORDER = "nav_order"
 # Page id (one of routers/preferences.py's NAV_PAGE_IDS) to redirect to on "/".
 DEFAULT_PAGE = "default_page"
+
+# ── Health experiment category preferences ──────────────────────────────────────
+# JSON array of category ids (a subset of routers/correlations.py's
+# EXPERIMENT_CATEGORIES) the user has opted OUT of for weekly health experiments --
+# deliberately a disabled-list, not an enabled-list, so a category added to
+# EXPERIMENT_CATEGORIES after this was last saved is enabled by default (opt-out),
+# never silently excluded just because it didn't exist yet.
+HEALTH_EXPERIMENT_DISABLED_CATEGORIES = "health_experiment_disabled_categories"

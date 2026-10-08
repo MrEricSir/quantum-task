@@ -30,3 +30,7 @@ class TagReplacement(BaseModel):
 class NavPreferences(BaseModel):
     order: List[str]
     default_page: str
+
+
+class ExperimentCategoryPreferences(BaseModel):
+    enabled: List[str]

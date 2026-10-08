@@ -10,7 +10,9 @@ To import by domain directly:
     from schemas.cards import Card, ParsedCard
     from schemas.habits import Habit
 """
-from schemas.common import Tag, TagCreate, TagUpdate, TagReplacement, NavPreferences
+from schemas.common import (
+    Tag, TagCreate, TagUpdate, TagReplacement, NavPreferences, ExperimentCategoryPreferences,
+)
 from schemas.cards import (
     CardCreate, CardUpdate, ParseRequest, ParsedCard, BulkParseResponse,
     CardReorderItem, BulkCardItem, BulkCardCreate, BreakdownCommit, Card,
@@ -66,6 +68,7 @@ class Note(BaseModel):
 __all__ = [
     # common
     "Tag", "TagCreate", "TagUpdate", "TagReplacement", "NavPreferences",
+    "ExperimentCategoryPreferences",
     # cards
     "CardCreate", "CardUpdate", "ParseRequest", "ParsedCard", "BulkParseResponse",
     "CardReorderItem", "BulkCardItem", "BulkCardCreate", "BreakdownCommit", "Card",
