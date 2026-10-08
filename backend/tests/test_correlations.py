@@ -26,7 +26,8 @@ from routers.correlations import (
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
-    check_food_avoidance_habits, _recent_avg_steps, _food_logging_days,
+    check_food_avoidance_habits, _recent_avg_steps,
+    _mentions_unsupported_calorie_target,
     _routine_identity, _routine_adhered, _routine_effect, get_routine_summary,
     _compute_correlations, _compute_segments,
 )
@@ -616,26 +617,6 @@ class TestEstablishedFoods:
         assert len(result) == 1
         # eligible_weeks = (21 - 7) / 7 = 2; 4 distinct days / 2 weeks = 2.0/week
         assert result[0]["days_per_week"] == 2.0
-
-
-class TestFoodLoggingDays:
-
-    def test_counts_distinct_days_across_different_foods(self, db):
-        _add_food_named(db, "coffee", days_ago=0)
-        _add_food_named(db, "toast", days_ago=0)  # same day as coffee -- still 1 distinct day
-        _add_food_named(db, "pizza", days_ago=5)
-        db.commit()
-
-        assert _food_logging_days(db, date.today()) == 2
-
-    def test_excludes_entries_outside_window(self, db):
-        _add_food_named(db, "coffee", days_ago=30)
-        db.commit()
-
-        assert _food_logging_days(db, date.today(), window_days=21) == 0
-
-    def test_zero_when_no_food_logged(self, db):
-        assert _food_logging_days(db, date.today()) == 0
 
 
 class TestNudgeIfNearDuplicate:
@@ -1620,12 +1601,53 @@ class TestGenerateExperimentRoutines:
         assert "coffee" in sent_content
 
 
-class TestGenerateExperimentFoodVolumeGate:
-    """A calorie-target experiment with no real food-logging baseline behind it is
-    misleading -- see PRODUCT_NOTES.md's 2026-09-29 entry. avg_calories/avg_food_quality
-    correlations must be dropped from the prompt entirely unless the user has actually
-    logged food on enough distinct recent days, even if the correlation itself looks
-    statistically strong (built from a thin week-level average, not real daily volume)."""
+class TestMentionsUnsupportedCalorieTarget:
+    """Unit tests for the regex backstop -- see TestGenerateExperimentUnsupportedCalorieTarget
+    below for how _generate_experiment actually uses it."""
+
+    def test_true_for_a_bare_kcal_target_with_no_structured_field(self):
+        assert _mentions_unsupported_calorie_target(
+            "Consume ~1,800 kcal daily", "If I eat 1800 kcal...", None, None,
+        )
+
+    def test_true_for_the_word_calories_with_no_structured_field(self):
+        assert _mentions_unsupported_calorie_target(
+            "Consume 300 fewer calories each day", None, None, None,
+        )
+
+    def test_false_when_health_metric_is_set(self):
+        # Shouldn't happen in practice (health_metric only covers steps/fat_ratio/
+        # weight), but a calorie number alongside a real structured field is backed by
+        # something trackable either way -- never the case this backstop exists for.
+        assert not _mentions_unsupported_calorie_target(
+            "Walk 8,000 steps every day (aim for 1800 kcal)", None, "steps", None,
+        )
+
+    def test_false_when_routine_type_is_set(self):
+        assert not _mentions_unsupported_calorie_target(
+            "Cut out soda entirely this week (currently ~150 kcal/day)", None, None, "food",
+        )
+
+    def test_false_with_no_calorie_mention_at_all(self):
+        assert not _mentions_unsupported_calorie_target(
+            "Walk 8,000 steps every day", "If I walk more...", None, None,
+        )
+
+    def test_checks_hypothesis_too_not_just_action(self):
+        assert _mentions_unsupported_calorie_target(
+            None, "If I eat 1,500 calories a day, I expect to lose weight", None, None,
+        )
+
+
+class TestGenerateExperimentUnsupportedCalorieTarget:
+    """avg_calories/avg_food_quality have no supported way to become a trackable
+    experiment (see _UNSUPPORTED_EXPERIMENT_FACTOR_KEYS's docstring): no Habit field
+    exists for an aggregate daily total, unlike steps/fat_ratio/weight (Withings) or a
+    specific named food (food diary). A prior fix only gated these on food-logging
+    volume, which a 2026-10-07 live-DB check showed was the wrong axis entirely -- a
+    user who logs food almost daily still got repeat raw-kcal-target experiments. Now
+    excluded unconditionally, with a regex backstop for when the LLM proposes one
+    anyway despite having no correlation data to justify it."""
 
     CORR_WITH_CALORIES = [
         {"factor": "Daily calories", "factor_key": "avg_calories",
@@ -1636,15 +1658,21 @@ class TestGenerateExperimentFoodVolumeGate:
          "r": 0.3, "p": 0.2, "n": 10, "scatter": []},
     ]
 
-    PAYLOAD = {
+    STEPS_PAYLOAD = {
         "text": "t", "hypothesis": "h", "action": "Walk 8,000 steps every day",
         "health_metric": "steps", "health_goal": 8000,
         "routine_type": None, "workout_type": None,
         "workout_target_value": None, "workout_unit": None,
     }
 
-    def test_calorie_correlation_dropped_with_no_food_logging_baseline(self, db):
-        fake_client = _fake_llm_client(self.PAYLOAD)
+    def test_calorie_correlation_dropped_regardless_of_food_logging_history(self, db):
+        # Logs food almost every day -- plenty of "baseline" by the old gate's
+        # standard -- yet the factor must still never reach the prompt.
+        for i in range(20):
+            _add_food_named(db, f"meal{i}", days_ago=i)
+        db.commit()
+
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
         with patch("routers.correlations.llm_client", return_value=fake_client):
             _generate_experiment(self.CORR_WITH_CALORIES, db, today=date.today())
 
@@ -1652,24 +1680,39 @@ class TestGenerateExperimentFoodVolumeGate:
         assert "Daily calories" not in sent_content
         assert "Daily steps" in sent_content
 
-    def test_calorie_correlation_kept_with_a_real_food_logging_baseline(self, db):
-        for i in range(4):
-            _add_food_named(db, f"meal{i}", days_ago=i * 5)  # 4 distinct logged days
-        db.commit()
-
-        fake_client = _fake_llm_client(self.PAYLOAD)
-        with patch("routers.correlations.llm_client", return_value=fake_client):
-            _generate_experiment(self.CORR_WITH_CALORIES, db, today=date.today())
-
-        sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
-        assert "Daily calories" in sent_content
-
     def test_dropping_the_only_correlation_falls_back_to_the_canned_experiment(self, db):
         corr = [self.CORR_WITH_CALORIES[0]]  # avg_calories only, no other factor to fall back to
         exp = _generate_experiment(corr, db, today=date.today())
 
         assert exp.action is None
         assert "at least 3 weeks of data" in exp.text
+
+    def test_llm_proposing_a_raw_calorie_target_anyway_falls_back_to_the_canned_experiment(self, db):
+        """Defense in depth: even with no calorie correlation data in the prompt, the
+        LLM can still propose one out of its own general knowledge -- observed happening
+        in practice. Must be discarded, not persisted."""
+        payload = {
+            "text": "t", "hypothesis": "h",
+            "action": "Consume ~1,800 kcal daily (about 300 kcal more than my current intake)",
+            "health_metric": None, "health_goal": None,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        fake_client = _fake_llm_client(payload)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            exp = _generate_experiment(self.CORR_WITH_CALORIES, db, today=date.today())
+
+        assert exp.action is None
+        assert exp.health_metric is None
+        assert exp.habit_id is None
+
+    def test_a_genuinely_supported_experiment_is_not_discarded(self, db):
+        fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
+        with patch("routers.correlations.llm_client", return_value=fake_client):
+            exp = _generate_experiment(self.CORR_WITH_CALORIES, db, today=date.today())
+
+        assert exp.action == "Walk 8,000 steps every day"
+        assert exp.health_metric == "steps"
 
 
 class TestRecentAvgSteps:

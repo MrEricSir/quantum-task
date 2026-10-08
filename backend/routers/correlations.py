@@ -522,29 +522,50 @@ def _established_foods(
     return results[:8]
 
 
-# Correlation factors that describe an aggregate over ALL food logged that day,
-# rather than one specific named food -- these need a real overall food-logging
-# habit behind them (see _food_logging_days below), not just 3 weekly averages
-# that could each be built from a single stray entry.
-_FOOD_VOLUME_FACTOR_KEYS = {"avg_calories", "avg_food_quality"}
-_FOOD_VOLUME_MIN_DAYS = 4
+# Correlation factors describing an aggregate over ALL food logged that day (not one
+# specific named food) have NO supported way to become a trackable experiment target in
+# this app: health_metric only covers Withings-verified steps/fat_ratio/weight, and
+# food_avoid_name only covers avoiding one SPECIFIC named food (auto-checked via
+# FoodEntry absence) -- there is no Habit field for "stayed under N total calories" or
+# "kept diet quality above N," so a proposed experiment here always falls back to a bare,
+# unverifiable number with a manual checkbox (see PRODUCT_NOTES.md's 2026-09-29 entry).
+#
+# A prior version of this gated the two factors on food-logging VOLUME (>=4 distinct
+# days/21) rather than excluding them outright, on the theory that the real problem was
+# a thin/no baseline. That was wrong: a live DB pull after a repeat user report (2026-10-07)
+# showed the LLM proposing raw numeric calorie targets ("Consume ~1,800 kcal daily") week
+# after week for a user who logs food almost every day with calorie estimates attached --
+# plenty of "baseline," but still nothing the user can self-verify against (they don't
+# count calories) and nothing the app can auto-track. The real issue was never data
+# volume, it's that this app has no supported mechanism to act on an aggregate calorie/
+# diet-quality number at all -- so these two factors are excluded from experiment
+# generation unconditionally, not gated on logging history. They remain fully visible on
+# the passive Analysis/correlation scatter-plot page (GET /api/health/correlations, via
+# _compute_correlations directly) -- that endpoint never calls _generate_experiment, so
+# this exclusion has no effect on it; informing the user calories correlate with an
+# outcome is fine, prescribing a bare number to act on is the part with no support.
+_UNSUPPORTED_EXPERIMENT_FACTOR_KEYS = {"avg_calories", "avg_food_quality"}
+
+# Defense in depth for the same gap: even with the factors above removed from its own
+# correlation data, an LLM can still propose a generic calorie-counting action out of
+# general "common sense" (seen in practice) rather than only ever reacting to what it was
+# shown. Matches this codebase's established pattern of backstopping LLM unreliability
+# with a deterministic regex rather than trusting prompt instructions alone (see
+# CLAUDE.md's Capture/model_plugins section) -- generation_system's own explicit
+# prohibition below is the first layer, this is the second.
+_RAW_CALORIE_TARGET_RE = re.compile(r'\b\d{3,5}\b(?:\s+\w+){0,2}\s+(?:kcal|calories?)\b', re.I)
 
 
-def _food_logging_days(db: Session, today: date, window_days: int = 21) -> int:
-    """Distinct days ANY food was logged in the trailing window_days. Unlike
-    _established_foods (which counts distinct days PER food name, to find
-    candidates for a "cut out X" experiment), this measures whether the user
-    keeps a food diary at all -- used to gate calorie/diet-quality-based
-    experiment proposals on a real logging habit, since _load_weekly_obs's
-    avg_calories/avg_food_quality otherwise go non-null off a single logged
-    entry in an entire week with no minimum-day requirement of its own."""
-    window_start = (today - timedelta(days=window_days)).isoformat()
-    rows = (
-        db.query(models.FoodEntry.consumed_at)
-        .filter(models.FoodEntry.consumed_at >= window_start)
-        .all()
-    )
-    return len({str(consumed_at)[:10] for (consumed_at,) in rows})
+def _mentions_unsupported_calorie_target(action, hypothesis, health_metric, routine_type) -> bool:
+    """True if the LLM proposed a bare numeric calorie target with none of the
+    already-supported structured mechanisms backing it (health_metric for Withings
+    metrics, routine_type for workout/habit/food). Checked against action+hypothesis,
+    not text, since text is free-form description and action/hypothesis are what's
+    actually meant to be acted on and tracked."""
+    if health_metric or routine_type:
+        return False
+    combined = f"{action or ''} {hypothesis or ''}"
+    return bool(_RAW_CALORIE_TARGET_RE.search(combined))
 
 
 def _recent_avg_steps(db: Session, today: date, days: int = 28) -> float | None:
@@ -844,8 +865,7 @@ workout_*/food_* fields null — habits are tracked by completion only, so just 
 state the new target clearly in the action field; there's no structured field \
 for it. If "Frequently eaten foods" lists something the user eats regularly \
 (e.g. "coffee — ~4.5x/week"), you may instead propose reducing or eliminating \
-it for the week to see whether it's linked to the outcome — this is especially \
-interesting when diet quality or calories showed a notable correlation. Set \
+it for the week to see whether it's linked to the outcome. Set \
 routine_type="food", food_name to the EXACT food name given, and \
 food_target_frequency to a number LOWER than its current frequency (0 for full \
 elimination, or a reduced count for a cutback). The action field must still \
@@ -866,7 +886,19 @@ Recently tried experiments: avoid proposing the same metric/routine/food with \
 the same or a near-identical target as one just tried — either pick a different \
 factor/routine/food, or a meaningfully different target (a genuinely bigger \
 step, not a token +1%). Repeating the exact same experiment back-to-back \
-provides no new information.\
+provides no new information.
+
+NEVER propose a bare calorie-intake or "diet quality" target (e.g. "consume \
+1,800 kcal daily", "cut 300 calories a day", "improve diet quality") as the \
+action, even if it seems like the obvious lever for a weight-related outcome. \
+This app has no way to verify or track a daily calorie/diet-quality total \
+against a target — unlike steps/fat_ratio/weight (Withings-verified) or a \
+specific named food (tracked by the food diary) — so an experiment built \
+around one is just an unverifiable number nobody can check off. If calories \
+or diet quality seem like the most interesting angle, translate that into one \
+of the mechanisms above instead: a specific frequently-eaten food's reduction \
+("Frequently eaten foods"), an established workout/habit routine, or a \
+Withings metric — or pick the next-strongest correlation factor entirely.\
 """
 
 
@@ -974,9 +1006,7 @@ def _generate_experiment(
     if existing:
         return existing
 
-    if any(c.get("factor_key") in _FOOD_VOLUME_FACTOR_KEYS for c in correlations):
-        if _food_logging_days(db, today) < _FOOD_VOLUME_MIN_DAYS:
-            correlations = [c for c in correlations if c.get("factor_key") not in _FOOD_VOLUME_FACTOR_KEYS]
+    correlations = [c for c in correlations if c.get("factor_key") not in _UNSUPPORTED_EXPERIMENT_FACTOR_KEYS]
 
     if not correlations:
         exp = models.HealthExperiment(
@@ -1130,6 +1160,17 @@ def _generate_experiment(
             health_metric, health_goal, workout_type, workout_target_value,
             recent[0] if recent else None,
         )
+
+        # Defense in depth against the same gap _UNSUPPORTED_EXPERIMENT_FACTOR_KEYS
+        # closes above: an LLM can still propose a bare calorie target out of its own
+        # general "common sense" rather than only ever reacting to correlation data it
+        # was shown -- observed happening in practice even with the explicit prompt
+        # prohibition above in place. Raising here (rather than silently nulling fields)
+        # deliberately reuses the existing LLM-failure fallback below -- an unsupported
+        # suggestion and a genuinely failed generation call both deserve the same safe
+        # canned experiment instead of persisting something nobody can act on or verify.
+        if _mentions_unsupported_calorie_target(action, hypothesis, health_metric, routine_type):
+            raise ValueError(f"LLM proposed an unsupported calorie-target experiment: {action!r}")
     except Exception as e:
         # Was a silent `except Exception: <canned fallback>` with no logging at all -- meant
         # a real, deterministically-repeating failure (see the reasoning_effort/max_tokens
