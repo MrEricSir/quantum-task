@@ -193,7 +193,7 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 
 1. Open any card and click **✦ Assist** in the footer
 2. Click the **Code** tab
-3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments)
+3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments); these sources aren't treated as equally authoritative -- your own Developer Notes win over a conflicting GitHub issue, and a later comment wins over the original issue/PR body on the point it addresses, rather than the two being blended into a compromise
 4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
 5. The local bridge agent picks up the job, fetches the repo, and creates an isolated `git worktree` on a fresh `qtask/<id>-<slug>` branch off the latest primary branch — your own working directory is never touched, so this works even if you have uncommitted changes there
 6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them, and by default it's told not to comment on the PR/issue itself either (see [Commenting on GitHub](#commenting-on-github-allow_pr_comments) below)

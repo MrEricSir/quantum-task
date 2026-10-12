@@ -49,7 +49,7 @@ _ALLOWLIST: set[tuple[str, int]] = {
     # models.py's UTC-instant app columns -- this regex can't tell columns apart by
     # model, only by name. Used only as a display label inside LLM prompt text, not for
     # day-bucketing/analysis. Confirmed during the original 2026-09-05 audit.
-    (os.path.join("assist", "generate.py"), 244),
+    (os.path.join("assist", "generate.py"), 271),
     (os.path.join("assist", "context.py"), 178),
 }
 

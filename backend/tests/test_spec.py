@@ -105,15 +105,20 @@ def _make_eng_item(external_id, body=None, number=1, repo="owner/repo"):
         return item.id
 
 
-def _add_comment(item_id, author="alice", body="LGTM"):
+def _add_comment(item_id, author="alice", body="LGTM", created_at=None):
+    # created_at defaults to "now" but accepts an explicit value -- two comments added
+    # back-to-back in the same test can otherwise land on the same wall-clock instant,
+    # making their relative order (which the ordering test below depends on) a race
+    # rather than a guarantee.
+    created_at = created_at or datetime.now(timezone.utc)
     with TestSession() as db:
         c = models.EngineeringItemComment(
             item_id=item_id,
             github_id=hash(body) % 100000,
             author=author,
             body=body,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=created_at,
+            updated_at=created_at,
         )
         db.add(c)
         db.commit()
@@ -260,3 +265,83 @@ class TestGenerateSpec:
         with TestSession() as db:
             card = db.query(models.Card).filter_by(id=card_id).first()
             assert card.spec == "new spec content"
+
+
+class TestGenerateSpecPrecedence:
+    """Sources are not equally authoritative: the user's own Developer Notes should win
+    over a conflicting GitHub issue, and a later comment should win over the original
+    issue/PR body on the point it addresses. Previously nothing in the prompt said so --
+    everything was flattened into one undifferentiated block (user report)."""
+
+    def test_system_prompt_states_developer_notes_outrank_github(self, client):
+        card_id = _make_card("Feature")
+        mock_client = _mock_llm()
+        with patch("assist.generate.llm_client", return_value=mock_client):
+            client.post(f"/api/cards/{card_id}/spec/generate")
+
+        messages = mock_client.chat.completions.create.call_args[1]["messages"]
+        system_content = next(m["content"] for m in messages if m["role"] == "system")
+        assert "most authoritative" in system_content
+        assert "Developer Notes" in system_content
+
+    def test_system_prompt_states_later_comments_supersede_the_body(self, client):
+        card_id = _make_card("Feature")
+        mock_client = _mock_llm()
+        with patch("assist.generate.llm_client", return_value=mock_client):
+            client.post(f"/api/cards/{card_id}/spec/generate")
+
+        messages = mock_client.chat.completions.create.call_args[1]["messages"]
+        system_content = next(m["content"] for m in messages if m["role"] == "system")
+        assert "supersede" in system_content.lower()
+
+    def test_developer_notes_section_is_labeled_authoritative(self, client):
+        card_id = _make_card("Feature", description="Use JWT, not sessions")
+        mock_client = _mock_llm()
+        with patch("assist.generate.llm_client", return_value=mock_client):
+            client.post(f"/api/cards/{card_id}/spec/generate")
+
+        user_content = next(
+            m["content"] for m in mock_client.chat.completions.create.call_args[1]["messages"]
+            if m["role"] == "user"
+        )
+        assert "Developer Notes (most authoritative" in user_content
+
+    def test_github_description_and_comments_are_labeled_with_precedence_hints(self, client):
+        ext_id = "github:owner/repo/issues/9"
+        card_id = _make_card("GH Feature", external_id=ext_id)
+        item_id = _make_eng_item(ext_id, body="Original description")
+        _add_comment(item_id, author="bob", body="Clarification: actually do X instead")
+
+        mock_client = _mock_llm()
+        with patch("assist.generate.llm_client", return_value=mock_client):
+            client.post(f"/api/cards/{card_id}/spec/generate")
+
+        user_content = next(
+            m["content"] for m in mock_client.chat.completions.create.call_args[1]["messages"]
+            if m["role"] == "user"
+        )
+        assert "may be superseded by later comments" in user_content
+        assert "supersedes the description or an earlier comment" in user_content
+
+    def test_comments_remain_in_chronological_order(self, client):
+        """Oldest-first ordering is what makes 'a later comment supersedes an earlier
+        one' a coherent instruction -- confirms the DB relationship's own ordering
+        (EngineeringItemComment.created_at ascending) still holds, independent of the
+        new prompt wording added around it."""
+        ext_id = "github:owner/repo/issues/10"
+        card_id = _make_card("GH Feature ordering", external_id=ext_id)
+        item_id = _make_eng_item(ext_id, body="Original description")
+        _add_comment(item_id, author="alice", body="First comment",
+                     created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        _add_comment(item_id, author="bob", body="Second comment",
+                     created_at=datetime(2026, 1, 2, tzinfo=timezone.utc))
+
+        mock_client = _mock_llm()
+        with patch("assist.generate.llm_client", return_value=mock_client):
+            client.post(f"/api/cards/{card_id}/spec/generate")
+
+        user_content = next(
+            m["content"] for m in mock_client.chat.completions.create.call_args[1]["messages"]
+            if m["role"] == "user"
+        )
+        assert user_content.index("First comment") < user_content.index("Second comment")

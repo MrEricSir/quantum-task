@@ -60,9 +60,14 @@ If the calendar section says "(none in the next 7 days)", report that. If it say
 questions about calendar data.
 - CRITICAL: GitHub issue context is pre-loaded into this prompt when the task is linked \
 to a GitHub issue. Never ask the user to paste or describe the issue — it is already \
-present in the "### GitHub Issue" section. Use it as primary source of truth for \
-requirements, acceptance criteria, and design decisions. Comments reflect the discussion \
-thread and may contain important decisions or clarifications.
+present below, under its own GitHub Issue/PR heading. \
+These sources are NOT equally authoritative: "Task notes" (written directly by the user \
+in this app) take precedence over the GitHub issue if they conflict — the user wrote \
+that with full knowledge of the GitHub thread, not the other way around. Within the \
+GitHub thread itself, comments are listed oldest to newest and can supersede the \
+original issue/PR description: a later comment that clarifies or corrects something in \
+the description (or an earlier comment) reflects the current state of the discussion on \
+that point, not an equally-valid alternative to blend together with it.
 - CRITICAL: Cards and tasks are work items — they do NOT have scheduled times and are NOT \
 calendar events. Never infer or state a time for a task (e.g. "meeting at 2 PM") unless \
 that exact time appears in the "### Upcoming calendar events" section. A task titled \
@@ -84,6 +89,22 @@ This document will be handed to a developer (or an AI coding agent with full cod
 access) to implement. Your job is to describe WHAT needs to be built and WHY — not HOW \
 to build it. Do not guess at file paths, function names, or implementation details; \
 the developer has the actual source code and can make better decisions than you can.
+
+CRITICAL — precedence when sources disagree or go stale: these sources are NOT equally \
+authoritative, and arrived in this order for a reason.
+1. "Developer Notes" (written directly in this app by the person who owns this task) is \
+the most authoritative statement of current intent. If anything there conflicts with the \
+GitHub issue/PR, follow the Developer Notes — it was written with full knowledge of the \
+GitHub thread, not the other way around.
+2. Within the GitHub thread, comments are listed oldest to newest and can supersede the \
+original issue/PR description: if a comment clarifies, corrects, or changes a decision \
+stated in the description (or in an earlier comment), treat the comment as current and \
+the earlier text as superseded on that specific point — not as an equally-valid \
+alternative to synthesize a compromise from. The original description still stands on \
+any point nothing later contradicts.
+3. Do not silently paper over a genuine, unresolved disagreement between sources (e.g. \
+two comments proposing different approaches with no later resolution) — surface it under \
+Open Questions rather than picking a winner arbitrarily.
 
 Output ONLY the markdown. No preamble, no summary, no commentary about what \
 you are doing or ignoring. Start immediately with the first section heading.
@@ -135,7 +156,7 @@ def send_message(request: Request, card_id: int, req: schemas.ThreadMessageReque
     system_parts = [_ASSIST_SYSTEM]
     system_parts.append(f"\nTask the user is working on: {card.title}")
     if card.description:
-        system_parts.append(f"Task notes: {card.description}")
+        system_parts.append(f"Task notes (most authoritative -- written directly in this app): {card.description}")
     gh_lines = _github_context_lines(db, card)
     if gh_lines:
         system_parts.append("\n" + "\n".join(gh_lines))
@@ -215,7 +236,10 @@ def generate_spec(card_id: int, db: Session):
     parts: list[str] = [f"## Task\n{card.title}"]
 
     if card.description and card.description.strip():
-        parts.append(f"## Developer Notes\n{card.description.strip()}")
+        parts.append(
+            "## Developer Notes (most authoritative -- written directly in this app)\n"
+            f"{card.description.strip()}"
+        )
 
     # GitHub issue body + comments
     if card.external_id:
@@ -233,13 +257,16 @@ def generate_spec(card_id: int, db: Session):
                 f"URL: {eng_item.url}"
             )
             if eng_item.body and eng_item.body.strip():
-                gh_header += f"\n\n### Description\n{eng_item.body.strip()}"
+                gh_header += (
+                    "\n\n### Description (original -- may be superseded by later comments below)\n"
+                    f"{eng_item.body.strip()}"
+                )
             else:
                 gh_header += "\n\n### Description\n(no description)"
             parts.append(gh_header)
 
             if eng_item.comments:
-                comment_lines = ["### Comments"]
+                comment_lines = ["### Comments (oldest first -- a later comment supersedes the description or an earlier comment on the same point)"]
                 for c in eng_item.comments:
                     date_str = c.created_at.strftime("%Y-%m-%d") if c.created_at else ""
                     comment_lines.append(f"\n[{c.author or 'unknown'}] ({date_str}):\n{c.body.strip()}")

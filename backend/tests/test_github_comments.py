@@ -510,6 +510,33 @@ class TestGithubContextLines:
 
         assert "Steps to reproduce the bug" in "\n".join(result)
 
+    def test_body_and_comments_are_labeled_with_precedence_hints(self):
+        """Comments aren't just "more text about the issue" -- a later one can
+        supersede the original description on the point it addresses, and the chat
+        assistant's prompt needs that signal right where the text appears, not only in
+        the system prompt (see _ASSIST_SYSTEM's own precedence rule)."""
+        from assist.context import _github_context_lines
+        item_id = _make_eng_item(body="Original description")
+        with TestSession() as db:
+            db.add(models.EngineeringItemComment(
+                item_id=item_id, github_id=502, author="dana",
+                body="Clarification: actually do X instead",
+                created_at=NOW, updated_at=NOW,
+            ))
+            db.commit()
+
+        with TestSession() as db:
+            card = models.Card(title="Fix bug", section="today", position=0,
+                               external_id="github:owner/repo/issues/1")
+            db.add(card)
+            db.commit()
+            card = db.query(models.Card).filter_by(title="Fix bug").first()
+            result = _github_context_lines(db, card)
+
+        full_text = "\n".join(result)
+        assert "may be superseded by later comments" in full_text
+        assert "supersedes the description or an earlier comment" in full_text
+
     def test_includes_comments(self):
         from assist.context import _github_context_lines
         item_id = _make_eng_item(body="Issue description")

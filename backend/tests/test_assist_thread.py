@@ -223,6 +223,33 @@ class TestSendMessage:
         events = _read_sse(res)
         assert any("error" in e for e in events)
 
+    def test_system_prompt_states_task_notes_outrank_github(self, client):
+        """Sources aren't equally authoritative: the card's own Task notes (written
+        directly in this app) should outrank a conflicting GitHub issue -- this used to
+        say the opposite ("use it as primary source of truth"), the mirror-image of the
+        same precedence bug fixed in generate_spec's _SPEC_SYSTEM."""
+        card_id = _make_card(title="Fix bug")
+        mock_llm = _mock_llm_stream()
+        with patch("assist.generate._maybe_web_search", return_value=""):
+            with patch("assist.generate.llm_client", return_value=mock_llm):
+                client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
+
+        system_msg = mock_llm.chat.completions.create.call_args[1]["messages"][0]["content"]
+        assert "Task notes" in system_msg
+        assert "take precedence over the GitHub issue" in system_msg
+        assert "supersede the" in system_msg
+
+    def test_task_notes_are_labeled_authoritative(self, client):
+        card_id = _make_card(title="Fix bug", description="Use JWT, not sessions")
+        mock_llm = _mock_llm_stream()
+        with patch("assist.generate._maybe_web_search", return_value=""):
+            with patch("assist.generate.llm_client", return_value=mock_llm):
+                client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
+
+        system_msg = mock_llm.chat.completions.create.call_args[1]["messages"][0]["content"]
+        assert "Task notes (most authoritative" in system_msg
+        assert "Use JWT, not sessions" in system_msg
+
 
 # ── POST /thread/context-from ──────────────────────────────────────────────────
 

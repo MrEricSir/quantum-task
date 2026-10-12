@@ -169,11 +169,11 @@ def _github_context_lines(db, card) -> list[str]:
         ]
 
         if eng_item.body and eng_item.body.strip():
-            lines.append("\n**Description:**")
+            lines.append("\n**Description** (original -- may be superseded by later comments below):")
             lines.append(eng_item.body.strip())
 
         if eng_item.comments:
-            lines.append("\n**Comments:**")
+            lines.append("\n**Comments** (oldest first -- a later comment supersedes the description or an earlier comment on the same point):")
             for c in eng_item.comments:
                 date_str = c.created_at.strftime("%Y-%m-%d") if c.created_at else ""
                 author = c.author or "unknown"
