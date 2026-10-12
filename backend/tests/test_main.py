@@ -46,14 +46,12 @@ def _set_tz_offset(minutes):
 
 
 class TestExpireStaleExperiments:
-    """_expire_stale_experiments is the daily background backstop for week-rollover
-    cleanup. It used to pass server-UTC date.today() straight to
+    """_expire_stale_experiments is the daily background backstop for rolling-window
+    experiment cleanup. It used to pass server-UTC date.today() straight to
     auto_expire_stale_experiments/check_food_avoidance_habits, which disagreed with the
-    real current week right at the Sunday/Monday boundary for anyone west of UTC --
-    this cron would see "Monday" in UTC while the user's local day was still Sunday,
-    and auto-dismiss (recording an outcome for) the still-active Sunday-week
-    experiment. Fixed to resolve "today" from the stored tz_offset instead, same
-    pattern as telegram/scheduler.py's check_all()."""
+    real client-local date right at a UTC day boundary for anyone outside UTC. Fixed to
+    resolve "today" from the stored tz_offset instead, same pattern as
+    telegram/scheduler.py's check_all()."""
 
     def test_uses_stored_tz_offset_not_server_utc_clock(self, monkeypatch):
         # A large offset guarantees local "today" differs from server-UTC "today" on
@@ -64,7 +62,6 @@ class TestExpireStaleExperiments:
         expected_today = (
             datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
         ).date()
-        expected_week = "{}-W{:02d}".format(*expected_today.isocalendar()[:2])
 
         monkeypatch.setattr(main, "SessionLocal", TestingSessionLocal)
         with patch("routers.correlations.check_food_avoidance_habits") as mock_food, \
@@ -76,8 +73,7 @@ class TestExpireStaleExperiments:
 
         mock_expire.assert_called_once()
         args, kwargs = mock_expire.call_args
-        assert args[1] == expected_week
-        assert args[2] == expected_today
+        assert args[1] == expected_today
         assert kwargs["tz_offset_minutes"] == tz_offset
 
     def test_defaults_to_utc_when_no_offset_is_configured(self, monkeypatch):

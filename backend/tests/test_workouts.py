@@ -6,7 +6,7 @@ LLM parsing is mocked to avoid network calls.
 """
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -20,7 +20,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from database import Base
 import models
 from routers import workouts as workouts_router
-from routers.correlations import _current_isoweek
 from deps import get_db
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -317,7 +316,7 @@ class TestWorkoutHabitAutoCompletion:
         db_session.add(habit)
         db_session.commit()
         db_session.add(models.HealthExperiment(
-            week=_current_isoweek(), text="t", status="active",
+            started_on=date.today().isoformat(), text="t", status="active",
             workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
             habit_id=habit.id,
         ))

@@ -2484,7 +2484,8 @@ test.describe('health page', () => {
     await page.route('**/api/health/experiment', async r => {
       if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } })
       return r.fulfill({ json: {
-        id: 42, week: '2026-W22', text: 'Row 1.5 mi/day instead of 1 mi/day',
+        id: 42, started_on: '2026-05-30', duration_days: 7, ends_on: '2026-06-06', days_left: 3,
+        text: 'Row 1.5 mi/day instead of 1 mi/day',
         hypothesis: null, habit_id: 10, health_metric: null,
       } })
     })
@@ -2522,7 +2523,8 @@ test.describe('health page', () => {
       return r.fulfill({ json: HABITS })
     })
     await page.route('**/api/health/experiment', r => r.fulfill({ json: {
-      id: 43, week: '2026-W22', text: 'Walk 10,000 steps every day',
+      id: 43, started_on: '2026-05-30', duration_days: 7, ends_on: '2026-06-06', days_left: 3,
+      text: 'Walk 10,000 steps every day',
       hypothesis: null, habit_id: 11, health_metric: 'steps',
     } }))
     await page.goto('/health')
@@ -2532,6 +2534,53 @@ test.describe('health page', () => {
     // One request from mounting the habits list on page load, plus a second from the
     // invalidation triggered by the experiment response's habit_id.
     await expect.poll(() => plainHabitsRequestCount).toBeGreaterThanOrEqual(2)
+  })
+
+  test('skipping an experiment never dismisses it, and refreshes the habits list with a fresh experiment', async ({ page }) => {
+    // Skip is a distinct action from Dismiss -- it must hit its own endpoint (never the
+    // DELETE used by Dismiss), and like Dismiss it still archives the old habit and
+    // replaces the experiment, so the Habits list must refetch and a brand-new
+    // experiment must appear in its place.
+    await page.route('**/api/withings/status', r =>
+      r.fulfill({ json: { connected: true, last_synced: null } }))
+    let habitsRequestCount = 0
+    await page.route(/\/api\/habits(\?|$)/, r => {
+      habitsRequestCount += 1
+      const url = r.request().url()
+      return r.fulfill({ json: url.includes('archived=true') ? [] : HABITS })
+    })
+    let dismissCalled = false
+    let skipCalled = false
+    await page.route('**/api/health/experiment', r => {
+      if (r.request().method() === 'DELETE') {
+        dismissCalled = true
+        return r.fulfill({ json: { ok: true } })
+      }
+      return r.fulfill({ json: skipCalled ? {
+        id: 99, started_on: '2026-06-03', duration_days: 7, ends_on: '2026-06-10', days_left: 7,
+        text: 'A brand new experiment after skip',
+        hypothesis: null, habit_id: 20, health_metric: null,
+      } : {
+        id: 42, started_on: '2026-05-30', duration_days: 7, ends_on: '2026-06-06', days_left: 3,
+        text: 'Row 1.5 mi/day instead of 1 mi/day',
+        hypothesis: null, habit_id: 10, health_metric: null,
+      } })
+    })
+    await page.route('**/api/health/experiment/skip', r => {
+      skipCalled = true
+      return r.fulfill({ json: { ok: true } })
+    })
+    await page.goto('/health')
+    await waitForApp(page)
+    await expect(page.locator('.experiment-card')).toContainText('Row 1.5 mi/day instead of 1 mi/day')
+
+    const countBeforeSkip = habitsRequestCount
+    await page.getByRole('button', { name: /skip \(no outcome recorded\)/i }).click()
+
+    await expect.poll(() => habitsRequestCount).toBeGreaterThan(countBeforeSkip)
+    await expect(page.locator('.experiment-card')).toContainText('A brand new experiment after skip')
+    expect(skipCalled).toBe(true)
+    expect(dismissCalled).toBe(false)
   })
 
   test('logging a manual measurement POSTs the entry and shows it in the list', async ({ page }) => {
@@ -2923,7 +2972,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 42, week: '2026-W22', text: 'Row 2 mi/day instead of 1 mi/day',
+        id: 42, started_on: '2026-05-25', duration_days: 7, ends_on: '2026-06-01',
+        text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: null, fat_delta: null, weight_baseline: null, fat_baseline: null,
@@ -2993,7 +3043,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 42, week: '2026-W22', text: 'Row 2 mi/day instead of 1 mi/day',
+        id: 42, started_on: '2026-05-25', duration_days: 7, ends_on: '2026-06-01',
+        text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: null, fat_delta: null, weight_baseline: null, fat_baseline: null,
@@ -3007,7 +3058,7 @@ test.describe('health page', () => {
     await page.goto('/health')
     await waitForApp(page)
     await page.getByRole('button', { name: /show past experiments/i }).click()
-    const row = page.locator('.exp-history-row', { hasText: '2026-W22' })
+    const row = page.locator('.exp-history-row')
     await expect(row.locator('.exp-verdict')).toHaveText('Significant change')
   })
 
@@ -3022,7 +3073,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 47, week: '2026-W27', text: 'Row 2 mi/day instead of 1 mi/day',
+        id: 47, started_on: '2026-06-29', duration_days: 7, ends_on: '2026-07-06',
+        text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3036,7 +3088,7 @@ test.describe('health page', () => {
     await page.goto('/health')
     await waitForApp(page)
     await page.getByRole('button', { name: /show past experiments/i }).click()
-    const row = page.locator('.exp-history-row', { hasText: '2026-W27' })
+    const row = page.locator('.exp-history-row')
     await expect(row.locator('.exp-verdict')).toHaveText('Not enough adherence to judge')
   })
 
@@ -3045,7 +3097,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 48, week: '2026-W28', text: 'Row 2 mi/day instead of 1 mi/day',
+        id: 48, started_on: '2026-07-06', duration_days: 7, ends_on: '2026-07-13',
+        text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3068,7 +3121,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 49, week: '2026-W29', text: 'Row 2 mi/day instead of 1 mi/day',
+        id: 49, started_on: '2026-07-13', duration_days: 7, ends_on: '2026-07-20',
+        text: 'Row 2 mi/day instead of 1 mi/day',
         hypothesis: null, action: 'Row 2 mi/day instead of 1 mi/day', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3095,7 +3149,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 50, week: '2026-W30', text: 'Sleep 8 hours a night',
+        id: 50, started_on: '2026-07-20', duration_days: 7, ends_on: '2026-07-27',
+        text: 'Sleep 8 hours a night',
         hypothesis: null, action: 'Sleep 8 hours a night', status: 'dismissed',
         habit_id: 12, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3107,7 +3162,7 @@ test.describe('health page', () => {
     await page.goto('/health')
     await waitForApp(page)
     await page.getByRole('button', { name: /show past experiments/i }).click()
-    const row = page.locator('.exp-history-row', { hasText: '2026-W30' })
+    const row = page.locator('.exp-history-row')
     await expect(row.locator('.seg-caveat')).toContainText('Steps also rose ~200%')
   })
 
@@ -3116,7 +3171,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 43, week: '2026-W23', text: 'Cut out coffee this week',
+        id: 43, started_on: '2026-06-01', duration_days: 7, ends_on: '2026-06-08',
+        text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3139,7 +3195,7 @@ test.describe('health page', () => {
     await expect(card.getByText('1x')).toBeVisible()
 
     await page.getByRole('button', { name: /show past experiments/i }).click()
-    const row = page.locator('.exp-history-row', { hasText: '2026-W23' })
+    const row = page.locator('.exp-history-row')
     await expect(row.locator('.exp-verdict')).toHaveText('Better than usual')
   })
 
@@ -3148,7 +3204,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 44, week: '2026-W24', text: 'Cut out coffee this week',
+        id: 44, started_on: '2026-06-08', duration_days: 7, ends_on: '2026-06-15',
+        text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         // Weight delta looks "better than usual" on paper, but adherence
@@ -3166,7 +3223,7 @@ test.describe('health page', () => {
     await expect(card.getByText('not adhered', { exact: true })).toBeVisible()
 
     await page.getByRole('button', { name: /show past experiments/i }).click()
-    const row = page.locator('.exp-history-row', { hasText: '2026-W24' })
+    const row = page.locator('.exp-history-row')
     await expect(row.locator('.exp-verdict')).toHaveText('Not enough adherence to judge')
   })
 
@@ -3175,7 +3232,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 45, week: '2026-W25', text: 'Cut out coffee this week',
+        id: 45, started_on: '2026-06-15', duration_days: 7, ends_on: '2026-06-22',
+        text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,
@@ -3197,7 +3255,8 @@ test.describe('health page', () => {
       r.fulfill({ json: { connected: true, last_synced: null } }))
     await page.route('**/api/health/experiments', r => r.fulfill({ json: [
       {
-        id: 46, week: '2026-W26', text: 'Cut out coffee this week',
+        id: 46, started_on: '2026-06-22', duration_days: 7, ends_on: '2026-06-29',
+        text: 'Cut out coffee this week',
         hypothesis: null, action: 'Cut out coffee entirely this week', status: 'dismissed',
         habit_id: null, health_metric: null, health_goal: null,
         weight_delta: -0.05, fat_delta: null, weight_baseline: 0.02, fat_baseline: null,

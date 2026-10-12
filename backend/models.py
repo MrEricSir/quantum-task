@@ -26,7 +26,8 @@ Three patterns are used, intentionally:
   hold local time already — do not "fix" them by attaching UTC tzinfo.
 
 • ``String`` columns holding YYYY-MM-DD dates (e.g. ``HabitCompletion.date``,
-  ``HabitStreakDay.date``, ``WithingsMeasurement.date``) — store date-only
+  ``HabitStreakDay.date``, ``WithingsMeasurement.date``, ``HealthExperiment.started_on``)
+  — store date-only
   values as plain strings.  SQLite has no native DATE type; using String avoids
   timezone ambiguity for calendar dates that are inherently tz-agnostic (a
   habit "completed on 2026-06-20" is the same regardless of tz).
@@ -267,11 +268,20 @@ class FoodEntry(Base):
 
 
 class HealthExperiment(Base):
-    """One row per weekly experiment — persisted for historical comparison."""
+    """One row per experiment — persisted for historical comparison."""
     __tablename__ = "health_experiments"
 
     id         = Column(Integer, primary_key=True, index=True)
-    week       = Column(String, nullable=False)       # ISO week "2026-W26"
+    # Local calendar date the experiment began, "YYYY-MM-DD" -- a rolling anchor, not tied
+    # to any ISO calendar week (replaces the old `week` column). A plain local-date string
+    # like HabitCompletion.date, set once at creation from the caller's already-correct
+    # local `today` -- never re-derived from created_at (a UTC instant) at read time, the
+    # exact bug class this app's timezone-handling convention exists to avoid.
+    started_on    = Column(String, nullable=False)
+    # Length of this experiment's active window in days. Always 7 today, but a real
+    # per-row field (not a module constant) so a future variable-duration experiment
+    # (shorter, every-other-day, etc.) needs no schema change.
+    duration_days = Column(Integer, nullable=False, default=7)
     text       = Column(String, nullable=False)        # LLM description shown to user
     hypothesis = Column(String, nullable=True)
     action     = Column(String, nullable=True)         # specific daily action
@@ -283,13 +293,17 @@ class HealthExperiment(Base):
                                                          # of generation drift (independent of which
                                                          # field-group actually ends up populated)
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    dismissed_at = Column(DateTime, nullable=True)
-    status      = Column(String, default="active")    # "active" | "dismissed"
+    dismissed_at = Column(DateTime, nullable=True)  # when this experiment stopped being
+                                                     # active -- dismissed OR skipped
+    status      = Column(String, default="active")    # "active" | "dismissed" | "skipped"
+                                                        # (skipped = ended with no outcome
+                                                        # recorded; never shows in history or
+                                                        # the routine leaderboard)
 
     # Outcome metrics — filled on dismiss
     habit_completion_rate = Column(Float, nullable=True)  # 0–1 fraction of days checked
-    weight_delta    = Column(Float, nullable=True)   # kg/day during experiment week
-    fat_delta       = Column(Float, nullable=True)   # %/day during experiment week
+    weight_delta    = Column(Float, nullable=True)   # kg/day during the experiment window
+    fat_delta       = Column(Float, nullable=True)   # %/day during the experiment window
     weight_baseline = Column(Float, nullable=True)   # avg kg/day across prior weeks (control)
     fat_baseline    = Column(Float, nullable=True)
 

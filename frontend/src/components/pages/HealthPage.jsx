@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, fetchHealthExperiments, fetchRoutineSummary, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, updateWorkoutEntry, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
+import { fetchHealthCorrelations, fetchHealthExperiment, dismissHealthExperiment, skipHealthExperiment, fetchHealthExperiments, fetchRoutineSummary, createFoodEntry, fetchFoodEntries, updateFoodEntry, deleteFoodEntry, localDateTime, localDate, localDateOf, fetchMoodToday, logMood, fetchFoodQualityTrend, createWorkoutEntry, fetchWorkoutEntries, updateWorkoutEntry, fetchWorkoutChart, deleteWorkoutEntry } from '../../api'
 import { useModalContext } from '../../context/ModalContext'
 import { isoToLocal } from '../modals/CardForm'
 import { useDailyLog } from '../../hooks/useDailyLog'
@@ -482,19 +482,42 @@ function CorrelationBar({ r, p, factor, outcome, n, scatter }) {
   )
 }
 
-// ── ISO week helpers (client-side) ────────────────────────────────────────────
+// ── Experiment date helpers (client-side) ─────────────────────────────────────
 
-function isoWeekDates(weekStr) {
-  const m = weekStr?.match(/^(\d{4})-W(\d{2})$/)
-  if (!m) return []
-  const y = parseInt(m[1]), w = parseInt(m[2])
-  const jan4 = new Date(y, 0, 4)
-  const isoDay = (jan4.getDay() + 6) % 7
-  const weekStart = new Date(jan4.getTime() - isoDay * 86400000 + (w - 1) * 7 * 86400000)
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart.getTime() + i * 86400000)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })
+// Same short-date format already used throughout this file (e.g. the measurement
+// charts' recent-reading labels) -- noon-anchored to avoid a bare date string shifting
+// to the adjacent day when parsed near a local timezone boundary.
+function fmtShortDate(dateStr) {
+  return new Date(dateStr + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+
+// Single-letter weekday label for a progress-strip day, derived from the date itself --
+// not from its position in the strip, since an experiment's started_on (and so its first
+// day) is no longer always a Monday.
+function dayLetter(dateStr) {
+  return DAY_LETTERS[new Date(dateStr + 'T12:00:00').getDay()]
+}
+
+function experimentDateRangeLabel(exp) {
+  if (!exp.started_on) return ''
+  const start = fmtShortDate(exp.started_on)
+  if (!exp.ends_on) return start
+  const endInclusive = localDateOf(new Date(new Date(exp.ends_on + 'T00:00:00').getTime() - 86400000))
+  return `${start} – ${fmtShortDate(endInclusive)}`
+}
+
+// Dates the experiment's progress strip covers, from its real started_on forward --
+// never earlier, so a mid-window replacement never shows a day before it existed as
+// falsely "missed" (the old isoWeekDates-based version reconstructed a full calendar
+// week regardless of when the experiment itself actually started).
+function experimentDayDates(exp) {
+  if (!exp?.started_on) return []
+  const start = new Date(exp.started_on + 'T00:00:00')
+  return Array.from({ length: exp.duration_days }, (_, i) =>
+    localDateOf(new Date(start.getTime() + i * 86400000))
+  )
 }
 
 // ── Experiment card ───────────────────────────────────────────────────────────
@@ -503,66 +526,69 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
   const [exp, setExp] = useState(null)
   const [loading, setLoading] = useState(true)
   const [dismissing, setDismissing] = useState(false)
+  const [skipping, setSkipping] = useState(false)
   const queryClient = useQueryClient()
 
   useEffect(() => {
     fetchHealthExperiment()
       .then((data) => {
         setExp(data)
-        // The very first load of a new week has nothing active yet, so this same GET
-        // lazily generates one server-side -- including a brand-new tracking habit, exactly
-        // like dismiss-and-regenerate below does. Without this, the Habits list (here and on
-        // the Today page) keeps showing its stale pre-fetched state and never picks up that
-        // new habit until some unrelated action happens to invalidate the cache -- a real
-        // report: "got a new experiment this week, but no habit to go along with it," when
-        // the habit had in fact been created correctly, just not reflected in the UI yet.
-        // Unconditional (not gated on whether this particular response has a habit_id) to
-        // match every other habit-invalidating call site in this file -- cheap and
-        // idempotent, and one fewer place that has to reason about response shape correctly.
+        // The very first load after none is active yet has nothing active, so this same
+        // GET lazily generates one server-side -- including a brand-new tracking habit,
+        // exactly like dismiss/skip-and-regenerate below do. Without this, the Habits
+        // list (here and on the Today page) keeps showing its stale pre-fetched state
+        // and never picks up that new habit until some unrelated action happens to
+        // invalidate the cache -- a real report: "got a new experiment, but no habit to
+        // go along with it," when the habit had in fact been created correctly, just
+        // not reflected in the UI yet. Unconditional (not gated on whether this
+        // particular response has a habit_id) to match every other habit-invalidating
+        // call site in this file -- cheap and idempotent, and one fewer place that has
+        // to reason about response shape correctly.
         queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleDismiss = async () => {
-    setDismissing(true)
+  const endActiveExperiment = async (apiCall, setBusy) => {
+    setBusy(true)
     try {
-      await dismissHealthExperiment()
-      // Dismissing archives the old habit and generating the replacement creates a new
-      // one server-side -- without this, the Habits list (here and on the Today page)
-      // keeps showing the now-archived habit and never picks up the new one until some
-      // unrelated action happens to invalidate the cache (same fix already applied to
-      // WorkoutLog's onMutate below, for the same class of "server changed a habit
-      // out from under the cache" bug).
+      await apiCall()
+      // Ending the experiment (dismiss or skip) archives the old habit, and generating
+      // the replacement creates a new one server-side -- without this, the Habits list
+      // (here and on the Today page) keeps showing the now-archived habit and never
+      // picks up the new one until some unrelated action happens to invalidate the
+      // cache (same fix already applied to WorkoutLog's onMutate below, for the same
+      // class of "server changed a habit out from under the cache" bug).
       queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
       setExp(null)
       onDismiss?.()
     } catch {
-      setDismissing(false)
+      setBusy(false)
     }
   }
+
+  const handleDismiss = () => endActiveExperiment(dismissHealthExperiment, setDismissing)
+  const handleSkip = () => endActiveExperiment(skipHealthExperiment, setSkipping)
 
   if (loading) return null
   if (!exp) return null
 
-  const weekDates = isoWeekDates(exp.week)
+  const dayDates = experimentDayDates(exp)
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const daysLeft = weekDates.length
-    ? Math.max(0, Math.ceil((new Date(weekDates[6] + 'T23:59:59').getTime() - today.getTime()) / 86400000))
-    : null
+  const daysLeft = exp.days_left
 
-  // Mid-week progress: which days has the experiment habit been completed?
+  // Mid-window progress: which days has the experiment habit been completed?
   const completedSet = new Set(
     exp.habit_id ? (habitCompletions?.[String(exp.habit_id)] ?? []) : []
   )
-  const showProgress = exp.habit_id && weekDates.length === 7
+  const showProgress = exp.habit_id && dayDates.length > 0
 
   return (
     <div className="experiment-card">
       <div className="experiment-header">
         <span className="experiment-badge">This week's experiment</span>
-        {daysLeft !== null && (
+        {daysLeft != null && (
           <span className="experiment-days">{daysLeft} day{daysLeft !== 1 ? 's' : ''} left</span>
         )}
       </div>
@@ -575,7 +601,7 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
       )}
       {showProgress && (
         <div className="experiment-progress">
-          {weekDates.map((d, i) => {
+          {dayDates.map((d) => {
             const done = completedSet.has(d)
             const isPast = new Date(d + 'T23:59:59') < today
             const isToday = d === localDate()
@@ -585,7 +611,7 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
                 className={`exp-day${done ? ' exp-day--done' : isPast ? ' exp-day--missed' : isToday ? ' exp-day--today' : ' exp-day--future'}`}
                 title={d}
               >
-                {done ? '✓' : ['M','T','W','T','F','S','S'][i]}
+                {done ? '✓' : dayLetter(d)}
               </div>
             )
           })}
@@ -595,9 +621,17 @@ function ExperimentCard({ onDismiss, habitCompletions }) {
         <button
           className="experiment-dismiss"
           onClick={handleDismiss}
-          disabled={dismissing}
+          disabled={dismissing || skipping}
         >
           {dismissing ? 'Dismissing…' : 'Dismiss & generate new'}
+        </button>
+        <button
+          className="experiment-skip"
+          onClick={handleSkip}
+          disabled={dismissing || skipping}
+          title="End this experiment without recording an outcome"
+        >
+          {skipping ? 'Skipping…' : 'Skip (no outcome recorded)'}
         </button>
       </div>
     </div>
@@ -712,7 +746,7 @@ function ExperimentsHistory({ isImperial }) {
             return (
               <div key={exp.id} className="exp-history-row">
                 <div className="exp-history-header">
-                  <span className="exp-history-week">{exp.week}</span>
+                  <span className="exp-history-week">{experimentDateRangeLabel(exp)}</span>
                   {verdict && <span className={`exp-verdict ${verdict.cls}`}>{verdict.label}</span>}
                   {exp.habit_completion_rate != null && (
                     <span className="exp-history-rate">

@@ -563,6 +563,12 @@ export async function dismissHealthExperiment() {
   return res.json()
 }
 
+export async function skipHealthExperiment() {
+  const res = await apiFetch('/api/health/experiment/skip', { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to skip experiment')
+  return res.json()
+}
+
 export async function fetchHealthExperiments() {
   const res = await apiFetch('/api/health/experiments')
   if (!res.ok) throw new Error('Failed to fetch experiment history')

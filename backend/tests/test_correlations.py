@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from database import Base
 import models
 from routers.correlations import (
-    _load_weekly_obs, _migrate_appsetting,
+    _load_weekly_obs, _rolling_obs, _migrate_appsetting,
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
@@ -336,7 +336,7 @@ class TestMigrateAppsetting:
         exp = _migrate_appsetting(db)
 
         assert exp is not None
-        assert exp.week == "2026-W25"
+        assert exp.started_on == "2026-06-15"  # _week_start("2026-W25")
         assert exp.text == "Try more sleep"
         assert exp.habit_id == 3
         assert exp.health_metric == "steps"
@@ -628,27 +628,27 @@ class TestNudgeIfNearDuplicate:
         assert (goal, workout_target) == (8000, None)
 
     def test_nudges_identical_health_goal(self):
-        prev = models.HealthExperiment(week="2020-W01", text="t", health_metric="steps", health_goal=8000.0)
+        prev = models.HealthExperiment(started_on="2020-01-01", text="t", health_metric="steps", health_goal=8000.0)
         goal, _ = _nudge_if_near_duplicate("steps", 8000, None, None, prev)
         assert goal == 9600
 
     def test_leaves_meaningfully_different_health_goal_unchanged(self):
-        prev = models.HealthExperiment(week="2020-W01", text="t", health_metric="steps", health_goal=8000.0)
+        prev = models.HealthExperiment(started_on="2020-01-01", text="t", health_metric="steps", health_goal=8000.0)
         goal, _ = _nudge_if_near_duplicate("steps", 10000, None, None, prev)
         assert goal == 10000
 
     def test_leaves_different_metric_unchanged(self):
-        prev = models.HealthExperiment(week="2020-W01", text="t", health_metric="weight", health_goal=75.0)
+        prev = models.HealthExperiment(started_on="2020-01-01", text="t", health_metric="weight", health_goal=75.0)
         goal, _ = _nudge_if_near_duplicate("steps", 8000, None, None, prev)
         assert goal == 8000
 
     def test_nudges_identical_workout_target(self):
-        prev = models.HealthExperiment(week="2020-W01", text="t", workout_type="row", workout_target_value=2.0)
+        prev = models.HealthExperiment(started_on="2020-01-01", text="t", workout_type="row", workout_target_value=2.0)
         _, target = _nudge_if_near_duplicate(None, None, "row", 2.0, prev)
         assert target == 2.4
 
     def test_leaves_different_workout_type_unchanged(self):
-        prev = models.HealthExperiment(week="2020-W01", text="t", workout_type="run", workout_target_value=3.0)
+        prev = models.HealthExperiment(started_on="2020-01-01", text="t", workout_type="run", workout_target_value=3.0)
         _, target = _nudge_if_near_duplicate(None, None, "row", 2.0, prev)
         assert target == 2.0
 
@@ -656,20 +656,19 @@ class TestNudgeIfNearDuplicate:
 class TestRecordOutcomeWorkout:
 
     def test_computes_baseline_and_experiment_averages_and_pvalue(self, db):
-        scratch_week = "2026-W10"
-        ws = _week_start(scratch_week)
+        started = date(2026, 3, 9)
         for i, v in enumerate([1.0, 1.1, 0.9, 1.0]):
             db.add(models.WorkoutEntry(
                 raw_input="row", type="row", value=v, unit="mi",
-                logged_at=datetime.combine(ws - timedelta(days=14 + i), datetime.min.time()),
+                logged_at=datetime.combine(started - timedelta(days=14 + i), datetime.min.time()),
             ))
         for i, v in enumerate([2.0, 1.9, 2.1, 2.0]):
             db.add(models.WorkoutEntry(
                 raw_input="row", type="row", value=v, unit="mi",
-                logged_at=datetime.combine(ws + timedelta(days=i), datetime.min.time()),
+                logged_at=datetime.combine(started + timedelta(days=i), datetime.min.time()),
             ))
         exp = models.HealthExperiment(
-            week=scratch_week, text="t", workout_type="row",
+            started_on=started.isoformat(), text="t", workout_type="row",
             workout_target_value=2.0, workout_unit="mi",
         )
         db.add(exp)
@@ -685,7 +684,7 @@ class TestRecordOutcomeWorkout:
         assert exp.workout_p < 0.05
 
     def test_leaves_workout_fields_none_when_no_workout_type(self, db):
-        exp = models.HealthExperiment(week="2026-W10", text="t")
+        exp = models.HealthExperiment(started_on="2026-03-09", text="t")
         db.add(exp)
         db.commit()
 
@@ -695,14 +694,13 @@ class TestRecordOutcomeWorkout:
         assert exp.workout_p is None
 
     def test_p_stays_none_with_insufficient_samples(self, db):
-        scratch_week = "2026-W11"
-        ws = _week_start(scratch_week)
+        started = date(2026, 3, 16)
         db.add(models.WorkoutEntry(
             raw_input="row", type="row", value=2.0, unit="mi",
-            logged_at=datetime.combine(ws, datetime.min.time()),
+            logged_at=datetime.combine(started, datetime.min.time()),
         ))
         exp = models.HealthExperiment(
-            week=scratch_week, text="t", workout_type="row",
+            started_on=started.isoformat(), text="t", workout_type="row",
             workout_target_value=2.0, workout_unit="mi",
         )
         db.add(exp)
@@ -716,15 +714,19 @@ class TestRecordOutcomeWorkout:
     def test_baseline_uses_only_weeks_workout_was_actually_present(self, db):
         # Same setup shape as TestRecordOutcomeFood's equivalent test -- 5
         # consecutive weekly weight readings, workout logged only in the
-        # weeks behind readings[1] and readings[3].
+        # windows behind readings[1] and readings[3]. Anchoring the
+        # experiment's own started_on to the LAST reading (base+28) makes
+        # _rolling_obs tile the timeline in exactly the same 5 one-reading
+        # windows a real calendar week grouping would have produced here,
+        # since the readings are already 7 days apart.
         base = date(2026, 3, 2)
         for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        assert len(weight_obs) == 4
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
+        weight_rows, _ = _rolling_obs(db, base + timedelta(days=35), started, 7)
+        assert len(weight_rows) == 4
 
         for offset in (7, 21):
             db.add(models.WorkoutEntry(
@@ -734,7 +736,7 @@ class TestRecordOutcomeWorkout:
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", workout_type="row",
+            started_on=started.isoformat(), text="t", workout_type="row",
             workout_target_value=2.0, workout_unit="mi",
         )
         db.add(exp)
@@ -743,7 +745,9 @@ class TestRecordOutcomeWorkout:
         _record_outcome(exp, db, base + timedelta(days=35))
 
         assert exp.workout_baseline_weeks_n == 2
-        expected = (weight_obs[0]["delta_per_day"] + weight_obs[2]["delta_per_day"]) / 2
+        by_window = {r["window_start"]: r["delta_per_day"] for r in weight_rows}
+        expected = (by_window[(base + timedelta(days=7)).isoformat()]
+                    + by_window[(base + timedelta(days=21)).isoformat()]) / 2
         assert abs(exp.weight_baseline - expected) < 1e-6
 
     def test_falls_back_to_generic_baseline_with_fewer_than_2_present_weeks(self, db):
@@ -752,8 +756,8 @@ class TestRecordOutcomeWorkout:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
+        weight_rows, _ = _rolling_obs(db, base + timedelta(days=35), started, 7)
 
         db.add(models.WorkoutEntry(
             raw_input="row", type="row", value=1.5, unit="mi",
@@ -762,7 +766,7 @@ class TestRecordOutcomeWorkout:
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", workout_type="row",
+            started_on=started.isoformat(), text="t", workout_type="row",
             workout_target_value=2.0, workout_unit="mi",
         )
         db.add(exp)
@@ -771,7 +775,7 @@ class TestRecordOutcomeWorkout:
         _record_outcome(exp, db, base + timedelta(days=35))
 
         assert exp.workout_baseline_weeks_n is None
-        generic = sum(r["delta_per_day"] for r in weight_obs[:-1]) / 3
+        generic = sum(r["delta_per_day"] for r in weight_rows if r["window_start"] != started.isoformat()) / 3
         assert abs(exp.weight_baseline - generic) < 1e-6
 
     def test_confound_check_compares_average_calories(self, db):
@@ -780,8 +784,7 @@ class TestRecordOutcomeWorkout:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
 
         for offset, cals in ((7, 2000), (21, 2200)):
             d = base + timedelta(days=offset)
@@ -789,13 +792,12 @@ class TestRecordOutcomeWorkout:
                                         logged_at=datetime.combine(d, datetime.min.time())))
             db.add(models.FoodEntry(raw_input="lunch", name="Lunch", category="food", calories=cals,
                                      consumed_at=datetime.combine(d, datetime.min.time())))
-        exp_day = base + timedelta(days=28)
         db.add(models.FoodEntry(raw_input="lunch", name="Lunch", category="food", calories=1500,
-                                 consumed_at=datetime.combine(exp_day, datetime.min.time())))
+                                 consumed_at=datetime.combine(started, datetime.min.time())))
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", workout_type="row",
+            started_on=started.isoformat(), text="t", workout_type="row",
             workout_target_value=2.0, workout_unit="mi",
         )
         db.add(exp)
@@ -808,27 +810,25 @@ class TestRecordOutcomeWorkout:
 
     def test_confound_check_also_compares_average_steps(self, db):
         """Steps was tracked all along but never checked as a confound for any experiment
-        type -- only calories was. Same matched-baseline weeks as the calorie test above,
+        type -- only calories was. Same matched-baseline windows as the calorie test above,
         just a different rival variable."""
         base = date(2026, 3, 2)
         for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
 
         for offset, steps in ((7, 6000), (21, 6400)):
             d = base + timedelta(days=offset)
             db.add(models.WorkoutEntry(raw_input="row", type="row", value=1.5, unit="mi",
                                         logged_at=datetime.combine(d, datetime.min.time())))
             db.add(models.WithingsMeasurement(date=d.isoformat(), metric="steps", value=steps))
-        exp_day = base + timedelta(days=28)
-        db.add(models.WithingsMeasurement(date=exp_day.isoformat(), metric="steps", value=18000))
+        db.add(models.WithingsMeasurement(date=started.isoformat(), metric="steps", value=18000))
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", workout_type="row",
+            started_on=started.isoformat(), text="t", workout_type="row",
             workout_target_value=2.0, workout_unit="mi",
         )
         db.add(exp)
@@ -838,6 +838,28 @@ class TestRecordOutcomeWorkout:
 
         confounds = json.loads(exp.confounds)
         assert confounds["avg_steps"] == {"baseline": 6200.0, "experiment": 18000.0}
+
+    def test_weight_delta_is_computed_for_a_window_not_aligned_to_a_calendar_week(self, db):
+        """The whole point of the rolling-window rework: an experiment's own window is
+        never clipped to an ISO calendar week. base here is a Wednesday, not a Monday --
+        confirms _rolling_obs still finds a real weight_delta/baseline for it rather than
+        silently coming up empty because the window doesn't start on a "real" week
+        boundary."""
+        base = date(2026, 3, 4)
+        assert base.isoweekday() == 3  # Wednesday, deliberately not a Monday
+        for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
+            _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
+        db.commit()
+
+        started = base + timedelta(days=28)
+        exp = models.HealthExperiment(started_on=started.isoformat(), text="t")
+        db.add(exp)
+        db.commit()
+
+        _record_outcome(exp, db, base + timedelta(days=35))
+
+        assert exp.weight_delta is not None
+        assert exp.weight_baseline is not None
 
 
 class TestRecordOutcomeHabit:
@@ -857,10 +879,8 @@ class TestRecordOutcomeHabit:
             ))
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
-
-        exp = models.HealthExperiment(week=exp_week, text="t")
+        started = base + timedelta(days=28)
+        exp = models.HealthExperiment(started_on=started.isoformat(), text="t")
         db.add(exp)
         db.commit()
 
@@ -870,7 +890,7 @@ class TestRecordOutcomeHabit:
         assert confounds["avg_steps"] == {"baseline": 6000.0, "experiment": 18000.0}
 
     def test_confounds_is_none_when_theres_no_data_to_compare(self, db):
-        exp = models.HealthExperiment(week="2026-W13", text="t")
+        exp = models.HealthExperiment(started_on="2026-03-23", text="t")
         db.add(exp)
         db.commit()
 
@@ -882,66 +902,84 @@ class TestRecordOutcomeHabit:
 class TestRecordOutcomeHabitCompletionRateTripDays:
 
     def test_trip_days_are_excluded_from_both_sides_of_the_rate(self, db):
-        week = "2026-W10"
-        ws = _week_start(week)
+        started = date(2026, 3, 9)
         habit = models.Habit(name="Meditate")
         db.add(habit)
         db.flush()
-        exp = models.HealthExperiment(week=week, text="t", habit_id=habit.id)
+        exp = models.HealthExperiment(started_on=started.isoformat(), text="t", habit_id=habit.id)
         db.add(exp)
-        trip_start = ws + timedelta(days=3)
-        trip_end = ws + timedelta(days=4)
+        trip_start = started + timedelta(days=3)
+        trip_end = started + timedelta(days=4)
         db.add(models.Trip(start_date=trip_start.isoformat(), end_date=trip_end.isoformat()))
         # Completed on days 0, 1, 2 (non-trip) -- 3 out of (7 - 2) = 5 eligible days.
         for i in [0, 1, 2]:
-            db.add(models.HabitCompletion(habit_id=habit.id, date=(ws + timedelta(days=i)).isoformat()))
+            db.add(models.HabitCompletion(habit_id=habit.id, date=(started + timedelta(days=i)).isoformat()))
         db.commit()
 
-        _record_outcome(exp, db, ws + timedelta(days=10))
+        _record_outcome(exp, db, started + timedelta(days=10))
 
         assert abs(exp.habit_completion_rate - (3 / 5)) < 1e-9
 
     def test_a_completion_during_a_trip_does_not_push_the_rate_above_one(self, db):
-        week = "2026-W10"
-        ws = _week_start(week)
+        started = date(2026, 3, 9)
         habit = models.Habit(name="Meditate")
         db.add(habit)
         db.flush()
-        exp = models.HealthExperiment(week=week, text="t", habit_id=habit.id)
+        exp = models.HealthExperiment(started_on=started.isoformat(), text="t", habit_id=habit.id)
         db.add(exp)
-        trip_day = ws + timedelta(days=3)
+        trip_day = started + timedelta(days=3)
         db.add(models.Trip(start_date=trip_day.isoformat(), end_date=trip_day.isoformat()))
         for i in range(7):
-            db.add(models.HabitCompletion(habit_id=habit.id, date=(ws + timedelta(days=i)).isoformat()))
+            db.add(models.HabitCompletion(habit_id=habit.id, date=(started + timedelta(days=i)).isoformat()))
         db.commit()
 
-        _record_outcome(exp, db, ws + timedelta(days=10))
+        _record_outcome(exp, db, started + timedelta(days=10))
 
         assert exp.habit_completion_rate == 1.0
+
+    def test_habit_completion_rate_is_prorated_to_elapsed_days_not_a_fixed_seven(self, db):
+        """The exact bug this whole rolling-window rework fixes: a mid-window dismiss
+        (or skip) used to still divide by a hardcoded 7, unfairly penalizing a window
+        that never got the full 7 days to prove itself. An experiment started 3 days ago
+        and recorded today must have a denominator of 3, not 7."""
+        started = date.today() - timedelta(days=3)
+        habit = models.Habit(name="Meditate")
+        db.add(habit)
+        db.flush()
+        exp = models.HealthExperiment(started_on=started.isoformat(), text="t", habit_id=habit.id)
+        db.add(exp)
+        # Completed on 2 of the 3 days that have actually elapsed.
+        db.add(models.HabitCompletion(habit_id=habit.id, date=started.isoformat()))
+        db.add(models.HabitCompletion(habit_id=habit.id, date=(started + timedelta(days=1)).isoformat()))
+        db.commit()
+
+        _record_outcome(exp, db, date.today())
+
+        assert exp.habit_completion_rate == round(2 / 3, 3)
 
 
 class TestRoutineIdentity:
 
     def test_metric_identity(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t", health_metric="steps")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", health_metric="steps")
         assert _routine_identity(exp) == ("metric", "steps")
 
     def test_workout_identity(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t", workout_type="row")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", workout_type="row")
         assert _routine_identity(exp) == ("workout", "row")
 
     def test_food_identity(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t", food_name="coffee")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", food_name="coffee")
         assert _routine_identity(exp) == ("food", "coffee")
 
     def test_habit_routine_has_no_identity(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", action="screen-free time", routine_type="habit",
+            started_on="2026-03-02", text="t", action="screen-free time", routine_type="habit",
         )
         assert _routine_identity(exp) is None
 
     def test_no_fields_set_has_no_identity(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t")
         assert _routine_identity(exp) is None
 
 
@@ -949,32 +987,32 @@ class TestRoutineAdhered:
 
     def test_food_adhered_when_cut_to_half_or_less(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", food_name="coffee",
+            started_on="2026-03-02", text="t", food_name="coffee",
             food_baseline_frequency=4.0, food_experiment_count=1,
         )
         assert _routine_adhered(exp) is True
 
     def test_food_not_adhered_when_still_at_usual_frequency(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", food_name="coffee",
+            started_on="2026-03-02", text="t", food_name="coffee",
             food_baseline_frequency=4.0, food_experiment_count=4,
         )
         assert _routine_adhered(exp) is False
 
     def test_food_unknown_when_missing_data(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t", food_name="coffee")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", food_name="coffee")
         assert _routine_adhered(exp) is None
 
     def test_workout_adhered_via_significant_pvalue(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", workout_type="row",
+            started_on="2026-03-02", text="t", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=1.05, workout_p=0.01,
         )
         assert _routine_adhered(exp) is True
 
     def test_workout_adhered_via_target_met(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", workout_type="row",
+            started_on="2026-03-02", text="t", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.5,
         )
@@ -982,30 +1020,30 @@ class TestRoutineAdhered:
 
     def test_workout_not_adhered_when_neither_condition_met(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", workout_type="row",
+            started_on="2026-03-02", text="t", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=1.1,
             workout_target_value=2.0, workout_p=0.5,
         )
         assert _routine_adhered(exp) is False
 
     def test_workout_unknown_when_missing_data(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t", workout_type="row")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", workout_type="row")
         assert _routine_adhered(exp) is None
 
     def test_metric_adhered_via_habit_completion_rate(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", health_metric="steps", habit_completion_rate=0.7,
+            started_on="2026-03-02", text="t", health_metric="steps", habit_completion_rate=0.7,
         )
         assert _routine_adhered(exp) is True
 
     def test_metric_not_adhered_below_half(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", health_metric="steps", habit_completion_rate=0.3,
+            started_on="2026-03-02", text="t", health_metric="steps", habit_completion_rate=0.3,
         )
         assert _routine_adhered(exp) is False
 
     def test_metric_unknown_when_no_habit(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t", health_metric="steps")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", health_metric="steps")
         assert _routine_adhered(exp) is None
 
 
@@ -1013,7 +1051,7 @@ class TestRoutineEffect:
 
     def test_averages_weight_and_fat_when_both_present(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t",
+            started_on="2026-03-02", text="t",
             weight_delta=-0.05, weight_baseline=-0.01,
             fat_delta=-0.03, fat_baseline=-0.01,
         )
@@ -1021,19 +1059,19 @@ class TestRoutineEffect:
 
     def test_uses_weight_only_when_no_fat_data(self):
         exp = models.HealthExperiment(
-            week="2026-W10", text="t", weight_delta=-0.05, weight_baseline=-0.01,
+            started_on="2026-03-02", text="t", weight_delta=-0.05, weight_baseline=-0.01,
         )
         assert abs(_routine_effect(exp) - -0.04) < 1e-9
 
     def test_none_when_neither_present(self):
-        exp = models.HealthExperiment(week="2026-W10", text="t")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t")
         assert _routine_effect(exp) is None
 
 
 class TestGetRoutineSummary:
 
     def _dismissed(self, db, **kwargs):
-        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults = dict(started_on="2026-03-02", text="t", status="dismissed")
         defaults.update(kwargs)
         exp = models.HealthExperiment(**defaults)
         db.add(exp)
@@ -1047,7 +1085,7 @@ class TestGetRoutineSummary:
             weight_delta=-0.05, weight_baseline=-0.01,
         )
         self._dismissed(
-            db, week="2026-W15", workout_type="row",
+            db, started_on="2026-04-06", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.06, weight_baseline=-0.01,
@@ -1099,7 +1137,7 @@ class TestGetRoutineSummary:
             weight_delta=-0.05, weight_baseline=-0.01,
         )
         self._dismissed(
-            db, week="2026-W15", food_name="coffee",
+            db, started_on="2026-04-06", food_name="coffee",
             food_baseline_frequency=4.0, food_experiment_count=0,
             weight_delta=0.05, weight_baseline=-0.01,
         )
@@ -1121,7 +1159,7 @@ class TestGetRoutineSummary:
             weight_delta=0.05, weight_baseline=-0.01,
         )
         self._dismissed(
-            db, week="2026-W15", workout_type="row",
+            db, started_on="2026-04-06", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.05, weight_baseline=-0.01,
@@ -1158,7 +1196,7 @@ class TestNeglectedWorkoutCategory:
 class TestLastWeekWin:
 
     def _dismissed(self, db, **kwargs):
-        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults = dict(started_on="2026-03-02", text="t", status="dismissed")
         defaults.update(kwargs)
         exp = models.HealthExperiment(**defaults)
         db.add(exp)
@@ -1212,7 +1250,7 @@ class TestLastWeekWin:
 class TestTopPastWinner:
 
     def _dismissed(self, db, **kwargs):
-        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults = dict(started_on="2026-03-02", text="t", status="dismissed")
         defaults.update(kwargs)
         exp = models.HealthExperiment(**defaults)
         db.add(exp)
@@ -1240,20 +1278,20 @@ class TestTopPastWinner:
 
     def test_excludes_a_winner_tried_again_recently(self, db):
         self._dismissed(
-            db, week="2026-W05", workout_type="row",
+            db, started_on="2026-01-26", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.05, weight_baseline=-0.01,
         )
         # Tried again more recently (any status/outcome) -- shouldn't be resurfaced as
         # "not tried again recently" when it literally was.
-        self._dismissed(db, week="2026-W09", workout_type="row", action="Row 2.2 mi")
+        self._dismissed(db, started_on="2026-02-23", workout_type="row", action="Row 2.2 mi")
 
         assert _top_past_winner(db, exclude_recent=4) is None
 
     def test_includes_a_winner_not_tried_in_a_while(self, db):
         self._dismissed(
-            db, week="2026-W01", workout_type="row",
+            db, started_on="2025-12-29", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.05, weight_baseline=-0.01,
@@ -1263,7 +1301,7 @@ class TestTopPastWinner:
         # count as "recent"; with exclude_recent=3 only the 3 newest do, leaving the row
         # win outside the window and eligible again.
         for i in range(3):
-            self._dismissed(db, week=f"2026-W1{i}", health_metric="steps", health_goal=8000)
+            self._dismissed(db, started_on=f"2026-04-{10 + i:02d}", health_metric="steps", health_goal=8000)
 
         assert _top_past_winner(db, exclude_recent=4) is None
         assert _top_past_winner(db, exclude_recent=3)["label"] == "row"
@@ -1275,7 +1313,7 @@ class TestTopPastWinner:
             weight_delta=-0.08, weight_baseline=-0.01,  # stronger effect than the food one
         )
         self._dismissed(
-            db, week="2026-W11", food_name="coffee",
+            db, started_on="2026-03-09", food_name="coffee",
             food_baseline_frequency=4.0, food_experiment_count=0,
             weight_delta=-0.03, weight_baseline=-0.01,
         )
@@ -1313,9 +1351,9 @@ class TestRecomputeExperimentOutcomes:
     improvement) applies retroactively instead of only to experiments that haven't run yet."""
 
     def test_recomputes_every_non_active_experiment_and_returns_the_count(self, db):
-        db.add(models.HealthExperiment(week="2026-W05", text="t", status="dismissed"))
-        db.add(models.HealthExperiment(week="2026-W06", text="t", status="dismissed"))
-        db.add(models.HealthExperiment(week="2026-W07", text="t", status="active"))
+        db.add(models.HealthExperiment(started_on="2026-01-26", text="t", status="dismissed"))
+        db.add(models.HealthExperiment(started_on="2026-02-02", text="t", status="dismissed"))
+        db.add(models.HealthExperiment(started_on="2026-02-09", text="t", status="active"))
         db.commit()
 
         from routers.correlations import recompute_experiment_outcomes
@@ -1323,10 +1361,10 @@ class TestRecomputeExperimentOutcomes:
 
         assert result == {"recomputed": 2}
 
-    def test_anchors_to_the_experiments_own_week_not_today(self, db):
+    def test_anchors_to_the_experiments_own_window_not_today(self, db):
         """The bug this guards against: recomputing an old experiment against
-        date.today() would push its own week outside _load_weekly_obs's 90-day trailing
-        window and silently blank weight_delta/confounds instead of fixing them."""
+        date.today() would push its own window outside _rolling_obs's 90-day trailing
+        lookback and silently blank weight_delta/confounds instead of fixing them."""
         old_base = date(2026, 1, 5)  # far enough back that date.today() in these tests
                                        # (anchored around 2026-06-20 elsewhere in this file)
                                        # would put it well outside a 90-day trailing window
@@ -1338,9 +1376,8 @@ class TestRecomputeExperimentOutcomes:
             ))
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, old_base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
-        exp = models.HealthExperiment(week=exp_week, text="t", status="dismissed")
+        started = old_base + timedelta(days=28)
+        exp = models.HealthExperiment(started_on=started.isoformat(), text="t", status="dismissed")
         db.add(exp)
         db.commit()
 
@@ -1354,7 +1391,7 @@ class TestRecomputeExperimentOutcomes:
         assert confounds["avg_steps"] == {"baseline": 6000.0, "experiment": 18000.0}
 
     def test_active_experiments_are_left_untouched(self, db):
-        exp = models.HealthExperiment(week="2026-W07", text="t", status="active")
+        exp = models.HealthExperiment(started_on="2026-02-09", text="t", status="active")
         db.add(exp)
         db.commit()
 
@@ -1365,28 +1402,139 @@ class TestRecomputeExperimentOutcomes:
         assert exp.weight_delta is None
         assert exp.status == "active"
 
+    def test_skipped_experiments_are_left_untouched(self, db):
+        """A skipped experiment must never get an outcome recorded, including by this
+        maintenance endpoint -- that's the entire point of the distinct status. Its
+        filter must be status == "dismissed" specifically, not just "!= active"."""
+        exp = models.HealthExperiment(started_on="2026-02-09", text="t", status="skipped")
+        db.add(exp)
+        db.commit()
+
+        from routers.correlations import recompute_experiment_outcomes
+        result = recompute_experiment_outcomes(db=db)
+        db.refresh(exp)
+
+        assert result == {"recomputed": 0}
+        assert exp.weight_delta is None
+        assert exp.status == "skipped"
+
+
+class TestSkipHealthExperiment:
+    """POST /api/health/experiment/skip -- ends the active experiment WITHOUT recording
+    an outcome, for when the user never engaged with it at all. `request` is accepted by
+    the route signature (for consistency with every other local-date-sensitive endpoint
+    in this router) but never actually used in the body, so these tests call it directly
+    with request=None rather than constructing a real Request."""
+
+    def _skip(self, db):
+        from routers.correlations import skip_health_experiment
+        return skip_health_experiment(request=None, db=db)
+
+    def test_skipping_sets_status_and_never_calls_record_outcome(self, db):
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t")
+        db.add(exp)
+        db.commit()
+
+        result = self._skip(db)
+        db.refresh(exp)
+
+        assert result == {"ok": True}
+        assert exp.status == "skipped"
+        assert exp.dismissed_at is not None
+        assert exp.weight_delta is None
+        assert exp.habit_completion_rate is None
+        assert exp.confounds is None
+
+    def test_skipping_archives_the_linked_habit(self, db):
+        habit = models.Habit(name="🧪 Walk 8,000 steps")
+        db.add(habit)
+        db.flush()
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t", habit_id=habit.id)
+        db.add(exp)
+        db.commit()
+
+        self._skip(db)
+        db.refresh(habit)
+
+        assert habit.archived is True
+        assert habit.archived_at is not None
+
+    def test_noop_when_nothing_is_active(self, db):
+        result = self._skip(db)
+        assert result == {"ok": True}
+
+    def test_skipped_experiment_is_invisible_to_the_routine_summary(self, db):
+        habit = models.Habit(name="🧪 Row 2 miles")
+        db.add(habit)
+        db.flush()
+        exp = models.HealthExperiment(
+            started_on="2026-03-02", text="t", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01, habit_id=habit.id,
+        )
+        db.add(exp)
+        db.commit()
+
+        self._skip(db)
+
+        assert get_routine_summary(db) == []
+
+    def test_skipped_experiment_is_not_a_last_week_win_candidate(self, db):
+        exp = models.HealthExperiment(
+            started_on="2026-03-02", text="t", workout_type="row",
+            workout_baseline_avg=1.0, workout_experiment_avg=2.0,
+            workout_target_value=2.0, workout_p=0.01,
+        )
+        db.add(exp)
+        db.commit()
+
+        self._skip(db)
+
+        assert _last_week_win(db) is None
+
+    def test_next_get_generates_a_fresh_experiment_after_skip(self, db):
+        """The active-experiment guards were simplified to "is any row active" (see §3 of
+        the rolling-window plan) specifically so a Skip doesn't need its own generation
+        logic -- the very next GET already generates one once none is active. No
+        correlation data is seeded here, so the real generation path falls through to
+        the canned "not enough data" experiment -- that's fine, this test only cares that
+        a genuinely NEW row gets created, not what it says."""
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t")
+        db.add(exp)
+        db.commit()
+        skipped_id = exp.id
+
+        self._skip(db)
+
+        from routers.correlations import get_health_experiment
+        fake_request = MagicMock()
+        fake_request.headers.get.return_value = ""  # falls back to date.today()/UTC offset 0
+        response = get_health_experiment(request=fake_request, db=db)
+
+        assert response["status"] == "active"
+        assert response["id"] != skipped_id
+
 
 class TestRecordOutcomeFood:
 
     def test_counts_matching_entries_during_experiment_week(self, db):
-        scratch_week = "2026-W12"
-        ws = _week_start(scratch_week)
+        started = date(2026, 3, 16)
         for i in range(3):
             db.add(models.FoodEntry(
                 raw_input="coffee", name="Coffee", category="food",
-                consumed_at=datetime.combine(ws + timedelta(days=i), datetime.min.time()),
+                consumed_at=datetime.combine(started + timedelta(days=i), datetime.min.time()),
             ))
-        # A different food, and a matching food outside the experiment week -- neither should count
+        # A different food, and a matching food outside the experiment window -- neither should count
         db.add(models.FoodEntry(
             raw_input="tea", name="Tea", category="drink",
-            consumed_at=datetime.combine(ws + timedelta(days=1), datetime.min.time()),
+            consumed_at=datetime.combine(started + timedelta(days=1), datetime.min.time()),
         ))
         db.add(models.FoodEntry(
             raw_input="coffee", name="Coffee", category="food",
-            consumed_at=datetime.combine(ws - timedelta(days=3), datetime.min.time()),
+            consumed_at=datetime.combine(started - timedelta(days=3), datetime.min.time()),
         ))
         exp = models.HealthExperiment(
-            week=scratch_week, text="t", food_name="coffee",
+            started_on=started.isoformat(), text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0,
         )
         db.add(exp)
@@ -1398,7 +1546,7 @@ class TestRecordOutcomeFood:
 
     def test_zero_when_food_not_logged_that_week(self, db):
         exp = models.HealthExperiment(
-            week="2026-W13", text="t", food_name="coffee",
+            started_on="2026-03-23", text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0,
         )
         db.add(exp)
@@ -1409,7 +1557,7 @@ class TestRecordOutcomeFood:
         assert exp.food_experiment_count == 0
 
     def test_leaves_food_experiment_count_none_when_no_food_name(self, db):
-        exp = models.HealthExperiment(week="2026-W10", text="t")
+        exp = models.HealthExperiment(started_on="2026-03-02", text="t")
         db.add(exp)
         db.commit()
 
@@ -1418,19 +1566,22 @@ class TestRecordOutcomeFood:
         assert exp.food_experiment_count is None
 
     def test_baseline_uses_only_weeks_food_was_actually_present(self, db):
-        # 5 consecutive weekly weight readings -> 4 week-over-week delta rows.
-        # Food logged in the weeks behind readings[1] and readings[3] only --
-        # not the week behind readings[2], and not the experiment week itself.
+        # 5 consecutive weekly weight readings -> 4 window-over-window delta rows.
+        # Food logged in the windows behind readings[1] and readings[3] only --
+        # not the window behind readings[2], and not the experiment window itself.
+        # Anchoring started_on to the LAST reading (base+28) makes _rolling_obs tile
+        # the timeline in exactly the same 5 one-reading windows a real calendar week
+        # grouping would have, since the readings are already 7 days apart.
         base = date(2026, 3, 2)
         for i, w in enumerate([80.0, 80.7, 80.7, 81.4, 81.4]):
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        assert len(weight_obs) == 4
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
+        weight_rows, _ = _rolling_obs(db, base + timedelta(days=35), started, 7)
+        assert len(weight_rows) == 4
 
-        for offset in (7, 21):  # weeks behind readings[1] and readings[3]
+        for offset in (7, 21):  # windows behind readings[1] and readings[3]
             d = base + timedelta(days=offset)
             db.add(models.FoodEntry(raw_input="coffee", name="Coffee", category="food",
                                      consumed_at=datetime.combine(d, datetime.min.time())))
@@ -1439,7 +1590,7 @@ class TestRecordOutcomeFood:
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", food_name="coffee",
+            started_on=started.isoformat(), text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0,
         )
         db.add(exp)
@@ -1448,12 +1599,14 @@ class TestRecordOutcomeFood:
         _record_outcome(exp, db, base + timedelta(days=35))
 
         assert exp.food_baseline_weeks_n == 2
-        expected = (weight_obs[0]["delta_per_day"] + weight_obs[2]["delta_per_day"]) / 2
+        by_window = {r["window_start"]: r["delta_per_day"] for r in weight_rows}
+        expected = (by_window[(base + timedelta(days=7)).isoformat()]
+                    + by_window[(base + timedelta(days=21)).isoformat()]) / 2
         assert abs(exp.weight_baseline - expected) < 1e-6
-        # The all-other-weeks generic average (weeks 0,1,2) would differ from
-        # the food-matched one (weeks 0,2 only) -- confirms the override
-        # actually changed the value rather than coincidentally matching.
-        generic = sum(r["delta_per_day"] for r in weight_obs[:-1]) / 3
+        # The all-other-windows generic average (windows at day7,14,21) would differ
+        # from the food-matched one (day7,21 only) -- confirms the override actually
+        # changed the value rather than coincidentally matching.
+        generic = sum(r["delta_per_day"] for r in weight_rows if r["window_start"] != started.isoformat()) / 3
         assert abs(exp.weight_baseline - generic) > 1e-6
 
     def test_confound_check_compares_average_calories(self, db):
@@ -1462,10 +1615,9 @@ class TestRecordOutcomeFood:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
 
-        for offset, cals in ((7, 2000), (21, 2200)):  # the two food-present weeks
+        for offset, cals in ((7, 2000), (21, 2200)):  # the two food-present windows
             d = base + timedelta(days=offset)
             db.add(models.FoodEntry(raw_input="coffee", name="Coffee", category="food",
                                      consumed_at=datetime.combine(d, datetime.min.time())))
@@ -1473,14 +1625,13 @@ class TestRecordOutcomeFood:
                                      consumed_at=datetime.combine(d + timedelta(days=1), datetime.min.time())))
             db.add(models.FoodEntry(raw_input="lunch", name="Lunch", category="food", calories=cals,
                                      consumed_at=datetime.combine(d, datetime.min.time())))
-        # Calories logged during the experiment week itself
-        exp_day = base + timedelta(days=28)
+        # Calories logged during the experiment window itself
         db.add(models.FoodEntry(raw_input="lunch", name="Lunch", category="food", calories=1500,
-                                 consumed_at=datetime.combine(exp_day, datetime.min.time())))
+                                 consumed_at=datetime.combine(started, datetime.min.time())))
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", food_name="coffee",
+            started_on=started.isoformat(), text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0,
         )
         db.add(exp)
@@ -1493,7 +1644,7 @@ class TestRecordOutcomeFood:
 
     def test_confound_fields_stay_none_without_a_food_specific_baseline(self, db):
         exp = models.HealthExperiment(
-            week="2026-W13", text="t", food_name="coffee",
+            started_on="2026-03-23", text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0,
         )
         db.add(exp)
@@ -1509,11 +1660,11 @@ class TestRecordOutcomeFood:
             _add_weight(db, (base + timedelta(days=7 * i)).isoformat(), w)
         db.commit()
 
-        weight_obs, _, _ = _load_weekly_obs(db, base + timedelta(days=35))
-        exp_week = weight_obs[-1]["date"]
+        started = base + timedelta(days=28)
+        weight_rows, _ = _rolling_obs(db, base + timedelta(days=35), started, 7)
 
-        # Food logged in only ONE other week -- below the 2-week minimum for a
-        # food-specific baseline, so the generic all-other-weeks average wins.
+        # Food logged in only ONE other window -- below the 2-window minimum for a
+        # food-specific baseline, so the generic all-other-windows average wins.
         d = base + timedelta(days=7)
         db.add(models.FoodEntry(raw_input="coffee", name="Coffee", category="food",
                                  consumed_at=datetime.combine(d, datetime.min.time())))
@@ -1522,7 +1673,7 @@ class TestRecordOutcomeFood:
         db.commit()
 
         exp = models.HealthExperiment(
-            week=exp_week, text="t", food_name="coffee",
+            started_on=started.isoformat(), text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0,
         )
         db.add(exp)
@@ -1531,7 +1682,7 @@ class TestRecordOutcomeFood:
         _record_outcome(exp, db, base + timedelta(days=35))
 
         assert exp.food_baseline_weeks_n is None
-        generic = sum(r["delta_per_day"] for r in weight_obs[:-1]) / 3
+        generic = sum(r["delta_per_day"] for r in weight_rows if r["window_start"] != started.isoformat()) / 3
         assert abs(exp.weight_baseline - generic) < 1e-6
 
 
@@ -1670,7 +1821,7 @@ class TestGenerateExperimentRoutines:
 
     def test_backstop_nudges_repeated_health_goal(self, db):
         db.add(models.HealthExperiment(
-            week="2020-W01", text="t", health_metric="steps", health_goal=8000.0, status="dismissed",
+            started_on="2019-12-30", text="t", health_metric="steps", health_goal=8000.0, status="dismissed",
         ))
         db.commit()
 
@@ -1689,7 +1840,7 @@ class TestGenerateExperimentRoutines:
         for i in range(4):
             _add_workout(db, "row", 1.5, "mi", days_ago=i * 7)
         db.add(models.HealthExperiment(
-            week="2020-W01", text="t", health_metric="steps", health_goal=8000.0, status="dismissed",
+            started_on="2019-12-30", text="t", health_metric="steps", health_goal=8000.0, status="dismissed",
         ))
         db.commit()
 
@@ -1745,7 +1896,7 @@ class TestGenerateExperimentRoutines:
         for i in range(4):
             _add_food_named(db, "coffee", days_ago=i * 5)
         db.add(models.HealthExperiment(
-            week="2020-W01", text="t", food_name="coffee",
+            started_on="2019-12-30", text="t", food_name="coffee",
             food_target_frequency=0, food_baseline_frequency=4.0, status="dismissed",
         ))
         db.commit()
@@ -1910,7 +2061,7 @@ class TestGenerateExperimentVarietySignals:
     }
 
     def _dismissed(self, db, **kwargs):
-        defaults = dict(week="2026-W10", text="t", status="dismissed")
+        defaults = dict(started_on="2026-03-02", text="t", status="dismissed")
         defaults.update(kwargs)
         exp = models.HealthExperiment(**defaults)
         db.add(exp)
@@ -1933,7 +2084,7 @@ class TestGenerateExperimentVarietySignals:
 
     def test_prompt_includes_worth_revisiting_when_no_last_week_win(self, db):
         self._dismissed(
-            db, week="2026-W01", workout_type="row",
+            db, started_on="2025-12-29", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.05, weight_baseline=-0.01,
@@ -1943,7 +2094,7 @@ class TestGenerateExperimentVarietySignals:
         # (what _last_week_win checks) isn't itself a win, so "row" should surface
         # as a past winner worth revisiting instead.
         for i in range(4):
-            self._dismissed(db, week=f"2026-W1{i}", health_metric="steps", health_goal=8000)
+            self._dismissed(db, started_on=f"2026-04-{10 + i:02d}", health_metric="steps", health_goal=8000)
 
         fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
         with patch("routers.correlations.llm_client", return_value=fake_client):
@@ -1957,13 +2108,13 @@ class TestGenerateExperimentVarietySignals:
         """Priority: don't clutter the prompt with an older win when a fresher,
         stronger signal (last week's own success) already applies."""
         self._dismissed(
-            db, week="2026-W01", workout_type="row",
+            db, started_on="2025-12-29", workout_type="row",
             workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.05, weight_baseline=-0.01,
         )
         self._dismissed(
-            db, week="2026-W15", health_metric="steps", health_goal=8000,
+            db, started_on="2026-04-06", health_metric="steps", health_goal=8000,
             habit_completion_rate=1.0, weight_delta=-0.05, weight_baseline=-0.01,
         )
 
@@ -2116,7 +2267,7 @@ class TestGenerateExperimentCategoryPreferences:
     def test_last_week_win_skipped_when_its_category_is_disabled(self, db):
         self._disable(db, "activity")
         db.add(models.HealthExperiment(
-            week="2026-W10", text="t", status="dismissed",
+            started_on="2026-03-02", text="t", status="dismissed",
             workout_type="row", workout_baseline_avg=1.0, workout_experiment_avg=2.0,
             workout_target_value=2.0, workout_p=0.01,
             weight_delta=-0.05, weight_baseline=-0.01,
@@ -2278,15 +2429,9 @@ class TestGenerateExperimentStepGoalFallback:
 
 class TestCheckHabitForWorkout:
 
-    def _active_experiment(self, db, workout_type="row", habit_id=None, week=None):
-        # Matches the fixed date(2026, 6, 20) every test in this class passes to
-        # check_habit_for_workout -- previously this defaulted to _current_isoweek()
-        # with no argument (real wall-clock "today"), which only ever passed because
-        # check_habit_for_workout itself had the same bug (computed its week lookup
-        # from real "today" too, ignoring the date it was actually given). Fixing that
-        # bug means this fixture must now agree with the fixed test date explicitly.
+    def _active_experiment(self, db, workout_type="row", habit_id=None, started_on=None):
         exp = models.HealthExperiment(
-            week=week or _current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            started_on=started_on or date(2026, 6, 20).isoformat(), text="t", status="active",
             workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
             habit_id=habit_id,
         )
@@ -2369,14 +2514,19 @@ class TestCheckHabitForWorkout:
         assert result is None
         assert db.query(models.HabitCompletion).count() == 0
 
-    def test_experiment_from_a_different_week_does_not_match(self, db):
+    def test_matches_regardless_of_started_on(self, db):
+        """Matching is on status + workout_type alone -- at most one experiment is ever
+        active at a time (enforced by a partial unique index), so there's nothing else an
+        active workout-type experiment could be other than "the current one," regardless
+        of when it started. Confirms the simplified lookup (no more week-string
+        comparison) still matches correctly rather than silently requiring one."""
         habit = self._habit(db)
-        self._active_experiment(db, workout_type="row", habit_id=habit.id, week="2020-W01")
+        self._active_experiment(db, workout_type="row", habit_id=habit.id, started_on="2019-12-30")
 
         result = check_habit_for_workout(db, "row", date(2026, 6, 20))
 
-        assert result is None
-        assert db.query(models.HabitCompletion).count() == 0
+        assert result is not None
+        assert result.id == habit.id
 
 
 class TestCheckWorkoutForHabit:
@@ -2384,10 +2534,10 @@ class TestCheckWorkoutForHabit:
     auto-log a workout at the experiment's target value (the "row 1.2 miles" bug report
     this was built for -- checking the habit never touched workout logs at all)."""
 
-    def _active_experiment(self, db, workout_type="row", habit_id=None, week=None,
+    def _active_experiment(self, db, workout_type="row", habit_id=None, started_on=None,
                             target_value=1.2, unit="mile", action="Row 1.2 miles"):
         exp = models.HealthExperiment(
-            week=week or _current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            started_on=started_on or date(2026, 6, 20).isoformat(), text="t", status="active",
             action=action, workout_type=workout_type, workout_target_value=target_value,
             workout_unit=unit, habit_id=habit_id,
         )
@@ -2433,7 +2583,7 @@ class TestCheckWorkoutForHabit:
         workout, even if it happens to have a habit_id."""
         habit = self._habit(db)
         db.add(models.HealthExperiment(
-            week=_current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            started_on=date(2026, 6, 20).isoformat(), text="t", status="active",
             habit_id=habit.id,
         ))
         db.commit()
@@ -2442,13 +2592,16 @@ class TestCheckWorkoutForHabit:
         assert result is None
         assert db.query(models.WorkoutEntry).count() == 0
 
-    def test_experiment_from_a_different_week_does_not_match(self, db):
+    def test_matches_regardless_of_started_on(self, db):
+        """Same reasoning as TestCheckHabitForWorkout's equivalent test: matching is on
+        status + habit_id alone, with no week/date comparison left to require agreement
+        on when the experiment started."""
         habit = self._habit(db)
-        self._active_experiment(db, habit_id=habit.id, week="2020-W01")
+        self._active_experiment(db, habit_id=habit.id, started_on="2019-12-30")
 
         result = check_workout_for_habit(db, habit.id, date(2026, 6, 20))
-        assert result is None
-        assert db.query(models.WorkoutEntry).count() == 0
+        assert result is not None
+        assert result.type == "row"
 
     def test_dismissed_experiment_is_a_noop(self, db):
         habit = self._habit(db)
@@ -2515,9 +2668,9 @@ class TestCheckFoodAvoidanceHabits:
         db.commit()
         return habit
 
-    def _experiment(self, db, habit_id, food_name="protein bar", week=None):
+    def _experiment(self, db, habit_id, food_name="protein bar", started_on=None):
         exp = models.HealthExperiment(
-            week=week or _current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            started_on=started_on or date(2026, 6, 15).isoformat(), text="t", status="active",
             food_name=food_name, food_target_frequency=1.0, habit_id=habit_id,
         )
         db.add(exp)
@@ -2533,10 +2686,9 @@ class TestCheckFoodAvoidanceHabits:
 
     def test_checks_off_trailing_days_the_food_was_not_logged(self, db):
         habit = self._habit(db)
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=5)  # comfortably within the week, 3 trailing days available
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=5)  # comfortably within the window, 3 trailing days available
 
         check_food_avoidance_habits(db, today)
 
@@ -2548,10 +2700,9 @@ class TestCheckFoodAvoidanceHabits:
 
     def test_does_not_check_today(self, db):
         habit = self._habit(db)
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=5)
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=5)
 
         check_food_avoidance_habits(db, today)
 
@@ -2561,10 +2712,9 @@ class TestCheckFoodAvoidanceHabits:
 
     def test_a_day_the_food_was_logged_is_not_checked(self, db):
         habit = self._habit(db)
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=5)
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=5)
         ate_on = today - timedelta(days=1)
         self._food_entry(db, "protein bar", ate_on)
 
@@ -2580,10 +2730,9 @@ class TestCheckFoodAvoidanceHabits:
 
     def test_food_match_is_case_insensitive(self, db):
         habit = self._habit(db, food_avoid_name="protein bar")
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=5)
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=5)
         ate_on = today - timedelta(days=1)
         self._food_entry(db, "Protein Bar", ate_on)
 
@@ -2593,33 +2742,31 @@ class TestCheckFoodAvoidanceHabits:
             habit_id=habit.id, date=ate_on.isoformat(),
         ).first() is None
 
-    def test_lookback_does_not_cross_into_the_prior_week(self, db):
+    def test_lookback_does_not_cross_before_the_experiment_started(self, db):
         habit = self._habit(db)
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=1)  # only 1 day into the experiment's week
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=1)  # only 1 day into the experiment's window
 
         check_food_avoidance_habits(db, today)
 
-        # today - 1 == the week's Monday: in-bounds, gets checked
+        # today - 1 == started_on: in-bounds, gets checked
         assert db.query(models.HabitCompletion).filter_by(
-            habit_id=habit.id, date=ws.isoformat(),
+            habit_id=habit.id, date=started.isoformat(),
         ).first() is not None
-        # today - 2 / today - 3 fall in the prior week: must not be touched
+        # today - 2 / today - 3 fall before the experiment existed: must not be touched
         assert db.query(models.HabitCompletion).filter_by(
-            habit_id=habit.id, date=(ws - timedelta(days=1)).isoformat(),
+            habit_id=habit.id, date=(started - timedelta(days=1)).isoformat(),
         ).first() is None
         assert db.query(models.HabitCompletion).filter_by(
-            habit_id=habit.id, date=(ws - timedelta(days=2)).isoformat(),
+            habit_id=habit.id, date=(started - timedelta(days=2)).isoformat(),
         ).first() is None
 
     def test_archived_habit_is_left_alone(self, db):
         habit = self._habit(db, archived=True)
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=5)
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=5)
 
         check_food_avoidance_habits(db, today)
 
@@ -2627,10 +2774,9 @@ class TestCheckFoodAvoidanceHabits:
 
     def test_already_checked_day_is_left_alone(self, db):
         habit = self._habit(db)
-        week = _current_isoweek(date(2026, 6, 20))
-        ws = _week_start(week)
-        self._experiment(db, habit.id, week=week)
-        today = ws + timedelta(days=5)
+        started = date(2026, 6, 15)
+        self._experiment(db, habit.id, started_on=started.isoformat())
+        today = started + timedelta(days=5)
         pre_checked = (today - timedelta(days=1)).isoformat()
         db.add(models.HabitCompletion(habit_id=habit.id, date=pre_checked))
         db.commit()
@@ -2661,7 +2807,7 @@ class TestCheckHabitRowWorkoutAutoLogWiring:
         db.add(habit)
         db.commit()
         db.add(models.HealthExperiment(
-            week=_current_isoweek(date(2026, 6, 20)), text="t", status="active",
+            started_on=date(2026, 6, 20).isoformat(), text="t", status="active",
             action="Row 1.2 miles", workout_type="row", workout_target_value=1.2,
             workout_unit="mile", habit_id=habit.id,
         ))

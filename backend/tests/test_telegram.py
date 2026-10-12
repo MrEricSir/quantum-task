@@ -29,20 +29,6 @@ from main import app
 from deps import get_db
 
 
-def _isoweek_for_tz_offset(tz_offset_minutes=0):
-    """The ISO week _reply_log_workout/_capture_from_text's own now_local computation
-    falls in, for a given tz_offset -- used to seed a HealthExperiment fixture that
-    check_habit_for_workout will actually match. Must NOT use
-    routers.correlations._current_isoweek()'s no-arg fallback (date.today(), the *test
-    runner machine's* configured local timezone) -- that can genuinely disagree with
-    the UTC-offset arithmetic the bot code itself uses, right at the Sunday/Monday UTC
-    boundary if the machine isn't itself set to UTC. Hit exactly this in practice once
-    already (a real, if rare, source of test flakiness, not a hypothetical one)."""
-    now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset_minutes)
-    year, week, _ = now_local.date().isocalendar()
-    return f"{year}-W{week:02d}"
-
-
 # ── In-memory DB fixture ──────────────────────────────────────────────────────
 
 test_engine = create_engine(
@@ -1162,7 +1148,7 @@ class TestBotLogWorkout:
         db.add(habit)
         db.commit()
         db.add(models.HealthExperiment(
-            week=_isoweek_for_tz_offset(0), text="t", status="active",
+            started_on=date.today().isoformat(), text="t", status="active",
             workout_type=workout_type, workout_target_value=2.0, workout_unit="mi",
             habit_id=habit.id,
         ))
@@ -1631,7 +1617,7 @@ class TestCaptureFromText:
             db.add(habit)
             db.commit()
             db.add(models.HealthExperiment(
-                week=_isoweek_for_tz_offset(0), text="t", status="active",
+                started_on=date.today().isoformat(), text="t", status="active",
                 workout_type="row", workout_target_value=2.0, workout_unit="mi",
                 habit_id=habit.id,
             ))
@@ -2393,7 +2379,7 @@ class TestGenerateWeeklyReview:
         utc_today = datetime.now(timezone.utc).date()
         with BotTestSession() as db:
             db.add(models.HealthExperiment(
-                week="2026-W01", text="Row 2 mi/day instead of 1 mi/day", status="dismissed",
+                started_on="2026-01-01", text="Row 2 mi/day instead of 1 mi/day", status="dismissed",
                 dismissed_at=datetime.now(timezone.utc),
                 weight_delta=-0.1, weight_baseline=0.05,
             ))
@@ -2410,7 +2396,7 @@ class TestGenerateWeeklyReview:
     def test_ignores_experiment_dismissed_outside_the_week(self):
         with BotTestSession() as db:
             db.add(models.HealthExperiment(
-                week="2025-W01", text="Old experiment", status="dismissed",
+                started_on="2024-12-25", text="Old experiment", status="dismissed",
                 dismissed_at=datetime.now(timezone.utc) - timedelta(days=30),
             ))
             db.commit()

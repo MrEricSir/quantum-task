@@ -976,9 +976,12 @@
 
 .experiment-footer {
   margin-top: 12px;
+  display: flex;
+  gap: 16px;
 }
 
-.experiment-dismiss {
+.experiment-dismiss,
+.experiment-skip {
   font-size: 11px;
   color: var(--text-muted);
   background: none;
@@ -990,11 +993,13 @@
   transition: opacity 0.15s;
 }
 
-.experiment-dismiss:hover {
+.experiment-dismiss:hover,
+.experiment-skip:hover {
   opacity: 1;
 }
 
-.experiment-dismiss:disabled {
+.experiment-dismiss:disabled,
+.experiment-skip:disabled {
   cursor: default;
   opacity: 0.35;
 }

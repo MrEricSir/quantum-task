@@ -73,15 +73,19 @@ def _current_isoweek(today: date | None = None) -> str:
 
 
 def check_habit_for_workout(db: Session, workout_type: str, today: date) -> models.Habit | None:
-    """If there's an active workout-routine experiment this week targeting
-    workout_type, check off its linked habit for today. Matches on type only,
-    not on hitting workout_target_value -- this is a lightweight "did you do
-    the routine today" signal, not the statistical adherence check (that's
-    computed separately from workout_experiment_avg/workout_p at outcome
-    time). Returns the habit that got checked, or None if nothing matched."""
+    """If there's an active workout-routine experiment targeting workout_type, check off
+    its linked habit for today. Matches on type only, not on hitting workout_target_value
+    -- this is a lightweight "did you do the routine today" signal, not the statistical
+    adherence check (that's computed separately from workout_experiment_avg/workout_p at
+    outcome time). Returns the habit that got checked, or None if nothing matched.
+
+    Matching is on status alone, not a week/window check -- at most one experiment is ever
+    active at a time (enforced by a partial unique index), so there's nothing else an
+    active workout-type experiment could be other than "the current one." `today` is still
+    needed below for check_habit_row's own "which day" parameter, independent of this."""
     exp = (
         db.query(models.HealthExperiment)
-        .filter_by(week=_current_isoweek(today), status="active")
+        .filter_by(status="active")
         .filter(models.HealthExperiment.workout_type == workout_type)
         .first()
     )
@@ -96,18 +100,21 @@ def check_habit_for_workout(db: Session, workout_type: str, today: date) -> mode
 
 def check_workout_for_habit(db: Session, habit_id: int, today: date) -> models.WorkoutEntry | None:
     """The mirror of check_habit_for_workout (workout -> habit): if habit_id is the linked
-    habit of an active workout-routine experiment this week, auto-log a workout entry for
-    today at the experiment's target value. Assumes the target was hit exactly rather than
-    asking for the real distance, so checking the habit off stays a single tap -- see the
-    "row 1.2 miles" bug report this was built for. Called from check_habit_row itself
+    habit of an active workout-routine experiment, auto-log a workout entry for today at
+    the experiment's target value. Assumes the target was hit exactly rather than asking
+    for the real distance, so checking the habit off stays a single tap -- see the "row 1.2
+    miles" bug report this was built for. Called from check_habit_row itself
     (from_workout=False path) rather than from each manual-checkoff call site individually,
     so any future caller of check_habit_row gets this for free without remembering to wire
     it up. No-ops (returns None) if habit_id isn't linked to an active workout-routine
     experiment, or if a workout of that type is already logged today (a real logged workout
-    always takes precedence over a synthetic one -- never overwrites or duplicates it)."""
+    always takes precedence over a synthetic one -- never overwrites or duplicates it).
+
+    Matching is on status + habit_id alone, same reasoning as check_habit_for_workout's own
+    docstring -- no week/window check needed, at most one experiment is ever active."""
     exp = (
         db.query(models.HealthExperiment)
-        .filter_by(week=_current_isoweek(today), status="active", habit_id=habit_id)
+        .filter_by(status="active", habit_id=habit_id)
         .filter(models.HealthExperiment.workout_type.isnot(None))
         .first()
     )
@@ -173,11 +180,11 @@ def check_food_avoidance_habits(db: Session, today: date) -> None:
             .order_by(models.HealthExperiment.id.desc())
             .first()
         )
-        week_start = _week_start(exp.week) if exp else None
+        started_floor = date.fromisoformat(exp.started_on) if exp else None
 
         for days_back in range(1, _FOOD_AVOID_LOOKBACK_DAYS + 1):
             day = today - timedelta(days=days_back)
-            if week_start and day < week_start:
+            if started_floor and day < started_floor:
                 break
             day_str = day.isoformat()
             if db.query(models.HabitCompletion).filter_by(habit_id=habit.id, date=day_str).first():
@@ -200,6 +207,29 @@ def check_food_avoidance_habits(db: Session, today: date) -> None:
 # neglecting" check (both need the same categorization, so it's defined once here rather
 # than duplicated).
 CARDIO_TYPES = {"run", "cycle", "row", "swim", "sport"}
+
+
+_TRIP_EXCLUDED_METRICS = {"weight", "fat_ratio"}
+
+
+def _daily_metric_values(db: Session, start_str: str, trip_days: set[str]) -> dict[str, dict[str, float]]:
+    """date -> {metric: value} for every WithingsMeasurement from start_str onward. Trip
+    days are excluded for weight/fat_ratio specifically (see _load_weekly_obs's own
+    docstring for why only those two) -- shared by _load_weekly_obs's calendar-week
+    binning and _rolling_obs's rolling-window binning, so both stay faithful to the exact
+    same trip-day rule without duplicating it."""
+    measurements = (
+        db.query(models.WithingsMeasurement)
+        .filter(models.WithingsMeasurement.date >= start_str)
+        .order_by(models.WithingsMeasurement.date)
+        .all()
+    )
+    by_date: dict[str, dict[str, float]] = {}
+    for m in measurements:
+        if m.date in trip_days and m.metric in _TRIP_EXCLUDED_METRICS:
+            continue
+        by_date.setdefault(m.date, {})[m.metric] = m.value
+    return by_date
 
 
 # ── Shared data loader ────────────────────────────────────────────────────────
@@ -235,19 +265,7 @@ def _load_weekly_obs(
     casing needed."""
     start_str = (today - timedelta(days=days)).isoformat()
     trip_days = get_trip_date_set(db, today)
-
-    measurements = (
-        db.query(models.WithingsMeasurement)
-        .filter(models.WithingsMeasurement.date >= start_str)
-        .order_by(models.WithingsMeasurement.date)
-        .all()
-    )
-    _TRIP_EXCLUDED_METRICS = {"weight", "fat_ratio"}
-    by_date: dict[str, dict[str, float]] = {}
-    for m in measurements:
-        if m.date in trip_days and m.metric in _TRIP_EXCLUDED_METRICS:
-            continue
-        by_date.setdefault(m.date, {})[m.metric] = m.value
+    by_date = _daily_metric_values(db, start_str, trip_days)
 
     active_habit_count = (
         db.query(models.Habit)
@@ -394,6 +412,92 @@ def _load_weekly_obs(
         return rows
 
     return build_obs("weight"), build_obs("fat_ratio"), build_obs("hydration")
+
+
+def _window_for(d: str, anchor_start: date, duration_days: int) -> str:
+    """Which duration_days-sized tile a date falls into, given tiles aligned so one
+    boundary falls exactly on anchor_start -- the rolling-window equivalent of
+    _isoweek(d) for real calendar weeks. Tiles extend in both directions from the
+    anchor (virtually all real data is before it, since it's an experiment's own
+    started_on), using floor division so a date just before anchor_start lands in the
+    preceding tile rather than spilling into the anchor's own. Returns that tile's own
+    start date as an isoformat string."""
+    delta_days = (date.fromisoformat(d) - anchor_start).days
+    tile_index = delta_days // duration_days
+    return (anchor_start + timedelta(days=tile_index * duration_days)).isoformat()
+
+
+def _rolling_obs(
+    db: Session, today: date, anchor_start: date, duration_days: int, days: int = 90,
+) -> tuple[list[dict], list[dict]]:
+    """Weight/fat rolling-window observations, analogous to _load_weekly_obs's build_obs
+    but tiled in duration_days-sized windows anchored so one tile boundary falls exactly
+    on anchor_start (an experiment's own started_on) instead of real ISO calendar weeks.
+    Used by _record_outcome so an experiment that didn't start on a Monday still gets a
+    real weight/fat delta measured against its own genuine window, rather than being
+    forced into a calendar week it never actually ran in.
+
+    Each row's delta_per_day = (this tile's avg - the immediately preceding tile's avg) /
+    duration_days -- the exact same adjacent-window momentum definition build_obs uses
+    for real weeks, just re-anchored. Tiles with zero data drop out entirely (same
+    "an entirely-traveled week contributes nothing" behavior _load_weekly_obs already
+    has for calendar weeks), and the gap-continuity guard scales with duration_days
+    instead of a hardcoded 21 days. Averaging a tile that's still in progress (the
+    experiment's own, if dismissed/skipped early) naturally reflects however many real
+    days of data exist in it so far -- no proration special-casing needed here, unlike
+    the habit-completion-rate fix in _record_outcome, which does need one (a tile with
+    partial data still looks like a normal, if noisier, average; a habit-completion
+    fraction divided by the WRONG denominator is a different, more direct kind of wrong).
+
+    Returns (weight_rows, fat_rows); each row is {"window_start": "YYYY-MM-DD",
+    "delta_per_day": float, "avg_calories": float|None, "avg_steps": float|None} -- only
+    the fields _record_outcome's baseline/confound computation actually needs, not the
+    full factor set _load_weekly_obs's rows carry for the passive correlation page."""
+    start_str = (today - timedelta(days=days)).isoformat()
+    trip_days = get_trip_date_set(db, today)
+    by_date = _daily_metric_values(db, start_str, trip_days)
+
+    food_calories_by_date: dict[str, list[float]] = {}
+    for entry in db.query(models.FoodEntry).filter(models.FoodEntry.consumed_at >= start_str).all():
+        if entry.calories is not None:
+            d_str = str(entry.consumed_at)[:10]
+            food_calories_by_date.setdefault(d_str, []).append(float(entry.calories))
+
+    tile_vals: dict[str, dict[str, list[float]]] = {}
+    for d, metrics in by_date.items():
+        tile = _window_for(d, anchor_start, duration_days)
+        for metric, val in metrics.items():
+            tile_vals.setdefault(tile, {}).setdefault(metric, []).append(val)
+
+    tile_calories: dict[str, list[float]] = {}
+    for d, cals in food_calories_by_date.items():
+        tile = _window_for(d, anchor_start, duration_days)
+        tile_calories.setdefault(tile, []).extend(cals)
+
+    tile_avgs: dict[str, dict[str, float]] = {
+        tile: {m: sum(vs) / len(vs) for m, vs in mdict.items()}
+        for tile, mdict in tile_vals.items()
+    }
+
+    def build(outcome_metric: str) -> list[dict]:
+        tiles = sorted(t for t, avgs in tile_avgs.items() if outcome_metric in avgs)
+        rows = []
+        for i in range(1, len(tiles)):
+            curr, prev = tiles[i], tiles[i - 1]
+            gap_days = (date.fromisoformat(curr) - date.fromisoformat(prev)).days
+            if gap_days > 3 * duration_days:
+                continue
+            delta_per_day = (tile_avgs[curr][outcome_metric] - tile_avgs[prev][outcome_metric]) / gap_days
+            cals = tile_calories.get(curr)
+            rows.append({
+                "window_start": curr,
+                "delta_per_day": delta_per_day,
+                "avg_calories": sum(cals) / len(cals) if cals else None,
+                "avg_steps": tile_avgs[curr].get("steps"),
+            })
+        return rows
+
+    return build("weight"), build("fat_ratio")
 
 
 # ── Existing-routine detection (for incremental experiment proposals) ─────────
@@ -1079,18 +1183,22 @@ def _generate_experiment(
 ) -> models.HealthExperiment:
     """Generate a new experiment via LLM, persist to health_experiments table.
 
-    `today` should be the caller's client-local date (deps.local_date(request)) so the
-    week this experiment is stamped with agrees with check_habit_for_workout's own
-    week lookup -- see _current_isoweek's docstring. Optional/defaults to server-UTC
-    date.today() only so existing callers/tests that don't care about day-level
-    precision don't all need updating. `tz_offset_minutes` is likewise the caller's
-    deps.utc_offset_minutes(request), threaded through to _established_habits so its
-    Habit.created_at (a UTC instant) comparison against `today` (local) is correct."""
+    `today` should be the caller's client-local date (deps.local_date(request)) -- it
+    becomes the new experiment's started_on, a rolling anchor (not tied to any ISO
+    calendar week), so a replacement generated right after a mid-window dismiss/skip
+    gets a genuine, undiluted duration_days window starting from that exact moment.
+    Optional/defaults to server-UTC date.today() only so existing callers/tests that
+    don't care about day-level precision don't all need updating. `tz_offset_minutes`
+    is likewise the caller's deps.utc_offset_minutes(request), threaded through to
+    _established_habits so its Habit.created_at (a UTC instant) comparison against
+    `today` (local) is correct."""
     today = today or date.today()
-    week = _current_isoweek(today)
 
     # Guard against concurrent generation: re-check inside the session before inserting.
-    existing = db.query(models.HealthExperiment).filter_by(week=week, status="active").first()
+    # Matching on status alone, not a week/window check -- at most one experiment is
+    # ever active at a time (enforced by a partial unique index on status='active'), so
+    # there's nothing else an active row could be other than "the current one."
+    existing = db.query(models.HealthExperiment).filter_by(status="active").first()
     if existing:
         return existing
 
@@ -1102,7 +1210,7 @@ def _generate_experiment(
 
     if not correlations:
         exp = models.HealthExperiment(
-            week=week,
+            started_on=today.isoformat(),
             text="Keep logging your health data to unlock personalised experiments. You need at least 3 weeks of data.",
             hypothesis=None,
             action=None,
@@ -1386,7 +1494,7 @@ def _generate_experiment(
         habit_id = habit.id
 
     exp = models.HealthExperiment(
-        week=week,
+        started_on=today.isoformat(),
         text=text,
         hypothesis=hypothesis,
         action=action,
@@ -1407,10 +1515,16 @@ def _generate_experiment(
     return exp
 
 
-def _exp_to_dict(exp: models.HealthExperiment) -> dict:
+def _exp_to_dict(exp: models.HealthExperiment, today: date) -> dict:
+    started = date.fromisoformat(exp.started_on)
+    ends_on = started + timedelta(days=exp.duration_days)
+    days_left = max(0, (ends_on - today).days) if exp.status == "active" else None
     return {
         "id":                   exp.id,
-        "week":                 exp.week,
+        "started_on":           exp.started_on,
+        "duration_days":        exp.duration_days,
+        "ends_on":              ends_on.isoformat(),
+        "days_left":            days_left,
         "text":                 exp.text,
         "hypothesis":           exp.hypothesis,
         "action":               exp.action,
@@ -1443,100 +1557,106 @@ def _exp_to_dict(exp: models.HealthExperiment) -> dict:
     }
 
 
-def _food_present_weeks(db: Session, food_name: str, candidate_weeks: set[str], min_days: int = 2) -> set[str]:
-    """Of the given ISO weeks, which ones had `food_name` (exact,
-    case-insensitive) logged on at least `min_days` distinct days -- i.e.
-    weeks the food was actually part of the regular pattern, not just any
-    week in the analysis window regardless of relevance. Used to build a
-    food-elimination experiment's baseline from a matched comparison
-    ("what does my trend look like on weeks I eat this") instead of the
-    generic all-other-weeks average every experiment type uses by default."""
-    if not candidate_weeks:
+def _food_present_windows(
+    db: Session, food_name: str, candidate_windows: set[str], anchor_start: date,
+    duration_days: int, min_days: int = 2,
+) -> set[str]:
+    """Of the given rolling windows (window_start date strings, see _rolling_obs), which
+    ones had `food_name` (exact, case-insensitive) logged on at least `min_days` distinct
+    days -- i.e. windows the food was actually part of the regular pattern, not just any
+    window in the analysis range regardless of relevance. Used to build a food-elimination
+    experiment's baseline from a matched comparison ("what does my trend look like on
+    windows I eat this") instead of the generic all-other-windows average every experiment
+    type uses by default."""
+    if not candidate_windows:
         return set()
-    days_by_week: dict[str, set[str]] = {}
+    days_by_window: dict[str, set[str]] = {}
     for e in db.query(models.FoodEntry).all():
         if e.name.strip().lower() != food_name:
             continue
         d = str(e.consumed_at)[:10]
-        wk = _isoweek(d)
-        if wk in candidate_weeks:
-            days_by_week.setdefault(wk, set()).add(d)
-    return {wk for wk, days in days_by_week.items() if len(days) >= min_days}
+        window = _window_for(d, anchor_start, duration_days)
+        if window in candidate_windows:
+            days_by_window.setdefault(window, set()).add(d)
+    return {w for w, days in days_by_window.items() if len(days) >= min_days}
 
 
-def _workout_present_weeks(db: Session, workout_type: str, candidate_weeks: set[str], min_sessions: int = 1) -> set[str]:
-    """Of the given ISO weeks, which ones had `workout_type` logged at least
-    `min_sessions` times -- i.e. weeks the routine was actually part of the
-    pattern. min_sessions defaults to 1 rather than _food_present_weeks'
-    2-distinct-days bar: workout logging is typically sparser than food
-    logging (established_workouts itself only requires ~0.5 sessions/week
-    on average), so requiring 2+ in a single week would exclude most
-    legitimately-established routines."""
-    if not candidate_weeks:
+def _workout_present_windows(
+    db: Session, workout_type: str, candidate_windows: set[str], anchor_start: date,
+    duration_days: int, min_sessions: int = 1,
+) -> set[str]:
+    """Of the given rolling windows, which ones had `workout_type` logged at least
+    `min_sessions` times -- i.e. windows the routine was actually part of the pattern.
+    min_sessions defaults to 1 rather than _food_present_windows' 2-distinct-days bar:
+    workout logging is typically sparser than food logging (established_workouts itself
+    only requires ~0.5 sessions/week on average), so requiring 2+ in a single window would
+    exclude most legitimately-established routines."""
+    if not candidate_windows:
         return set()
-    sessions_by_week: dict[str, int] = {}
+    sessions_by_window: dict[str, int] = {}
     for e in db.query(models.WorkoutEntry).filter(models.WorkoutEntry.type == workout_type).all():
         d = str(e.logged_at)[:10]
-        wk = _isoweek(d)
-        if wk in candidate_weeks:
-            sessions_by_week[wk] = sessions_by_week.get(wk, 0) + 1
-    return {wk for wk, n in sessions_by_week.items() if n >= min_sessions}
+        window = _window_for(d, anchor_start, duration_days)
+        if window in candidate_windows:
+            sessions_by_window[window] = sessions_by_window.get(window, 0) + 1
+    return {w for w, n in sessions_by_window.items() if n >= min_sessions}
 
 
-def _matched_baseline(weight_obs: list[dict], fat_obs: list[dict], present_weeks: set[str], exp_week: str):
-    """Weight/fat baseline (mean delta_per_day) computed from `present_weeks` only -- the
-    shared "matched comparison instead of an unmatched all-other-weeks average" logic behind
-    both the food-elimination and workout-routine outcomes, which only differ in how
+def _matched_baseline(weight_rows: list[dict], fat_rows: list[dict], present_windows: set[str], exp_window: str):
+    """Weight/fat baseline (mean delta_per_day) computed from `present_windows` only -- the
+    shared "matched comparison instead of an unmatched all-other-windows average" logic
+    behind both the food-elimination and workout-routine outcomes, which only differ in how
     "present" is defined (food name vs. workout type). Returns (weight_baseline,
-    fat_baseline, weeks_n) -- all None if fewer than 2 present weeks exist (one week isn't a
-    baseline, it's a single data point); the caller keeps whatever generic baseline it
-    already had in that case.
+    fat_baseline, windows_n) -- all None if fewer than 2 present windows exist (one window
+    isn't a baseline, it's a single data point); the caller keeps whatever generic baseline
+    it already had in that case.
 
     The confound check that used to live in this function is now _confound_summary below --
     pulled out because it applies the same way regardless of whether a matched baseline was
     even found (habit experiments never have one, but still get a confound check against the
-    generic all-other-weeks set)."""
-    if len(present_weeks) < 2:
+    generic all-other-windows set)."""
+    if len(present_windows) < 2:
         return None, None, None
 
-    present_weight = [r["delta_per_day"] for r in weight_obs if r["date"] in present_weeks]
-    present_fat = [r["delta_per_day"] for r in fat_obs if r["date"] in present_weeks]
+    present_weight = [r["delta_per_day"] for r in weight_rows if r["window_start"] in present_windows]
+    present_fat = [r["delta_per_day"] for r in fat_rows if r["window_start"] in present_windows]
     weight_baseline = round(sum(present_weight) / len(present_weight), 6) if present_weight else None
     fat_baseline = round(sum(present_fat) / len(present_fat), 6) if present_fat else None
 
-    return weight_baseline, fat_baseline, len(present_weeks)
+    return weight_baseline, fat_baseline, len(present_windows)
 
 
 _CONFOUND_VARS = ("avg_calories", "avg_steps")
 
 
-def _confound_summary(weight_obs: list[dict], fat_obs: list[dict], baseline_weeks: set[str],
-                       exp_week: str) -> dict:
+def _confound_summary(weight_rows: list[dict], fat_rows: list[dict], baseline_windows: set[str],
+                       exp_window: str) -> dict:
     """One-variable-at-a-time confound check against every variable in _CONFOUND_VARS:
-    average value across baseline_weeks vs. the experiment week, for whichever variables
-    have data in both. Not a substitute for a real multivariate model -- the ~12-13 weeks of
-    paired data this app typically has doesn't support one (see PRODUCT_NOTES.md) -- this is
-    the cheap, honest middle step: surface the most obvious rival explanations rather than
-    silently crediting whatever the experiment was actually about.
+    average value across baseline_windows vs. the experiment's own window, for whichever
+    variables have data in both. Not a substitute for a real multivariate model -- the
+    ~12-13 weeks of paired data this app typically has doesn't support one (see
+    PRODUCT_NOTES.md) -- this is the cheap, honest middle step: surface the most obvious
+    rival explanations rather than silently crediting whatever the experiment was actually
+    about.
 
-    baseline_weeks is whatever comparison set the caller already has -- the food/workout
-    matched present-weeks when one was found, or the same generic all-other-weeks set used
-    for weight_baseline/fat_baseline otherwise (the only option for a habit experiment, whose
-    tracking habit is always freshly created for that one week with no prior history of its
-    own). Returns {} if nothing is computable; a variable is only included when both a
-    baseline and an experiment-week value exist for it."""
+    baseline_windows is whatever comparison set the caller already has -- the food/workout
+    matched present-windows when one was found, or the same generic all-other-windows set
+    used for weight_baseline/fat_baseline otherwise (the only option for a habit
+    experiment, whose tracking habit is always freshly created for that one window with no
+    prior history of its own). Returns {} if nothing is computable; a variable is only
+    included when both a baseline and an experiment-window value exist for it."""
     result = {}
     for var in _CONFOUND_VARS:
-        by_week = {
-            r["date"]: r[var] for r in weight_obs + fat_obs
+        by_window = {
+            r["window_start"]: r[var] for r in weight_rows + fat_rows
             if r.get(var) is not None
         }
-        baseline_values = [by_week[wk] for wk in baseline_weeks if wk in by_week]
-        if not baseline_values or exp_week not in by_week:
+        baseline_values = [by_window[w] for w in baseline_windows if w in by_window]
+        if not baseline_values or exp_window not in by_window:
             continue
         result[var] = {
             "baseline": round(sum(baseline_values) / len(baseline_values), 1),
-            "experiment": round(by_week[exp_week], 1),
+            "experiment": round(by_window[exp_window], 1),
         }
     return result
 
@@ -1544,42 +1664,54 @@ def _confound_summary(weight_obs: list[dict], fat_obs: list[dict], baseline_week
 def _record_outcome(
     exp: models.HealthExperiment, db: Session, today: date, tz_offset_minutes: int = 0,
 ) -> None:
-    """Fill outcome fields on exp using the experiment week's health data."""
-    weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset_minutes)
+    """Fill outcome fields on exp using the experiment's own rolling window of health
+    data -- [started_on, started_on + duration_days), NOT a calendar week. Every window
+    below is prorated to `elapsed_days` (how many days have actually passed since
+    started_on, capped at duration_days) rather than always assuming the full duration --
+    the direct fix for the bug that motivated this whole rework: a mid-window dismiss/skip
+    used to still get judged against a fixed 7-day denominator regardless of how many days
+    it actually got to run."""
+    started = date.fromisoformat(exp.started_on)
+    elapsed_days = min(today, started + timedelta(days=exp.duration_days)) - started
+    elapsed_days = elapsed_days.days
+    exp_end = (started + timedelta(days=elapsed_days)).isoformat()
+    exp_start = exp.started_on
 
-    # Experiment week delta
-    def find_week(obs, wk):
-        for row in obs:
-            if row["date"] == wk:
+    weight_rows, fat_rows = _rolling_obs(db, today, started, exp.duration_days)
+
+    def find_window(rows, window_start):
+        for row in rows:
+            if row["window_start"] == window_start:
                 return row["delta_per_day"]
         return None
 
-    exp.weight_delta = find_week(weight_obs, exp.week)
-    exp.fat_delta    = find_week(fat_obs,    exp.week)
+    exp.weight_delta = find_window(weight_rows, exp.started_on)
+    exp.fat_delta    = find_window(fat_rows,    exp.started_on)
 
-    # Baseline: mean of all OTHER weeks
-    other_weeks = {r["date"] for r in weight_obs if r["date"] != exp.week} | \
-                  {r["date"] for r in fat_obs if r["date"] != exp.week}
-    other_weight = [r["delta_per_day"] for r in weight_obs if r["date"] in other_weeks]
-    other_fat    = [r["delta_per_day"] for r in fat_obs    if r["date"] in other_weeks]
+    # Baseline: mean of all OTHER windows
+    other_windows = {r["window_start"] for r in weight_rows if r["window_start"] != exp.started_on} | \
+                    {r["window_start"] for r in fat_rows    if r["window_start"] != exp.started_on}
+    other_weight = [r["delta_per_day"] for r in weight_rows if r["window_start"] in other_windows]
+    other_fat    = [r["delta_per_day"] for r in fat_rows    if r["window_start"] in other_windows]
     exp.weight_baseline = round(sum(other_weight) / len(other_weight), 6) if other_weight else None
     exp.fat_baseline    = round(sum(other_fat)    / len(other_fat),    6) if other_fat    else None
 
-    # Confound check (avg_calories, avg_steps): defaults to the generic all-other-weeks set
-    # above -- the only option for a habit experiment, whose tracking habit is always freshly
-    # created for that one week with no prior history to match against. Overridden below to
-    # the matched present-weeks set for food/workout experiments when one was found, same as
-    # weight_baseline/fat_baseline are.
-    confound_baseline_weeks = other_weeks
+    # Confound check (avg_calories, avg_steps): defaults to the generic all-other-windows
+    # set above -- the only option for a habit experiment, whose tracking habit is always
+    # freshly created for that one window with no prior history to match against.
+    # Overridden below to the matched present-windows set for food/workout experiments
+    # when one was found, same as weight_baseline/fat_baseline are.
+    confound_baseline_windows = other_windows
 
-    # Habit completion rate during experiment week. Trip days are excluded from both sides
-    # (not just the denominator) -- same "not a miss" treatment streak.py already gives trip
-    # days for habit streaks generally, applied consistently here, matching
-    # _load_weekly_obs's own habit_rate fix. Excluding trip days from only the denominator
+    # Habit completion rate during the experiment's own elapsed days -- prorated to
+    # `elapsed_days`, not a hardcoded 7, so a window ended early (dismissed/skipped before
+    # its full duration) is judged on the days it actually had, not penalized for days it
+    # never got to run. Trip days are excluded from both sides (not just the denominator)
+    # -- same "not a miss" treatment streak.py already gives trip days for habit streaks
+    # generally, applied consistently here. Excluding trip days from only the denominator
     # would let a completion logged during a trip push the rate above 1.0.
     if exp.habit_id:
-        ws = _week_start(exp.week)
-        dates = [(ws + timedelta(days=i)).isoformat() for i in range(7)]
+        dates = [(started + timedelta(days=i)).isoformat() for i in range(elapsed_days)]
         trip_days = get_trip_date_set(db, today)
         eligible_dates = [d for d in dates if d not in trip_days]
         completed_days = (
@@ -1599,10 +1731,10 @@ def _record_outcome(
     # _compute_segments already uses for the weight/fat correlation segments
     # -- not a new statistical concept, just applied to a new data source.
     if exp.workout_type:
-        ws = _week_start(exp.week)
-        exp_start = ws.isoformat()
-        exp_end = (ws + timedelta(days=7)).isoformat()          # exclusive
-        baseline_start = (ws - timedelta(days=56)).isoformat()  # 8 prior weeks
+        # 8 prior windows, scaling the old hardcoded "8 prior weeks = 56 days" by
+        # duration_days instead -- identical result today (8*7=56), but no longer
+        # forecloses a future variable-duration experiment.
+        baseline_start = (started - timedelta(days=8 * exp.duration_days)).isoformat()
 
         exp_samples = [
             e.value for e in db.query(models.WorkoutEntry).filter(
@@ -1635,28 +1767,26 @@ def _record_outcome(
                 pass
 
         # Matched weight/fat baseline -- same concept as the food-elimination override
-        # below, applied to weeks this workout type was actually being logged instead of
-        # weeks this food was actually being eaten. Also becomes the confound-check
-        # baseline (set below) when found, in place of the generic all-other-weeks set.
-        workout_present_weeks = _workout_present_weeks(db, exp.workout_type, other_weeks)
-        w_base, f_base, weeks_n = _matched_baseline(weight_obs, fat_obs, workout_present_weeks, exp.week)
+        # below, applied to windows this workout type was actually being logged instead
+        # of windows this food was actually being eaten. Also becomes the confound-check
+        # baseline (set below) when found, in place of the generic all-other-windows set.
+        workout_present_windows = _workout_present_windows(
+            db, exp.workout_type, other_windows, started, exp.duration_days,
+        )
+        w_base, f_base, windows_n = _matched_baseline(weight_rows, fat_rows, workout_present_windows, exp.started_on)
         if w_base is not None:
             exp.weight_baseline = w_base
         if f_base is not None:
             exp.fat_baseline = f_base
-        exp.workout_baseline_weeks_n = weeks_n
-        if weeks_n:
-            confound_baseline_weeks = workout_present_weeks
+        exp.workout_baseline_weeks_n = windows_n
+        if windows_n:
+            confound_baseline_windows = workout_present_windows
 
     # Food-elimination outcome: adherence is a plain count, not a t-test --
-    # there's no natural per-week sample the way individual WorkoutEntry
+    # there's no natural per-window sample the way individual WorkoutEntry
     # sessions provide one for the workout case above (this is a single
-    # experiment week, not a series of sessions within it).
+    # experiment window, not a series of sessions within it).
     if exp.food_name:
-        ws = _week_start(exp.week)
-        exp_start = ws.isoformat()
-        exp_end = (ws + timedelta(days=7)).isoformat()  # exclusive
-
         matching = [
             e for e in db.query(models.FoodEntry).filter(
                 models.FoodEntry.consumed_at >= exp_start,
@@ -1666,26 +1796,28 @@ def _record_outcome(
         ]
         exp.food_experiment_count = len(matching)
 
-        # Override the generic all-other-weeks weight/fat baseline (set
-        # above) with a matched comparison: weeks this food was ACTUALLY
-        # present at a regular clip, vs. the week it was cut. A comparison
-        # against weeks that had nothing to do with this food is weaker
-        # evidence than comparing against weeks the food was actually part
+        # Override the generic all-other-windows weight/fat baseline (set
+        # above) with a matched comparison: windows this food was ACTUALLY
+        # present at a regular clip, vs. the window it was cut. A comparison
+        # against windows that had nothing to do with this food is weaker
+        # evidence than comparing against windows the food was actually part
         # of the pattern. Falls back to the generic baseline (already set)
-        # when fewer than 2 such weeks exist -- one week isn't a baseline,
+        # when fewer than 2 such windows exist -- one window isn't a baseline,
         # it's a single data point.
-        present_weeks = _food_present_weeks(db, exp.food_name, other_weeks)
-        w_base, f_base, weeks_n = _matched_baseline(weight_obs, fat_obs, present_weeks, exp.week)
+        present_windows = _food_present_windows(
+            db, exp.food_name, other_windows, started, exp.duration_days,
+        )
+        w_base, f_base, windows_n = _matched_baseline(weight_rows, fat_rows, present_windows, exp.started_on)
         if w_base is not None:
             exp.weight_baseline = w_base
         if f_base is not None:
             exp.fat_baseline = f_base
-        exp.food_baseline_weeks_n = weeks_n
-        if weeks_n:
-            confound_baseline_weeks = present_weeks
+        exp.food_baseline_weeks_n = windows_n
+        if windows_n:
+            confound_baseline_windows = present_windows
 
     exp.confounds = json.dumps(confounds) if (confounds := _confound_summary(
-        weight_obs, fat_obs, confound_baseline_weeks, exp.week
+        weight_rows, fat_rows, confound_baseline_windows, exp.started_on
     )) else None
 
 
@@ -1891,7 +2023,7 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
         # read back with its original key names regardless of what the live
         # model calls them now.
         exp = models.HealthExperiment(
-            week=data.get("week", _current_isoweek()),
+            started_on=_week_start(data.get("week") or _current_isoweek()).isoformat(),
             text=data.get("text", ""),
             hypothesis=data.get("hypothesis"),
             action=data.get("action"),
@@ -1939,24 +2071,18 @@ def get_health_correlations(request: Request, db: Session = Depends(get_db)):
     }
 
 
-def auto_expire_stale_experiments(
-    db: Session, current_week: str, today: date, tz_offset_minutes: int = 0,
-) -> None:
-    """Archive habits and dismiss any active experiments from previous weeks.
+def auto_expire_stale_experiments(db: Session, today: date, tz_offset_minutes: int = 0) -> None:
+    """Archive habits and dismiss any active experiment whose rolling window has elapsed
+    (today is duration_days or more past started_on).
 
-    Called automatically when the frontend fetches the current experiment so
-    that week-rollover cleanup happens even when the user never clicks
-    'Dismiss & generate new'.
+    Called automatically when the frontend fetches the current experiment so that
+    rollover cleanup happens even when the user never clicks 'Dismiss & generate new'.
     """
-    stale = (
-        db.query(models.HealthExperiment)
-        .filter(
-            models.HealthExperiment.status == "active",
-            models.HealthExperiment.week != current_week,
-        )
-        .all()
-    )
+    stale = db.query(models.HealthExperiment).filter_by(status="active").all()
     for exp in stale:
+        started = date.fromisoformat(exp.started_on)
+        if (today - started).days < exp.duration_days:
+            continue
         _record_outcome(exp, db, today, tz_offset_minutes)
         exp.status       = "dismissed"
         exp.dismissed_at = datetime.now(timezone.utc)
@@ -1965,35 +2091,28 @@ def auto_expire_stale_experiments(
             if habit and not habit.archived:
                 habit.archived    = True
                 habit.archived_at = datetime.now(timezone.utc)
-    if stale:
-        db.commit()
+    db.commit()
 
 
 @router.get("/api/health/experiment")
 def get_health_experiment(request: Request, db: Session = Depends(get_db)):
-    """Return the active experiment for the current week, generating one if needed."""
+    """Return the active experiment, generating one if needed."""
     today = local_date(request)
-    current_week = _current_isoweek(today)
     tz_offset = utc_offset_minutes(request)
 
     # Auto-check food-elimination habits for any trailing day the target food went
-    # unlogged, before the week-rollover cleanup below potentially archives one --
-    # see check_food_avoidance_habits' docstring for why this can't be triggered from
-    # a food-log write the way workout habits react to a WorkoutEntry.
+    # unlogged, before the rollover cleanup below potentially archives one -- see
+    # check_food_avoidance_habits' docstring for why this can't be triggered from a
+    # food-log write the way workout habits react to a WorkoutEntry.
     check_food_avoidance_habits(db, today)
 
-    # Archive habits and expire any active experiments from previous weeks so
-    # week-rollover cleanup happens automatically (not just on explicit dismiss).
-    auto_expire_stale_experiments(db, current_week, today, tz_offset)
+    # Archive habits and expire any active experiment whose window has elapsed, so
+    # rollover cleanup happens automatically (not just on explicit dismiss/skip).
+    auto_expire_stale_experiments(db, today, tz_offset)
 
-    # Check table for an active experiment this week
-    exp = (
-        db.query(models.HealthExperiment)
-        .filter_by(week=current_week, status="active")
-        .first()
-    )
+    exp = db.query(models.HealthExperiment).filter_by(status="active").first()
     if exp:
-        return _exp_to_dict(exp)
+        return _exp_to_dict(exp, today)
 
     # Generate a new experiment -- deliberately weight/fat only (no hydration_obs): experiment
     # generation proposes a routine to change and evaluates it against weight/fat, and isn't
@@ -2001,19 +2120,14 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
     weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
     exp = _generate_experiment(correlations, db, today, tz_offset)
-    return _exp_to_dict(exp)
+    return _exp_to_dict(exp, today)
 
 
 @router.delete("/api/health/experiment")
 def dismiss_health_experiment(request: Request, db: Session = Depends(get_db)):
     """Dismiss the active experiment, recording outcome metrics."""
     today = local_date(request)
-    current_week = _current_isoweek(today)
-    exp = (
-        db.query(models.HealthExperiment)
-        .filter_by(week=current_week, status="active")
-        .first()
-    )
+    exp = db.query(models.HealthExperiment).filter_by(status="active").first()
     if exp:
         _record_outcome(exp, db, today, utc_offset_minutes(request))
         exp.status       = "dismissed"
@@ -2030,15 +2144,43 @@ def dismiss_health_experiment(request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/api/health/experiment/skip")
+def skip_health_experiment(request: Request, db: Session = Depends(get_db)):
+    """End the active experiment WITHOUT recording an outcome -- for when the user never
+    engaged with it at all, so it shouldn't score a (likely near-zero-signal) data point
+    into the What's Working leaderboard or the last-week-win continuation chain. The
+    linked habit is still archived (it's now pointless to keep tracking), exactly like
+    dismiss -- only the outcome-scoring step is skipped. A "skipped" status gets that
+    leaderboard/chain exclusion for free: get_routine_summary and _last_week_win both
+    already filter on status == "dismissed" specifically, so a skipped row is invisible
+    to both without any extra filtering logic."""
+    exp = db.query(models.HealthExperiment).filter_by(status="active").first()
+    if exp:
+        exp.status       = "skipped"
+        exp.dismissed_at = datetime.now(timezone.utc)  # "when this experiment stopped
+                                                         # being active" -- accurate for
+                                                         # both dismissed and skipped rows
+
+        if exp.habit_id:
+            habit = db.query(models.Habit).filter_by(id=exp.habit_id).first()
+            if habit and not habit.archived:
+                habit.archived    = True
+                habit.archived_at = datetime.now(timezone.utc)
+
+        db.commit()
+    return {"ok": True}
+
+
 @router.get("/api/health/experiments")
-def get_health_experiments(db: Session = Depends(get_db)):
+def get_health_experiments(request: Request, db: Session = Depends(get_db)):
     """Return all past experiments ordered newest first."""
+    today = local_date(request)
     exps = (
         db.query(models.HealthExperiment)
         .order_by(models.HealthExperiment.created_at.desc())
         .all()
     )
-    return [_exp_to_dict(e) for e in exps]
+    return [_exp_to_dict(e, today) for e in exps]
 
 
 @router.get("/api/health/routine-summary")
@@ -2054,17 +2196,22 @@ def recompute_experiment_outcomes(db: Session = Depends(get_db)):
     so analysis improvements (e.g. the habit-experiment + avg_steps confound check added
     after some experiments already ran) apply retroactively instead of only to future ones.
 
-    Anchors each experiment's own 90-day lookback window to shortly after ITS OWN week, not
-    today -- _load_weekly_obs is a 90-day trailing window ending at whatever "today" it's
-    given, so recomputing an old experiment against date.today() would push its own week
-    outside that window and silently blank it out instead of fixing it."""
+    Deliberately status == "dismissed", not just "!= active" -- a "skipped" experiment
+    must never get an outcome recorded, including here; that's the entire point of the
+    distinct status (see skip_health_experiment's docstring).
+
+    Anchors each experiment's own 90-day lookback window to shortly after ITS OWN window,
+    not today -- _rolling_obs/_load_weekly_obs are 90-day trailing windows ending at
+    whatever "today" they're given, so recomputing an old experiment against
+    date.today() would push its own window outside that range and silently blank it out
+    instead of fixing it."""
     experiments = (
         db.query(models.HealthExperiment)
-        .filter(models.HealthExperiment.status != "active")
+        .filter(models.HealthExperiment.status == "dismissed")
         .all()
     )
     for exp in experiments:
-        anchor = _week_start(exp.week) + timedelta(days=7)
+        anchor = date.fromisoformat(exp.started_on) + timedelta(days=exp.duration_days)
         _record_outcome(exp, db, anchor)
     db.commit()
     return {"recomputed": len(experiments)}
