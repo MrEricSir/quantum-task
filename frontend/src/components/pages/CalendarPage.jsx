@@ -175,6 +175,24 @@ function downloadIcs(ev) {
 const RANKING_POLL_MS = 3000
 const RANKING_POLL_MAX_ATTEMPTS = 10
 
+// Groups an already-chronologically-sorted event list into consecutive same-day runs --
+// a single linear pass is correct here (no need to key/sort into a map first) precisely
+// because the input is already sorted.
+function groupEventsByDay(events) {
+  const groups = []
+  let current = null
+  for (const ev of events) {
+    const date = new Date(ev.start)
+    const key = toDateKey(date)
+    if (!current || current.key !== key) {
+      current = { key, date, events: [] }
+      groups.push(current)
+    }
+    current.events.push(ev)
+  }
+  return groups
+}
+
 function DiscoveryPanel({ refreshTrigger }) {
   const { openCalendarSettings } = useModalContext()
   const [events, setEvents] = useState(null)  // null = not yet loaded
@@ -188,6 +206,7 @@ function DiscoveryPanel({ refreshTrigger }) {
   // UIDs that were already disliked when the view loaded — hidden from the list entirely
   const [initialDisliked, setInitialDisliked] = useState(new Set())
   const [distanceUnit, setDistanceUnit] = useState('mi')
+  const todayKey = toDateKey(new Date())
 
   // Returns whether the server is still ranking in the background, so the
   // polling loop below can drive off the fresh result instead of a
@@ -303,24 +322,38 @@ function DiscoveryPanel({ refreshTrigger }) {
                 to get AI-ranked recommendations.
               </p>
             )}
-                {events.map((ev) => {
-                  const time = formatDiscoveryTime(ev.start, ev.all_day)
-                  const endTime = ev.end ? formatDiscoveryTime(ev.end, ev.all_day) : null
-                  const uid = ev.uid || ev.id
-                  const liked = feedback[uid]
-                  const isDismissed = liked === false
-                  const isExpanded = expanded.has(ev.id)
-
-                  if (isDismissed) return (
-                    <div key={ev.id} className="disc-event-card disc-event-card--dismissed">
-                      <span className="disc-dismissed-label">Dismissed</span>
-                      <button className="disc-undo-btn" onClick={() => handleFeedback(ev, false)}>Undo</button>
-                    </div>
-                  )
-
+                {groupEventsByDay(events).map((group) => {
+                  const isToday = group.key === todayKey
                   return (
-                    <div key={ev.id} className="disc-event-card">
-                      <div className="disc-event-header">
+                  <div key={group.key} className={`calp-day-group${isToday ? ' calp-day-group--today' : ''}`}>
+                    <div className="calp-day-heading">
+                      <span className="calp-day-name">
+                        {group.date.toLocaleDateString(undefined, { weekday: 'short' })}
+                      </span>
+                      <span className="calp-day-date">
+                        {group.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </span>
+                      {isToday && <span className="calp-today-badge">Today</span>}
+                    </div>
+                    <div className="calp-day-items">
+                    {group.events.map((ev) => {
+                      const time = formatDiscoveryTime(ev.start, ev.all_day)
+                      const endTime = ev.end ? formatDiscoveryTime(ev.end, ev.all_day) : null
+                      const uid = ev.uid || ev.id
+                      const liked = feedback[uid]
+                      const isDismissed = liked === false
+                      const isExpanded = expanded.has(ev.id)
+
+                      if (isDismissed) return (
+                        <div key={ev.id} className="disc-event-card disc-event-card--dismissed">
+                          <span className="disc-dismissed-label">Dismissed</span>
+                          <button className="disc-undo-btn" onClick={() => handleFeedback(ev, false)}>Undo</button>
+                        </div>
+                      )
+
+                      return (
+                        <div key={ev.id} className="disc-event-card">
+                          <div className="disc-event-header">
                         {ev.score != null && (
                           <span className={`disc-score-badge disc-score-badge--${ev.score >= 8 ? 'high' : 'mid'}`}>
                             {ev.score >= 8 ? 'Great match' : 'Good match'}
@@ -418,7 +451,11 @@ function DiscoveryPanel({ refreshTrigger }) {
                           </button>
                         </div>
                       )}
+                        </div>
+                      )
+                    })}
                     </div>
+                  </div>
                   )
                 })}
               </div>

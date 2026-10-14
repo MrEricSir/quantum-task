@@ -370,7 +370,9 @@ class TestSelectRankingBatch:
 
     def test_busy_near_term_day_no_longer_crowds_out_the_whole_batch(self):
         today = date(2026, 6, 15)
-        near = _dated_events(*([0] * 20), today=today)
+        # More near-term events than the whole batch can hold, so the test keeps proving
+        # the fix regardless of how _RANK_BATCH_SIZE is tuned.
+        near = _dated_events(*([0] * (discovery._RANK_BATCH_SIZE + 10)), today=today)
         far = _dated_events(20, today=today)
         events = sorted(near + far, key=lambda e: e["start"])
 
@@ -392,7 +394,10 @@ class TestSelectRankingBatch:
     def test_leftover_quota_from_empty_near_term_buckets_rolls_forward(self):
         today = date(2026, 6, 15)
         # Nothing in the first two buckets (days 0-6) -- every event is 7+ days out.
-        events = _dated_events(*range(7, 28), today=today)
+        # Repeated so there's always enough supply to fill a full batch regardless of how
+        # _RANK_BATCH_SIZE is tuned (days 7-27 alone may not outnumber a larger batch size).
+        offsets = list(range(7, 28)) * 2
+        events = _dated_events(*offsets, today=today)
 
         batch = discovery._select_ranking_batch(events, today, discovery._RANK_BATCH_SIZE)
 
@@ -430,17 +435,18 @@ class TestRankingBatchEndToEnd:
     weeks out actually reaches the LLM and shows up in the final ranked result."""
 
     def test_far_out_event_gets_scored_when_near_term_is_busy(self, client):
-        """Realistic scoring, not a tie: the far event is the best match, the 20 near-term
+        """Realistic scoring, not a tie: the far event is the best match, the near-term
         ones are mediocre. Before Phase 3, the far event never even reached the LLM (it
-        wasn't in the chronological-first-12 slice), so it had no way to outrank them no
-        matter how good a match it was."""
+        wasn't in the chronological-first-N slice), so it had no way to outrank them no
+        matter how good a match it was. More near-term events than the whole scoring batch
+        can hold, so this keeps proving the fix regardless of how _RANK_BATCH_SIZE is tuned."""
         _make_feed("Feed", "https://feed.example/feed.ics")
         client.put("/api/discovery/interests", json={"interests": "music and art"})
 
         base = datetime.now(timezone.utc) + timedelta(hours=2)
         near_events = [
             _timed_event(f"Near {i}", base + timedelta(minutes=i), base + timedelta(hours=1, minutes=i))
-            for i in range(20)
+            for i in range(discovery._RANK_BATCH_SIZE + 10)
         ]
         far_event = _timed_event("Far Concert", base + timedelta(days=20), base + timedelta(days=20, hours=1))
         events = near_events + [far_event]
@@ -469,6 +475,23 @@ class TestRankingBatchEndToEnd:
 
         titles = {e["title"] for e in res2.json()}
         assert "Far Concert" in titles
+
+
+class TestRankSystemPrompt:
+    """Unit tests for discovery._rank_system_prompt -- the "aim to surface N standout
+    events" instruction scales with the actual batch size instead of a fixed number, so
+    retuning _RANK_BATCH_SIZE doesn't silently reintroduce a second, hidden cap via the
+    LLM's own prompt."""
+
+    def test_target_scales_with_batch_size(self):
+        small = discovery._rank_system_prompt(10)
+        large = discovery._rank_system_prompt(30)
+        assert "at most 7 standout events from the full list of 10" in small
+        assert "at most 21 standout events from the full list of 30" in large
+
+    def test_target_has_a_floor_for_a_tiny_batch(self):
+        prompt = discovery._rank_system_prompt(2)
+        assert "at most 3 standout events from the full list of 2" in prompt
 
 
 def _dup_event(title, start, url=None, description=None):
@@ -714,14 +737,18 @@ class TestRankingPersistenceEndToEnd:
 
 
 class TestDisplayResultCap:
-    """Phase 6: the result cap was raised from 10 to _DISPLAY_RESULT_CAP (20) -- with Phase
-    3's batch selection now giving farther-out events a real chance to be scored, a 10-cap
-    was throwing away more of the newly fair candidate pool than it needed to."""
+    """The result cap limits how many events are ever displayed, whether ranked or (no
+    interests configured) plain chronological -- with Phase 3's batch selection giving
+    farther-out events a real chance to be scored, an overly tight cap would throw away
+    more of the fair candidate pool than it needs to."""
 
     def test_no_interests_chronological_fallback_returns_up_to_the_cap(self, client):
         _make_feed("Feed", "https://feed.example/feed.ics")
         base = datetime.now(timezone.utc) + timedelta(hours=2)
-        events = [_timed_event(f"Event {i}", base + timedelta(hours=i)) for i in range(25)]
+        events = [
+            _timed_event(f"Event {i}", base + timedelta(hours=i))
+            for i in range(discovery._DISPLAY_RESULT_CAP + 5)
+        ]
 
         with patch("routers.discovery.gcal_lib.fetch_events", return_value=events):
             res = client.get("/api/discovery/events")
@@ -734,7 +761,10 @@ class TestDisplayResultCap:
         client.put("/api/discovery/interests", json={"interests": "anything"})
 
         base = datetime.now(timezone.utc) + timedelta(hours=2)
-        events = [_timed_event(f"Event {i}", base + timedelta(hours=i)) for i in range(25)]
+        events = [
+            _timed_event(f"Event {i}", base + timedelta(hours=i))
+            for i in range(discovery._DISPLAY_RESULT_CAP + 5)
+        ]
 
         def fake_create(**kwargs):
             # Score nothing -- forces the padding-with-unscored-events path, which is what

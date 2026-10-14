@@ -2214,6 +2214,51 @@ test.describe('calendar page', () => {
     await expect(page.locator('.disc-no-interests-hint')).toBeVisible()
   })
 
+  test('discovery events are grouped under a day heading per calendar day, with Today badged', async ({ page }) => {
+    // Regression test for day-bucketed display: events used to render as one flat list,
+    // making it easy to miss that two events are actually a week apart -- grouping by day
+    // (same visual pattern as the main calendar list view) lets a person plan ahead instead
+    // of only noticing an event the day it happens. Clock is frozen to 2026-06-03T10:00:00
+    // (see CLAUDE.md), so today's group must carry the Today badge and the other two days
+    // must not.
+    await page.route('**/api/discovery/events', r => r.fulfill({ json: [
+      {
+        id: 'feed1::today', uid: 'feed1::today', title: 'Today Only Event',
+        description: null, location: null, url: null,
+        start: '2026-06-03T18:00:00Z', end: null, all_day: false,
+        feed_name: null, score: null, reason: null,
+      },
+      {
+        id: 'feed1::fri', uid: 'feed1::fri', title: 'Friday Trivia Night',
+        description: null, location: null, url: null,
+        start: '2026-06-05T20:00:00Z', end: null, all_day: false,
+        feed_name: null, score: null, reason: null,
+      },
+      {
+        id: 'feed1::fri2', uid: 'feed1::fri2', title: 'Friday Rooftop Party',
+        description: null, location: null, url: null,
+        start: '2026-06-05T22:00:00Z', end: null, all_day: false,
+        feed_name: null, score: null, reason: null,
+      },
+    ]}))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await page.getByRole('button', { name: /^discover$/i }).click()
+
+    const dayGroups = page.locator('.disc-event-list > .calp-day-group')
+    await expect(dayGroups).toHaveCount(2)
+
+    const todayGroup = page.locator('.calp-day-group--today')
+    await expect(todayGroup).toHaveCount(1)
+    await expect(todayGroup.locator('.calp-today-badge')).toBeVisible()
+    await expect(todayGroup).toContainText('Today Only Event')
+
+    const fridayGroup = dayGroups.filter({ hasNotText: 'Today' })
+    await expect(fridayGroup).toHaveCount(1)
+    await expect(fridayGroup).toContainText('Friday Trivia Night')
+    await expect(fridayGroup).toContainText('Friday Rooftop Party')
+  })
+
   test('calendar settings modal shows discovery feed inputs and interests textarea', async ({ page }) => {
     await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
     await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))

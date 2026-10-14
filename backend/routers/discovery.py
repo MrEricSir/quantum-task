@@ -63,19 +63,23 @@ _ranking_cache: dict[str, list] = {}
 _RANKING_CACHE_MAX = 64  # evict oldest when over limit
 
 # Max events shown to the user, whether ranked or (no interests configured) plain
-# chronological. Raised from 10 -- with Phase 3's batch selection now actually giving
-# farther-out events a chance to be scored, a 10-cap was throwing away more of the newly
-# fair candidate pool than it needed to. See DISCOVERY_IMPROVEMENTS.md Phase 6.
-_DISPLAY_RESULT_CAP = 20
+# chronological. Raised from 20 to 30 alongside _RANK_BATCH_SIZE below -- the two move
+# together, since a display cap larger than the scoring batch just pads the list with
+# more unranked chronological filler rather than more well-matched events.
+_DISPLAY_RESULT_CAP = 30
 
 # rkeys with a background ranking task currently running — prevents duplicate
 # LLM calls when e.g. React StrictMode double-fires an effect in dev, or the
 # user hits refresh again before the first call has finished.
 _ranking_inflight: set[str] = set()
 
-# Events sent to the LLM for scoring — kept small so the local model returns
-# quickly rather than churning through a large batch.
-_RANK_BATCH_SIZE = 12
+# Events sent to the LLM for scoring. Raised from 12 to 30 -- at 12, the LLM's own
+# "be selective" instruction (see _rank_system_prompt) routinely scored fewer events than
+# _DISPLAY_RESULT_CAP, so most of a typical 20-event list was actually unranked
+# chronological filler rather than an interest match. Ranking runs as a background task
+# and is cached until interests/feedback change, not on every page load, so a larger batch
+# costs more per profile change, not per visit.
+_RANK_BATCH_SIZE = 30
 
 # Horizon buckets used to select which events make it into the scoring batch, as
 # (start_offset_days_inclusive, end_offset_days_exclusive) from "today". Splitting the batch
@@ -403,14 +407,23 @@ def _persist_ranking(rkey: str, results: list[dict]) -> None:
         db.close()
 
 
-_RANK_SYSTEM = """\
-You are a personal event recommender. Given a user's interest description and a list of \
-upcoming community events, score each event 1–10 for how well it matches their interests \
-(10 = perfect match, 1 = completely irrelevant). Be selective and critical — only return \
-events that genuinely align with the user's stated preferences. Generic or loosely related \
-events should score low. Aim to surface at most 8–10 standout events from the full list.
-Respond ONLY with JSON: {"results": [{"id": "...", "score": 7, "reason": "One sentence why this matches."}]}\
-"""
+def _rank_system_prompt(batch_size: int) -> str:
+    """System prompt for the ranking LLM call. The "aim to surface N standout events"
+    instruction scales with batch_size instead of a fixed number -- a hardcoded target
+    silently stops scaling the moment _RANK_BATCH_SIZE changes, becoming a second cap
+    hiding behind the real one (_DISPLAY_RESULT_CAP).
+    """
+    target = max(3, round(batch_size * 0.7))
+    return (
+        "You are a personal event recommender. Given a user's interest description and a "
+        "list of upcoming community events, score each event 1-10 for how well it matches "
+        "their interests (10 = perfect match, 1 = completely irrelevant). Be selective and "
+        "critical -- only return events that genuinely align with the user's stated "
+        "preferences. Generic or loosely related events should score low. Aim to surface "
+        f"at most {target} standout events from the full list of {batch_size}.\n"
+        'Respond ONLY with JSON: {"results": [{"id": "...", "score": 7, "reason": "One '
+        'sentence why this matches."}]}'
+    )
 
 
 def _rank_events_bg(rkey: str, interests: str, feedback_context: str,
@@ -438,7 +451,7 @@ def _rank_events_bg(rkey: str, interests: str, feedback_context: str,
             model=LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": _RANK_SYSTEM},
+                {"role": "system", "content": _rank_system_prompt(len(ranked_events))},
                 {"role": "user", "content": (
                     f"User interests: {interests}{feedback_context}\n\n"
                     f"Events:\n{json.dumps(payload)}"

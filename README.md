@@ -675,7 +675,7 @@ Configured in **Settings → Telegram** — set a send time for each:
 - Thumbs-up / thumbs-down per event trains the ranker; dismissed events are hidden on next load with an in-session undo option
 - iCal feeds are cached for ~3 hours; LLM rankings are cached until interests or feedback change, and persist across server restarts so a fresh instance doesn't have to re-rank from scratch
 - Ranking runs in the background so the panel shows events immediately (a "Ranking recommendations..." hint appears while it works) instead of blocking on the LLM call
-- Shows up to 20 events
+- Shows up to 30 events, grouped by day (so you can plan ahead rather than only noticing an event the day it happens) -- up to 30 are sent to the AI for interest-scoring per refresh too, so raising the display cap alone wouldn't have meant more well-matched events without also raising how many actually get evaluated
 - Events farther than a configurable distance from your current location (Settings → Calendar,
   default 25 miles / ~40 km, whichever your browser's locale suggests) are filtered out
   entirely — no point surfacing an event you can't realistically get to. Each event's venue
