@@ -13,6 +13,38 @@
   font-size: 0.9rem;
 }
 
+/* ── Tabs ── */
+.cal-tabs-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.cal-tabs-trigger {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.cal-tabs-trigger:hover {
+  color: var(--text);
+}
+
+.cal-tabs-trigger[data-state='active'] {
+  color: #a78bfa;
+  border-bottom-color: #7c3aed;
+}
+
 .cal-feed-list {
   display: flex;
   flex-direction: column;
@@ -27,24 +59,90 @@
 
 /* ── Feed card ── */
 .cal-feed-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
 }
 
-.cal-feed-top-row {
+/* Collapsed-by-default summary row -- click (or Enter) anywhere on it to expand to the
+   full edit form below, except the remove button which always acts immediately. */
+.cal-feed-summary-row {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.cal-feed-summary-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cal-feed-tag-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cal-feed-summary-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-feed-summary-url {
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-feed-chevron {
+  flex-shrink: 0;
+  font-size: 1rem;
+  color: var(--text-muted);
+  opacity: 0.5;
+  display: inline-block;
+  transform: rotate(90deg);
+  transition: transform 0.15s;
+}
+
+.cal-feed-chevron--open {
+  transform: rotate(-90deg);
+}
+
+.cal-feed-test-icon {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.cal-feed-test-icon--ok { color: #34d399; }
+.cal-feed-test-icon--err { color: #f87171; }
+
+/* Full edit form, shown only while this feed's row is expanded. */
+.cal-feed-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
 }
 
 .cal-feed-name-input {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
   padding: 0.35rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -116,13 +214,6 @@
 .cal-url-input:focus {
   outline: 2px solid #7c3aed;
   outline-offset: -1px;
-}
-
-/* ── Generic section divider ── */
-.cal-section {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-  margin-bottom: 16px;
 }
 
 /* ── Discovery test ── */
@@ -214,13 +305,6 @@
 }
 
 .cal-disc-distance-input:focus { outline: 2px solid #7c3aed; outline-offset: -1px; }
-
-/* ── Export section ── */
-.cal-export-section {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-  margin-bottom: 16px;
-}
 
 .cal-export-label {
   font-size: 0.82rem;

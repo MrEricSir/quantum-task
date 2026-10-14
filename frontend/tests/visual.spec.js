@@ -1003,6 +1003,7 @@ test.describe('settings modals', () => {
   test('calendar settings shows export URL section', async ({ page }) => {
     await page.getByRole('button', { name: /settings/i }).click()
     await page.getByRole('menuitem', { name: /calendar/i }).click()
+    await page.getByRole('tab', { name: /^export$/i }).click()
     await expect(page.getByText(/export tasks as ical/i)).toBeVisible()
     await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
   })
@@ -2260,7 +2261,7 @@ test.describe('calendar page', () => {
   })
 
   test('calendar settings modal shows discovery feed inputs and interests textarea', async ({ page }) => {
-    await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
+    await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
     await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
     await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [
       { id: 1, name: 'Meetup SF', ical_url: 'https://example.com/meetup.ics' },
@@ -2271,13 +2272,48 @@ test.describe('calendar page', () => {
     // Open settings via header gear → Calendar
     await page.locator('button[title="Settings"]').click()
     await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+    await page.getByRole('tab', { name: /event discovery/i }).click()
+    // Discovery feeds load collapsed to a one-line summary -- expand it to reach the inputs.
+    await page.locator('.cal-feed-summary-row', { hasText: 'Meetup SF' }).click()
     await expect(page.locator('.cal-feed-name-input').first()).toBeVisible()
     await expect(page.locator('.cal-url-input').first()).toBeVisible()
     await expect(page.locator('.cal-disc-interests')).toHaveValue('Tech meetups and workshops')
   })
 
+  test('calendar settings separates calendars from discovery feeds via tabs, with rows collapsed by default', async ({ page }) => {
+    await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [
+      { id: 1, name: 'Personal', ical_url: 'https://example.com/personal.ics', tag_id: null },
+    ]}))
+    await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
+    await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [
+      { id: 2, name: 'Meetup SF', ical_url: 'https://example.com/meetup.ics' },
+    ]}))
+    await page.route('**/api/discovery/interests', r => r.fulfill({ json: { interests: '' } }))
+    await page.goto('/calendar')
+    await waitForApp(page)
+    await page.locator('button[title="Settings"]').click()
+    await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+
+    // My Calendars is the default tab; the feed loads collapsed -- its name is visible as a
+    // one-line summary, but the edit inputs are not shown until the row is expanded.
+    await expect(page.getByRole('tab', { name: /my calendars/i })).toHaveAttribute('data-state', 'active')
+    await expect(page.locator('.cal-feed-summary-row', { hasText: 'Personal' })).toBeVisible()
+    await expect(page.locator('.cal-feed-name-input')).toHaveCount(0)
+    await expect(page.getByText('Meetup SF')).toHaveCount(0)
+
+    await page.locator('.cal-feed-summary-row', { hasText: 'Personal' }).click()
+    await expect(page.locator('.cal-feed-name-input')).toHaveValue('Personal')
+    await page.locator('.cal-feed-summary-row', { hasText: 'Personal' }).click()
+    await expect(page.locator('.cal-feed-name-input')).toHaveCount(0)
+
+    // Switching tabs shows the discovery feed and hides the calendar feed entirely.
+    await page.getByRole('tab', { name: /event discovery/i }).click()
+    await expect(page.locator('.cal-feed-summary-row', { hasText: 'Meetup SF' })).toBeVisible()
+    await expect(page.getByText('Personal', { exact: true })).toHaveCount(0)
+  })
+
   test('calendar settings modal shows a saved max distance and unit', async ({ page }) => {
-    await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
+    await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
     await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
     await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [] }))
     await page.route('**/api/discovery/interests', r => r.fulfill({ json: {
@@ -2288,12 +2324,13 @@ test.describe('calendar page', () => {
     await waitForApp(page)
     await page.locator('button[title="Settings"]').click()
     await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+    await page.getByRole('tab', { name: /event discovery/i }).click()
     await expect(page.locator('.cal-disc-distance-input')).toHaveValue('64')
     await expect(page.getByRole('button', { name: 'km' })).toHaveClass(/cal-feed-tag-pill--all/)
   })
 
   test('saving calendar settings PUTs the max distance converted to miles', async ({ page }) => {
-    await page.route('**/api/calendar/mappings', r => r.fulfill({ json: [] }))
+    await page.route('**/api/calendar-mappings', r => r.fulfill({ json: [] }))
     await page.route('**/api/settings/export-token', r => r.fulfill({ json: '' }))
     await page.route('**/api/discovery/feeds', r => r.fulfill({ json: [] }))
     let putBody = null
@@ -2308,6 +2345,7 @@ test.describe('calendar page', () => {
     await waitForApp(page)
     await page.locator('button[title="Settings"]').click()
     await page.locator('.settings-dropdown-item', { hasText: /calendar/i }).first().click()
+    await page.getByRole('tab', { name: /event discovery/i }).click()
     await page.locator('.cal-disc-distance-input').fill('50')
     await page.getByRole('button', { name: 'km' }).click()
     await page.locator('.btn-save').click()
