@@ -1016,6 +1016,32 @@ test.describe('settings modals', () => {
     await expect(page.getByRole('button', { name: /connect withings/i })).toBeVisible()
   })
 
+  test('a weight goal set in lbs saves at full precision instead of drifting from what was typed', async ({ page }) => {
+    // Regression test: health_goal is always stored in kg -- the lbs conversion used to
+    // round to 1 decimal kg at save time, so a value like 150.5 lbs would come back as
+    // 150.6 lbs the next time it was shown, even though nothing else had changed.
+    await page.addInitScript(() => localStorage.setItem('health-unit', 'imperial'))
+    let savedGoals = null
+    await page.route('**/api/withings/goals', r => {
+      if (r.request().method() === 'PATCH') {
+        savedGoals = r.request().postDataJSON()
+        return r.fulfill({ json: savedGoals })
+      }
+      return r.fulfill({ json: { steps: null, fat_ratio: null, weight: null } })
+    })
+    await page.goto('/')
+    await waitForApp(page)
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.getByRole('menuitem', { name: /withings/i }).click()
+    await page.getByRole('button', { name: 'Edit' }).click()
+    await page.getByPlaceholder('165.0').fill('150.5')
+    await page.getByRole('button', { name: /save goals/i }).click()
+
+    await expect.poll(() => savedGoals).toBeTruthy()
+    expect(savedGoals.weight).toBeCloseTo(150.5 / 2.20462, 6)
+    expect(savedGoals.weight).not.toBe(Math.round((150.5 / 2.20462) * 10) / 10)
+  })
+
   test('navigation settings opens with heading, ordered pages, and Save/Cancel footer buttons', async ({ page }) => {
     await page.getByRole('button', { name: /settings/i }).click()
     await page.getByRole('menuitem', { name: /navigation/i }).click()

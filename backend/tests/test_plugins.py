@@ -560,3 +560,31 @@ class TestWorkoutTypeOverride:
         """The workout regex must not false-positive on genuinely unrelated intents."""
         result = _pp(text, type=expected_type)
         assert result.type == expected_type
+
+
+class TestWeightGoalUnitConversion:
+    """health_goal for a weight metric is always stored in kg, regardless of what unit the
+    text was phrased in -- the lbs regex backstop (_WEIGHT_LB_RE, for weaker local models
+    that don't reliably convert units themselves) must convert at full precision, not round
+    to a fixed number of decimals at this step. Rounding here bakes a few tenths of a pound
+    of drift into the stored value, which then shows up as a visibly different number than
+    what was actually typed once the frontend converts it back to lbs for display -- the
+    standard fix for this class of bug is to round only at the final display step, never at
+    an intermediate unit-conversion/storage step."""
+
+    def test_lbs_input_converts_to_kg_at_full_precision(self):
+        result = _pp("set my weight goal to 150.5 lbs", type="task")
+        assert result.health_metric == "weight"
+        assert result.health_goal == pytest.approx(150.5 * 0.453592)
+        # The old behavior rounded to 1 decimal here -- confirm that's gone, not just that
+        # the value is "close enough" to pass a loose approx check.
+        assert result.health_goal != round(150.5 * 0.453592, 1)
+
+    def test_kg_input_passes_through_unrounded(self):
+        result = _pp("set my weight goal to 68.265596 kg", type="task")
+        assert result.health_metric == "weight"
+        assert result.health_goal == pytest.approx(68.265596)
+
+    def test_lbs_goal_phrase_sets_type_to_goal(self):
+        result = _pp("set my weight goal to 150.5 lbs", type="task")
+        assert result.type == "goal"

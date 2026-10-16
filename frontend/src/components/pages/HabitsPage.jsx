@@ -137,7 +137,7 @@ function metricBadgeText(metric, goal, isImperial) {
   if (metric === 'fat_ratio') return `body fat${goal != null ? ' ≤ ' + goal.toFixed(1) + '%' : ''}`
   if (metric === 'weight') {
     if (goal == null) return 'weight'
-    const val = isImperial ? Math.round(goal * KG_TO_LBS * 10) / 10 : goal
+    const val = isImperial ? goal * KG_TO_LBS : goal
     return `weight ≤ ${val.toFixed(1)} ${isImperial ? 'lbs' : 'kg'}`
   }
   return metric
@@ -184,7 +184,12 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     setEditingId(habit.id)
     setEditName(habit.name)
     setEditMetric(habit.health_metric || '')
-    setEditGoal(habit.health_goal != null ? String(habit.health_goal) : '')
+    // health_goal is always stored in kg -- convert to lbs for display here, same as every
+    // other weight-goal display in the app, so the edit box matches its own 'lbs' placeholder.
+    const goalForEdit = habit.health_metric === 'weight' && isImperial && habit.health_goal != null
+      ? habit.health_goal * KG_TO_LBS
+      : habit.health_goal
+    setEditGoal(goalForEdit != null ? String(goalForEdit) : '')
     setEditTags(habit.tags ?? [])
   }
 
@@ -193,10 +198,17 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     if (!name) { setEditingId(null); return }
     try {
       const resolvedTags = await resolveTags(editTags, onCreateTag)
+      const goal = editMetric && editGoal !== '' ? parseFloat(editGoal) : null
+      // Convert a weight goal back to kg before saving -- full precision, not rounded here,
+      // so the value shown next time (converted back to lbs for display) matches what was
+      // actually typed instead of drifting by a fraction of a pound.
+      const health_goal = editMetric === 'weight' && isImperial && goal != null
+        ? goal / KG_TO_LBS
+        : goal
       await onUpdate(editingId, {
         name,
         health_metric: editMetric || null,
-        health_goal: editMetric && editGoal !== '' ? parseFloat(editGoal) : null,
+        health_goal,
         tag_ids: resolvedTags.map(t => t.id),
       })
       setEditingId(null)

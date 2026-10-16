@@ -561,7 +561,12 @@ class BaseModelPlugin:
                 lm = _WEIGHT_LB_RE.search(lowered)
                 if lm:
                     parsed.health_metric = "weight"
-                    parsed.health_goal = round(float(lm.group(1)) * 0.453592, 1)
+                    # Full precision, not rounded here -- health_goal is always stored in kg,
+                    # with any lbs<->kg rounding happening only at display time. Rounding at
+                    # this conversion step instead would bake a few tenths of a pound of drift
+                    # into the stored value, which then shows up as a visibly different number
+                    # than what was actually typed once it's converted back for display.
+                    parsed.health_goal = float(lm.group(1)) * 0.453592
 
         # Override type to "goal" when the input is explicitly about setting a health target.
         # This runs after metric detection so health_metric is already populated.

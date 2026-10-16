@@ -62,7 +62,11 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
           payload[metric] = null
         } else {
           const val = parseFloat(raw)
-          payload[metric] = metric === 'weight' && isImperial ? Math.round(val / KG_TO_LBS * 10) / 10 : val
+          // Full precision -- health_goal is always stored in kg, and rounding at this
+          // conversion step (rather than only when displaying it back) bakes a few tenths
+          // of a pound of drift into the stored value, which then shows up as a visibly
+          // different number than what was actually typed.
+          payload[metric] = metric === 'weight' && isImperial ? val / KG_TO_LBS : val
         }
       }
       await onSaveGoals(payload)
@@ -121,8 +125,10 @@ export default function WithingsSettings({ status, onSync, onDisconnect, onSaveG
           <div className="withings-goals-list">
             {GOAL_FIELDS.map(({ metric, label }) => {
               const rawVal = healthGoals?.[metric]
+              // Rounded only here, for display -- .toFixed(1) below does the actual
+              // rounding, this conversion just needs to stay at full precision going in.
               const displayVal = metric === 'weight' && rawVal != null
-                ? (isImperial ? Math.round(rawVal * KG_TO_LBS * 10) / 10 : rawVal)
+                ? (isImperial ? rawVal * KG_TO_LBS : rawVal)
                 : rawVal
               const unit = metric === 'weight' ? (isImperial ? 'lbs' : 'kg') : '%'
               return (

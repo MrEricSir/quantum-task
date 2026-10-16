@@ -129,6 +129,46 @@ describe('Withings-synced habit (health_metric set)', () => {
   })
 })
 
+// ── Weight-goal unit conversion (health_goal is always stored in kg) ────────────
+// Regression coverage for a bug where the inline habit editor never converted a weight
+// goal between lbs and kg at all -- the edit box showed the raw kg number next to a
+// 'lbs'-styled placeholder, and saving stored whatever was typed as if it were already kg.
+
+describe('weight-goal unit conversion in the inline edit form', () => {
+  const KG_TO_LBS = 2.20462
+  const weightHabit = { ...base, id: 4, name: 'Weight goal', health_metric: 'weight', health_goal: 68.265596 }
+
+  it('shows the kg-stored goal converted to lbs when isImperial is true', () => {
+    renderHabits([weightHabit], { isImperial: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit habit' }))
+    const input = document.querySelector('.habit-card-edit-goal')
+    expect(input.value).toBe(String(weightHabit.health_goal * KG_TO_LBS))
+  })
+
+  it('shows the raw kg value unconverted when isImperial is false', () => {
+    renderHabits([weightHabit], { isImperial: false })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit habit' }))
+    const input = document.querySelector('.habit-card-edit-goal')
+    expect(input.value).toBe(String(weightHabit.health_goal))
+  })
+
+  it('converts an edited lbs value back to kg at full precision on save, not rounded', async () => {
+    const onUpdate = vi.fn().mockResolvedValue({})
+    renderHabits([weightHabit], { isImperial: true, onUpdate })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit habit' }))
+    fireEvent.change(document.querySelector('.habit-card-edit-goal'), { target: { value: '150.5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onUpdate).toHaveBeenCalled())
+    const [, payload] = onUpdate.mock.calls[0]
+    expect(payload.health_goal).toBeCloseTo(150.5 / KG_TO_LBS, 6)
+    // The old bug either skipped conversion entirely or rounded to 1 decimal kg here --
+    // confirm neither: the raw lbs number must never be stored as-is, and the converted
+    // value must not have been rounded away from what the precise conversion gives.
+    expect(payload.health_goal).not.toBe(150.5)
+    expect(payload.health_goal).not.toBe(Math.round((150.5 / KG_TO_LBS) * 10) / 10)
+  })
+})
+
 // ── Food-avoidance habits ────────────────────────────────────────────────────
 
 describe('food-avoidance habit (food_avoid_name set)', () => {
