@@ -84,12 +84,18 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     if (task?.spec && specText === null && !specGenerating) setSpecText(task.spec)
   }, [task?.spec]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll bridge job while pending / running, OR while its auto-preview is still starting --
-  // a preview launches AFTER /complete (job status already terminal), so polling only on
-  // status pending/running would miss it arriving entirely.
+  // Poll bridge job while pending / running, OR while its auto-preview is starting or
+  // already running -- a preview launches AFTER /complete (job status already terminal), so
+  // polling only on status pending/running would miss it arriving entirely. 'running' must
+  // stay active too, not just 'starting': otherwise polling stops the instant the preview
+  // comes up, permanently missing a later stopped/failed transition from
+  // --stop-preview/--cleanup.
   useEffect(() => {
     const isActive = (job) =>
-      !!job && (job.status === 'pending' || job.status === 'running' || job.preview_status === 'starting')
+      !!job && (
+        job.status === 'pending' || job.status === 'running' ||
+        job.preview_status === 'starting' || job.preview_status === 'running'
+      )
     if (!isActive(bridgeJob)) return
     const iv = setInterval(async () => {
       try {

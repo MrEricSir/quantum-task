@@ -3717,7 +3717,9 @@ class TestCapturePreviewScreenshot:
         return {"app_url": "http://fake", "token": "x"}
 
     def test_success_uploads_base64_and_cleans_up_the_temp_file(self, monkeypatch):
-        real_bytes = b"\x89PNG\r\n fake png bytes"
+        # Padded well past _MIN_SCREENSHOT_BYTES -- a real screenshot is always this size
+        # or larger, and this exercises the size check's happy path, not just its signature.
+        real_bytes = b"\x89PNG\r\n\x1a\n" + b"fake png bytes after the real signature" * 50
         captured_path = {}
         def fake_run(cmd, **kwargs):
             output_path = cmd[-1]
@@ -3792,6 +3794,61 @@ class TestCapturePreviewScreenshot:
 
         assert api_calls == []
         assert "failed unexpectedly" in capsys.readouterr().err.lower()
+
+    def test_empty_output_file_skips_with_a_warning(self, monkeypatch, capsys):
+        """A returncode==0 doesn't guarantee a real image -- playwright has been observed
+        to exit clean while the render was still blank at the --wait-for-timeout cutoff,
+        writing an empty file. Must never upload that."""
+        def fake_run(cmd, **kwargs):
+            output_path = cmd[-1]
+            open(output_path, "wb").close()  # exit 0, but nothing written
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert api_calls == []
+        assert "no usable image" in capsys.readouterr().err.lower()
+
+    def test_corrupt_non_png_output_skips_with_a_warning(self, monkeypatch, capsys):
+        """A returncode==0 with a non-empty but non-PNG file (truncated write, wrong file
+        type) must also be rejected, not just the empty-file case."""
+        def fake_run(cmd, **kwargs):
+            output_path = cmd[-1]
+            with open(output_path, "wb") as f:
+                f.write(b"not a png at all")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert api_calls == []
+        assert "no usable image" in capsys.readouterr().err.lower()
+
+    def test_truncated_file_with_a_valid_png_header_is_still_rejected(self, monkeypatch, capsys):
+        """A process killed right after flushing just the PNG signature (OOM, full disk)
+        would pass a magic-bytes-only check while still being garbage -- the minimum-size
+        check must catch this even though the header itself is genuinely valid."""
+        def fake_run(cmd, **kwargs):
+            output_path = cmd[-1]
+            with open(output_path, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n")  # valid signature, nothing else
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        monkeypatch.setattr(agent_core.subprocess, "run", fake_run)
+        api_calls = []
+        monkeypatch.setattr(agent_core, "api",
+                            lambda cfg, method, path, body=None: api_calls.append((method, path, body)))
+
+        agent_core._capture_preview_screenshot(self._cfg(), 42, "http://localhost:9999")
+
+        assert api_calls == []
+        assert "no usable image" in capsys.readouterr().err.lower()
 
     def test_temp_file_is_removed_even_on_failure(self, monkeypatch):
         removed = []

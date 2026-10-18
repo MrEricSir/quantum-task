@@ -198,7 +198,9 @@ def queue_jobs_by_tag(body: _QueueByTag, db: Session = Depends(get_db)):
     already_queued_card_ids = {
         row.card_id for row in
         db.query(models.BridgeJob.card_id)
-        .filter(models.BridgeJob.status.in_(["pending", "running"]))
+        .filter(models.BridgeJob.status.in_(
+            ["pending", "running", "blocked", "needs_confirmation"]
+        ))
         .all()
     }
 

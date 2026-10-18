@@ -533,16 +533,24 @@ describe('useAssistCode — polling', () => {
     expect(api.getBridgeJob).not.toHaveBeenCalled()
   })
 
-  it('keeps polling a done job while its auto-preview is still starting', async () => {
+  it('keeps polling a done job through preview_status starting -> running, stopping only at a terminal preview state', async () => {
     // A preview launches AFTER /complete, so the job's own status is already terminal --
     // without the preview_status check, this job would never be polled and the preview
-    // URL would never arrive.
+    // URL would never arrive. Regression test: 'running' must stay active too, not just
+    // 'starting' -- the old code stopped polling the instant the preview came up, which
+    // meant it permanently missed a later stopped/failed transition from
+    // --stop-preview/--cleanup. This test fails against that old behavior (it never
+    // observes 'stopped' below) and passes now that 'running' keeps polling alive.
     api.getBridgeJobChain.mockResolvedValue({
       root: { id: 1, status: 'done', preview_status: 'starting' }, companion: null,
     })
-    api.getBridgeJob.mockResolvedValueOnce({
-      id: 1, status: 'done', preview_status: 'running', preview_url: 'http://localhost:20771',
-    })
+    api.getBridgeJob
+      .mockResolvedValueOnce({
+        id: 1, status: 'done', preview_status: 'running', preview_url: 'http://localhost:20771',
+      })
+      .mockResolvedValueOnce({
+        id: 1, status: 'done', preview_status: 'stopped', preview_url: 'http://localhost:20771',
+      })
 
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     await vi.waitFor(() => expect(result.current.bridgeJob?.preview_status).toBe('starting'))
@@ -551,10 +559,14 @@ describe('useAssistCode — polling', () => {
     expect(result.current.bridgeJob.preview_status).toBe('running')
     expect(result.current.bridgeJob.preview_url).toBe('http://localhost:20771')
 
-    // Stops polling once the preview leaves "starting" -- no further calls.
-    const callCountAtRunning = api.getBridgeJob.mock.calls.length
+    // Keeps polling while the preview is running -- this is the exact gap the old code had.
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(result.current.bridgeJob.preview_status).toBe('stopped')
+
+    // Stops polling once the preview reaches a terminal state -- no further calls.
+    const callCountAtStopped = api.getBridgeJob.mock.calls.length
     await act(async () => { await vi.advanceTimersByTimeAsync(20000) })
-    expect(api.getBridgeJob.mock.calls.length).toBe(callCountAtRunning)
+    expect(api.getBridgeJob.mock.calls.length).toBe(callCountAtStopped)
   })
 
   it('does not poll a done job with no preview activity', async () => {

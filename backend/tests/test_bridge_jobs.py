@@ -1138,6 +1138,38 @@ class TestQueueJobsByTag:
         res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
         assert res.json()["skipped_already_queued"] != []
 
+    def test_skips_cards_with_a_blocked_job(self, client):
+        """A card whose only job is blocked (waiting on a cross-repo dependency) must not
+        be silently re-queued -- it already has a job in flight, just not an active one yet."""
+        _make_tag("work")
+        card_id = _make_card("Waiting on dependency", spec="s", tags=("work",))
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.status = "blocked"
+            db.commit()
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        data = res.json()
+        assert data["queued"] == []
+        assert data["skipped_already_queued"] == [{"id": card_id, "title": "Waiting on dependency"}]
+
+    def test_skips_cards_with_a_needs_confirmation_job(self, client):
+        """A card whose only job is flagged needs_confirmation (checkpoint/self-review match,
+        not yet acknowledged) must not be silently re-queued out from under the pending review."""
+        _make_tag("work")
+        card_id = _make_card("Flagged for review", spec="s", tags=("work",))
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.status = "needs_confirmation"
+            db.commit()
+
+        res = client.post("/api/bridge/jobs/queue-by-tag", json={"tag": "work"})
+        data = res.json()
+        assert data["queued"] == []
+        assert data["skipped_already_queued"] == [{"id": card_id, "title": "Flagged for review"}]
+
     def test_requeues_card_whose_last_job_is_done(self, client):
         """A card whose previous job finished (done/error) is eligible again —
         only pending/running jobs block re-queueing."""

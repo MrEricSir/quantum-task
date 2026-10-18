@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import models
+import bridge.stale as bridge_stale
 from bridge.stale import STALE_THRESHOLD_MINUTES, check_stale_bridge_jobs
 from main import app
 from deps import get_db
@@ -151,6 +152,36 @@ class TestCheckStaleBridgeJobs:
         with TestSession() as db:
             stale = check_stale_bridge_jobs(db)
             assert {j.id for j in stale} == {id1, id2}
+
+    def test_a_real_completion_racing_the_sweep_is_not_clobbered_back_to_stalled(self, monkeypatch):
+        """Regression test for a real lost-update race: the candidate SELECT can find a
+        job "running" and stale, but a real POST /complete can land in the gap before
+        this function's own write -- an unconditional "job.status = 'stalled'" would
+        silently overwrite that real, newer status. Simulates a completion landing in
+        that exact gap via a second, independent session, right between the candidate
+        SELECT and the atomic conditional UPDATE -- and asserts the sweep backs off
+        instead of clobbering it, the same way the job-double-claim race test does for
+        _claim_job_if_still_pending."""
+        job_id = _make_job(status="running", minutes_ago=STALE_THRESHOLD_MINUTES + 5)
+
+        real_mark_stalled = bridge_stale._mark_stalled_if_still_running
+
+        def racing_mark_stalled(db, marked_job_id):
+            with TestSession() as other_db:
+                other_db.query(models.BridgeJob).filter_by(
+                    id=marked_job_id, status="running",
+                ).update({"status": "done"})
+                other_db.commit()
+            return real_mark_stalled(db, marked_job_id)
+
+        monkeypatch.setattr(bridge_stale, "_mark_stalled_if_still_running", racing_mark_stalled)
+
+        with TestSession() as db:
+            stale = check_stale_bridge_jobs(db)
+
+        assert stale == []
+        with TestSession() as db:
+            assert db.query(models.BridgeJob).filter_by(id=job_id).first().status == "done"
 
 
 # ── POST /api/bridge/jobs/{id}/heartbeat ───────────────────────────────────────

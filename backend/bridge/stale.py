@@ -24,6 +24,28 @@ import models
 STALE_THRESHOLD_MINUTES = 20
 
 
+def _mark_stalled_if_still_running(db: Session, job_id: int) -> bool:
+    """Atomically flips one job running -> stalled, conditioned on it still being
+    running at the moment this UPDATE actually runs -- not just when the stale-sweep's
+    candidate SELECT found it.
+
+    A real POST /complete or /needs-confirmation can land in the gap between that
+    SELECT and this write; without the status='running' guard here, this would be a
+    blind write that silently clobbers the real outcome back to "stalled". The
+    status='running' condition makes the write a no-op (rowcount 0) when that
+    happens, so check_stale_bridge_jobs below can simply skip the job instead of
+    overwriting a real, newer status. Same pattern as
+    bridge.jobs._claim_job_if_still_pending (that one guards pending->running, this
+    one guards running->stalled)."""
+    updated = (
+        db.query(models.BridgeJob)
+        .filter_by(id=job_id, status="running")
+        .update({"status": "stalled"})
+    )
+    db.commit()
+    return updated > 0
+
+
 def check_stale_bridge_jobs(db: Session) -> list[models.BridgeJob]:
     """Transition any "running" job with no heartbeat/output in the last
     STALE_THRESHOLD_MINUTES to "stalled". Self-limiting: once transitioned,
@@ -34,7 +56,7 @@ def check_stale_bridge_jobs(db: Session) -> list[models.BridgeJob]:
     # Compare against a naive cutoff too, or the string comparison SQLite
     # falls back to for datetimes can silently misorder aware vs naive values.
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
-    stale_jobs = (
+    candidates = (
         db.query(models.BridgeJob)
         .filter(
             models.BridgeJob.status == "running",
@@ -43,8 +65,9 @@ def check_stale_bridge_jobs(db: Session) -> list[models.BridgeJob]:
         )
         .all()
     )
-    for job in stale_jobs:
-        job.status = "stalled"
-    if stale_jobs:
-        db.commit()
+    stale_jobs = []
+    for candidate in candidates:
+        if _mark_stalled_if_still_running(db, candidate.id):
+            db.refresh(candidate)
+            stale_jobs.append(candidate)
     return stale_jobs

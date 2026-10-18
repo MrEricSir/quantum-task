@@ -2187,6 +2187,10 @@ _SCREENSHOT_TIMEOUT = 40  # generous but bounded -- npx can hang trying to inter
                           # prompt if playwright/its browsers aren't installed, and this must
                           # never block the daemon thread (or a future job) indefinitely
 
+_MIN_SCREENSHOT_BYTES = 1024  # a genuine 1280x800 capture is always well over this --
+                               # only a truncated/corrupt write (OOM-killed, disk full,
+                               # killed right after the PNG header) would land under it
+
 
 def _capture_preview_screenshot(cfg, job_id, url):
     """Best-effort: shell out to `npx playwright screenshot` against a confirmed-running
@@ -2211,7 +2215,21 @@ def _capture_preview_screenshot(cfg, job_id, url):
                   file=sys.stderr)
             return
         with open(output_path, "rb") as f:
-            image_b64 = base64.b64encode(f.read()).decode("ascii")
+            image_bytes = f.read()
+        # A returncode==0 doesn't guarantee a real image -- playwright has been observed to
+        # exit clean while writing an empty or truncated file (e.g. OOM-killed or a full disk
+        # mid-write, or the render was still blank at the --wait-for-timeout cutoff). The
+        # size check catches a truncated write the magic-bytes check alone would miss (a
+        # process killed right after flushing just the PNG header would still have a valid
+        # signature); the magic-bytes check catches a wrong-but-non-empty file the size check
+        # alone would miss. Skip rather than upload something that would just fail to render
+        # wherever it's shown (dashboard, Telegram).
+        if len(image_bytes) < _MIN_SCREENSHOT_BYTES or not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            print(f"[bridge] Screenshot capture produced no usable image "
+                  f"({len(image_bytes)} bytes) — skipping visual verification",
+                  file=sys.stderr)
+            return
+        image_b64 = base64.b64encode(image_bytes).decode("ascii")
         api(cfg, "POST", f"/api/bridge/jobs/{job_id}/screenshot", {"image_base64": image_b64})
         print("[bridge] Preview screenshot captured and uploaded")
     except subprocess.TimeoutExpired:
