@@ -221,6 +221,43 @@ class TestConcurrentFetch:
         titles = {e["title"] for e in res.json()}
         assert titles == {"Stale Cached Event"}
 
+    def test_fetch_error_still_updates_last_fetched_to_avoid_a_retry_storm(self, client):
+        """Regression test for a real production issue: a failed fetch used to leave
+        last_fetched untouched, so the SAME feed got retried on every single subsequent
+        request instead of backing off for the normal TTL -- turning one transient failure
+        (e.g. a 429 from the upstream calendar provider) into a sustained retry storm against
+        the same URL, especially compounded by the frontend's ranking-poll loop (up to 10
+        requests in 30s). last_fetched must advance on failure too, even though
+        cached_events (the actual stale data served) stays untouched."""
+        stale = datetime.utcnow() - timedelta(hours=10)
+        cached = discovery._serialize_gcal_events([_event("Stale Cached Event")])
+        feed_id = _make_feed("Flaky", "https://flaky.example/feed.ics", last_fetched=stale, cached_events=cached)
+
+        with patch("routers.discovery.gcal_lib.fetch_events", side_effect=ConnectionError("boom")):
+            client.get("/api/discovery/events")
+
+        with TestingSessionLocal() as db:
+            feed = db.query(models.EventDiscoveryFeed).filter_by(id=feed_id).first()
+            assert feed.last_fetched > stale
+            # The stale content itself is untouched -- only the retry timer resets.
+            assert "Stale Cached Event" in feed.cached_events
+
+    def test_repeated_requests_after_one_failure_do_not_keep_retrying_the_same_feed(self, client):
+        """End-to-end version of the test above: confirms the retry storm is actually fixed,
+        not just that a field changed. A second request immediately after a failed one must
+        not attempt the fetch again -- it should serve the (now not-actually-stale-by-TTL)
+        cached copy instead, same as any other feed within its normal cache window."""
+        stale = datetime.utcnow() - timedelta(hours=10)
+        cached = discovery._serialize_gcal_events([_event("Stale Cached Event")])
+        _make_feed("Flaky", "https://flaky.example/feed.ics", last_fetched=stale, cached_events=cached)
+
+        with patch("routers.discovery.gcal_lib.fetch_events", side_effect=ConnectionError("boom")) as mock_fetch:
+            client.get("/api/discovery/events")
+            assert mock_fetch.call_count == 1
+
+            client.get("/api/discovery/events")
+            assert mock_fetch.call_count == 1  # not retried -- last_fetched already advanced
+
     def test_successful_fetches_are_persisted_in_one_batch_commit(self, client):
         """DB writes happen back on the main thread after every worker-thread fetch
         finishes, not one commit per feed -- confirm the persisted state is correct

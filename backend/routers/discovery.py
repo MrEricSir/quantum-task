@@ -675,6 +675,19 @@ def get_discovery_events(
                     feed_raw_events[feed.id] = raw_events
                 except Exception as e:
                     print(f"[discovery] feed {feed.id} fetch error: {e}")
+                    # Bump last_fetched on failure too, not just success -- otherwise a
+                    # feed that fails once (e.g. a 429 from the upstream calendar provider)
+                    # gets retried on every single subsequent request instead of backing off,
+                    # since the cache-freshness check below is driven entirely by
+                    # last_fetched. With the frontend's ranking-poll loop alone retrying up
+                    # to 10 times in the 30s after one page load, a single transient failure
+                    # could otherwise turn into a sustained retry storm against the same
+                    # upstream URL -- which, for a 429 specifically, keeps the rate limit
+                    # triggered indefinitely instead of ever letting it clear. cached_events
+                    # deliberately stays untouched (the stale copy below is still the best
+                    # data available), only the retry timer resets.
+                    feed.last_fetched = now_naive
+                    db.add(feed)
                     # Serve stale cache rather than returning nothing for this feed;
                     # if there's no cache at all yet, feed_raw_events just has no entry
                     # for it and the loop below skips it entirely.
