@@ -591,6 +591,19 @@ class BridgeJob(Base):
     # more infrastructure. Revisit only if that tradeoff ever actually matters. Null when
     # visual_verify never ran for this job.
     screenshot_data = Column(Text, nullable=True)
+    # For a cross-repo companion job (depends_on_job_id set): the upstream job's preview_url,
+    # IF it was already "running" at the exact moment this job was claimed via GET
+    # /api/bridge/jobs/next/pending -- null otherwise (no dependency, upstream had no
+    # auto_preview, or its preview hadn't come up yet). Checked fresh at claim time, not at
+    # unblock time -- the upstream's auto_preview doesn't even attempt to start until after
+    # its own /complete call returns, the same request that triggers the unblock, so checking
+    # any earlier would almost always find nothing yet. Set alongside (not instead of) a short
+    # note appended into prompt_snapshot itself, so the coding agent is actually told about
+    # it -- this column exists so the Code tab can show "used a live preview" as its own UI
+    # signal, the same pattern checkpoint_matched_paths/self_review_flagged already use,
+    # instead of making a human re-read prompt text to find out. See
+    # bridge/router.py's get_next_pending.
+    live_preview_url_used = Column(Text, nullable=True)
 
     card = relationship("Card")
 

@@ -199,6 +199,17 @@ export default function AssistCodeTab({ code }) {
               </div>
             )}
 
+            {bridgeJob.live_preview_url_used && (
+              <div className="cdp-bridge-group cdp-bridge-group--upstream-preview">
+                <span className="cdp-bridge-upstream-preview">
+                  ✓ Used upstream's live preview:{' '}
+                  <a href={bridgeJob.live_preview_url_used} target="_blank" rel="noreferrer">
+                    {bridgeJob.live_preview_url_used}
+                  </a>
+                </span>
+              </div>
+            )}
+
             {bridgeJob.preview_status && (
               <div className="cdp-bridge-group cdp-bridge-group--preview">
                 <div className="cdp-bridge-preview">

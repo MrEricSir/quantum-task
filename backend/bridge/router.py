@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session, selectinload
 import models
 import app_setting_keys as setting_keys
 from bridge.jobs import (
+    _append_live_upstream_preview,
     _build_prompt,
     _claim_job_if_still_pending,
     _get_bridge_install_token,
@@ -391,6 +392,7 @@ def get_next_pending(repos: str = Query(None), db: Session = Depends(get_db)):
 
     # Always fetch the card — needed for card_title (branch slug) and lazy prompt build
     card = db.query(models.Card).filter_by(id=job.card_id).first()
+    needs_commit = False
     if not job.prompt_snapshot and card:
         eng_item = None
         if card.external_id:
@@ -401,6 +403,14 @@ def get_next_pending(repos: str = Query(None), db: Session = Depends(get_db)):
                 .first()
             )
         job.prompt_snapshot = _build_prompt(card, eng_item)
+        needs_commit = True
+    # Checked fresh at claim time, not at unblock time -- see _append_live_upstream_preview's
+    # own docstring for why. Independent of the lazy-build above: a companion job's
+    # prompt_snapshot is already set at creation/unblock time, so that branch never fires for
+    # it, but this one always does.
+    if job.depends_on_job_id and _append_live_upstream_preview(db, job):
+        needs_commit = True
+    if needs_commit:
         db.commit()
         db.refresh(job)
 

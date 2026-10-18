@@ -46,6 +46,46 @@ def _claim_job_if_still_pending(db: Session, job_id: int) -> bool:
     return updated > 0
 
 
+def _append_live_upstream_preview(db: Session, job: models.BridgeJob) -> bool:
+    """For a cross-repo companion job (depends_on_job_id set), check the upstream job's
+    CURRENT preview status -- fresh, right now, at the exact moment this job is being
+    claimed via GET /api/bridge/jobs/next/pending -- and append a note pointing the coding
+    agent at it if one is live. Mutates job.prompt_snapshot/job.live_preview_url_used in
+    place; does not commit (the caller batches this with any other claim-time mutation into
+    one commit). Returns whether anything actually changed, so the caller knows whether a
+    commit is needed at all.
+
+    Deliberately NOT checked at unblock time (bridge.unblock.unblock_dependent_jobs): the
+    upstream's auto_preview doesn't even attempt to start until after its own /complete call
+    returns, the same request that triggers the unblock -- so the preview is essentially
+    never up yet at that moment. By the time this job is actually claimed (which can be
+    minutes, hours, or a full --watch cycle after unblock), the upstream has had real time
+    for its preview to come up, if it has one at all.
+
+    Done here, server-side, with a plain DB query -- not by having the bridge CLI fetch this
+    live over HTTP itself (the first design tried) -- for three reasons: the enriched prompt
+    becomes the real prompt_snapshot, so the Code tab shows what the agent actually saw
+    instead of a stale pre-dependency-check version; no extra network round-trip (and its own
+    timeout risk) added to every companion job's startup; and no question ever arises about
+    whether the coding agent's own shell should be able to reach the bridge's auth token,
+    since the server already has this data directly and never needs to hand the agent
+    anything to look up.
+
+    A claimed job's status flips away from "pending" permanently (see
+    _claim_job_if_still_pending above), so next/pending's query can never select the same job
+    twice -- this runs exactly once per job's lifetime, no idempotency guard needed."""
+    upstream = db.query(models.BridgeJob).filter_by(id=job.depends_on_job_id).first()
+    if not upstream or upstream.preview_status != "running" or not upstream.preview_url:
+        return False
+    job.prompt_snapshot = (job.prompt_snapshot or "") + (
+        "\n\n---\n\n## Live upstream preview\n\n"
+        f"The upstream job this depends on has a running preview you can use for real "
+        f"integration testing, not just the completion note above: {upstream.preview_url}\n"
+    )
+    job.live_preview_url_used = upstream.preview_url
+    return True
+
+
 def get_checkpoint_patterns(db: Session) -> list[str]:
     """Return the configured checkpoint glob patterns. Same newline-joined storage
     convention as github_sync.get_config's repos list. Empty list (the default) means
@@ -297,6 +337,7 @@ def _job_response(job: models.BridgeJob) -> dict:
         "preview_status": job.preview_status,
         "preview_url": job.preview_url,
         "screenshot_data": job.screenshot_data,
+        "live_preview_url_used": job.live_preview_url_used,
     }
 
 
@@ -521,7 +562,14 @@ def _queue_fix_job(
     gets called when the bridge actually picks this up (see run_job's resumes_job_id branch),
     to record which agent/machine ran it and refresh updated_at, same as every other job
     kind -- it just echoes back values that were already set instead of establishing them
-    for the first time."""
+    for the first time.
+
+    depends_on_job_id is also copied from original_job -- a job with worktree_path set has
+    already run once, so any upstream dependency it had was already satisfied (status stays
+    "pending" below, not "blocked" -- it does NOT need to wait again); this is carried along
+    purely as identity, so a resumed/fixed companion job's run still knows which upstream to
+    check for a live preview (see agent_core.py's _live_upstream_preview_note), instead of
+    silently losing that context the moment it's resumed."""
     card = db.query(models.Card).filter_by(id=original_job.card_id).first()
     prompt = _build_fix_prompt(card, comments)
     return models.BridgeJob(
@@ -532,6 +580,7 @@ def _queue_fix_job(
         worktree_path=original_job.worktree_path,
         prompt_snapshot=prompt,
         resumes_job_id=original_job.id,
+        depends_on_job_id=original_job.depends_on_job_id,
         fix_comment_ids=json.dumps([c.id for c in comments]),
         created_at=datetime.now(timezone.utc),
     )
@@ -547,7 +596,8 @@ def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.Bri
     is set.
 
     branch_name/worktree_path copied from original_job at creation time, same reasoning as
-    _queue_fix_job."""
+    _queue_fix_job -- depends_on_job_id is copied the same way and for the same reason too,
+    see that function's docstring."""
     card = db.query(models.Card).filter_by(id=original_job.card_id).first()
     eng_item = None
     if card.external_id:
@@ -566,6 +616,7 @@ def _queue_resume_job(db: Session, original_job: models.BridgeJob) -> models.Bri
         worktree_path=original_job.worktree_path,
         prompt_snapshot=prompt,
         resumes_job_id=original_job.id,
+        depends_on_job_id=original_job.depends_on_job_id,
         created_at=datetime.now(timezone.utc),
     )
 

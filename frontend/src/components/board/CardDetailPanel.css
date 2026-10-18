@@ -953,6 +953,20 @@
   text-decoration: underline;
 }
 
+.cdp-bridge-upstream-preview {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cdp-bridge-upstream-preview a {
+  color: #34d399;
+  text-decoration: none;
+}
+
+.cdp-bridge-upstream-preview a:hover {
+  text-decoration: underline;
+}
+
 .cdp-bridge-screenshot {
   margin-top: 6px;
 }

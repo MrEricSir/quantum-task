@@ -1330,6 +1330,15 @@ def _run_streaming(cfg, job_id, branch, cwd,
 def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
     job_id      = job["id"]
     card_id     = job["card_id"]
+    # A companion job's prompt (job["prompt"]) already includes a live-upstream-preview note
+    # if one was available -- checked server-side, fresh, at the exact moment this job was
+    # claimed via GET /api/bridge/jobs/next/pending, not computed here. See that endpoint
+    # (bridge/router.py's get_next_pending) and BridgeJob.live_preview_url_used's own comment
+    # in models.py for why this moved server-side rather than having the CLI fetch it live
+    # itself (persistence: the enriched prompt is what prompt_snapshot actually is now, not a
+    # local-only addition the server never learns about; no extra network round-trip/timeout
+    # risk on every companion job's startup; no bridge-token-reachable-from-the-agent question
+    # ever arises, since the server never needs to hand the agent anything to look up).
     prompt      = job.get("prompt", "")
     spec_text   = job.get("spec")
     target_repo = job.get("target_repo")

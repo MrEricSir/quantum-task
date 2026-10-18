@@ -1383,6 +1383,130 @@ class TestGetNextPending:
         assert job["card_title"] == "Fix login bug"
 
 
+class TestGetNextPendingCompanionLivePreview:
+    """GET /api/bridge/jobs/next/pending -- for a companion job (depends_on_job_id set),
+    checks the upstream job's CURRENT preview status fresh at the exact moment of claim and
+    appends a note (+ records live_preview_url_used) if one is live. See
+    bridge.jobs._append_live_upstream_preview."""
+
+    def _make_claimable_companion_job(self, client, upstream_preview_status=None, upstream_preview_url=None):
+        """An upstream job, completed, and a companion job depending on it, already unblocked
+        (status "pending", claimable) -- optionally with the upstream's preview set to a given
+        status/url, simulating auto_preview having come up (or not) sometime after the
+        upstream completed, before the companion is ever claimed."""
+        # A companion job must target the SAME card as its upstream -- they share one card's
+        # spec, split across repos (see router.py's "Dependency job must belong to the same
+        # card" check).
+        card_id = _make_card("Shared card", spec="s")
+        upstream_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        companion_id = client.post("/api/bridge/jobs", json={
+            "card_id": card_id, "target_repo": "owner/web-repo",
+            "depends_on_job_id": upstream_id,
+        }).json()["id"]
+
+        client.get("/api/bridge/jobs/next/pending")  # claims the upstream
+        client.post(f"/api/bridge/jobs/{upstream_id}/complete", json={"result": "done"})  # unblocks companion
+
+        if upstream_preview_status:
+            client.post(f"/api/bridge/jobs/{upstream_id}/preview",
+                        json={"status": upstream_preview_status, "url": upstream_preview_url})
+
+        return upstream_id, companion_id
+
+    def test_includes_live_preview_url_when_upstream_preview_is_running(self, client):
+        _, companion_id = self._make_claimable_companion_job(
+            client, upstream_preview_status="running", upstream_preview_url="http://localhost:20771",
+        )
+
+        job = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        assert job["id"] == companion_id
+        assert "http://localhost:20771" in job["prompt"]
+        assert job["live_preview_url_used"] == "http://localhost:20771"
+
+    def test_enriched_prompt_is_persisted_to_prompt_snapshot_not_just_returned(self, client):
+        """The live-preview note must land in the real DB record, not just this one response
+        -- otherwise the Code tab would show a stale prompt forever after, the exact gap this
+        server-side redesign exists to close."""
+        self._make_claimable_companion_job(
+            client, upstream_preview_status="running", upstream_preview_url="http://localhost:20771",
+        )
+        claimed = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        # prompt_snapshot isn't exposed on the plain job response (only next/pending's own
+        # "prompt" key is) -- read the real DB row directly, same as how this file's other
+        # prompt-persistence tests do it.
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=claimed["id"]).first()
+            assert "http://localhost:20771" in job.prompt_snapshot
+            assert job.live_preview_url_used == "http://localhost:20771"
+
+    def test_no_note_when_upstream_has_no_preview_activity(self, client):
+        _, companion_id = self._make_claimable_companion_job(client)  # no /preview call at all
+
+        job = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        assert job["id"] == companion_id
+        assert "Live upstream preview" not in job["prompt"]
+        assert job["live_preview_url_used"] is None
+
+    def test_no_note_while_upstream_preview_is_still_starting(self, client):
+        # Not yet running -- a URL that isn't actually serving anything yet would be worse
+        # than no URL at all.
+        self._make_claimable_companion_job(
+            client, upstream_preview_status="starting", upstream_preview_url=None,
+        )
+
+        job = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        assert "Live upstream preview" not in job["prompt"]
+        assert job["live_preview_url_used"] is None
+
+    def test_no_note_when_upstream_preview_already_stopped(self, client):
+        self._make_claimable_companion_job(
+            client, upstream_preview_status="stopped", upstream_preview_url="http://localhost:20771",
+        )
+
+        job = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        assert "Live upstream preview" not in job["prompt"]
+        assert job["live_preview_url_used"] is None
+
+    def test_non_companion_job_is_unaffected(self, client):
+        """A job with no depends_on_job_id must never attempt the upstream lookup at all."""
+        card_id = _make_card("Solo job", spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        job = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        assert job["live_preview_url_used"] is None
+
+    def test_resumed_companion_job_gets_its_own_fresh_live_preview_check(self, client):
+        """depends_on_job_id is copied onto a resume job (see TestQueueResumeJob's own
+        coverage of that) specifically so this still works: the upstream's preview may not
+        have been up yet when the ORIGINAL companion job was first claimed, but has had more
+        time by the time a resume is claimed -- it must get its own independent check, not
+        just inherit whatever (nothing) the original run saw."""
+        upstream_id, companion_id = self._make_claimable_companion_job(client)  # no preview yet
+        first_claim = client.get("/api/bridge/jobs/next/pending").json()["job"]
+        assert first_claim["live_preview_url_used"] is None  # nothing live on the first run
+        client.post(f"/api/bridge/jobs/{companion_id}/start", json={
+            "branch": "qtask/1-companion", "agent": "work-mac",
+            "worktree_path": "/Users/dev/.local/share/qtask-bridge/worktrees/web/qtask-1-companion",
+        })
+        client.post(f"/api/bridge/jobs/{companion_id}/error", json={"result": "crashed"})
+
+        # Only now, after the original attempt, does the upstream's preview come up.
+        client.post(f"/api/bridge/jobs/{upstream_id}/preview",
+                    json={"status": "running", "url": "http://localhost:20771"})
+        resume_id = client.post(f"/api/bridge/jobs/{companion_id}/resume").json()["id"]
+
+        resumed_claim = client.get("/api/bridge/jobs/next/pending").json()["job"]
+
+        assert resumed_claim["id"] == resume_id
+        assert resumed_claim["live_preview_url_used"] == "http://localhost:20771"
+
+
 # ── POST /api/bridge/jobs/{id}/start ─────────────────────────────────────────
 
 class TestStartJob:
@@ -1695,6 +1819,24 @@ class TestQueueFixJob:
         assert "Second fix needed." in pending["prompt"]
         assert "a-human-reviewer" in pending["prompt"]
 
+    def test_depends_on_job_id_is_copied_from_the_original_job(self, client):
+        """A fix job resumes the ORIGINAL job's worktree -- it must also carry forward which
+        upstream it depended on (if any, e.g. a cross-repo companion job), so a later live
+        preview check (see agent_core.py's _live_upstream_preview_note) still knows what to
+        look up instead of silently losing that context the moment the job is resumed."""
+        item_id = _make_eng_item("github:owner/repo/pull/7")
+        comment_id = _make_comment(item_id, github_id=510)
+        job_id = self._make_started_job(client, external_id="github:owner/repo/pull/7")
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.depends_on_job_id = 42
+            db.commit()
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]})
+
+        assert res.status_code == 200
+        assert res.json()["depends_on_job_id"] == 42
+
 
 # ── POST /api/bridge/jobs/{id}/resume ────────────────────────────────────────
 
@@ -1735,6 +1877,20 @@ class TestQueueResumeJob:
         assert data["branch_name"] == "qtask/9-oauth-login"
         assert data["worktree_path"] == \
             "/Users/dev/.local/share/qtask-bridge/worktrees/myapp/qtask-9-oauth-login"
+
+    def test_depends_on_job_id_is_copied_from_the_original_job(self, client):
+        """Same reasoning as TestQueueFixJob's equivalent test: a resume job must carry
+        forward which upstream the original job depended on, not silently drop it."""
+        job_id = self._make_started_job(client)
+        with TestSession() as db:
+            job = db.query(models.BridgeJob).filter_by(id=job_id).first()
+            job.depends_on_job_id = 42
+            db.commit()
+
+        res = client.post(f"/api/bridge/jobs/{job_id}/resume")
+
+        assert res.status_code == 200
+        assert res.json()["depends_on_job_id"] == 42
 
     def test_resume_prompt_includes_original_spec_and_continuation_framing(self, client):
         card_id = _make_card(spec="## Problem Statement\nImplement OAuth login.")

@@ -4548,6 +4548,46 @@ test.describe('card detail panel — github and spec', () => {
     await expect(link).toHaveAttribute('target', '_blank')
   })
 
+  test('a companion job that used a live upstream preview shows it as its own indicator', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/web-repo',
+      branch_name: 'qtask/99-wire-up-endpoint', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Wired up the new endpoint', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      depends_on_job_id: 4, live_preview_url_used: 'http://localhost:20771',
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    const indicator = page.locator('.cdp-bridge-upstream-preview')
+    await expect(indicator).toContainText("Used upstream's live preview")
+    const link = indicator.locator('a')
+    await expect(link).toHaveAttribute('href', 'http://localhost:20771')
+    await expect(link).toHaveAttribute('target', '_blank')
+  })
+
+  test('a job that never used a live upstream preview shows no indicator', async ({ page }) => {
+    const job = {
+      id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
+      branch_name: 'qtask/99-oauth-login', agent_name: 'claude',
+      worktree_path: '/tmp/worktrees/99', result: 'Implemented feature', output: null,
+      spec_snapshot: GH_CARD.spec, resumes_job_id: null, fix_comment_ids: null,
+      live_preview_url_used: null,
+      created_at: '2026-06-01T09:00:00Z', updated_at: '2026-06-01T09:30:00Z',
+    }
+    await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
+    await page.route('**/api/bridge/jobs/card/*/chain', r =>
+      r.fulfill({ json: { root: job, companion: null } }))
+    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+
+    await expect(page.locator('.cdp-bridge-upstream-preview')).toHaveCount(0)
+  })
+
   test('a running preview with a screenshot shows the image', async ({ page }) => {
     const job = {
       id: 5, card_id: 99, status: 'done', target_repo: 'owner/repo',
