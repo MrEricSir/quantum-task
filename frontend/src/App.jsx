@@ -50,6 +50,7 @@ import { ModalContext } from './context/ModalContext'
 import { RefreshContext } from './context/RefreshContext'
 import PullToRefresh from './components/layout/PullToRefresh'
 import {
+  localDate,
   fetchTags,
   fetchCards,
   fetchWeather,
@@ -147,12 +148,19 @@ export default function App() {
   const [weather, setWeather] = useState(() => {
     try {
       const cached = sessionStorage.getItem('weather')
-      return cached ? JSON.parse(cached) : null
+      if (!cached) return null
+      const parsed = JSON.parse(cached)
+      // A reading cached on an earlier day is stale -- show nothing rather than an old
+      // day's high/low until a fresh fetch below replaces it. Without this check a
+      // long-lived mobile PWA tab (geolocation only ever fetched once per mount) can show
+      // the same cached temperature indefinitely, days after it stopped being accurate.
+      return parsed.cachedDate === localDate() ? parsed : null
     } catch { return null }
   })
   const handleSetWeather = (w) => {
-    setWeather(w)
-    try { sessionStorage.setItem('weather', JSON.stringify(w)) } catch {}
+    const withDate = { ...w, cachedDate: localDate() }
+    setWeather(withDate)
+    try { sessionStorage.setItem('weather', JSON.stringify(withDate)) } catch {}
   }
   const {
     cards, setCards, loading: cardsLoading, cardsRef,
@@ -289,10 +297,22 @@ export default function App() {
 
   useEffect(() => {
     if (!navigator.geolocation) return
-    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
-      const w = await fetchWeather(coords.latitude, coords.longitude)
-      if (w && w.emojis) handleSetWeather(w)
-    }, () => {/* permission denied — weather stays as cached/SSE value */})
+    const refreshWeather = () => {
+      navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+        const w = await fetchWeather(coords.latitude, coords.longitude)
+        if (w && w.emojis) handleSetWeather(w)
+      }, () => {/* permission denied — weather stays as cached/SSE value */}, { timeout: 10000 })
+    }
+    refreshWeather()
+    // A tab/PWA left open across midnight never remounts, so the mount-time fetch above
+    // would otherwise never run again and the displayed reading would go stale until the
+    // tab is actually closed and reopened. Re-fetching on every visibility regain keeps
+    // it current without needing a running timer while the tab is backgrounded.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshWeather()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
 
   useEffect(() => {

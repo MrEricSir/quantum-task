@@ -33,6 +33,7 @@ import base64
 import http.server
 import io
 import json
+import platform
 import re
 import signal
 import socket
@@ -3927,6 +3928,170 @@ class TestKillPreviewIfRunning:
 
         assert result is True
         assert api_calls == []
+
+
+class TestPreventSleep:
+    """_prevent_sleep/_allow_sleep -- keeps the machine from idle-sleeping for the duration
+    of an unattended run (--watch/--tag/--card), platform-specific, deliberately best-effort
+    everywhere (never raises, falls back to a warning + None)."""
+
+    def test_macos_spawns_caffeinate(self, monkeypatch):
+        monkeypatch.setattr(agent_core.platform, "system", lambda: "Darwin")
+        captured_cmd = {}
+        real_popen = agent_core.subprocess.Popen
+        def fake_popen(cmd, **kwargs):
+            captured_cmd["cmd"] = cmd
+            return real_popen(["sleep", "60"])  # a real, killable process standing in
+        monkeypatch.setattr(agent_core.subprocess, "Popen", fake_popen)
+
+        handle = agent_core._prevent_sleep()
+
+        # -w <our own pid> is load-bearing, not cosmetic -- it's what makes caffeinate
+        # release itself if this process dies uncleanly instead of being orphaned. See
+        # test_caffeinate_self_releases_if_the_watched_process_dies_uncleanly below for the
+        # real (unmocked) proof this actually works, not just that the flag is present here.
+        assert captured_cmd["cmd"] == ["caffeinate", "-i", "-w", str(os.getpid())]
+        assert handle is not None
+        agent_core._allow_sleep(handle)  # must not raise, cleans up the real process
+
+    def test_linux_spawns_systemd_inhibit(self, monkeypatch):
+        monkeypatch.setattr(agent_core.platform, "system", lambda: "Linux")
+        captured_cmd = {}
+        real_popen = agent_core.subprocess.Popen
+        def fake_popen(cmd, **kwargs):
+            captured_cmd["cmd"] = cmd
+            return real_popen(["sleep", "60"])
+        monkeypatch.setattr(agent_core.subprocess, "Popen", fake_popen)
+
+        handle = agent_core._prevent_sleep()
+
+        assert captured_cmd["cmd"] == [
+            "systemd-inhibit", "--what=sleep:idle", "--who=qtask-bridge",
+            "--why=running a bridge job", "sleep", "infinity",
+        ]
+        assert handle is not None
+        agent_core._allow_sleep(handle)
+
+    def test_windows_calls_set_thread_execution_state(self, monkeypatch):
+        monkeypatch.setattr(agent_core.platform, "system", lambda: "Windows")
+        calls = []
+
+        class FakeKernel32:
+            def SetThreadExecutionState(self, flags):
+                calls.append(flags)
+
+        class FakeWindll:
+            kernel32 = FakeKernel32()
+
+        monkeypatch.setattr(agent_core.ctypes, "windll", FakeWindll(), raising=False)
+
+        handle = agent_core._prevent_sleep()
+
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        assert calls == [ES_CONTINUOUS | ES_SYSTEM_REQUIRED]
+        assert handle == "windows"
+
+        agent_core._allow_sleep(handle)
+        assert calls == [ES_CONTINUOUS | ES_SYSTEM_REQUIRED, ES_CONTINUOUS]
+
+    def test_unknown_platform_warns_and_returns_none(self, monkeypatch, capsys):
+        monkeypatch.setattr(agent_core.platform, "system", lambda: "SomeOtherOS")
+
+        handle = agent_core._prevent_sleep()
+
+        assert handle is None
+        assert "isn't supported" in capsys.readouterr().err.lower()
+
+    def test_missing_binary_warns_and_returns_none_instead_of_raising(self, monkeypatch, capsys):
+        monkeypatch.setattr(agent_core.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            agent_core.subprocess, "Popen",
+            lambda cmd, **k: (_ for _ in ()).throw(FileNotFoundError("caffeinate not found")),
+        )
+
+        handle = agent_core._prevent_sleep()
+
+        assert handle is None
+        assert "could not prevent idle sleep" in capsys.readouterr().err.lower()
+
+    def test_allow_sleep_is_a_noop_for_none(self):
+        agent_core._allow_sleep(None)  # must not raise
+
+    def test_allow_sleep_terminates_a_held_process(self, monkeypatch):
+        proc = agent_core.subprocess.Popen(["sleep", "60"])
+        agent_core._allow_sleep(proc)
+        assert proc.poll() is not None  # terminated, not still running
+
+    def test_allow_sleep_kills_a_process_that_ignores_terminate(self, monkeypatch):
+        calls = []
+
+        class FakeProc:
+            def terminate(self):
+                calls.append("terminate")
+            def wait(self, timeout=None):
+                raise subprocess.TimeoutExpired(cmd="sleep", timeout=timeout)
+            def kill(self):
+                calls.append("kill")
+
+        agent_core._allow_sleep(FakeProc())
+
+        assert calls == ["terminate", "kill"]
+
+
+class TestPreventSleepRealMacOS:
+    """Real (unmocked) smoke tests against the actual caffeinate/pmset tools -- the
+    argv-only tests in TestPreventSleep above prove the right command gets built, not that
+    it does anything real. Only runs on macOS, the one platform this was actually testable
+    against (skipped elsewhere rather than failing outright). Checks are scoped to a
+    specific spawned process's own PID, never "does any PreventUserIdleSystemSleep
+    assertion exist anywhere" -- a real dev machine can easily have unrelated
+    caffeinate/other processes already holding assertions of their own."""
+
+    def _pmset_assertions(self):
+        return subprocess.run(["pmset", "-g", "assertions"], capture_output=True, text=True).stdout
+
+    @pytest.mark.skipif(platform.system() != "Darwin", reason="exercises the real macOS caffeinate/pmset tools")
+    def test_prevent_sleep_creates_a_real_assertion_and_allow_sleep_clears_it(self):
+        handle = agent_core._prevent_sleep()
+        try:
+            assert f"pid {handle.pid}(caffeinate)" in self._pmset_assertions()
+        finally:
+            agent_core._allow_sleep(handle)
+
+        assert f"pid {handle.pid}(caffeinate)" not in self._pmset_assertions()
+
+    @pytest.mark.skipif(platform.system() != "Darwin", reason="exercises real caffeinate -w behavior")
+    def test_caffeinate_self_releases_if_the_watched_process_dies_uncleanly(self):
+        """Proves the -w fix actually works, not just that the flag is present in the argv
+        (see TestPreventSleep.test_macos_spawns_caffeinate for that). Can't kill this test's
+        own process to simulate an unclean death, so it spawns a real stand-in process to
+        watch instead, starts a real `caffeinate -w` pointed at it directly -- the same way
+        _prevent_sleep() points one at the real bridge process -- then SIGKILLs the stand-in
+        (the exact scenario a try/finally never runs for) and confirms caffeinate notices
+        and releases the assertion entirely on its own; nothing in this codebase has to call
+        _allow_sleep() for this to work."""
+        standin = subprocess.Popen(["sleep", "30"])
+        caffeinate = subprocess.Popen(["caffeinate", "-i", "-w", str(standin.pid)])
+        try:
+            deadline = time.time() + 5
+            while time.time() < deadline and f"pid {caffeinate.pid}(caffeinate)" not in self._pmset_assertions():
+                time.sleep(0.2)
+            assert f"pid {caffeinate.pid}(caffeinate)" in self._pmset_assertions(), \
+                "caffeinate never registered its assertion -- can't test release without this"
+
+            standin.kill()  # SIGKILL -- the exact "dies uncleanly" scenario -w exists for
+            standin.wait()
+
+            deadline = time.time() + 10
+            while time.time() < deadline and f"pid {caffeinate.pid}(caffeinate)" in self._pmset_assertions():
+                time.sleep(0.2)
+            assert f"pid {caffeinate.pid}(caffeinate)" not in self._pmset_assertions(), \
+                "caffeinate -w did not release its assertion after its watched process died"
+        finally:
+            agent_core._allow_sleep(caffeinate)
+            if standin.poll() is None:
+                standin.kill()
 
 
 class TestCmdStopPreview:

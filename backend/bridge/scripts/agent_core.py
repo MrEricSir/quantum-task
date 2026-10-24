@@ -93,9 +93,11 @@ IDE_SETTINGS_GITIGNORE_ENTRY value (if not None) to install.py's BRIDGE_IGNORE_E
 """
 import argparse
 import base64
+import ctypes
 import fnmatch
 import json
 import os
+import platform
 import re
 import signal
 import socket
@@ -1525,6 +1527,92 @@ def run_job(cfg, job, streaming=False, prompt_note=True, suggest_next=True):
         print()
 
 
+def _prevent_sleep():
+    """Best-effort: start a mechanism to keep this machine from idle-sleeping for as long as
+    an unattended run (--watch/--tag/--card) keeps going, so a job doesn't sit stalled until
+    someone manually wakes the machine. Platform-specific, every mechanism chosen for needing
+    no admin/root privileges and no extra install beyond what the OS already ships:
+      - macOS: spawns `caffeinate -i -w <our own pid>` as a child process. The `-w` is
+        load-bearing, not cosmetic -- `man caffeinate`: "-w pid  Waits for the process with
+        the specified pid to exit. Once the process exits, the assertion is also released."
+        Without it, a plain `caffeinate -i` child has no lifetime tie-in to this process at
+        all: if the bridge dies uncleanly (SIGKILL, OOM-kill, a crash, the machine's battery
+        dying) the finally blocks around every call site below never run, orphaning
+        caffeinate -- it would keep blocking idle sleep indefinitely, permanently defeating
+        the point of this feature in exactly the scenario (a long unattended run) it exists
+        for. `-w` makes the assertion self-release the moment THIS process is gone, for any
+        reason, clean exit or not -- `_allow_sleep`'s explicit terminate() below still
+        handles the normal/clean-exit case immediately, `-w` is the safety net underneath it.
+      - Linux: spawns `systemd-inhibit --what=sleep:idle sleep infinity` the same way --
+        requires systemd, which covers the large majority of desktop distros but isn't
+        universal (a minimal/non-systemd distro just falls through to the warning below).
+        Known, accepted gap, not fixed here: unlike caffeinate, there's no equivalent
+        single-flag self-release -- an unclean death orphans this child exactly the same way
+        caffeinate would without -w. A real fix exists (locking via logind's D-Bus API
+        directly, a kernel-released file descriptor instead of a detached process) but is a
+        meaningfully bigger change than this feature's own scope; revisit if this is ever
+        actually hit in practice, rather than building it speculatively now.
+      - Windows: calls SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) directly
+        -- a one-shot flag on this process, not a child process, so there's nothing to hold
+        onto beyond a sentinel string marking that it was set. Structurally not exposed to
+        the same orphaning risk as macOS/Linux: the flag lives inside this process's own
+        thread object, not a separate resource, so it has nothing to leak if this process
+        dies for any reason -- reasoned from the documented architecture, not independently
+        verified on a real Windows machine (this was built and tested entirely on macOS).
+    None of these prevent an explicit sleep action (closing a laptop lid, manually choosing
+    Sleep) on any platform -- only automatic idle-timeout sleep. That's a structural gap in
+    each OS's own design (an explicit user action is deliberately allowed to override an
+    app's "please don't sleep" request), not something fixable from here.
+
+    Deliberately fails open everywhere: if the mechanism for this platform isn't available
+    (binary not found, non-systemd Linux, some locked-down environment), prints a warning
+    and returns None rather than raising -- an unattended run should still proceed even if it
+    can't keep the machine awake for itself.
+
+    Returns an opaque handle to pass to _allow_sleep() when done -- never inspect its shape
+    directly, it differs per platform (a subprocess.Popen on macOS/Linux, the sentinel string
+    "windows" on Windows, None if nothing could be started)."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            return subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+        if system == "Linux":
+            return subprocess.Popen([
+                "systemd-inhibit", "--what=sleep:idle", "--who=qtask-bridge",
+                "--why=running a bridge job", "sleep", "infinity",
+            ])
+        if system == "Windows":
+            ES_CONTINUOUS = 0x80000000
+            ES_SYSTEM_REQUIRED = 0x00000001
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+            return "windows"
+    except (OSError, FileNotFoundError) as e:
+        print(f"[bridge] Could not prevent idle sleep ({e}) -- this machine may need to be "
+              f"woken manually if it sleeps mid-job.", file=sys.stderr)
+        return None
+    print(f"[bridge] Idle-sleep prevention isn't supported on {system!r} -- this machine may "
+          f"need to be woken manually if it sleeps mid-job.", file=sys.stderr)
+    return None
+
+
+def _allow_sleep(handle):
+    """Release whatever _prevent_sleep() started. Safe to call with None (nothing was
+    started, or this platform isn't supported) -- always called in a finally, so a clean
+    exit, an error, or Ctrl-C all release it the same way instead of leaving the machine
+    pinned awake after the run that requested it has ended."""
+    if handle is None:
+        return
+    if handle == "windows":
+        ES_CONTINUOUS = 0x80000000
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+        return
+    handle.terminate()
+    try:
+        handle.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        handle.kill()
+
+
 def cmd_card(cfg, card_id):
     print(f"[bridge] Queueing job for card #{card_id}...")
     job_wrap = api(cfg, "POST", "/api/bridge/jobs", {"card_id": card_id})
@@ -1537,7 +1625,11 @@ def cmd_card(cfg, card_id):
     if not job:
         print("[bridge] Could not claim job (another agent may have picked it up).", file=sys.stderr)
         sys.exit(1)
-    run_job(cfg, job, streaming=False)
+    sleep_handle = _prevent_sleep()
+    try:
+        run_job(cfg, job, streaming=False)
+    finally:
+        _allow_sleep(sleep_handle)
 
 
 def cmd_tag(cfg, tag_name):
@@ -1565,16 +1657,20 @@ def cmd_tag(cfg, tag_name):
         return
 
     print(f"\n[bridge] Running {len(queued)} job(s) sequentially, unattended...\n")
-    for i in range(len(queued)):
-        resp2 = api(cfg, "GET", "/api/bridge/jobs/next/pending")
-        job = resp2.get("job") if resp2 else None
-        if not job:
-            remaining = len(queued) - i
-            print(f"[bridge] No more claimable jobs (expected {remaining} more) — stopping.",
-                  file=sys.stderr)
-            break
-        print(f"[bridge] ({i + 1}/{len(queued)}) Job {job['id']} — card #{job['card_id']}")
-        run_job(cfg, job, streaming=True, prompt_note=False, suggest_next=False)
+    sleep_handle = _prevent_sleep()
+    try:
+        for i in range(len(queued)):
+            resp2 = api(cfg, "GET", "/api/bridge/jobs/next/pending")
+            job = resp2.get("job") if resp2 else None
+            if not job:
+                remaining = len(queued) - i
+                print(f"[bridge] No more claimable jobs (expected {remaining} more) — stopping.",
+                      file=sys.stderr)
+                break
+            print(f"[bridge] ({i + 1}/{len(queued)}) Job {job['id']} — card #{job['card_id']}")
+            run_job(cfg, job, streaming=True, prompt_note=False, suggest_next=False)
+    finally:
+        _allow_sleep(sleep_handle)
 
     print("[bridge] Tag run complete.")
     print("[bridge] Next: qtask-bridge --list to see the resulting worktrees, "
@@ -1587,21 +1683,28 @@ def cmd_watch(cfg):
     print(f"[bridge] Watching for jobs (polling every {POLL_INTERVAL}s)... Ctrl-C to stop.\n")
     if known_repos:
         print(f"[bridge] Filtering to repos: {', '.join(known_repos)}\n")
-    while True:
-        try:
-            resp = api(cfg, "GET", f"/api/bridge/jobs/next/pending{repos_qs}")
-            job = resp.get("job") if resp else None
-            if job:
-                run_job(cfg, job, streaming=False, prompt_note=False)
-            else:
-                print(f"[bridge] No pending jobs — sleeping {POLL_INTERVAL}s...", end="\r")
+    # Held for the whole watch session, not just while a job is actually running -- the
+    # machine sleeping during an idle polling gap (no job to work on yet) is exactly the
+    # "left it running overnight, had to wake it by hand" scenario this exists to prevent.
+    sleep_handle = _prevent_sleep()
+    try:
+        while True:
+            try:
+                resp = api(cfg, "GET", f"/api/bridge/jobs/next/pending{repos_qs}")
+                job = resp.get("job") if resp else None
+                if job:
+                    run_job(cfg, job, streaming=False, prompt_note=False)
+                else:
+                    print(f"[bridge] No pending jobs — sleeping {POLL_INTERVAL}s...", end="\r")
+                    time.sleep(POLL_INTERVAL)
+            except KeyboardInterrupt:
+                print("\n[bridge] Stopped.")
+                break
+            except Exception as e:
+                print(f"\n[bridge] Error: {e}", file=sys.stderr)
                 time.sleep(POLL_INTERVAL)
-        except KeyboardInterrupt:
-            print("\n[bridge] Stopped.")
-            break
-        except Exception as e:
-            print(f"\n[bridge] Error: {e}", file=sys.stderr)
-            time.sleep(POLL_INTERVAL)
+    finally:
+        _allow_sleep(sleep_handle)
 
 
 def _parse_worktree_porcelain(output):
