@@ -138,6 +138,23 @@ export default function App() {
   const [activeCard, setActiveCard] = useState(null)
   const [selectedCardId, setSelectedCardId] = useState(null)
   const [panelInitialMode, setPanelInitialMode] = useState('view')
+  const [panelInitialAssistTab, setPanelInitialAssistTab] = useState('assist')
+  // Mirrors the panel's live mode/assist-tab (as opposed to panelInitialMode/
+  // panelInitialAssistTab above, which are one-time initializers for a fresh open) --
+  // used only to keep the URL in sync so the current step is always a linkable/
+  // bookmarkable URL, desktop CardDetailPanel only. Lazily seeded straight from the raw
+  // URL (not the panelInitial* state, which the deep-link effect below only populates
+  // after cards finish loading) so a fresh page load with ?mode=assist&tab=code already
+  // in the address bar doesn't briefly have the sync effect below wipe it back out
+  // before CardDetailPanel mounts and reports in via onModeChange/onAssistTabChange.
+  const [panelCurrentMode, setPanelCurrentMode] = useState(() => {
+    const m = new URLSearchParams(window.location.search).get('mode')
+    return m === 'edit' || m === 'assist' ? m : 'view'
+  })
+  const [panelCurrentAssistTab, setPanelCurrentAssistTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    return t === 'breakdown' || t === 'code' ? t : 'assist'
+  })
   // Mobile-only: CardDetailPanel is desktop-only (hidden via CSS below 640px),
   // so opening an arbitrary card in view mode from outside the board (e.g.
   // the Engineering page) needs its own CardSheet instance on mobile.
@@ -487,28 +504,91 @@ export default function App() {
     if (card.id === selectedCardId) { setSelectedCardId(null); return }
     setSelectedCardId(card.id)
     setPanelInitialMode('view')
+    setPanelInitialAssistTab('assist')
   }
 
   const openEdit = (card) => {
     if (window.matchMedia('(max-width: 640px)').matches) { setSheetViewCard(card); return }
     setSelectedCardId(card.id)
     setPanelInitialMode('edit')
+    setPanelInitialAssistTab('assist')
   }
 
-  // Deep-link support for ?card=<id> (used by qtask-bridge's --open command). Waits for
-  // cards to finish loading rather than firing on the empty initial array, and only ever
-  // consumes the param once (deepLinkConsumedRef) so closing the panel afterward doesn't
-  // reopen it if something else re-runs this effect.
+  // Deep-link support for ?card=<id>&mode=edit|assist&tab=assist|breakdown|code (used by
+  // qtask-bridge's --open command, and by the live URL this app now keeps in sync as you
+  // navigate -- see the sync effect below). Waits for cards to finish loading rather than
+  // firing on the empty initial array, and only ever consumes the param once per full page
+  // load (deepLinkConsumedRef) so closing the panel afterward doesn't reopen it if
+  // something else re-runs this effect, and so the sync effect below is the one source of
+  // truth for the URL from that point on rather than the two fighting over it.
   const deepLinkConsumedRef = useRef(false)
   useEffect(() => {
     if (deepLinkConsumedRef.current || cardsLoading) return
-    const cardId = Number(new URLSearchParams(location.search).get('card'))
+    const params = new URLSearchParams(location.search)
+    const cardId = Number(params.get('card'))
     if (!cardId || !cards.some((c) => c.id === cardId)) return
     deepLinkConsumedRef.current = true
     setSelectedCardId(cardId)
-    setPanelInitialMode('view')
-    navigate(location.pathname, { replace: true })
-  }, [cardsLoading, cards, location.search, location.pathname, navigate])
+    const mode = params.get('mode')
+    setPanelInitialMode(mode === 'edit' || mode === 'assist' ? mode : 'view')
+    const tab = params.get('tab')
+    setPanelInitialAssistTab(tab === 'breakdown' || tab === 'code' ? tab : 'assist')
+  }, [cardsLoading, cards, location.search])
+
+  // Keeps ?card=/&mode=/&tab= in the URL mirroring whatever's actually open, so the
+  // current step is always a linkable/bookmarkable URL -- replace (not push) on every
+  // change so clicking through View/Edit/Assist/Chat/Breakdown/Code doesn't flood the
+  // back button with one entry per step; the URL still ends up wherever the user left
+  // off. Desktop CardDetailPanel only -- the mobile card sheet isn't wired to this.
+  //
+  // hadCardRef (not a plain "is selectedCardId falsy" check) guards the clearing branch:
+  // every effect in a component runs once on first mount regardless of its own
+  // dependency list, and on that very first pass selectedCardId is still its null
+  // default -- cardsLoading is NOT a reliable signal to gate on here, since
+  // useCards/react-query reports isLoading:false even before a fetch has started
+  // (the query is enabled: !!authed, and isLoading only tracks an in-flight fetch, not
+  // "has this ever resolved"). Without hadCardRef, this effect would see "no card
+  // selected" on that very first pass and strip a real ?card= deep link out of the URL
+  // before the deep-link effect above ever got a real chance to read it.
+  // Reads window.location directly (not the location/pathname from useLocation()) when
+  // building the next URL -- react-router's own reactive location can still reflect the
+  // PREVIOUS route for one effect-flush after a plain navigate('/other-page') call made
+  // earlier in the same event handler (e.g. EngineeringPage's onOpenCard does
+  // navigate('/board') then selects a card in the same click) -- history.pushState/
+  // replaceState itself is synchronous, so window.location is already correct by the
+  // time this effect runs, even when react-router's reactive copy hasn't caught up yet.
+  // Real incident: using location.pathname here raced onOpenCard's navigate('/board')
+  // and clobbered it back to the engineering page with ?card= appended.
+  const hadCardRef = useRef(false)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (!selectedCardId) {
+      if (!hadCardRef.current) return
+      params.delete('card'); params.delete('mode'); params.delete('tab')
+    } else {
+      hadCardRef.current = true
+      params.set('card', String(selectedCardId))
+      if (panelCurrentMode === 'view') params.delete('mode')
+      else params.set('mode', panelCurrentMode)
+      if (panelCurrentMode === 'assist' && panelCurrentAssistTab !== 'assist') {
+        params.set('tab', panelCurrentAssistTab)
+      } else {
+        params.delete('tab')
+      }
+    }
+    const nextSearch = params.toString()
+    if (nextSearch === window.location.search.replace(/^\?/, '')) return
+    navigate(`${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`, { replace: true })
+  }, [location.pathname, selectedCardId, panelCurrentMode, panelCurrentAssistTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resets the live mirror once the panel closes, so a stale mode/tab from a previous
+  // card doesn't leak into the next one before CardDetailPanel's own effects report in.
+  useEffect(() => {
+    if (!selectedCardId) {
+      setPanelCurrentMode('view')
+      setPanelCurrentAssistTab('assist')
+    }
+  }, [selectedCardId])
 
   const openNewCard = (section = 'today') => {
     if (window.matchMedia('(max-width: 640px)').matches) { openNewCardSheet(section); return }
@@ -1108,6 +1188,9 @@ export default function App() {
         <CardDetailPanel
           card={selectedCard}
           initialMode={panelInitialMode}
+          initialAssistTab={panelInitialAssistTab}
+          onModeChange={setPanelCurrentMode}
+          onAssistTabChange={setPanelCurrentAssistTab}
           defaultSection={panelDefaultSection}
           allTags={tags}
           topTags={topTags}

@@ -1,12 +1,31 @@
 // "Break down" tab content for AssistModal. All state/handlers come from
 // useAssistBreakdown -- this component is presentational only.
 export default function AssistBreakdownTab({ breakdown }) {
-  const { bdStatus, bdSubtasks, setBdSubtasks, bdTagName, bdError, confirmBreakdown } = breakdown
+  const { bdStatus, bdSubtasks, setBdSubtasks, bdTagName, bdError, generateBreakdown, confirmBreakdown } = breakdown
 
   const validBdCount = bdSubtasks.filter(s => s.trim()).length
 
   return (
     <>
+      {/* Header row mirrors Code tab's Brief header (label + action button in the same
+          spot every time) -- same reason the button itself reuses cdp-spec-gen-btn:
+          a direct child of .assist-inline's flex column stretches to full width with
+          no wrapper, which is why this lives in a row instead of sitting on its own. */}
+      <div className="cdp-spec-header">
+        <div className="cdp-section-label">Subtasks</div>
+        <div className="cdp-spec-actions">
+          {(bdStatus === 'idle' || bdStatus === 'error') && (
+            <button className="cdp-gh-btn cdp-spec-gen-btn" onClick={generateBreakdown}>
+              ✦ {bdStatus === 'error' ? 'Try again' : 'Generate'}
+            </button>
+          )}
+        </div>
+      </div>
+      {bdStatus === 'idle' && (
+        <p className="assist-bd-intro">
+          Splits this card into subtasks you can edit before creating them.
+        </p>
+      )}
       {bdStatus === 'loading' && (
         <div className="assist-bd-loading">
           <span className="assist-spinner assist-spinner--dark" /> Generating subtasks…

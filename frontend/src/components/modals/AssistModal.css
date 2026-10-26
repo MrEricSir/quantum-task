@@ -227,39 +227,64 @@
   line-height: 1.5;
 }
 
-/* ── Tabs ── */
+/* ── Context sources chip ── */
+.assist-sources {
+  flex-shrink: 0;
+}
+
+.assist-sources-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.assist-sources-toggle:hover { color: #a78bfa; text-decoration: underline; }
+
+.assist-sources-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+/* ── Tabs — plain underline style, deliberately distinct from the pill-style
+   View/Edit/Assist tabs above this panel (CardDetailPanel.css's .cdp-mode-tabs)
+   so the two nesting levels never read as one six-option row. ── */
 .assist-tabs {
   display: flex;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .assist-tab {
-  flex: 1;
-  padding: 6px 10px;
+  padding: 8px 12px 7px;
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: color 0.15s, border-color 0.15s;
 }
 
 .assist-tab:hover:not(.assist-tab--active) {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
 }
 
 .assist-tab--active {
-  background: rgba(139, 92, 246, 0.2);
   color: #c4b5fd;
+  border-bottom-color: #a78bfa;
 }
 
 /* ── Saved output panel ── */

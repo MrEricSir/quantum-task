@@ -1659,6 +1659,34 @@ test.describe('assistant modal', () => {
     await expect(panel.getByRole('button', { name: /assist/i })).toBeVisible()
   })
 
+  test('View/Edit/Assist mode tabs are visible for an existing card and let you switch modes', async ({ page }) => {
+    const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
+    await card.click()
+    const tabs = page.locator('.cdp-mode-tabs')
+    await expect(tabs).toBeVisible()
+    await expect(page.locator('.cdp-mode-tab--view')).toHaveClass(/cdp-mode-tab--active/)
+
+    await page.locator('.cdp-mode-tab--edit').click()
+    await expect(page.locator('.cdp-form')).toBeVisible()
+    await expect(page.locator('.cdp-mode-tab--edit')).toHaveClass(/cdp-mode-tab--active/)
+
+    await page.locator('.cdp-mode-tab--assist').click()
+    await expect(page.locator('.assist-inline')).toBeVisible()
+    await expect(page.locator('.cdp-mode-tab--assist')).toHaveClass(/cdp-mode-tab--active/)
+
+    await page.locator('.cdp-mode-tab--view').click()
+    await expect(page.locator('.assist-inline')).toHaveCount(0)
+    await expect(page.locator('.cdp-mode-tab--view')).toHaveClass(/cdp-mode-tab--active/)
+  })
+
+  test('mode tabs are absent when creating a new card', async ({ page }) => {
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.locator('.column-add-btn').first().click()
+    await expect(page.locator('.card-detail-panel .cdp-form')).toBeVisible()
+    await expect(page.locator('.cdp-mode-tabs')).toHaveCount(0)
+  })
+
   test('clicking Assist opens inline assistant with Chat and Break down tabs', async ({ page }) => {
     const card = page.locator('.event-card', { hasText: 'Daily Engineering Standup' })
     await card.click()
@@ -1687,6 +1715,7 @@ test.describe('assistant modal', () => {
     const panel = page.locator('.card-detail-panel')
     await panel.getByRole('button', { name: /assist/i }).click()
     await page.getByRole('button', { name: /^break down$/i }).click()
+    await panel.getByRole('button', { name: /generate/i }).click()
     await expect(page.locator('.assist-bd-input').nth(0)).toHaveValue('Go to the dentist')
     await expect(page.locator('.assist-bd-input').nth(1)).toHaveValue('Get a cleaning')
     await expect(page.locator('.assist-bd-input').nth(2)).toHaveValue('Schedule follow-up')
@@ -1702,6 +1731,7 @@ test.describe('assistant modal', () => {
     const panel = page.locator('.card-detail-panel')
     await panel.getByRole('button', { name: /assist/i }).click()
     await page.getByRole('button', { name: /^break down$/i }).click()
+    await panel.getByRole('button', { name: /generate/i }).click()
     await expect(page.locator('.assist-bd-input').first()).toBeVisible()
     await page.getByRole('button', { name: /^chat$/i }).click()
     await expect(page.locator('.assist-bd-input')).toHaveCount(0)
@@ -1945,7 +1975,67 @@ test.describe('breakdown', () => {
     await expect(page.getByRole('button', { name: /^break down$/i })).toBeVisible()
   })
 
-  test('clicking "Break down" tab generates subtasks and shows editable list', async ({ page }) => {
+  test('"Break down" tab does not call the API until "Generate" is clicked', async ({ page }) => {
+    let called = false
+    await page.route('**/api/cards/3/breakdown', (r) => {
+      called = true
+      return r.fulfill({ json: { subtasks: ['Step 1'], tag_name: 'Project: Call dentist' } })
+    })
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /^break down$/i }).click()
+    await expect(panel.getByRole('button', { name: /generate/i })).toBeVisible()
+    expect(called).toBe(false)
+
+    await panel.getByRole('button', { name: /generate/i }).click()
+    await expect(page.locator('.assist-bd-input').first()).toBeVisible()
+    expect(called).toBe(true)
+  })
+
+  test('Break down\'s Generate button sits in the same header-row spot and width as Code\'s', async ({ page }) => {
+    await page.route('**/api/cards/3/breakdown', (r) =>
+      r.fulfill({ json: { subtasks: ['Step 1'], tag_name: 'Project: Call dentist' } }))
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+
+    await page.getByRole('button', { name: /^break down$/i }).click()
+    await expect(page.locator('.cdp-spec-header .cdp-spec-gen-btn')).toBeVisible()
+    const bdBox = await page.locator('.cdp-spec-gen-btn').boundingBox()
+
+    await page.getByRole('button', { name: /^code$/i }).click()
+    await expect(page.locator('.cdp-spec-header .cdp-spec-gen-btn')).toBeVisible()
+    const codeBox = await page.locator('.cdp-spec-gen-btn').boundingBox()
+
+    expect(bdBox.width).toBeCloseTo(codeBox.width, 0)
+    expect(bdBox.x).toBeCloseTo(codeBox.x, 0)
+    expect(bdBox.y).toBeCloseTo(codeBox.y, 0)
+  })
+
+  test('a failed generation shows an error with a "Try again" button that retries', async ({ page }) => {
+    let attempt = 0
+    await page.route('**/api/cards/3/breakdown', (r) => {
+      attempt += 1
+      if (attempt === 1) return r.fulfill({ status: 500, json: { detail: 'Server error' } })
+      return r.fulfill({ json: { subtasks: ['Step 1'], tag_name: 'Project: Call dentist' } })
+    })
+    const card = page.locator('.event-card', { hasText: 'Call dentist' })
+    await card.click()
+    const panel = page.locator('.card-detail-panel')
+    await panel.getByRole('button', { name: /assist/i }).click()
+    await page.getByRole('button', { name: /^break down$/i }).click()
+    await panel.getByRole('button', { name: /generate/i }).click()
+    await expect(page.locator('.assist-bd-error')).toBeVisible()
+
+    await page.getByRole('button', { name: /try again/i }).click()
+    await expect(page.locator('.assist-bd-input').first()).toBeVisible()
+    expect(attempt).toBe(2)
+  })
+
+  test('clicking "Break down" tab then "Generate" shows the editable list', async ({ page }) => {
     await page.route('**/api/cards/3/breakdown', (r) =>
       r.fulfill({ json: { subtasks: ['Step 1', 'Step 2', 'Step 3'], tag_name: 'Project: Call dentist' } })
     )
@@ -1954,6 +2044,7 @@ test.describe('breakdown', () => {
     const panel = page.locator('.card-detail-panel')
     await panel.getByRole('button', { name: /assist/i }).click()
     await page.getByRole('button', { name: /^break down$/i }).click()
+    await panel.getByRole('button', { name: /generate/i }).click()
     await expect(page.getByText('Project: Call dentist')).toBeVisible()
     await expect(page.locator('.assist-bd-input').nth(0)).toHaveValue('Step 1')
     await expect(page.locator('.assist-bd-input').nth(1)).toHaveValue('Step 2')
@@ -3740,6 +3831,7 @@ test.describe('assistant modal — create tasks error', () => {
     const panel = page.locator('.card-detail-panel')
     await panel.getByRole('button', { name: /assist/i }).click()
     await page.getByRole('button', { name: /^break down$/i }).click()
+    await panel.getByRole('button', { name: /generate/i }).click()
     await expect(page.locator('.assist-bd-input').first()).toBeVisible()
     await page.getByRole('button', { name: /create 3 subtasks/i }).click()
     await expect(page.locator('.assist-bd-error')).toBeVisible()
@@ -4017,6 +4109,18 @@ test.describe('card detail panel — github and spec', () => {
     await expect(link).toHaveAttribute('href', /github\.com/)
   })
 
+  test('Assistant shows a context-sources chip naming Task Notes and the linked GitHub issue', async ({ page }) => {
+    await page.locator('.cdp-mode-tab--assist').click()
+    await expect(page.locator('.assist-sources-toggle')).toHaveText(/Using Task Notes \+ Issue owner\/repo#42 \(3 comments\)/)
+  })
+
+  test('clicking the context-sources chip reveals the precedence explanation', async ({ page }) => {
+    await page.locator('.cdp-mode-tab--assist').click()
+    await expect(page.locator('.assist-sources-detail')).toHaveCount(0)
+    await page.locator('.assist-sources-toggle').click()
+    await expect(page.locator('.assist-sources-detail')).toContainText(/Task Notes.*priority/i)
+  })
+
   test('CodeRabbit PR review comment shows a badge and diff position', async ({ page }) => {
     const comment = page.locator('.cdp-gh-comment', { hasText: 'Consider using a set' })
     await expect(comment.locator('.cdp-gh-comment-badge')).toHaveText('CodeRabbit')
@@ -4187,34 +4291,34 @@ test.describe('card detail panel — github and spec', () => {
   })
 
   test('Code tab in Assistant shows spec', async ({ page }) => {
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-markdown')).toBeVisible()
     await expect(page.locator('.cdp-spec-markdown')).toContainText(/Problem Statement/i)
   })
 
   test('Generate/Regen button is visible in Code tab', async ({ page }) => {
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-gen-btn')).toBeVisible()
   })
 
   test('Run button is visible in Code tab when spec exists', async ({ page }) => {
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-spec-bridge-btn')).toBeVisible()
     await expect(page.locator('.cdp-spec-bridge-btn')).toContainText(/Run/i)
   })
 
   test('Copy button is visible in Code tab when spec exists', async ({ page }) => {
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     const copyBtn = page.locator('.assist-spec-tab .cdp-gh-btn', { hasText: /Copy/i })
     await expect(copyBtn).toBeVisible()
   })
 
   test('branch name field shows the auto-generated default as a placeholder', async ({ page }) => {
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     const input = page.locator('.cdp-branch-input')
     await expect(input).toBeVisible()
@@ -4229,7 +4333,7 @@ test.describe('card detail panel — github and spec', () => {
       return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
                                  created_at: '2026-06-03T10:00:00Z', updated_at: null } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.locator('.cdp-spec-bridge-btn').click()
 
@@ -4243,7 +4347,7 @@ test.describe('card detail panel — github and spec', () => {
       return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
                                  created_at: '2026-06-03T10:00:00Z', updated_at: null } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.locator('.cdp-branch-input').fill('my-custom-branch')
     await page.locator('.cdp-spec-bridge-btn').click()
@@ -4258,7 +4362,7 @@ test.describe('card detail panel — github and spec', () => {
       return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
                                  created_at: '2026-06-03T10:00:00Z', updated_at: null } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.locator('.cdp-branch-input').fill('has a space')
     await page.locator('.cdp-spec-bridge-btn').click()
@@ -4274,7 +4378,7 @@ test.describe('card detail panel — github and spec', () => {
       return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
                                  created_at: '2026-06-03T10:00:00Z', updated_at: null } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.locator('.cdp-branch-input').fill('-not-a-flag')
     await page.locator('.cdp-spec-bridge-btn').click()
@@ -4290,7 +4394,7 @@ test.describe('card detail panel — github and spec', () => {
       return r.fulfill({ json: { id: 1, card_id: 99, status: 'pending', result: null,
                                  created_at: '2026-06-03T10:00:00Z', updated_at: null } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const input = page.locator('.cdp-branch-input')
@@ -4313,7 +4417,7 @@ test.describe('card detail panel — github and spec', () => {
     }
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const input = page.locator('.cdp-branch-input')
@@ -4331,7 +4435,7 @@ test.describe('card detail panel — github and spec', () => {
     }
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-branch-input')).toBeDisabled()
@@ -4352,7 +4456,7 @@ test.describe('card detail panel — github and spec', () => {
       requestBody = r.request().postDataJSON()
       return r.fulfill({ json: { ...job, requested_branch_name: requestBody.branch_name } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const input = page.locator('.cdp-branch-input')
@@ -4377,7 +4481,7 @@ test.describe('card detail panel — github and spec', () => {
       requestFired = true
       return r.fulfill({ json: job })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const input = page.locator('.cdp-branch-input')
@@ -4399,7 +4503,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-bridge-resume-btn')).toBeVisible()
   })
@@ -4415,7 +4519,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-bridge-resume-btn')).toBeVisible()
   })
@@ -4431,7 +4535,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await expect(page.locator('.cdp-bridge-resume-btn')).toHaveCount(0)
   })
@@ -4448,7 +4552,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-status--needs_confirmation')).toBeVisible()
@@ -4479,7 +4583,7 @@ test.describe('card detail panel — github and spec', () => {
       acknowledgeCalled = true
       return r.fulfill({ json: { ...job, status: 'done', checkpoint_matched_paths: null } })
     })
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.getByRole('button', { name: /mark reviewed/i }).click()
 
@@ -4500,7 +4604,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-status--needs_confirmation')).toContainText(/self-review flagged possible issues/i)
@@ -4521,7 +4625,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-preview')).toContainText(/preview starting/i)
@@ -4539,7 +4643,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const link = page.locator('.cdp-bridge-preview a')
@@ -4560,7 +4664,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const indicator = page.locator('.cdp-bridge-upstream-preview')
@@ -4582,7 +4686,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-upstream-preview')).toHaveCount(0)
@@ -4601,7 +4705,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const img = page.locator('.cdp-bridge-screenshot img')
@@ -4620,7 +4724,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-screenshot')).toHaveCount(0)
@@ -4638,7 +4742,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-preview')).toContainText(/preview failed to start/i)
@@ -4656,7 +4760,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/latest', r => r.fulfill({ json: { job } }))
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: job, companion: null } }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-preview')).toContainText(/preview stopped/i)
@@ -4687,7 +4791,7 @@ test.describe('card detail panel — github and spec', () => {
       })
     })
 
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.locator('.cdp-bridge-resume-btn').click()
 
@@ -4706,7 +4810,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/chain', r => r.fulfill({
       json: { root: job, companion: null, attempts: { number: 1, prior_count: 0, prior_failed_count: 0 } },
     }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-attempts')).toHaveCount(0)
@@ -4723,7 +4827,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/chain', r => r.fulfill({
       json: { root: job, companion: null, attempts: { number: 3, prior_count: 2, prior_failed_count: 2 } },
     }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const attempts = page.locator('.cdp-bridge-attempts')
@@ -4743,7 +4847,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/chain', r => r.fulfill({
       json: { root: job, companion: null, attempts: { number: 2, prior_count: 1, prior_failed_count: 0 } },
     }))
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const attempts = page.locator('.cdp-bridge-attempts')
@@ -4763,7 +4867,7 @@ test.describe('card detail panel — github and spec', () => {
       r.fulfill({ json: { root: job, companion: null } }))
     await page.route('**/api/bridge/repos', r => r.fulfill({ json: { repos: ['owner/web-repo'] } }))
 
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     const addBtn = page.locator('.cdp-companion-add-btn')
@@ -4794,7 +4898,7 @@ test.describe('card detail panel — github and spec', () => {
       } })
     })
 
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
     await page.locator('.cdp-companion-add-btn').click()
     await page.locator('.cdp-companion-repo-input').fill('owner/web-repo')
@@ -4831,7 +4935,7 @@ test.describe('card detail panel — github and spec', () => {
       return r.fulfill({ json: { ...companionJob, id: 7, status: 'pending', resumes_job_id: 6 } })
     })
 
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-status--stalled .cdp-bridge-resume-btn')).toBeVisible()
@@ -4852,7 +4956,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: rootJob, companion: null } }))
 
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-companion-add-btn')).toHaveCount(0)
@@ -4876,7 +4980,7 @@ test.describe('card detail panel — github and spec', () => {
     await page.route('**/api/bridge/jobs/card/*/chain', r =>
       r.fulfill({ json: { root: rootJob, companion: companionJob } }))
 
-    await page.locator('.cdp-btn--assist-footer').click()
+    await page.locator('.cdp-mode-tab--assist').click()
     await page.locator('.assist-tab', { hasText: 'Code' }).click()
 
     await expect(page.locator('.cdp-bridge-status--blocked .cdp-bridge-label'))
@@ -4912,18 +5016,106 @@ test.describe('card deep link via ?card= query param', () => {
     await expect(page.locator('.card-detail-panel')).toContainText('Daily Engineering Standup')
   })
 
-  test('strips the query param from the URL once consumed', async ({ page }) => {
+  test('keeps ?card= in the URL once opened, so the link stays valid to share again', async ({ page }) => {
     await page.goto('/today?card=1')
     await waitForApp(page)
     await expect(page.locator('.card-detail-panel')).toBeVisible()
 
-    expect(page.url()).not.toContain('card=1')
+    expect(page.url()).toContain('card=1')
+  })
+
+  test('deep-links directly into edit mode via ?mode=edit', async ({ page }) => {
+    await page.goto('/today?card=1&mode=edit')
+    await waitForApp(page)
+    await expect(page.locator('.card-detail-panel .cdp-form')).toBeVisible()
+    await expect(page.locator('.cdp-mode-tab--edit')).toHaveClass(/cdp-mode-tab--active/)
+  })
+
+  test('deep-links directly into a specific assist sub-tab via ?mode=assist&tab=code', async ({ page }) => {
+    await page.goto('/today?card=1&mode=assist&tab=code')
+    await waitForApp(page)
+    await expect(page.locator('.assist-inline')).toBeVisible()
+    await expect(page.getByRole('button', { name: /^code$/i })).toHaveClass(/assist-tab--active/)
   })
 
   test('is a no-op for an id that matches no card', async ({ page }) => {
     await page.goto('/today?card=999999')
     await waitForApp(page)
 
+    await expect(page.locator('.card-detail-panel')).not.toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Card panel URL stays in sync as you navigate it (so the current step is
+// always a linkable/bookmarkable URL, not just the initial ?card= open)
+// ---------------------------------------------------------------------------
+test.describe('card panel URL sync', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/today')
+    await waitForApp(page)
+  })
+
+  test('switching to Edit adds mode=edit, switching back to View removes it', async ({ page }) => {
+    await page.locator('.event-card', { hasText: 'Daily Engineering Standup' }).click()
+    await expect(page.locator('.card-detail-panel')).toBeVisible()
+    expect(page.url()).not.toContain('mode=')
+
+    await page.locator('.cdp-mode-tab--edit').click()
+    await expect(page).toHaveURL(/mode=edit/)
+
+    await page.locator('.cdp-mode-tab--view').click()
+    await expect(page).not.toHaveURL(/mode=/)
+  })
+
+  test('switching to the Code sub-tab adds mode=assist&tab=code', async ({ page }) => {
+    await page.locator('.event-card', { hasText: 'Daily Engineering Standup' }).click()
+    await page.locator('.cdp-mode-tab--assist').click()
+    await expect(page).toHaveURL(/mode=assist/)
+    await expect(page).not.toHaveURL(/tab=/)
+
+    await page.locator('.assist-tab', { hasText: 'Code' }).click()
+    await expect(page).toHaveURL(/tab=code/)
+
+    // The default Chat sub-tab is the implicit one -- no tab= param for it, same
+    // reasoning as mode=view above (the common case stays a plain, short URL).
+    await page.locator('.assist-tab', { hasText: 'Chat' }).click()
+    await expect(page).not.toHaveURL(/tab=/)
+  })
+
+  test('closing the panel clears card/mode/tab from the URL', async ({ page }) => {
+    await page.goto('/today?card=1&mode=assist&tab=code')
+    await waitForApp(page)
+    await expect(page.locator('.card-detail-panel')).toBeVisible()
+
+    await page.locator('.cdp-close').click()
+    await expect(page.locator('.card-detail-panel')).not.toBeVisible()
+    expect(page.url()).not.toContain('card=')
+    expect(page.url()).not.toContain('mode=')
+    expect(page.url()).not.toContain('tab=')
+  })
+
+  test('navigating between modes replaces the URL instead of pushing history entries', async ({ page }) => {
+    // Two real, separate navigations first, so there's an unambiguous "page before
+    // this card session" entry to land on -- goto (unlike client-side navigate) always
+    // pushes, giving a reliable two-entry baseline: [... , /board, /today].
+    await page.goto('/board')
+    await waitForApp(page)
+    await page.goto('/today')
+    await waitForApp(page)
+
+    await page.locator('.event-card', { hasText: 'Daily Engineering Standup' }).click()
+    await page.locator('.cdp-mode-tab--edit').click()
+    await expect(page).toHaveURL(/mode=edit/)
+    await page.locator('.cdp-mode-tab--assist').click()
+    await expect(page).toHaveURL(/mode=assist/)
+
+    // If each mode switch had pushed its own history entry, one Back would land on an
+    // intermediate state (e.g. mode=edit, or /today with the panel still open). Since
+    // they all replace the same entry instead, one Back skips the entire card-panel
+    // session in a single step and lands on /board.
+    await page.goBack()
+    await expect(page).toHaveURL(/\/board/)
     await expect(page.locator('.card-detail-panel')).not.toBeVisible()
   })
 })

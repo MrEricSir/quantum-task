@@ -17,6 +17,39 @@ _procfile_processes() {
   done < "$PROCFILE"
 }
 
+# True if something is already listening on 127.0.0.1:$1 -- pure bash via the
+# /dev/tcp pseudo-device, no dependency on lsof/nc being installed.
+_port_in_use() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+# Best-effort "who's holding it" -- only shown if lsof happens to be present,
+# which it is on macOS and most Linux desktops but isn't guaranteed. Purely
+# informational; a missing lsof never blocks port selection itself.
+_port_owner() {
+  command -v lsof &>/dev/null || return 0
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 { print $1 " (pid " $2 ")" }'
+}
+
+# Picks a free QTASK_PORT_BASE automatically when the default (8000 backend /
+# 5173 frontend) is already taken by something else -- common on a shared dev
+# machine where an unrelated project's server was left running on the same
+# default port. Steps by 10 so each candidate's paired frontend port
+# (base+1) lands in its own decade, same spacing qtask-bridge worktrees
+# already use for QTASK_PORT_BASE (see agent_core.py's cmd_run).
+_find_open_port_base() {
+  local base=8000 attempt
+  for attempt in $(seq 0 20); do
+    if ! _port_in_use "$base" && ! _port_in_use "$((base + 1))"; then
+      echo "$base"
+      return 0
+    fi
+    base=$((base + 10))
+  done
+  echo "Could not find a free port pair after 20 attempts starting at 8000." >&2
+  return 1
+}
+
 # Kill a PID and every descendant, not just direct children -- the tracked
 # PID is the subshell that evals a Procfile.dev line (e.g. "cd backend &&
 # env ... uvicorn --reload"), and uvicorn's reloader forks its own server
@@ -89,6 +122,26 @@ start() {
     exit 1
   fi
 
+  # Only auto-pick a port if the caller didn't already ask for a specific one
+  # (e.g. a qtask-bridge worktree always sets this itself -- respect that
+  # explicit choice and let a real collision there fail loudly instead of
+  # silently moving it). Otherwise, the default 8000/5173 pair is surprisingly
+  # easy to collide with -- any other local project using the same common
+  # defaults left running is enough -- and that used to fail silently: uvicorn
+  # would die on "Address already in use" while this script kept printing a
+  # success banner regardless, leaving the frontend talking to whatever else
+  # happened to be on port 8000.
+  if [[ -z "${QTASK_PORT_BASE:-}" ]] && { _port_in_use 8000 || _port_in_use 5173; }; then
+    echo "Port 8000 or 5173 is already in use$(
+      owner="$(_port_owner 8000)"; [[ -z "$owner" ]] && owner="$(_port_owner 5173)"
+      [[ -n "$owner" ]] && echo -n " (by $owner)"
+    ) -- picking a free port pair instead."
+    QTASK_PORT_BASE="$(_find_open_port_base)"
+    export QTASK_PORT_BASE
+    echo "Using QTASK_PORT_BASE=$QTASK_PORT_BASE for this run."
+    echo ""
+  fi
+
   : > "$PID_FILE"
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -99,9 +152,12 @@ start() {
     echo "$name $!" >> "$PID_FILE"
   done < "$PROCFILE"
 
+  # Mirrors Procfile.dev's own fallback defaults exactly (backend: QTASK_PORT_BASE or
+  # 8000; frontend: QTASK_PORT_BASE or 5172, plus one) so this banner is never wrong
+  # about where the servers it just started actually ended up.
   echo ""
-  echo "  Backend  → http://localhost:8000"
-  echo "  Frontend → http://localhost:5173"
+  echo "  Backend  → http://localhost:${QTASK_PORT_BASE:-8000}"
+  echo "  Frontend → http://localhost:$(( ${QTASK_PORT_BASE:-5172} + 1 ))"
   echo ""
   echo "Logs: ./dev.sh logs"
   echo "Stop: ./dev.sh stop"

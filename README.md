@@ -78,6 +78,8 @@ Logs are written to `backend.log` and `frontend.log` in the project root.
 
 `start`/`stop`/`logs` are driven by `Procfile.dev` in the project root, not hardcoded — the same file `qtask-bridge --run` looks for when trying a change in a worktree (see [Trying a change yourself](#trying-a-change-yourself)). Add a line there for a new process (e.g. a queue worker) and all three commands pick it up automatically.
 
+**If port 8000 or 5173 is already taken** (e.g. by an unrelated project's own dev server left running) `./dev.sh start` detects it automatically and picks a free port pair instead, printing which port it chose and — when `lsof` is available — what's holding the original one. Without this, the old failure mode was silent and confusing: uvicorn died on "Address already in use" while the script kept printing a success banner regardless, leaving the frontend's dev proxy talking to whatever else happened to already be on port 8000. One real exception: **Withings OAuth login needs the backend on the exact port registered in its developer console (`http://localhost:8000/...`, see [Withings](#withings-optional) below) — if a port gets auto-switched, that one feature won't work until port 8000 is freed up and the app is restarted.** Pass an explicit `QTASK_PORT_BASE=<port> ./dev.sh start` yourself if you want a specific port instead of auto-detection (same variable qtask-bridge worktrees use for their own isolation, see [Avoiding port and database collisions](#avoiding-port-and-database-collisions)) — auto-detection only kicks in when you haven't already chosen one.
+
 ## Manual start (alternative)
 
 After running `./dev.sh setup`, you can run each process in its own terminal:
@@ -191,13 +193,14 @@ Automate implementation work by sending cards to a local Claude Code agent. The 
 
 #### How it works
 
-1. Open any card and click **✦ Assist** in the footer
+1. Open any card and click the **✦ Assist** tab at the top of the panel (alongside **View** and **Edit** — all three are the same panel, not separate screens)
 2. Click the **Code** tab
-3. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments); these sources aren't treated as equally authoritative -- your own Developer Notes win over a conflicting GitHub issue, and a later comment wins over the original issue/PR body on the point it addresses, rather than the two being blended into a compromise
-4. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
-5. The local bridge agent picks up the job, fetches the repo, and creates an isolated `git worktree` on a fresh `qtask/<id>-<slug>` branch off the latest primary branch — your own working directory is never touched, so this works even if you have uncommitted changes there
-6. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them, and by default it's told not to comment on the PR/issue itself either (see [Commenting on GitHub](#commenting-on-github-allow_pr_comments) below)
-7. When the session ends, the branch, machine, and full worktree path are shown in the Code tab and sent via Telegram (with a copy button in the UI); the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
+3. If the card is linked to a GitHub issue/PR, a small "Using Task Notes + Issue ..." line appears under the task name — click it to see exactly which sources are feeding the AI and how conflicts between them are resolved
+4. Click **✦ Generate** — the AI synthesises a requirements document from the card title, developer notes, and linked GitHub issue/PR context (body + comments); these sources aren't treated as equally authoritative -- your own Developer Notes win over a conflicting GitHub issue, and a later comment wins over the original issue/PR body on the point it addresses, rather than the two being blended into a compromise
+5. Review and optionally edit the requirements inline, then click **▶ Run** to queue a job
+6. The local bridge agent picks up the job, fetches the repo, and creates an isolated `git worktree` on a fresh `qtask/<id>-<slug>` branch off the latest primary branch — your own working directory is never touched, so this works even if you have uncommitted changes there
+7. Claude Code launches interactively in your terminal — you can participate, ask questions, or let it run; push is disabled so no changes leave your machine until you review them, and by default it's told not to comment on the PR/issue itself either (see [Commenting on GitHub](#commenting-on-github-allow_pr_comments) below)
+8. When the session ends, the branch, machine, and full worktree path are shown in the Code tab and sent via Telegram (with a copy button in the UI); the worktree is left in place for you to review, test, and push; the bridge picks up the next queued job automatically
 
 You never have to go hunting for where a job's code landed — see [Finding your worktree](#finding-your-worktree) below for every way it's surfaced.
 
@@ -454,6 +457,8 @@ qtask-bridge --open 84-ranking  # branch fragment, same resolution as --run/--re
 ```
 
 The card id comes straight from the branch name, so no job lookup is needed just to find it. The issue link comes from the card's own GitHub link if it has one; the PR link is found separately via a live GitHub lookup against the worktree's branch — a card started from an issue keeps that issue link even after a PR is later opened for the job's branch, so the PR is usually not something the card's own link ever points to. Anything not found (no linked issue, no PR yet) is silently skipped rather than erroring.
+
+The card URL this opens (`?card=<id>`) stays live and shareable in the address bar as you navigate the panel, not just a one-time redirect — switching between View/Edit/Assist, or between the Chat/Break down/Code tabs inside Assist, updates the URL (`&mode=`, `&tab=`) to match, so copying the address bar at any point links straight back to that exact step. It replaces rather than pushes a new browser-history entry on every change, so the Back button skips the whole card-panel session in one step rather than stepping back through each mode/tab you visited. Desktop only for now (the mobile card sheet doesn't mirror this).
 
 #### Commenting on GitHub (allow_pr_comments)
 

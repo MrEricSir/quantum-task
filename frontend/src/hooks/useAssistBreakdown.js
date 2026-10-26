@@ -3,7 +3,7 @@ import { breakdownCard, commitBreakdown } from '../api'
 
 // "Break down" tab state for AssistModal -- extracted so AssistModal.jsx isn't
 // one file owning chat, breakdown, and code/bridge state all at once.
-export function useAssistBreakdown(task, open, initialTab, mode, onBreakdown, handleClose) {
+export function useAssistBreakdown(task, open, initialTab, onBreakdown, handleClose) {
   const [bdStatus,   setBdStatus]   = useState('idle')
   const [bdSubtasks, setBdSubtasks] = useState([])
   const [bdTagName,  setBdTagName]  = useState('')
@@ -24,10 +24,6 @@ export function useAssistBreakdown(task, open, initialTab, mode, onBreakdown, ha
     }
   }
 
-  useEffect(() => {
-    if (mode === 'breakdown' && bdStatus === 'idle') generateBreakdown()
-  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const confirmBreakdown = async () => {
     const valid = bdSubtasks.filter(s => s.trim())
     if (!valid.length) return
@@ -40,5 +36,5 @@ export function useAssistBreakdown(task, open, initialTab, mode, onBreakdown, ha
     }
   }
 
-  return { bdStatus, bdSubtasks, setBdSubtasks, bdTagName, bdError, confirmBreakdown }
+  return { bdStatus, bdSubtasks, setBdSubtasks, bdTagName, bdError, generateBreakdown, confirmBreakdown }
 }

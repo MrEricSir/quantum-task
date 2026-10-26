@@ -47,6 +47,9 @@ export default function CardDetailPanel({
   onRefreshGithubItem,
   onDismissComment,
   onExtractActions,
+  initialAssistTab = 'assist',
+  onModeChange,
+  onAssistTabChange,
 }) {
   const [mode, setMode] = useState(initialMode)
 
@@ -93,8 +96,15 @@ export default function CardDetailPanel({
     setSelectedFixIds(new Set())
     setFixQueuing(false)
     setFixError('')
-    setAssistInitialTab('assist')
-  }, [card?.id, initialMode]) // eslint-disable-line react-hooks/exhaustive-deps
+    setAssistInitialTab(initialAssistTab)
+  }, [card?.id, initialMode, initialAssistTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reports the active mode upward (used to mirror it into the URL) -- separate from the
+  // reset effect above, which only runs on a genuine new-card/initialMode navigation event,
+  // not on every click within an already-open panel.
+  useEffect(() => {
+    onModeChange?.(mode)
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Populate edit form fields whenever entering edit/new mode
   useEffect(() => {
@@ -272,6 +282,30 @@ export default function CardDetailPanel({
             <Cross2Icon />
           </button>
         </div>
+
+        {/* Mode tabs — View/Edit/Assist are siblings of one panel, not separate screens */}
+        {card && mode !== 'new' && (
+          <div className="cdp-mode-tabs">
+            <button
+              className={`cdp-mode-tab cdp-mode-tab--view${mode === 'view' ? ' cdp-mode-tab--active' : ''}`}
+              onClick={() => setMode('view')}
+            >
+              View
+            </button>
+            <button
+              className={`cdp-mode-tab cdp-mode-tab--edit${mode === 'edit' ? ' cdp-mode-tab--active' : ''}`}
+              onClick={() => setMode('edit')}
+            >
+              Edit
+            </button>
+            <button
+              className={`cdp-mode-tab cdp-mode-tab--assist${mode === 'assist' ? ' cdp-mode-tab--active' : ''}`}
+              onClick={() => { setAssistInitialTab('assist'); setMode('assist') }}
+            >
+              ✦ {savedOutput ? 'Assistant' : 'Assist'}
+            </button>
+          </div>
+        )}
 
         {/* ── VIEW mode ── */}
         {mode === 'view' && card && (
@@ -580,12 +614,6 @@ export default function CardDetailPanel({
                   Archive
                 </button>
               )}
-              <button className="cdp-btn cdp-btn--assist-footer" onClick={() => { setAssistInitialTab('assist'); setMode('assist') }}>
-                ✦ {savedOutput ? 'Assistant' : 'Assist'}
-              </button>
-              <button className="cdp-btn cdp-btn--edit" onClick={() => setMode('edit')}>
-                Edit
-              </button>
             </div>
           </>
         )}
@@ -636,11 +664,13 @@ export default function CardDetailPanel({
             open
             onClose={() => { setMode('view'); refreshBridgeHistory() }}
             task={card}
+            githubContext={engItem}
             onBreakdown={onBreakdown}
             onOutputSaved={(output) => setSavedOutput(output)}
             onSpecSaved={(spec) => onSave?.(card.id, { spec })}
             inline
             initialTab={assistInitialTab}
+            onTabChange={onAssistTabChange}
           />
         )}
       </aside>

@@ -46,6 +46,42 @@
   flex-shrink: 0;
 }
 
+/* ── Mode tabs (View/Edit/Assist) ── */
+.cdp-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 10px 16px 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 8px;
+  padding: 3px;
+  flex-shrink: 0;
+}
+
+.cdp-mode-tab {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cdp-mode-tab:hover:not(.cdp-mode-tab--active) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cdp-mode-tab--active {
+  background: rgba(139, 92, 246, 0.2);
+  color: #c4b5fd;
+}
+
 .cdp-title {
   flex: 1;
   font-size: 15px;
