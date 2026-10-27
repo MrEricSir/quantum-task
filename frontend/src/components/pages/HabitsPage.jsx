@@ -371,6 +371,16 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                       🚫 {foodAvoidBadgeText(habit.food_avoid_name, habit.food_avoid_target)}
                     </span>
                     <span className="habit-card-withings-auto">↻ from food log</span>
+                    {/* The checkbox above never shows checked for this habit -- success is an
+                        absence with nothing to react to on the day it's happening, see
+                        check_food_avoidance_habits. This gives the positive feedback the
+                        checkbox structurally can't, reusing the same streak value every other
+                        habit's 🔥 badge already shows (habit.streak), not a new computation. */}
+                    {habit.streak > 0 && (
+                      <span className="habit-card-clean-streak">
+                        🔥 {habit.streak} day{habit.streak !== 1 ? 's' : ''} clean
+                      </span>
+                    )}
                   </button>
                 )}
 

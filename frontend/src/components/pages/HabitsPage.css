@@ -638,6 +638,19 @@
   padding: 2px 7px;
 }
 
+/* Same orange used by .habit-card-streak elsewhere on this page, so "fire = streak"
+   reads consistently across both auto-tracked and manually-checked habits. */
+.habit-card-clean-streak {
+  font-size: 10px;
+  font-weight: 600;
+  color: #f97316;
+  background: rgba(249, 115, 22, 0.1);
+  border: 1px solid rgba(249, 115, 22, 0.25);
+  border-radius: 10px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
 .habit-card-tags {
   display: flex;
   flex-wrap: wrap;
