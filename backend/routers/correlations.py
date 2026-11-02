@@ -1481,7 +1481,10 @@ def _generate_experiment(
         # manual convention -- you'd have to guess whether checking it means you avoided
         # the food or ate it -- so this one is never manually toggleable, same as a
         # Withings-goal habit).
-        habit_name = f"🧪 {action[:60]}"
+        if len(action) > 60:
+            habit_name = f"🧪 {action[:60].rsplit(' ', 1)[0]}…"
+        else:
+            habit_name = f"🧪 {action}"
         habit = models.Habit(
             name=habit_name,
             health_metric=health_metric,
@@ -2094,12 +2097,12 @@ def auto_expire_stale_experiments(db: Session, today: date, tz_offset_minutes: i
     db.commit()
 
 
-@router.get("/api/health/experiment")
-def get_health_experiment(request: Request, db: Session = Depends(get_db)):
-    """Return the active experiment, generating one if needed."""
-    today = local_date(request)
-    tz_offset = utc_offset_minutes(request)
-
+def get_or_generate_active_experiment(db: Session, today: date, tz_offset: int) -> models.HealthExperiment:
+    """Return the active experiment, generating one if needed. Factored out of
+    get_health_experiment so telegram.scheduler's hourly check_new_experiment can run
+    the exact same rollover + generation logic server-side, headlessly -- that's what
+    makes a new experiment show up on Today without anyone having visited the Health
+    page first, which is what used to trigger this generation path exclusively."""
     # Auto-check food-elimination habits for any trailing day the target food went
     # unlogged, before the rollover cleanup below potentially archives one -- see
     # check_food_avoidance_habits' docstring for why this can't be triggered from a
@@ -2112,14 +2115,22 @@ def get_health_experiment(request: Request, db: Session = Depends(get_db)):
 
     exp = db.query(models.HealthExperiment).filter_by(status="active").first()
     if exp:
-        return _exp_to_dict(exp, today)
+        return exp
 
     # Generate a new experiment -- deliberately weight/fat only (no hydration_obs): experiment
     # generation proposes a routine to change and evaluates it against weight/fat, and isn't
     # scoped to consider water-weight as a target outcome (see _load_weekly_obs's docstring).
     weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
-    exp = _generate_experiment(correlations, db, today, tz_offset)
+    return _generate_experiment(correlations, db, today, tz_offset)
+
+
+@router.get("/api/health/experiment")
+def get_health_experiment(request: Request, db: Session = Depends(get_db)):
+    """Return the active experiment, generating one if needed."""
+    today = local_date(request)
+    tz_offset = utc_offset_minutes(request)
+    exp = get_or_generate_active_experiment(db, today, tz_offset)
     return _exp_to_dict(exp, today)
 
 

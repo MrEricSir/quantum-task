@@ -2185,6 +2185,62 @@ class TestCheckHealthNudges:
         assert "No food logged" in text
 
 
+class TestCheckNewExperiment:
+    """get_or_generate_active_experiment is imported lazily inside check_new_experiment
+    (mirrors check_trip_retrospective's generate_trip_retrospective import), so these
+    tests patch it at its source (routers.correlations), not on telegram.scheduler."""
+
+    def test_skipped_when_experiment_already_active(self):
+        with BotTestSession() as db:
+            db.add(models.HealthExperiment(started_on=TODAY.isoformat(), text="Existing experiment"))
+            db.commit()
+
+        from telegram.scheduler import check_new_experiment
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send:
+            with BotTestSession() as db:
+                result = check_new_experiment(db, "tok", "123", 0, TODAY)
+
+        assert result == "skipped"
+        mock_send.assert_not_called()
+
+    def test_sends_when_none_active(self):
+        generated = models.HealthExperiment(started_on=TODAY.isoformat(), text="Walk 8,000 steps every day")
+
+        from telegram.scheduler import check_new_experiment
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send, \
+             patch("routers.correlations.get_or_generate_active_experiment", return_value=generated) as mock_gen:
+            with BotTestSession() as db:
+                result = check_new_experiment(db, "tok", "123", 0, TODAY)
+
+        assert result == "sent"
+        mock_gen.assert_called_once_with(mock_gen.call_args[0][0], TODAY, 0)
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][2]
+        assert "New health experiment" in text
+        assert "Walk 8,000 steps every day" in text
+
+    def test_escapes_experiment_text(self):
+        generated = models.HealthExperiment(started_on=TODAY.isoformat(), text="Do <b>10</b> push-ups & rest")
+
+        from telegram.scheduler import check_new_experiment
+        with patch("telegram.scheduler.send_message", return_value=True) as mock_send, \
+             patch("routers.correlations.get_or_generate_active_experiment", return_value=generated):
+            with BotTestSession() as db:
+                check_new_experiment(db, "tok", "123", 0, TODAY)
+
+        text = mock_send.call_args[0][2]
+        assert "&lt;b&gt;10&lt;/b&gt;" in text
+        assert "&amp;" in text
+
+    def test_generation_failure_returns_error(self):
+        from telegram.scheduler import check_new_experiment
+        with patch("routers.correlations.get_or_generate_active_experiment", side_effect=RuntimeError("boom")):
+            with BotTestSession() as db:
+                result = check_new_experiment(db, "tok", "123", 0, TODAY)
+
+        assert result == "error: boom"
+
+
 # ── Streak milestone celebrations (habit, food quality, task completion) ────────
 
 class TestCheckStreakMilestones:

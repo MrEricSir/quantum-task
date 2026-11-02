@@ -730,6 +730,34 @@ def check_health_nudges(db: Session, token: str, chat_id: str,
     return "sent" if send_message(token, chat_id, text) else "send_failed"
 
 
+def check_new_experiment(db: Session, token: str, chat_id: str,
+                          tz_offset: int, today: date) -> str:
+    """Generate the next health experiment server-side the moment the previous one
+    rolls over or none exists yet, instead of waiting for someone to open the Health
+    page -- that page-visit-only trigger used to be the only thing that generated a
+    new experiment at all, which is also why Today never showed one until Health had
+    been visited first (Today never calls the generating endpoint). Runs every hour
+    via check_all(), so a scaled-to-zero instance still picks this up reliably.
+
+    Idempotent without any separate last-sent tracking: an experiment is only
+    generated when none is currently active, so this only has something new to
+    announce on the one hourly tick where that's true."""
+    from routers.correlations import get_or_generate_active_experiment
+
+    already_active = db.query(models.HealthExperiment).filter_by(status="active").first() is not None
+
+    try:
+        exp = get_or_generate_active_experiment(db, today, tz_offset)
+    except Exception as e:
+        return f"error: {e}"
+
+    if already_active:
+        return "skipped"
+
+    text = f"🧪 <b>New health experiment</b>\n\n{esc(exp.text)}"
+    return "sent" if send_message(token, chat_id, text) else "send_failed"
+
+
 _OUTPUT_TAIL_LINES = 10  # lines of Claude Code output included in completion notifications
 
 
@@ -878,5 +906,6 @@ def check_all(db: Session) -> dict:
         "meeting_alerts":     check_meeting_alerts(db, token, chat_id, tz_offset, now_utc, now_local),
         "streak_milestones":  check_streak_milestones(db, token, chat_id, now_local, today),
         "health_nudges":      check_health_nudges(db, token, chat_id, now_local, today, tz_offset),
+        "new_experiment":     check_new_experiment(db, token, chat_id, tz_offset, today),
         "bridge_jobs":        check_bridge_jobs(db, token, chat_id),
     }
