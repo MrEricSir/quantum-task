@@ -876,7 +876,7 @@ export default function App() {
       <header className="app-header">
         <div className="header-inner">
           <div className="header-title">
-            <img src="/logo.svg" alt="Quantum Task" className="header-logo" />
+            <img src="/logo.svg" alt="Quantum" className="header-logo" />
             <h1>Quantum</h1>
           </div>
           {weather && (
