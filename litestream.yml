@@ -7,6 +7,20 @@
 
 exec: "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
 
+# Litestream only folds its replicated WAL fragments into a full snapshot
+# inside the long-running `replicate` daemon -- there's no one-off command to
+# force it, and the default snapshot.interval is 24h. Since this app runs at
+# min-instances 0, a container rarely stays warm anywhere near 24h straight,
+# so the 24h default meant a real snapshot almost never completed -- every
+# cold start just piled more small WAL fragments onto the replica forever
+# (confirmed in prod: 1,320 objects, 171MB, for what's actually a ~9MB
+# database). A short interval instead gives any realistic session a real
+# chance to complete one, which folds the backlog down and keeps the replica
+# from re-bloating.
+snapshot:
+  interval: 10m
+  retention: 24h
+
 dbs:
   - path: /app/db/todos.db
     replica:
