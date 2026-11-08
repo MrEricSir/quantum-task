@@ -127,9 +127,14 @@
   line-height: 1;
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   color: #fff;
   background: rgba(255,255,255,0.08);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ── Notifications toggle in settings dropdown ── */
@@ -198,8 +203,13 @@
   transition: background 0.15s;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: #6d28d9;
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ── Mobile tab bar (hidden on desktop) ── */

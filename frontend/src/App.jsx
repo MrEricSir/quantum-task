@@ -263,6 +263,11 @@ export default function App() {
   }
 
   const loading = cardsLoading || tagsLoading
+  // True only until each of cards/tags/habits/calendar has loaded once (react-query's
+  // isLoading, not isFetching -- a later background refetch never re-flips this). Used to
+  // keep the header/footer from looking fully usable before there's anything to act on --
+  // e.g. Capture creating a card the still-loading card list would then have to catch up to.
+  const appDataLoading = loading || habitsLoading || calendarLoading
 
   const { permission: notifPermission, enabled: notifEnabled, setEnabled: setNotifEnabled, requestPermission } = useNotifications(
     cards,
@@ -343,9 +348,9 @@ export default function App() {
 
   const shortcutsRef = useRef([])
   shortcutsRef.current = [
-    { key: 'n', label: 'Capture',           group: 'action', action: ()  => { setQuickAddStep('input'); setShowQuickAdd(true) } },
-    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { setQuickAddStep('assist'); setShowQuickAdd(true) } },
-    { key: '/', label: 'Search',            group: 'action', action: (e) => { e.preventDefault(); setShowSearch(true) } },
+    { key: 'n', label: 'Capture',           group: 'action', action: ()  => { if (!appDataLoading) { setQuickAddStep('input'); setShowQuickAdd(true) } } },
+    { key: 'a', label: 'Assist',            group: 'action', action: ()  => { if (!appDataLoading) { setQuickAddStep('assist'); setShowQuickAdd(true) } } },
+    { key: '/', label: 'Search',            group: 'action', action: (e) => { e.preventDefault(); if (!appDataLoading) setShowSearch(true) } },
     { key: '?', label: 'Keyboard shortcuts',group: 'action', action: ()  => setShowShortcuts(true) },
     { key: 't', label: 'Today',             group: 'nav',    action: ()  => navigate('/today') },
     { key: 'b', label: 'Board',             group: 'nav',    action: ()  => navigate('/board') },
@@ -889,7 +894,8 @@ export default function App() {
             <button
               className="btn-ghost"
               onClick={() => setShowSearch(true)}
-              title="Search (press /)"
+              disabled={appDataLoading}
+              title={appDataLoading ? 'Still loading…' : 'Search (press /)'}
               aria-label="Search"
               style={{ fontSize: 18, padding: '7px 10px' }}
             >
@@ -904,7 +910,12 @@ export default function App() {
               }}
               onClearErrors={() => setParseQueue((prev) => prev.filter((i) => i.status === 'pending'))}
             />
-            <button className="btn-primary" onClick={() => { setQuickAddStep('input'); setShowQuickAdd(true) }}>
+            <button
+              className="btn-primary"
+              onClick={() => { setQuickAddStep('input'); setShowQuickAdd(true) }}
+              disabled={appDataLoading}
+              title={appDataLoading ? 'Still loading…' : undefined}
+            >
               Capture
             </button>
             <DropdownMenu.Root>

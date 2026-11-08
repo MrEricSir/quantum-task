@@ -213,6 +213,32 @@ test.describe('app shell', () => {
       await expect(page.getByRole('button', { name: label }).or(page.getByText(label)).first()).toBeVisible()
     }
   })
+
+  test('Capture and Search are disabled until initial data has loaded, then become usable', async ({ page }) => {
+    /* Regression test: the header used to render Capture/Search as immediately clickable the
+       moment auth resolved, even though cards/tags hadn't loaded yet -- on a cold-starting
+       backend this gave the false impression the app was ready when tapping Capture would
+       just queue against a card list that hadn't caught up yet. Holds /api/cards open with a
+       manually-released promise (deterministic, not timing-based) so this reliably exercises
+       the still-loading window regardless of how fast the mocked APIs would otherwise resolve. */
+    let releaseCards
+    const cardsHeld = new Promise((resolve) => { releaseCards = resolve })
+    await page.route('**/api/cards', async (r) => {
+      await cardsHeld
+      return r.fulfill({ json: [] })
+    })
+
+    await page.goto('/today')
+    await page.waitForSelector('.app-header', { state: 'visible' })
+
+    await expect(page.getByRole('button', { name: /capture/i })).toBeDisabled()
+    await expect(page.getByRole('button', { name: /search/i })).toBeDisabled()
+
+    releaseCards()
+
+    await expect(page.getByRole('button', { name: /capture/i })).toBeEnabled()
+    await expect(page.getByRole('button', { name: /search/i })).toBeEnabled()
+  })
 })
 
 // ---------------------------------------------------------------------------
