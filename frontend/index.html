@@ -22,7 +22,7 @@
     <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/iphone-14pro.png" />
     <!-- iPhone 14 Pro Max / 15 Pro Max (430×932 @3x) -->
     <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/iphone-14promax.png" />
-    <title>Quantum Task</title>
+    <title>Quantum</title>
     <style>
       #qt-splash {
         position: fixed;
@@ -55,6 +55,14 @@
         animation: qt-spin 0.8s linear infinite;
       }
       @keyframes qt-spin { to { transform: rotate(360deg); } }
+      #qt-splash-stage {
+        min-height: 16px;
+        margin: 0;
+        color: #9c8fb8;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        font-weight: 400;
+      }
     </style>
   </head>
   <body>
@@ -62,8 +70,26 @@
       <img src="/logo.svg" alt="" aria-hidden="true" />
       <p>Quantum Task</p>
       <div id="qt-splash-spinner"></div>
+      <p id="qt-splash-stage"></p>
     </div>
     <div id="root"></div>
+    <script>
+      // The backend (Cloud Run, min-instances 0) can take a while to wake up from
+      // a cold start -- these timers just explain the wait so it doesn't look
+      // broken. Plain inline JS because this has to run before React (and the
+      // app's own slower-loading-stage hook, see src/hooks/useLoadingStage.js)
+      // has a chance to mount anything.
+      [
+        [4000, 'Waking up the server…'],
+        [15000, 'First load after inactivity can take a bit longer…'],
+      ].forEach(function (stage) {
+        setTimeout(function () {
+          var splash = document.getElementById('qt-splash')
+          if (!splash || splash.classList.contains('qt-splash--out')) return
+          document.getElementById('qt-splash-stage').textContent = stage[1]
+        }, stage[0])
+      })
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

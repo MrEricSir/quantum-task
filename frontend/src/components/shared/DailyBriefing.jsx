@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { UpdateIcon, ExclamationTriangleIcon, SpeakerLoudIcon, StopIcon, ChevronRightIcon } from '@radix-ui/react-icons'
 import { localDate } from '../../api'
+import useLoadingStage from '../../hooks/useLoadingStage'
 import './DailyBriefing.css'
 
 export default function DailyBriefing({ tagId = null, ready = true, onWeather, todayOnly = false, invalidationKey = 0, collapsedByDefault = false }) {
@@ -10,6 +11,7 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
   // very first render already reserves space instead of appearing a frame later.
   const [status, setStatus] = useState(ready && expanded ? 'loading' : 'idle') // idle | loading | done | error
   const [showSpinner, setShowSpinner] = useState(false)
+  const stageText = useLoadingStage(status === 'loading')
   const [error, setError] = useState('')
   const [speaking, setSpeaking] = useState(false)
   const abortRef = useRef(null)
@@ -229,7 +231,10 @@ export default function DailyBriefing({ tagId = null, ready = true, onWeather, t
         ) : (
           // Always reserve the spinner's space during load; only its
           // visibility is delayed, so the card never jumps in height.
-          <span className="briefing-spinner" style={{ visibility: showSpinner ? 'visible' : 'hidden' }} />
+          <span className="briefing-loading" style={{ visibility: showSpinner ? 'visible' : 'hidden' }}>
+            <span className="briefing-spinner" />
+            {stageText && <span className="briefing-stage">{stageText}</span>}
+          </span>
         )}
       </div>
       <div className="briefing-actions">

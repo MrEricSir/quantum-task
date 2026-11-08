@@ -84,6 +84,12 @@
 }
 
 /* ── Loading spinners ── */
+.briefing-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .briefing-spinner {
   width: 14px;
   height: 14px;
@@ -92,6 +98,13 @@
   border-radius: 50%;
   animation: briefing-spin 0.8s linear infinite;
   display: inline-block;
+  flex-shrink: 0;
+}
+
+.briefing-stage {
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0.8;
 }
 
 .briefing-spin {

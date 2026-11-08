@@ -25,7 +25,7 @@ export default function LoginPage({ onLogin }) {
     <div className="login-page">
       <form className="login-form" onSubmit={handleSubmit}>
         <img src="/logo.svg" alt="Quantum Task" className="login-logo" />
-        <h1 className="login-title">Quantum Task</h1>
+        <h1 className="login-title">Quantum</h1>
         <input
           className="login-input"
           type="password"

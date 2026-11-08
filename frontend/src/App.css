@@ -292,10 +292,35 @@
 }
 
 .loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   text-align: center;
   color: var(--text-muted);
   padding: 60px;
   font-size: 15px;
+}
+
+.loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border);
+  border-top-color: var(--color-today);
+  border-radius: 50%;
+  animation: loading-spin 0.8s linear infinite;
+}
+
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+
+.loading-label {
+  margin: 0;
+}
+
+.loading-stage {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
 }
 
 /* ── Mobile responsive ── */

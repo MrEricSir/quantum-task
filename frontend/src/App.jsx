@@ -35,6 +35,7 @@ import ExperimentCategorySettings from './components/modals/ExperimentCategorySe
 import TelegramSettings from './components/modals/TelegramSettings'
 import NavigationSettings from './components/modals/NavigationSettings'
 import QueueIndicator from './components/shared/QueueIndicator'
+import LoadingIndicator from './components/shared/LoadingIndicator'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { GearIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons'
 import { useNotifications } from './hooks/useNotifications'
@@ -396,20 +397,39 @@ export default function App() {
   )
 
   useEffect(() => {
-    Promise.all([
-      checkAuth(),
-      // Falls back to the built-in default if unauthenticated (401) or on any
-      // fetch error -- matches the previous hardcoded '/today' behavior.
-      fetchNavPreferences().catch(() => ({ order: NAV_PAGE_IDS, default_page: 'today' })),
-    ])
-      .then(([{ authed: a, enabled: e }, prefs]) => {
-        setAuthed(a)
-        setAuthEnabled(e)
-        setNavOrder(prefs.order)
-        setDefaultPage(prefs.default_page)
-        if (location.pathname === '/') navigate(`/${prefs.default_page}`, { replace: true })
-      })
-      .catch(() => setAuthed(false))
+    let cancelled = false
+    let attempt = 0
+
+    const run = () => {
+      Promise.all([
+        checkAuth(),
+        // Falls back to the built-in default if unauthenticated (401) or on any
+        // fetch error -- matches the previous hardcoded '/today' behavior.
+        fetchNavPreferences().catch(() => ({ order: NAV_PAGE_IDS, default_page: 'today' })),
+      ])
+        .then(([{ authed: a, enabled: e }, prefs]) => {
+          if (cancelled) return
+          setAuthed(a)
+          setAuthEnabled(e)
+          setNavOrder(prefs.order)
+          setDefaultPage(prefs.default_page)
+          if (location.pathname === '/') navigate(`/${prefs.default_page}`, { replace: true })
+        })
+        .catch(() => {
+          if (cancelled) return
+          // checkAuth() only throws on a genuine network/server error -- a clean
+          // 401 already resolves as {authed:false} (see checkAuth's own comment
+          // in api.js). This is most often the Cloud Run backend cold-starting,
+          // so keep quietly retrying with backoff instead of landing on
+          // setAuthed(false), which would show the login screen and look
+          // exactly like a wrong-password failure instead of a slow server.
+          attempt += 1
+          setTimeout(() => { if (!cancelled) run() }, Math.min(3000 * attempt, 10000))
+        })
+    }
+
+    run()
+    return () => { cancelled = true }
   }, [])
 
   // Handle Withings OAuth callback redirect (?withings=connected|error lands in the new tab)
@@ -857,7 +877,7 @@ export default function App() {
         <div className="header-inner">
           <div className="header-title">
             <img src="/logo.svg" alt="Quantum Task" className="header-logo" />
-            <h1>Quantum Task</h1>
+            <h1>Quantum</h1>
           </div>
           {weather && (
             <div className="header-weather">
@@ -1031,9 +1051,9 @@ export default function App() {
           onClearTags={handleClearTags}
         />
         {loading ? (
-          <div className="loading">Loading...</div>
+          <LoadingIndicator label="Loading your tasks…" />
         ) : isTodayPage && (habitsLoading || calendarLoading) ? (
-          <div className="loading">Loading...</div>
+          <LoadingIndicator label="Loading today's habits & calendar…" />
         ) : isTodayPage ? (
           <TodayPage
             cards={selectedTagIds.size ? cards.filter((t) => (t.tags ?? []).some((tg) => selectedTagIds.has(tg.id))) : cards}
