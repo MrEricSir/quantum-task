@@ -397,18 +397,19 @@ class TestCalendarContextInjection:
         }]
 
     def _stream_thread(self, client, card_id, message):
-        with patch("assist.generate._maybe_web_search", return_value=""):
-            with patch("assist.generate.llm_client") as mock_llm:
-                stream_mock = MagicMock()
-                chunk = MagicMock()
-                chunk.choices[0].delta.content = "Team standup at 9 AM"
-                stream_mock.__iter__ = MagicMock(return_value=iter([chunk]))
-                mock_llm.return_value.chat.completions.create.return_value = stream_mock
-                resp = client.post(
-                    f"/api/cards/{card_id}/thread/message",
-                    json={"content": message},
-                    headers={"X-Local-Date": date.today().isoformat(), "X-UTC-Offset": "0"},
-                )
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate._maybe_web_search", return_value=""):
+                with patch("assist.generate.llm_client") as mock_llm:
+                    stream_mock = MagicMock()
+                    chunk = MagicMock()
+                    chunk.choices[0].delta.content = "Team standup at 9 AM"
+                    stream_mock.__iter__ = MagicMock(return_value=iter([chunk]))
+                    mock_llm.return_value.chat.completions.create.return_value = stream_mock
+                    resp = client.post(
+                        f"/api/cards/{card_id}/thread/message",
+                        json={"content": message},
+                        headers={"X-Local-Date": date.today().isoformat(), "X-UTC-Offset": "0"},
+                    )
         return mock_llm, resp
 
     def test_card_thread_injects_calendar_into_system_prompt(self, client):
@@ -539,13 +540,14 @@ class TestGithubContextInjection:
         app.dependency_overrides[get_db] = override_get_db
         mock_stream = MagicMock()
         mock_stream.__iter__ = MagicMock(return_value=iter([]))
-        with patch("assist.generate.llm_client") as mock_llm:
-            mock_llm.return_value.chat.completions.create.return_value = mock_stream
-            with TestClient(app) as client:
-                client.post(
-                    f"/api/cards/{card_id}/thread/message",
-                    json={"content": "What needs to be done here?"},
-                )
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate.llm_client") as mock_llm:
+                mock_llm.return_value.chat.completions.create.return_value = mock_stream
+                with TestClient(app) as client:
+                    client.post(
+                        f"/api/cards/{card_id}/thread/message",
+                        json={"content": "What needs to be done here?"},
+                    )
         call_args = mock_llm.return_value.chat.completions.create.call_args
         system_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "system")
         assert "### GitHub Issue" in system_content
@@ -557,13 +559,14 @@ class TestGithubContextInjection:
         app.dependency_overrides[get_db] = override_get_db
         mock_stream = MagicMock()
         mock_stream.__iter__ = MagicMock(return_value=iter([]))
-        with patch("assist.generate.llm_client") as mock_llm:
-            mock_llm.return_value.chat.completions.create.return_value = mock_stream
-            with TestClient(app) as client:
-                client.post(
-                    f"/api/cards/{card_id}/thread/message",
-                    json={"content": "What needs to be done here?"},
-                )
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate.llm_client") as mock_llm:
+                mock_llm.return_value.chat.completions.create.return_value = mock_stream
+                with TestClient(app) as client:
+                    client.post(
+                        f"/api/cards/{card_id}/thread/message",
+                        json={"content": "What needs to be done here?"},
+                    )
         call_args = mock_llm.return_value.chat.completions.create.call_args
         system_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "system")
         assert "alice" in system_content
@@ -585,13 +588,14 @@ class TestGithubContextInjection:
         app.dependency_overrides[get_db] = override_get_db
         mock_stream = MagicMock()
         mock_stream.__iter__ = MagicMock(return_value=iter([]))
-        with patch("assist.generate.llm_client") as mock_llm:
-            mock_llm.return_value.chat.completions.create.return_value = mock_stream
-            with TestClient(app) as client:
-                client.post(
-                    f"/api/cards/{card_id}/thread/message",
-                    json={"content": "Help me with this"},
-                )
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate.llm_client") as mock_llm:
+                mock_llm.return_value.chat.completions.create.return_value = mock_stream
+                with TestClient(app) as client:
+                    client.post(
+                        f"/api/cards/{card_id}/thread/message",
+                        json={"content": "Help me with this"},
+                    )
         call_args = mock_llm.return_value.chat.completions.create.call_args
         system_content = next(m["content"] for m in call_args[1]["messages"] if m["role"] == "system")
         # The injected header has format "### GitHub Issue: repo#N" (with colon + repo)

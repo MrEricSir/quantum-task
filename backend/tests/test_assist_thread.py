@@ -191,9 +191,10 @@ class TestSendMessage:
     def test_system_prompt_includes_task_title(self, client):
         card_id = _make_card(title="Ship the release")
         mock_llm = _mock_llm_stream()
-        with patch("assist.generate._maybe_web_search", return_value=""):
-            with patch("assist.generate.llm_client", return_value=mock_llm):
-                client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate._maybe_web_search", return_value=""):
+                with patch("assist.generate.llm_client", return_value=mock_llm):
+                    client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
 
         call_args = mock_llm.chat.completions.create.call_args
         system_msg = call_args[1]["messages"][0]["content"]
@@ -202,9 +203,10 @@ class TestSendMessage:
     def test_web_search_results_injected(self, client):
         card_id = _make_card()
         mock_llm = _mock_llm_stream()
-        with patch("assist.generate._maybe_web_search", return_value="[Result](http://x)\nsome content"):
-            with patch("assist.generate.llm_client", return_value=mock_llm):
-                res = client.post(f"/api/cards/{card_id}/thread/message", json={"content": "find a hotel"})
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate._maybe_web_search", return_value="[Result](http://x)\nsome content"):
+                with patch("assist.generate.llm_client", return_value=mock_llm):
+                    res = client.post(f"/api/cards/{card_id}/thread/message", json={"content": "find a hotel"})
 
         events = _read_sse(res)
         assert any(e.get("status") == "searching" for e in events)
@@ -230,9 +232,10 @@ class TestSendMessage:
         same precedence bug fixed in generate_spec's _SPEC_SYSTEM."""
         card_id = _make_card(title="Fix bug")
         mock_llm = _mock_llm_stream()
-        with patch("assist.generate._maybe_web_search", return_value=""):
-            with patch("assist.generate.llm_client", return_value=mock_llm):
-                client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate._maybe_web_search", return_value=""):
+                with patch("assist.generate.llm_client", return_value=mock_llm):
+                    client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
 
         system_msg = mock_llm.chat.completions.create.call_args[1]["messages"][0]["content"]
         assert "Task notes" in system_msg
@@ -242,9 +245,10 @@ class TestSendMessage:
     def test_task_notes_are_labeled_authoritative(self, client):
         card_id = _make_card(title="Fix bug", description="Use JWT, not sessions")
         mock_llm = _mock_llm_stream()
-        with patch("assist.generate._maybe_web_search", return_value=""):
-            with patch("assist.generate.llm_client", return_value=mock_llm):
-                client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
+        with patch("assist.generate.SessionLocal", TestSession):
+            with patch("assist.generate._maybe_web_search", return_value=""):
+                with patch("assist.generate.llm_client", return_value=mock_llm):
+                    client.post(f"/api/cards/{card_id}/thread/message", json={"content": "status?"})
 
         system_msg = mock_llm.chat.completions.create.call_args[1]["messages"][0]["content"]
         assert "Task notes (most authoritative" in system_msg
