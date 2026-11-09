@@ -34,6 +34,11 @@ describe('src/sw.js', () => {
   it('still handles notification clicks', () => {
     expect(swSource).toMatch(/addEventListener\(\s*['"]notificationclick['"]/)
   })
+
+  it('still coalesces in-flight requests via lib/requestCoalescing (behavior tested there)', () => {
+    expect(swSource).toMatch(/from ['"]\.\/lib\/requestCoalescing['"]/)
+    expect(swSource).toMatch(/shouldCoalesce\(/)
+  })
 })
 
 describe('vite.config.js PWA strategy', () => {

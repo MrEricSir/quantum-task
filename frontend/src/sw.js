@@ -5,6 +5,7 @@
 // shipped to dist/ for a while under generateSW with zero effect, since the backend's
 // push notifications had no service-worker code left to receive them).
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
+import { createCoalescer, shouldCoalesce } from './lib/requestCoalescing'
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
@@ -27,17 +28,33 @@ self.addEventListener('activate', (event) => {
   self.clients.claim()
 })
 
+// In-flight coalescing for the handful of idempotent GETs the app fires on every single
+// load (auth check, cards/tags/habits/calendar, nav prefs) -- see lib/requestCoalescing.js
+// for why. Matched on pathname only (ignoring query string) so an unrelated variant of the
+// same endpoint -- e.g. /api/calendar-events?force=1's manual, deliberately-uncached refresh
+// -- never collides with the plain bootstrap fetch; the in-flight map itself is still keyed
+// on the full URL so the two variants track their own separate in-flight state rather than
+// merging.
+const _coalesce = createCoalescer(fetch)
+
 self.addEventListener('fetch', (event) => {
+  const req = event.request
+  const url = new URL(req.url)
+
+  if (shouldCoalesce(req.method, url.pathname)) {
+    event.respondWith(_coalesce(req, url.pathname + url.search))
+    return
+  }
+
   // For navigation requests (loading the SPA), serve the cached shell when offline.
   // Exclude /api/ paths so the browser handles redirects natively (e.g. OAuth callbacks).
-  if (event.request.mode === 'navigate') {
-    const url = new URL(event.request.url)
+  if (req.mode === 'navigate') {
     if (url.pathname.startsWith('/api/')) return
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('/'))
+      fetch(req).catch(() => caches.match('/'))
     )
   }
-  // API calls and static assets: network only — no stale data risk
+  // Everything else: network only — no stale data risk
 })
 
 self.addEventListener('push', (event) => {

@@ -63,9 +63,37 @@
         font-size: 13px;
         font-weight: 400;
       }
+
+      /* Works around an iOS 27 standalone-PWA bug where the system draws a
+         washed-out blur across the top of the screen instead of the real UI.
+         WebKit's status-bar compositor looks for a fixed, full-width, >10px-tall
+         element with a solid background near the top edge and samples ITS color
+         for the status bar -- lacking one, it falls back to a translucent blur.
+         This div supplies that signal without ever being visible: its background
+         is clipped to its (empty) text content, so nothing actually paints over
+         the real header. Gated on a feature check, not a UA/version sniff, and a
+         no-op everywhere except installed iOS standalone mode. See
+         https://github.com/HKUDS/nanobot/pull/5942 for the originating writeup. */
+      .ios-status-bar-fix { display: none; }
+      @supports (-webkit-touch-callout: none) and (background-clip: text) {
+        @media (display-mode: standalone) {
+          .ios-status-bar-fix {
+            display: block;
+            position: fixed;
+            inset: 0 0 auto;
+            height: 11px;
+            z-index: 9999;
+            pointer-events: none;
+            background-color: #07040f;
+            -webkit-background-clip: text;
+            background-clip: text;
+          }
+        }
+      }
     </style>
   </head>
   <body>
+    <div class="ios-status-bar-fix" aria-hidden="true"></div>
     <div id="qt-splash">
       <img src="/logo.svg" alt="" aria-hidden="true" />
       <p>Quantum</p>
