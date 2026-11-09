@@ -27,6 +27,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 from scipy.stats import pearsonr, ttest_ind
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -2015,12 +2016,16 @@ def _top_past_winner(
 # ── Migration: AppSetting → table ────────────────────────────────────────────
 
 def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
-    """One-time migration of the old AppSetting-backed experiment to the table."""
-    row = db.query(models.AppSetting).filter_by(key="health_experiment").first()
-    if not row:
+    """One-time migration of the old AppSetting-backed experiment to the table. The
+    "health_experiment" key is a frozen historical artifact being retired by this very
+    migration -- it has no app_setting_keys.py constant because it's not a live setting,
+    just the thing being read once and deleted."""
+    settings = Settings(db)
+    raw = settings.get("health_experiment")
+    if not raw:
         return None
     try:
-        data = json.loads(row.value)
+        data = json.loads(raw)
         # This JSON blob was written by code that predates the health_metric/
         # health_goal rename -- it's a frozen historical format, so it must be
         # read back with its original key names regardless of what the live
@@ -2036,7 +2041,7 @@ def _migrate_appsetting(db: Session) -> Optional[models.HealthExperiment]:
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
         )
         db.add(exp)
-        db.delete(row)
+        settings.delete("health_experiment")
         db.flush()
         db.commit()
         return exp
@@ -2122,7 +2127,19 @@ def get_or_generate_active_experiment(db: Session, today: date, tz_offset: int) 
     # scoped to consider water-weight as a target outcome (see _load_weekly_obs's docstring).
     weight_obs, fat_obs, _hydration_obs = _load_weekly_obs(db, today, tz_offset_minutes=tz_offset)
     correlations = _compute_correlations(weight_obs, fat_obs) if (weight_obs or fat_obs) else []
-    return _generate_experiment(correlations, db, today, tz_offset)
+    try:
+        return _generate_experiment(correlations, db, today, tz_offset)
+    except IntegrityError:
+        # _generate_experiment's own re-check (status="active" immediately before insert)
+        # only protects against a caller that read stale state -- it can't protect against
+        # two callers that both pass the re-check before either commits (the hourly
+        # telegram.scheduler.check_new_experiment tick landing at the same moment as a
+        # Health-page visit, say). The partial unique index on status="active" is what
+        # actually prevents a second active row from existing; this just means the loser of
+        # that race gets here instead of crashing -- the winner's row is already committed,
+        # so re-querying for it is always correct, never another miss.
+        db.rollback()
+        return db.query(models.HealthExperiment).filter_by(status="active").first()
 
 
 @router.get("/api/health/experiment")

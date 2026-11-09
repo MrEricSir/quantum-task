@@ -143,7 +143,7 @@ def stream_briefing(request: Request, req: schemas.BriefingRequest, db: Session 
 
 # ── Standalone weather endpoint ───────────────────────────────────────────────
 
-@router.get("/weather")
+@router.get("/api/briefing/weather")
 def get_weather(lat: float, lon: float):
     """Return current weather for the given coordinates."""
     result = fetch_weather(lat, lon)

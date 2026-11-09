@@ -26,6 +26,7 @@ from alembic.config import Config as AlembicConfig
 from alembic import command as alembic_command
 from database import SessionLocal, engine
 from deps import AUTH_PASSWORD, get_db
+from settings import Settings
 
 from routers import auth, engineering, push, tags, habits, calendar, cards, withings, insights, correlations, food, discovery, mood, workouts, preferences, health
 import assist as assist_pkg
@@ -59,16 +60,10 @@ def _sync_tz_offset_from_headers(request: Request, db) -> None:
         offset = int(raw)
     except ValueError:
         return
-    row = db.query(models.AppSetting).filter(
-        models.AppSetting.key == setting_keys.BRIEFING_TZ_OFFSET
-    ).first()
-    current = int(row.value) if row and row.value else 0
-    if current == offset:
+    settings = Settings(db)
+    if settings.tz_offset == offset:
         return
-    if row:
-        row.value = str(offset)
-    else:
-        db.add(models.AppSetting(key=setting_keys.BRIEFING_TZ_OFFSET, value=str(offset)))
+    settings.set(setting_keys.BRIEFING_TZ_OFFSET, str(offset))
     db.commit()
 
 
@@ -93,12 +88,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         db_gen = db_dependency()
         db = next(db_gen)
         try:
-            settings_rows = {
-                row.key: row.value
-                for row in db.query(models.AppSetting).filter(
-                    models.AppSetting.key.in_([setting_keys.SESSION_SECRET, setting_keys.BRIDGE_TOKEN])
-                )
-            }
+            # Bulk-fetched (not two separate Settings(db).get() calls) since this
+            # middleware runs on every authenticated request -- one query beats two
+            # on the app's hottest path.
+            settings_rows = Settings(db).get_many([setting_keys.SESSION_SECRET, setting_keys.BRIDGE_TOKEN])
             # Session cookie (browser)
             session_secret = settings_rows.get(setting_keys.SESSION_SECRET, "")
             token = request.cookies.get("session", "")
@@ -191,11 +184,12 @@ def _backfill_streak_days():
     """One-time backfill: populate habit_streak_days for all existing habits."""
     try:
         with SessionLocal() as db:
-            if db.query(models.AppSetting).filter_by(key=setting_keys.STREAK_DAYS_V1).first():
+            settings = Settings(db)
+            if settings.get(setting_keys.STREAK_DAYS_V1):
                 return
             from streak import recompute_all_habits
             recompute_all_habits(db)
-            db.add(models.AppSetting(key=setting_keys.STREAK_DAYS_V1, value="1"))
+            settings.set(setting_keys.STREAK_DAYS_V1, "1")
             db.commit()
             print("[startup] backfilled habit streak days")
     except Exception as e:
@@ -269,10 +263,9 @@ def _fire_due_push_notifications() -> None:
         subs = db.query(models.PushSubscription).all()
         if not subs:
             return
-        private_key = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PRIVATE_KEY).first()
-        if not private_key or not private_key.value:
+        priv = Settings(db).vapid_private_key
+        if not priv:
             return
-        priv = private_key.value
         dead_endpoints = []
         for card in cards:
             key = f"{card.id}:{card.scheduled_at.isoformat()}"

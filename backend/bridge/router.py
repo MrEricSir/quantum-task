@@ -767,11 +767,7 @@ def get_bridge_install_token(db: Session = Depends(get_db)):
 @router.post("/api/bridge/install-token/rotate")
 def rotate_bridge_install_token(db: Session = Depends(get_db)):
     new_token = secrets.token_hex(24)
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_INSTALL_TOKEN).first()
-    if row:
-        row.value = new_token
-    else:
-        db.add(models.AppSetting(key=setting_keys.BRIDGE_INSTALL_TOKEN, value=new_token))
+    Settings(db).set(setting_keys.BRIDGE_INSTALL_TOKEN, new_token)
     db.commit()
     return {"token": new_token}
 
@@ -781,11 +777,7 @@ def rotate_bridge_token(db: Session = Depends(get_db)):
     """Rotate the bridge API token, invalidating every already-installed CLI's
     credential. A user re-runs the installer afterward to pick up the new one."""
     new_token = secrets.token_hex(24)
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_TOKEN).first()
-    if row:
-        row.value = new_token
-    else:
-        db.add(models.AppSetting(key=setting_keys.BRIDGE_TOKEN, value=new_token))
+    Settings(db).set(setting_keys.BRIDGE_TOKEN, new_token)
     db.commit()
     return {"token": new_token}
 

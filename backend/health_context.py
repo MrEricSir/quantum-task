@@ -15,17 +15,12 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 import models
-import app_setting_keys as setting_keys
-
-_GOALS_KEY = setting_keys.WITHINGS_HEALTH_GOALS
+from settings import Settings
 
 
 def _load_standalone_goals(db: "Session") -> dict:
-    row = db.query(models.AppSetting).filter_by(key=_GOALS_KEY).first()
-    if not row:
-        return {}
     try:
-        return json.loads(row.value)
+        return json.loads(Settings(db).health_goals)
     except Exception:
         return {}
 

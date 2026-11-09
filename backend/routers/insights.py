@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from deps import get_db, llm_client, LLM_MODEL, local_date, reasoning_kwargs, to_local_date, utc_offset_minutes
+from settings import Settings
 
 router = APIRouter()
 
@@ -89,13 +90,11 @@ def _generate_texts(patterns: list[str]) -> list[str]:
 def _load_health_goals(db: Session) -> dict[str, float]:
     """Return goal values for weight/fat_ratio. Habit-linked goals override standalone."""
     goals: dict[str, float] = {}
-    row = db.query(models.AppSetting).filter_by(key="withings_health_goals").first()
-    if row:
-        try:
-            for k, v in json.loads(row.value).items():
-                goals[k] = float(v)
-        except Exception:
-            pass
+    try:
+        for k, v in json.loads(Settings(db).health_goals).items():
+            goals[k] = float(v)
+    except Exception:
+        pass
     for h in db.query(models.Habit).filter(
         models.Habit.health_metric.isnot(None),
         models.Habit.health_goal.isnot(None),

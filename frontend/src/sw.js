@@ -1,3 +1,14 @@
+// Custom service worker, bundled by vite-plugin-pwa's injectManifest strategy (see
+// vite.config.js) rather than its default generateSW strategy -- generateSW would
+// generate its own sw.js from scratch and overwrite this file's build output,
+// silently dropping the push/notificationclick handlers below (a real incident: they
+// shipped to dist/ for a while under generateSW with zero effect, since the backend's
+// push notifications had no service-worker code left to receive them).
+import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
+
+cleanupOutdatedCaches()
+precacheAndRoute(self.__WB_MANIFEST)
+
 const CACHE = 'qt-shell-v1'
 
 self.addEventListener('install', (event) => {

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 import github_sync
 import models
 import app_setting_keys as setting_keys
+from settings import Settings
 
 # Statuses that should always stay visible on the Engineering page dashboard regardless of
 # age, not just "has a live/pending session" -- needs_confirmation has none (the CLI already
@@ -91,17 +92,12 @@ def get_checkpoint_patterns(db: Session) -> list[str]:
     convention as github_sync.get_config's repos list. Empty list (the default) means
     the checkpoint gate never fires -- opt-in, no config change required for existing
     installs."""
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.CHECKPOINT_PATTERNS).first()
-    return [p.strip() for p in row.value.splitlines() if p.strip()] if row and row.value else []
+    value = Settings(db).get(setting_keys.CHECKPOINT_PATTERNS)
+    return [p.strip() for p in value.splitlines() if p.strip()] if value else []
 
 
 def save_checkpoint_patterns(db: Session, patterns: list[str]) -> None:
-    value = "\n".join(patterns)
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.CHECKPOINT_PATTERNS).first()
-    if row:
-        row.value = value
-    else:
-        db.add(models.AppSetting(key=setting_keys.CHECKPOINT_PATTERNS, value=value))
+    Settings(db).set(setting_keys.CHECKPOINT_PATTERNS, "\n".join(patterns))
     db.commit()
 
 
@@ -111,11 +107,11 @@ def _get_bridge_install_token(db: Session) -> str:
     This is deliberately separate from AUTH_PASSWORD: it only gates the one-time
     curl-able install script, so it can be shared or rotated without touching the
     real app password (mirrors calendar.py's _get_export_token)."""
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_INSTALL_TOKEN).first()
-    if row:
-        return row.value
+    settings = Settings(db)
+    if settings.bridge_install_token:
+        return settings.bridge_install_token
     token = secrets.token_hex(24)
-    db.add(models.AppSetting(key=setting_keys.BRIDGE_INSTALL_TOKEN, value=token))
+    settings.set(setting_keys.BRIDGE_INSTALL_TOKEN, token)
     db.commit()
     return token
 
@@ -127,11 +123,11 @@ def _get_bridge_token(db: Session) -> str:
     ongoing requests -- deliberately separate from AUTH_PASSWORD (see BRIDGE_TOKEN's
     definition in app_setting_keys.py) and from BRIDGE_INSTALL_TOKEN (which only
     gates fetching the install script itself, not the CLI's later requests)."""
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.BRIDGE_TOKEN).first()
-    if row:
-        return row.value
+    settings = Settings(db)
+    if settings.bridge_token:
+        return settings.bridge_token
     token = secrets.token_hex(24)
-    db.add(models.AppSetting(key=setting_keys.BRIDGE_TOKEN, value=token))
+    settings.set(setting_keys.BRIDGE_TOKEN, token)
     db.commit()
     return token
 

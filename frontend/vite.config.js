@@ -10,6 +10,19 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      // injectManifest (not the default generateSW) because src/sw.js is a real,
+      // handwritten service worker with push/notificationclick handlers the backend's
+      // push notifications depend on -- generateSW would generate its own sw.js from
+      // scratch and overwrite it. The navigate-fallback-to-shell and /api/-bypass
+      // behavior that generateSW's `workbox.navigateFallback`/`runtimeCaching` options
+      // used to express declaratively is instead handwritten directly in src/sw.js's
+      // own `fetch` listener.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,svg,png}'],
+      },
       registerType: 'autoUpdate',
       manifest: {
         name: 'Quantum Task',
@@ -22,17 +35,6 @@ export default defineConfig({
         icons: [
           { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
           { src: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-        ],
-      },
-      workbox: {
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
-        globPatterns: ['**/*.{js,css,html,svg,png}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^\/api\//,
-            handler: 'NetworkOnly',
-          },
         ],
       },
       devOptions: {

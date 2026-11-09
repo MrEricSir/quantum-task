@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from database import Base
@@ -25,6 +26,7 @@ from routers.correlations import (
     _load_weekly_obs, _rolling_obs, _migrate_appsetting,
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
+    get_or_generate_active_experiment,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
     check_food_avoidance_habits, _recent_avg_steps,
     _mentions_unsupported_calorie_target,
@@ -2840,3 +2842,30 @@ class TestCheckHabitRowWorkoutAutoLogWiring:
 
         check_habit_row(db, habit.id, date(2026, 6, 20))
         assert db.query(models.WorkoutEntry).count() == 1
+
+
+class TestGetOrGenerateActiveExperimentRace:
+    """_generate_experiment's own re-check (status="active" immediately before insert)
+    only protects a caller against stale state it already read -- it can't stop two
+    callers from both passing that re-check before either commits (e.g. the hourly
+    telegram.scheduler.check_new_experiment tick landing at the same moment as a
+    Health-page visit). The partial unique index on status="active" is what actually
+    prevents two active rows existing; get_or_generate_active_experiment must catch the
+    resulting IntegrityError from the race's loser and hand back the winner's row
+    instead of letting it crash the request."""
+
+    def test_integrity_error_from_a_concurrent_winner_returns_their_row_instead_of_crashing(self, db):
+        def _simulate_a_concurrent_caller_winning_the_race(*args, **kwargs):
+            db.add(models.HealthExperiment(started_on=TODAY.isoformat(), text="Winner's experiment"))
+            db.commit()
+            raise IntegrityError("INSERT INTO health_experiments ...", {}, Exception("UNIQUE constraint failed"))
+
+        with patch(
+            "routers.correlations._generate_experiment",
+            side_effect=_simulate_a_concurrent_caller_winning_the_race,
+        ):
+            exp = get_or_generate_active_experiment(db, TODAY, 0)
+
+        assert exp is not None
+        assert exp.text == "Winner's experiment"
+        assert exp.status == "active"

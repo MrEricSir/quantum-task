@@ -25,7 +25,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -1003,12 +1003,18 @@ class TestBridgeJobsDashboardEndpoint:
         assert statuses == ["running", "error"]
 
     def test_deleted_card_shows_a_placeholder_title(self, client):
-        # A job whose card no longer exists (FK enforcement is off for this app's SQLite
-        # connections, so this can genuinely happen -- see database.py) shouldn't 500 the
-        # whole dashboard just because one row's title lookup comes up empty.
+        # SQLite FK enforcement (database.py) now makes bridge_jobs.card_id's ON DELETE
+        # CASCADE actually fire, so a job can no longer end up pointing at a deleted card
+        # going forward -- but rows created before that enforcement existed (or any future
+        # schema that doesn't cascade) could still have one, and the dashboard shouldn't 500
+        # just because one row's title lookup comes up empty. Simulate that legacy state by
+        # disabling enforcement for this one insert rather than depending on it being absent
+        # app-wide.
         with TestSession() as db:
+            db.execute(text("PRAGMA foreign_keys=OFF"))
             db.add(models.BridgeJob(card_id=9999, status="pending"))
             db.commit()
+            db.execute(text("PRAGMA foreign_keys=ON"))
 
         res = client.get("/api/bridge/jobs/dashboard").json()
         assert res["jobs"][0]["card_title"] == "(deleted card)"
@@ -1826,16 +1832,17 @@ class TestQueueFixJob:
         look up instead of silently losing that context the moment the job is resumed."""
         item_id = _make_eng_item("github:owner/repo/pull/7")
         comment_id = _make_comment(item_id, github_id=510)
+        upstream_job_id = self._make_started_job(client, external_id="github:owner/repo/pull/8")
         job_id = self._make_started_job(client, external_id="github:owner/repo/pull/7")
         with TestSession() as db:
             job = db.query(models.BridgeJob).filter_by(id=job_id).first()
-            job.depends_on_job_id = 42
+            job.depends_on_job_id = upstream_job_id
             db.commit()
 
         res = client.post(f"/api/bridge/jobs/{job_id}/fix", json={"comment_ids": [comment_id]})
 
         assert res.status_code == 200
-        assert res.json()["depends_on_job_id"] == 42
+        assert res.json()["depends_on_job_id"] == upstream_job_id
 
 
 # ── POST /api/bridge/jobs/{id}/resume ────────────────────────────────────────
@@ -1881,16 +1888,17 @@ class TestQueueResumeJob:
     def test_depends_on_job_id_is_copied_from_the_original_job(self, client):
         """Same reasoning as TestQueueFixJob's equivalent test: a resume job must carry
         forward which upstream the original job depended on, not silently drop it."""
+        upstream_job_id = self._make_started_job(client, external_id="github:owner/repo/pull/8")
         job_id = self._make_started_job(client)
         with TestSession() as db:
             job = db.query(models.BridgeJob).filter_by(id=job_id).first()
-            job.depends_on_job_id = 42
+            job.depends_on_job_id = upstream_job_id
             db.commit()
 
         res = client.post(f"/api/bridge/jobs/{job_id}/resume")
 
         assert res.status_code == 200
-        assert res.json()["depends_on_job_id"] == 42
+        assert res.json()["depends_on_job_id"] == upstream_job_id
 
     def test_resume_prompt_includes_original_spec_and_continuation_framing(self, client):
         card_id = _make_card(spec="## Problem Statement\nImplement OAuth login.")

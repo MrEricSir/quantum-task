@@ -345,11 +345,7 @@ def _refine_interests_bg(liked_titles: list[str], disliked_titles: list[str],
             return
         db = SessionLocal()
         try:
-            row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
-            if row:
-                row.value = refined
-            else:
-                db.add(models.AppSetting(key=setting_keys.DISCOVERY_INTERESTS, value=refined))
+            Settings(db).set(setting_keys.DISCOVERY_INTERESTS, refined)
             db.commit()
         finally:
             db.close()
@@ -533,26 +529,19 @@ def set_discovery_feeds(
 
 @router.get("/api/discovery/interests")
 def get_discovery_interests(db: Session = Depends(get_db)):
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
-    dist_row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_MAX_DISTANCE_MILES).first()
-    unit_row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_DISTANCE_UNIT).first()
+    settings = Settings(db)
+    # max_distance_miles/distance_unit read raw (empty-string default, not the
+    # discovery_max_distance_miles/discovery_distance_unit properties' non-null fallbacks) so
+    # the response can tell "never explicitly configured" apart from "set" -- that's what lets
+    # the settings UI apply its own locale-aware default (25 mi vs. ~40 km) instead of always
+    # showing the server's miles-based fallback before the user has ever visited this screen.
+    dist_str = settings.get(setting_keys.DISCOVERY_MAX_DISTANCE_MILES)
+    unit_str = settings.get(setting_keys.DISCOVERY_DISTANCE_UNIT)
     return {
-        "interests": row.value if row else "",
-        # null when never explicitly configured -- lets the settings UI apply a locale-aware
-        # default (25 mi vs. ~40 km) instead of always showing the server's own miles-based
-        # fallback (Settings.discovery_max_distance_miles, used for actual filtering) before
-        # the user has ever visited this screen.
-        "max_distance_miles": float(dist_row.value) if dist_row and dist_row.value else None,
-        "distance_unit": unit_row.value if unit_row else None,
+        "interests": settings.discovery_interests,
+        "max_distance_miles": float(dist_str) if dist_str else None,
+        "distance_unit": unit_str or None,
     }
-
-
-def _upsert_setting(db: Session, key: str, value: str) -> None:
-    row = db.query(models.AppSetting).filter_by(key=key).first()
-    if row:
-        row.value = value
-    else:
-        db.add(models.AppSetting(key=key, value=value))
 
 
 @router.put("/api/discovery/interests")
@@ -560,8 +549,9 @@ def set_discovery_interests(
     body: dict = Body(...),
     db: Session = Depends(get_db),
 ):
+    settings = Settings(db)
     text = (body.get("interests") or "").strip()
-    _upsert_setting(db, setting_keys.DISCOVERY_INTERESTS, text)
+    settings.set(setting_keys.DISCOVERY_INTERESTS, text)
 
     if "max_distance_miles" in body:
         try:
@@ -569,11 +559,11 @@ def set_discovery_interests(
         except (TypeError, ValueError):
             miles = None
         if miles is not None and miles > 0:
-            _upsert_setting(db, setting_keys.DISCOVERY_MAX_DISTANCE_MILES, str(miles))
+            settings.set(setting_keys.DISCOVERY_MAX_DISTANCE_MILES, str(miles))
 
     unit = body.get("distance_unit")
     if unit in ("mi", "km"):
-        _upsert_setting(db, setting_keys.DISCOVERY_DISTANCE_UNIT, unit)
+        settings.set(setting_keys.DISCOVERY_DISTANCE_UNIT, unit)
 
     db.commit()
     _ranking_cache.clear()
@@ -789,15 +779,8 @@ def get_discovery_events(
     # Today page, before ever visiting Discover).
     settings = Settings(db)
     if lat is not None and lon is not None:
-        for key, val in [
-            (setting_keys.LAST_KNOWN_LAT, str(lat)),
-            (setting_keys.LAST_KNOWN_LON, str(lon)),
-        ]:
-            row = db.query(models.AppSetting).filter_by(key=key).first()
-            if row:
-                row.value = val
-            else:
-                db.add(models.AppSetting(key=key, value=val))
+        settings.set(setting_keys.LAST_KNOWN_LAT, str(lat))
+        settings.set(setting_keys.LAST_KNOWN_LON, str(lon))
         db.commit()
         user_lat, user_lon = lat, lon
     else:
@@ -822,8 +805,7 @@ def get_discovery_events(
     response.headers["X-Distance-Unit"] = settings.discovery_distance_unit
 
     # Load interests
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
-    interests = (row.value or "").strip() if row else ""
+    interests = settings.discovery_interests.strip()
 
     if not interests or not events:
         # No filtering — return chronologically, cap at _DISPLAY_RESULT_CAP
@@ -939,8 +921,7 @@ def save_feedback(
     all_feedback = db.query(models.DiscoveryFeedback).all()
     liked_titles    = [r.event_title for r in all_feedback if r.interested]
     disliked_titles = [r.event_title for r in all_feedback if not r.interested]
-    interests_row = db.query(models.AppSetting).filter_by(key=setting_keys.DISCOVERY_INTERESTS).first()
-    current_interests = (interests_row.value or "").strip() if interests_row else ""
+    current_interests = Settings(db).discovery_interests.strip()
     background_tasks.add_task(
         _refine_interests_bg, liked_titles, disliked_titles, current_interests
     )

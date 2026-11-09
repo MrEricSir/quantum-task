@@ -24,6 +24,7 @@ from database import SessionLocal
 from deps import llm_client, LLM_MODEL, reasoning_kwargs
 from gcal import get_personal_events
 from health_context import build_health_context
+from settings import Settings
 from weather import fetch_weather
 
 
@@ -289,26 +290,13 @@ def _fetch_briefing_data(today: date, tz_offset: int, lat: float | None = None, 
         eng_issues = [i for i in eng_items if i.item_type == "issue" and i.url not in on_board]
 
         # ── Location: persist if fresh, fall back to cached ──────────────────
+        settings = Settings(db)
         if lat is not None and lon is not None:
-            for key, val in [
-                (setting_keys.LAST_KNOWN_LAT, str(lat)),
-                (setting_keys.LAST_KNOWN_LON, str(lon)),
-            ]:
-                row = db.query(models.AppSetting).filter_by(key=key).first()
-                if row:
-                    row.value = val
-                else:
-                    db.add(models.AppSetting(key=key, value=val))
+            settings.set(setting_keys.LAST_KNOWN_LAT, str(lat))
+            settings.set(setting_keys.LAST_KNOWN_LON, str(lon))
             db.commit()
-        else:
-            lat_row = db.query(models.AppSetting).filter_by(key=setting_keys.LAST_KNOWN_LAT).first()
-            lon_row = db.query(models.AppSetting).filter_by(key=setting_keys.LAST_KNOWN_LON).first()
-            if lat_row and lon_row:
-                try:
-                    lat = float(lat_row.value)
-                    lon = float(lon_row.value)
-                except (ValueError, TypeError):
-                    pass
+        elif settings.last_known_lat is not None and settings.last_known_lon is not None:
+            lat, lon = settings.last_known_lat, settings.last_known_lon
 
         # ── Calendar events (today + week) ────────────────────────────────────
         week_end: date = today + timedelta(days=8)

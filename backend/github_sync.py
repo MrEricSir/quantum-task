@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 import models
 import app_setting_keys as setting_keys
+from settings import Settings
 
 GITHUB_API = "https://api.github.com"
 GITHUB_GRAPHQL = "https://api.github.com/graphql"
@@ -25,27 +26,19 @@ log = logging.getLogger(__name__)
 
 def get_config(db: Session) -> tuple[str | None, list[str]]:
     """Return (token, repos) from AppSettings. repos is [] for all accessible repos."""
-    token_row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_TOKEN).first()
-    repos_row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_REPOS).first()
-    token = token_row.value.strip() if token_row and token_row.value else None
-    repos = (
-        [r.strip() for r in repos_row.value.splitlines() if r.strip()]
-        if repos_row and repos_row.value
-        else []
-    )
+    settings = Settings(db)
+    token_value = settings.github_token.strip()
+    repos_value = settings.github_repos
+    token = token_value or None
+    repos = [r.strip() for r in repos_value.splitlines() if r.strip()] if repos_value else []
     return token, repos
 
 
 def save_config(db: Session, token: str | None, repos: list[str]) -> None:
-    updates = [(setting_keys.GITHUB_REPOS, "\n".join(repos))]
+    settings = Settings(db)
+    settings.set(setting_keys.GITHUB_REPOS, "\n".join(repos))
     if token:  # only overwrite stored token when a new value is provided
-        updates.append((setting_keys.GITHUB_TOKEN, token))
-    for key, value in updates:
-        row = db.query(models.AppSetting).filter_by(key=key).first()
-        if row:
-            row.value = value
-        else:
-            db.add(models.AppSetting(key=key, value=value))
+        settings.set(setting_keys.GITHUB_TOKEN, token)
     db.commit()
 
 
@@ -243,21 +236,14 @@ _DEFAULT_DONE = "Done"
 
 def get_status_config(db: Session) -> dict:
     """Return the per-repo status name config dict. Falls back to {} if not set."""
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_STATUS_CONFIG).first()
-    if row and row.value:
-        try:
-            return json.loads(row.value)
-        except Exception:
-            pass
-    return {}
+    try:
+        return json.loads(Settings(db).github_status_config)
+    except Exception:
+        return {}
 
 
 def save_status_config(db: Session, config: dict) -> None:
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_STATUS_CONFIG).first()
-    if row:
-        row.value = json.dumps(config)
-    else:
-        db.add(models.AppSetting(key=setting_keys.GITHUB_STATUS_CONFIG, value=json.dumps(config)))
+    Settings(db).set(setting_keys.GITHUB_STATUS_CONFIG, json.dumps(config))
     db.commit()
 
 
@@ -272,21 +258,14 @@ def _get_status_names(config: dict, repo: str) -> tuple[str, str]:
 
 def get_repo_tags_config(db: Session) -> dict[str, list[int]]:
     """Return the repo → tag-ids config dict. Falls back to {} if not set."""
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_REPO_TAGS).first()
-    if row and row.value:
-        try:
-            return json.loads(row.value)
-        except Exception:
-            pass
-    return {}
+    try:
+        return json.loads(Settings(db).github_repo_tags)
+    except Exception:
+        return {}
 
 
 def save_repo_tags_config(db: Session, config: dict[str, list[int]]) -> None:
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.GITHUB_REPO_TAGS).first()
-    if row:
-        row.value = json.dumps(config)
-    else:
-        db.add(models.AppSetting(key=setting_keys.GITHUB_REPO_TAGS, value=json.dumps(config)))
+    Settings(db).set(setting_keys.GITHUB_REPO_TAGS, json.dumps(config))
     db.commit()
 
 

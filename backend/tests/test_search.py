@@ -377,9 +377,13 @@ class TestCalendarContextInjection:
     TOMORROW = date.today() + timedelta(days=1)
 
     def _make_mapping(self):
-        """Create a CalendarMapping in the test DB (SQLite won't enforce the tag FK)."""
+        """Create a CalendarMapping in the test DB, against a real Tag (SQLite FK
+        enforcement is on -- see database.py -- so tag_id must reference an existing row)."""
         with TestSession() as db:
-            db.add(models.CalendarMapping(tag_id=1, ical_url="https://example.com/cal.ics", name="Work"))
+            tag = models.Tag(name="work")
+            db.add(tag)
+            db.flush()
+            db.add(models.CalendarMapping(tag_id=tag.id, ical_url="https://example.com/cal.ics", name="Work"))
             db.commit()
 
     def _fake_events(self):

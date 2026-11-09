@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 import models
 import app_setting_keys as setting_keys
+from settings import Settings
 
 log = logging.getLogger(__name__)
 
@@ -42,9 +43,8 @@ def ensure_vapid_keys(db: Session) -> None:
     if not _PUSH_AVAILABLE:
         return
 
-    priv_row = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PRIVATE_KEY).first()
-    pub_row  = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PUBLIC_KEY).first()
-    if priv_row and pub_row and priv_row.value and pub_row.value:
+    settings = Settings(db)
+    if settings.vapid_private_key and settings.vapid_public_key:
         return
 
     v = Vapid()
@@ -52,18 +52,13 @@ def ensure_vapid_keys(db: Session) -> None:
     private_pem = _priv_to_pem(v)
     public_b64  = _pub_to_b64(v)
 
-    for key, value in [(setting_keys.VAPID_PRIVATE_KEY, private_pem), (setting_keys.VAPID_PUBLIC_KEY, public_b64)]:
-        row = db.query(models.AppSetting).filter_by(key=key).first()
-        if row:
-            row.value = value
-        else:
-            db.add(models.AppSetting(key=key, value=value))
+    settings.set(setting_keys.VAPID_PRIVATE_KEY, private_pem)
+    settings.set(setting_keys.VAPID_PUBLIC_KEY, public_b64)
     db.commit()
 
 
 def get_vapid_public_key(db: Session) -> str | None:
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.VAPID_PUBLIC_KEY).first()
-    return row.value if row and row.value else None
+    return Settings(db).vapid_public_key or None
 
 
 def send_notification(subscription: models.PushSubscription, payload: dict, vapid_pem: str) -> bool:

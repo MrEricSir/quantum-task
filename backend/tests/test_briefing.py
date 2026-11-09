@@ -161,3 +161,21 @@ class TestBriefingHallucinationGuard:
         user_msg = next(m["content"] for m in captured_context["messages"] if m["role"] == "user")
         assert "Meditate" in user_msg
         assert "Exercise" not in user_msg
+
+
+class TestWeatherEndpoint:
+    """Regression test: this route used to be declared as GET /weather (no /api/briefing
+    prefix), so it 404'd at the path the frontend actually calls (/api/briefing/weather,
+    see frontend/src/api.js's fetchWeather) and, as a side effect, fell outside
+    AuthMiddleware entirely since that only gates paths starting with /api/."""
+
+    def test_weather_is_reachable_at_its_documented_api_path(self, client):
+        with patch("briefing.router.fetch_weather", return_value={"emojis": "☀️", "high": 70, "low": 55}):
+            res = client.get("/api/briefing/weather?lat=37.7749&lon=-122.4194")
+
+        assert res.status_code == 200
+        assert res.json() == {"emojis": "☀️", "high": 70, "low": 55}
+
+    def test_old_unprefixed_path_no_longer_exists(self, client):
+        res = client.get("/weather?lat=37.7749&lon=-122.4194")
+        assert res.status_code == 404

@@ -34,6 +34,7 @@ import models
 import schemas
 from deps import get_db
 from integrations.base import Measurement
+from settings import Settings
 from streak import recompute_from
 
 router = APIRouter()
@@ -471,14 +472,7 @@ def _do_sync_impl(db: Session) -> dict:
             _clear_reauth_notified(db)
 
     # Use the user's local date (via stored tz offset) — the server runs UTC on Cloud Run.
-    tz_offset = 0
-    try:
-        import app_setting_keys as _sk
-        row = db.query(models.AppSetting).filter_by(key=_sk.BRIEFING_TZ_OFFSET).first()
-        if row and row.value:
-            tz_offset = int(row.value)
-    except Exception:
-        pass
+    tz_offset = Settings(db).tz_offset
     today = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)).date()
     start = today - timedelta(days=89)
     synced = {
@@ -531,21 +525,15 @@ def withings_status(db: Session = Depends(get_db)):
 
 
 def _store_pending_oauth_state(db: Session, state: str) -> None:
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.WITHINGS_OAUTH_STATE).first()
-    if row:
-        row.value = state
-    else:
-        db.add(models.AppSetting(key=setting_keys.WITHINGS_OAUTH_STATE, value=state))
+    Settings(db).set(setting_keys.WITHINGS_OAUTH_STATE, state)
     db.commit()
 
 
 def _pop_pending_oauth_state(db: Session) -> str:
     """Return the pending state value and clear it (one-time use)."""
-    row = db.query(models.AppSetting).filter_by(key=setting_keys.WITHINGS_OAUTH_STATE).first()
-    if not row:
-        return ""
-    value = row.value
-    db.delete(row)
+    settings = Settings(db)
+    value = settings.get(setting_keys.WITHINGS_OAUTH_STATE)
+    settings.delete(setting_keys.WITHINGS_OAUTH_STATE)
     db.commit()
     return value
 
@@ -650,16 +638,12 @@ def withings_sync(db: Session = Depends(get_db)):
     return do_sync(db)
 
 
-_GOALS_KEY = setting_keys.WITHINGS_HEALTH_GOALS
 _ALL_METRICS = ("steps", "fat_ratio", "weight")
 
 
 def _load_goals(db: Session) -> dict:
-    row = db.query(models.AppSetting).filter_by(key=_GOALS_KEY).first()
-    if not row:
-        return {m: None for m in _ALL_METRICS}
     try:
-        data = json.loads(row.value)
+        data = json.loads(Settings(db).health_goals)
         return {m: data.get(m) for m in _ALL_METRICS}
     except Exception:
         return {m: None for m in _ALL_METRICS}
@@ -677,7 +661,7 @@ def withings_set_goals(payload: dict, db: Session = Depends(get_db)):
         if metric in payload:
             val = payload[metric]
             goals[metric] = float(val) if val is not None else None
-    db.merge(models.AppSetting(key=_GOALS_KEY, value=json.dumps(goals)))
+    Settings(db).set(setting_keys.WITHINGS_HEALTH_GOALS, json.dumps(goals))
     db.commit()
     return goals
 
