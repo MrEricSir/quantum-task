@@ -26,7 +26,7 @@ from routers.correlations import (
     _load_weekly_obs, _rolling_obs, _migrate_appsetting,
     _established_habits, _established_workouts, _established_foods,
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
-    get_or_generate_active_experiment,
+    get_or_generate_active_experiment, _strip_redundant_action_duration,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
     check_food_avoidance_habits, _recent_avg_steps,
     _mentions_unsupported_calorie_target,
@@ -2047,6 +2047,67 @@ class TestGenerateExperimentUnsupportedCalorieTarget:
         assert exp.health_metric == "steps"
 
 
+class TestStripRedundantActionDuration:
+    """Unit tests for the regex backstop -- see TestGenerateExperimentRedundantDuration
+    below for how _generate_experiment actually uses it. The app already shows an
+    experiment's remaining days separately (_exp_to_dict's days_left), so restating the
+    7-day duration inside "action" itself is pure redundancy, not new information --
+    e.g. "do 3 sets of 8 push-ups each day for 7 days" (a real live example)."""
+
+    def test_strips_trailing_each_day_for_n_days(self):
+        assert _strip_redundant_action_duration(
+            "Do 3 sets of 8 push-ups each day for 7 days"
+        ) == "Do 3 sets of 8 push-ups each day"
+
+    def test_strips_trailing_for_n_days_alone(self):
+        assert _strip_redundant_action_duration(
+            "Walk 8,000 steps every day for 7 days"
+        ) == "Walk 8,000 steps every day"
+
+    def test_strips_trailing_this_week(self):
+        assert _strip_redundant_action_duration(
+            "Row 2 mi every day this week"
+        ) == "Row 2 mi every day"
+
+    def test_strips_trailing_for_the_next_n_days(self):
+        assert _strip_redundant_action_duration(
+            "Meditate 10 minutes daily for the next 7 days."
+        ) == "Meditate 10 minutes daily"
+
+    def test_leaves_every_day_and_daily_untouched_when_no_duration_follows(self):
+        # The frequency itself ("every day"/"daily") is real information, not redundant --
+        # only a trailing restatement of the overall duration should ever be stripped.
+        assert _strip_redundant_action_duration("Walk 8,000 steps every day") == "Walk 8,000 steps every day"
+        assert _strip_redundant_action_duration("45 minutes of walking daily") == "45 minutes of walking daily"
+
+    def test_leaves_an_unrelated_day_count_in_the_middle_of_the_sentence_untouched(self):
+        assert _strip_redundant_action_duration(
+            "Row 2 mi every day instead of your usual ~1.6 over the last 7 days"
+        ) == "Row 2 mi every day instead of your usual ~1.6 over the last 7 days"
+
+    def test_none_and_empty_pass_through_unchanged(self):
+        assert _strip_redundant_action_duration(None) is None
+        assert _strip_redundant_action_duration("") == ""
+
+
+class TestGenerateExperimentRedundantDuration:
+
+    CORR = [{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}]
+
+    def test_persisted_action_has_the_redundant_duration_clause_stripped(self, db):
+        payload = {
+            "text": "t", "hypothesis": "h",
+            "action": "Do 3 sets of 8 push-ups each day for 7 days",
+            "health_metric": None, "health_goal": None,
+            "routine_type": None, "workout_type": None,
+            "workout_target_value": None, "workout_unit": None,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.action == "Do 3 sets of 8 push-ups each day"
+
+
 class TestGenerateExperimentVarietySignals:
     """Integration coverage for the three new prompt sections _generate_experiment
     builds from _last_week_win/_top_past_winner/_neglected_workout_category -- each
@@ -2304,14 +2365,14 @@ class TestGenerateExperimentCategoryPreferences:
         docstring)."""
         self._disable(db, "habits")
         fake_client = _fake_llm_client({
-            "text": "t", "hypothesis": "h", "action": "Do one 20-minute strength session this week",
+            "text": "t", "hypothesis": "h", "action": "Do one 20-minute strength session daily",
             "health_metric": None, "health_goal": None, "routine_type": "habit",
             "workout_type": None, "workout_target_value": None, "workout_unit": None,
         })
         with patch("routers.correlations.llm_client", return_value=fake_client):
             exp = _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
 
-        assert exp.action == "Do one 20-minute strength session this week"
+        assert exp.action == "Do one 20-minute strength session daily"
         assert exp.habit_id is not None
 
 

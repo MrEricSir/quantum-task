@@ -672,6 +672,26 @@ def _established_foods(
 # _compute_correlations directly) -- that endpoint never calls _generate_experiment, so
 # this exclusion has no effect on it; informing the user calories correlate with an
 # outcome is fine, prescribing a bare number to act on is the part with no support.
+# Defense in depth for the same class of gap as _RAW_CALORIE_TARGET_RE below: even with
+# the prompt's explicit "never restate the 7-day duration" instruction in place, the LLM
+# sometimes still tacks a redundant day-count back onto "action" (e.g. "do 3 sets of 8
+# push-ups each day for 7 days") -- the app already shows the experiment's remaining days
+# separately, so this is pure restatement, not new information. Strips only a trailing
+# duration clause; "every day"/"daily" elsewhere in the string (the actual frequency,
+# not redundant) is left untouched.
+_REDUNDANT_ACTION_DURATION_RE = re.compile(
+    r'[,.]?\s*(for (the next )?(\d+\s+days?|a week|one week|the week)|this week)\.?\s*$',
+    re.I,
+)
+
+
+def _strip_redundant_action_duration(action: str | None) -> str | None:
+    if not action:
+        return action
+    cleaned = _REDUNDANT_ACTION_DURATION_RE.sub('', action).strip()
+    return cleaned or action
+
+
 _UNSUPPORTED_EXPERIMENT_FACTOR_KEYS = {"avg_calories", "avg_food_quality"}
 
 # Defense in depth for the same gap: even with the factors above removed from its own
@@ -1012,7 +1032,12 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 CRITICAL: "action" must ALWAYS contain a specific measurable target — never vague \
 phrases like "increase my steps" or "walk more". Always include a concrete number: \
 "8,000 steps every day", "45 minutes of walking daily", "7 hours of sleep". \
-If the experiment is passive observation with no daily action, set action to null.
+If the experiment is passive observation with no daily action, set action to null. \
+Never restate the experiment's overall 7-day duration inside "action" (e.g. "for 7 \
+days", "each day for 7 days", "this week") -- the app already shows how many days \
+are left separately, so stating it again here is redundant. Describe only the \
+per-day action and its daily frequency ("every day" / "daily" is fine), never the \
+total day count.
 
 health_metric/health_goal: ONLY set these when the experiment's primary \
 measurable outcome is literally one of the three Withings-tracked metrics: step \
@@ -1337,7 +1362,7 @@ def _generate_experiment(
         llm_data = json.loads(raw)
         text           = llm_data.get("text", "")
         hypothesis     = llm_data.get("hypothesis")
-        action         = llm_data.get("action")
+        action         = _strip_redundant_action_duration(llm_data.get("action"))
         health_metric = llm_data.get("health_metric") or None
         health_goal   = llm_data.get("health_goal")
         if health_goal is not None:
