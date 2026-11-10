@@ -256,8 +256,8 @@
 }
 
 /* ── Tabs — plain underline style, deliberately distinct from the pill-style
-   View/Edit/Assist tabs above this panel (CardDetailPanel.css's .cdp-mode-tabs)
-   so the two nesting levels never read as one six-option row. ── */
+   View/Edit/Assist/Code tabs above this panel (CardDetailPanel.css's .cdp-mode-tabs)
+   so the two nesting levels never read as one flat row. ── */
 .assist-tabs {
   display: flex;
   gap: 4px;

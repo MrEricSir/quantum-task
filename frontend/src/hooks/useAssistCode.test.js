@@ -107,6 +107,29 @@ describe('useAssistCode — loading on open', () => {
     rerender({ task: taskNoSpec })
     expect(result.current.attemptStats).toBeNull()
   })
+
+  it('re-fetches the chain fresh on re-opening (e.g. CardDetailPanel re-entering Code mode)', async () => {
+    api.getBridgeJobChain.mockResolvedValueOnce({ root: { id: 1, status: 'pending' }, companion: null, attempts: null })
+    const { result, rerender } = renderHook(
+      ({ open }) => useAssistCode(taskWithSpec, open, 'code', vi.fn()),
+      { initialProps: { open: true } },
+    )
+    await waitFor(() => expect(result.current.bridgeJob).toEqual({ id: 1, status: 'pending' }))
+
+    rerender({ open: false })
+    api.getBridgeJobChain.mockResolvedValueOnce({
+      root: { id: 2, status: 'pending', branch_name: 'qtask/4-fix' },
+      companion: { id: 9, status: 'blocked' },
+      attempts: { number: 2, prior_count: 1, prior_failed_count: 0 },
+    })
+    rerender({ open: true })
+
+    await waitFor(() => expect(result.current.bridgeJob).toEqual({ id: 2, status: 'pending', branch_name: 'qtask/4-fix' }))
+    expect(result.current.companionJob).toEqual({ id: 9, status: 'blocked' })
+    expect(result.current.attemptStats).toEqual({ number: 2, prior_count: 1, prior_failed_count: 0 })
+    expect(result.current.branchOverride).toBe('qtask/4-fix')
+    expect(result.current.specText).toBe('Do the work')
+  })
 })
 
 describe('useAssistCode — branch field editability', () => {

@@ -150,11 +150,11 @@ export default function App() {
   // before CardDetailPanel mounts and reports in via onModeChange/onAssistTabChange.
   const [panelCurrentMode, setPanelCurrentMode] = useState(() => {
     const m = new URLSearchParams(window.location.search).get('mode')
-    return m === 'edit' || m === 'assist' ? m : 'view'
+    return m === 'edit' || m === 'assist' || m === 'code' ? m : 'view'
   })
   const [panelCurrentAssistTab, setPanelCurrentAssistTab] = useState(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    return t === 'breakdown' || t === 'code' ? t : 'assist'
+    return t === 'breakdown' ? t : 'assist'
   })
   // Mobile-only: CardDetailPanel is desktop-only (hidden via CSS below 640px),
   // so opening an arbitrary card in view mode from outside the board (e.g.
@@ -539,7 +539,7 @@ export default function App() {
     setPanelInitialAssistTab('assist')
   }
 
-  // Deep-link support for ?card=<id>&mode=edit|assist&tab=assist|breakdown|code (used by
+  // Deep-link support for ?card=<id>&mode=edit|assist|code&tab=breakdown (used by
   // qtask-bridge's --open command, and by the live URL this app now keeps in sync as you
   // navigate -- see the sync effect below). Waits for cards to finish loading rather than
   // firing on the empty initial array, and only ever consumes the param once per full page
@@ -555,9 +555,15 @@ export default function App() {
     deepLinkConsumedRef.current = true
     setSelectedCardId(cardId)
     const mode = params.get('mode')
-    setPanelInitialMode(mode === 'edit' || mode === 'assist' ? mode : 'view')
     const tab = params.get('tab')
-    setPanelInitialAssistTab(tab === 'breakdown' || tab === 'code' ? tab : 'assist')
+    // Code used to be reached via ?mode=assist&tab=code rather than its own mode value --
+    // keeps an old link/bookmark in that shape still landing on Code instead of Chat.
+    if (mode === 'assist' && tab === 'code') {
+      setPanelInitialMode('code')
+    } else {
+      setPanelInitialMode(mode === 'edit' || mode === 'assist' || mode === 'code' ? mode : 'view')
+    }
+    setPanelInitialAssistTab(tab === 'breakdown' ? tab : 'assist')
   }, [cardsLoading, cards, location.search])
 
   // Keeps ?card=/&mode=/&tab= in the URL mirroring whatever's actually open, so the

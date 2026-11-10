@@ -51,6 +51,21 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
 
   // ── Load on open ──────────────────────────────────────────────────────────
 
+  // Re-fetches the job chain (bridge job, companion job, attempt stats) without resetting
+  // any other state -- factored out of the effect below purely to avoid duplicating this
+  // same fetch-and-set logic a second time elsewhere in this file.
+  const _refreshChain = () => {
+    if (!task?.id) return
+    getBridgeJobChain(task.id)
+      .then(({ root, companion, attempts }) => {
+        setBridgeJob(root); setCompanionJob(companion); setAttemptStats(attempts)
+        // Show the job's actual current name (rather than blank + placeholder) once
+        // there is one, so editing it starts from reality, not a guess.
+        if (root?.branch_name) setBranchOverride(root.branch_name)
+      })
+      .catch(() => {})
+  }
+
   useEffect(() => {
     if (!open || !task?.id) return
     setSpecText(task.spec ?? null); setSpecEditing(false); setSpecError(''); setCopiedSpec(false)
@@ -59,16 +74,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     setCompanionQueuing(false); setCompanionError(''); setCompanionResumeQueuing(false)
     setAttemptStats(null)
 
-    if (task.spec) {
-      getBridgeJobChain(task.id)
-        .then(({ root, companion, attempts }) => {
-          setBridgeJob(root); setCompanionJob(companion); setAttemptStats(attempts)
-          // Show the job's actual current name (rather than blank + placeholder) once
-          // there is one, so editing it starts from reality, not a guess.
-          if (root?.branch_name) setBranchOverride(root.branch_name)
-        })
-        .catch(() => {})
-    }
+    if (task.spec) _refreshChain()
   }, [open, task?.id, initialTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refreshes attempt-history stats (see bridge/jobs.py's compute_attempt_stats) after

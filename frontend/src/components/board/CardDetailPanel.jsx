@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Cross2Icon, CopyIcon, CheckIcon } from '@radix-ui/react-icons'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import AssistModal from '../modals/AssistModal'
+import AssistTaskHeader from '../modals/AssistTaskHeader'
+import AssistCodeTab from '../modals/AssistCodeTab'
 import CardForm, { isoToLocal } from '../modals/CardForm'
 import { SECTIONS, SECTION_LABELS, SECTION_COLORS } from '../../lib/sections'
 import descriptionToHtml from '../../lib/descriptionToHtml'
@@ -10,6 +12,7 @@ import { parseGitHubUrl } from '../../lib/github'
 import { getBridgeJobChain, queueFixJob } from '../../api'
 import { useExtractActions } from '../../hooks/useExtractActions'
 import { useBridgeJobHistory } from '../../hooks/useBridgeJobHistory'
+import { useAssistCode } from '../../hooks/useAssistCode'
 import './CardDetailPanel.css'
 
 function renderMarkdown(text) {
@@ -60,6 +63,15 @@ export default function CardDetailPanel({
   // ── Bridge history (every job ever run against this card) ────────────────
   const { jobs: bridgeHistory, refresh: refreshBridgeHistory } = useBridgeJobHistory(card?.id)
 
+  // ── Code mode (spec generation + bridge job + cross-repo companion job) ──
+  // `open` is mode === 'code', matching exactly when this used to fetch/poll before Code
+  // was promoted out of Assist: entering Code (any way) loads the job chain fresh; leaving
+  // and coming back refetches, the same "remount" effect AssistModal unmounting/remounting
+  // on Assist entry/exit used to produce. Deliberately NOT unconditional (`!!card`) --
+  // that would fetch the bridge job chain for every card the panel opens, even one never
+  // taken into Code mode at all, an unwanted extra request per card open.
+  const code = useAssistCode(card, mode === 'code', 'code', (spec) => onSave?.(card.id, { spec }))
+
   // ── Edit / new form state ─────────────────────────────────────────────────
   const [editTitle,          setEditTitle]          = useState('')
   const [editDescription,    setEditDescription]    = useState('')
@@ -106,6 +118,18 @@ export default function CardDetailPanel({
     onModeChange?.(mode)
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Refreshes View mode's "Bridge history" list right as Code mode is left (any way --
+  // another tab, Escape, closing the panel), the same point AssistModal's own onClose used
+  // to trigger this before Code moved out of Assist mode. A ref (not a cleanup function
+  // tied to Code's own mount) because Code no longer mounts/unmounts on its own -- the
+  // whole panel body does, driven by mode -- so "leaving" has to be read as a transition
+  // between consecutive mode values instead of an unmount.
+  const prevModeRef = useRef(mode)
+  useEffect(() => {
+    if (prevModeRef.current === 'code' && mode !== 'code') refreshBridgeHistory()
+    prevModeRef.current = mode
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Populate edit form fields whenever entering edit/new mode
   useEffect(() => {
     if (mode === 'edit' || mode === 'new') {
@@ -123,7 +147,7 @@ export default function CardDetailPanel({
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return
-      if (mode === 'assist') { setMode('view'); return }
+      if (mode === 'assist' || mode === 'code') { setMode('view'); return }
       if (mode === 'edit' || mode === 'new') { setMode(card ? 'view' : null); if (!card) onClose(); return }
       onClose()
     }
@@ -237,8 +261,10 @@ export default function CardDetailPanel({
       }
       await queueFixJob(root.id, Array.from(selectedFixIds))
       setSelectedFixIds(new Set())
-      setAssistInitialTab('code')
-      setMode('assist')
+      // Switching mode to 'code' flips useAssistCode's own `open` (mode === 'code') from
+      // false to true, which is exactly what triggers its load-on-open effect to fetch the
+      // chain fresh -- no separate refreshChain() call needed here on top of that.
+      setMode('code')
     } catch (e) {
       setFixError(e.message || 'Failed to queue fix job')
     } finally {
@@ -255,6 +281,7 @@ export default function CardDetailPanel({
   // ── Header ────────────────────────────────────────────────────────────────
   const headerTitle =
     mode === 'assist' ? 'Assistant' :
+    mode === 'code'   ? 'Code' :
     mode === 'edit'   ? 'Edit card' :
     mode === 'new'    ? 'New card'  :
     card?.title ?? ''
@@ -283,7 +310,11 @@ export default function CardDetailPanel({
           </button>
         </div>
 
-        {/* Mode tabs — View/Edit/Assist are siblings of one panel, not separate screens */}
+        {/* Mode tabs — View/Edit/Assist/Code are siblings of one panel, not separate
+            screens. Code used to be a tab nested inside Assist's own Chat/Break down/Code
+            bar; promoted to a top-level peer since it's a genuinely distinct activity
+            (queueing/monitoring a coding-agent job), not a third way of talking about the
+            task the way Chat/Break down are. */}
         {card && mode !== 'new' && (
           <div className="cdp-mode-tabs">
             <button
@@ -303,6 +334,12 @@ export default function CardDetailPanel({
               onClick={() => { setAssistInitialTab('assist'); setMode('assist') }}
             >
               ✦ {savedOutput ? 'Assistant' : 'Assist'}
+            </button>
+            <button
+              className={`cdp-mode-tab cdp-mode-tab--code${mode === 'code' ? ' cdp-mode-tab--active' : ''}`}
+              onClick={() => setMode('code')}
+            >
+              Code
             </button>
           </div>
         )}
@@ -658,7 +695,7 @@ export default function CardDetailPanel({
           </form>
         )}
 
-        {/* ── ASSIST mode ── */}
+        {/* ── ASSIST mode (Chat / Break down) ── */}
         {mode === 'assist' && card && (
           <AssistModal
             open
@@ -667,11 +704,18 @@ export default function CardDetailPanel({
             githubContext={engItem}
             onBreakdown={onBreakdown}
             onOutputSaved={(output) => setSavedOutput(output)}
-            onSpecSaved={(spec) => onSave?.(card.id, { spec })}
             inline
             initialTab={assistInitialTab}
             onTabChange={onAssistTabChange}
           />
+        )}
+
+        {/* ── CODE mode ── */}
+        {mode === 'code' && card && (
+          <div className="assist-inline">
+            <AssistTaskHeader task={card} githubContext={engItem} />
+            <AssistCodeTab code={code} />
+          </div>
         )}
       </aside>
     </>
