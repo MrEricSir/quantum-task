@@ -222,7 +222,7 @@ describe('useAssistCode — spec generation', () => {
 describe('useAssistCode — queueing a bridge job', () => {
   it('rejects a branch name containing whitespace without calling the API', async () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
-    act(() => result.current.setBranchOverride('has space'))
+    act(() => result.current.handleBranchChange('has space'))
 
     await act(() => result.current.handleSendToBridge())
 
@@ -232,7 +232,7 @@ describe('useAssistCode — queueing a bridge job', () => {
 
   it("rejects a branch name starting with '-' without calling the API", async () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
-    act(() => result.current.setBranchOverride('-flag-like'))
+    act(() => result.current.handleBranchChange('-flag-like'))
 
     await act(() => result.current.handleSendToBridge())
 
@@ -243,7 +243,7 @@ describe('useAssistCode — queueing a bridge job', () => {
   it('queues a job with a valid branch override', async () => {
     api.queueBridgeJob.mockResolvedValue({ id: 9, status: 'pending' })
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
-    act(() => result.current.setBranchOverride('my-branch'))
+    act(() => result.current.handleBranchChange('my-branch'))
 
     await act(() => result.current.handleSendToBridge())
 
@@ -296,7 +296,7 @@ describe('useAssistCode — renaming a live job\'s branch', () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     await waitFor(() => expect(result.current.branchOverride).toBe('qtask/4-original'))
 
-    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    act(() => result.current.handleBranchChange('qtask/4-renamed'))
     await act(() => result.current.handleRenameBranch())
 
     expect(api.requestBranchRename).toHaveBeenCalledWith(9, 'qtask/4-renamed')
@@ -323,7 +323,7 @@ describe('useAssistCode — renaming a live job\'s branch', () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
 
-    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    act(() => result.current.handleBranchChange('qtask/4-renamed'))
     await act(() => result.current.handleRenameBranch())
 
     expect(api.requestBranchRename).not.toHaveBeenCalled()
@@ -331,7 +331,7 @@ describe('useAssistCode — renaming a live job\'s branch', () => {
 
   it('does nothing when there is no bridge job yet', async () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
-    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    act(() => result.current.handleBranchChange('qtask/4-renamed'))
 
     await act(() => result.current.handleRenameBranch())
 
@@ -345,7 +345,7 @@ describe('useAssistCode — renaming a live job\'s branch', () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
 
-    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    act(() => result.current.handleBranchChange('qtask/4-renamed'))
     await act(() => result.current.handleRenameBranch())
 
     expect(api.requestBranchRename).not.toHaveBeenCalled()
@@ -358,7 +358,7 @@ describe('useAssistCode — renaming a live job\'s branch', () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
 
-    act(() => result.current.setBranchOverride('has a space'))
+    act(() => result.current.handleBranchChange('has a space'))
     await act(() => result.current.handleRenameBranch())
 
     expect(result.current.bridgeError).toBe("Branch name can't contain whitespace")
@@ -373,7 +373,7 @@ describe('useAssistCode — renaming a live job\'s branch', () => {
     const { result } = renderHook(() => useAssistCode(taskWithSpec, true, 'code', vi.fn()))
     await waitFor(() => expect(result.current.bridgeJob).not.toBeNull())
 
-    act(() => result.current.setBranchOverride('qtask/4-renamed'))
+    act(() => result.current.handleBranchChange('qtask/4-renamed'))
     await act(() => result.current.handleRenameBranch())
 
     expect(result.current.bridgeError).toBe('Job is not active')

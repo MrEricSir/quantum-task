@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   generateSpec, queueBridgeJob, getBridgeJob, getBridgeJobChain, queueResumeJob,
   queueCompanionJob, getKnownBridgeRepos, requestBranchRename, acknowledgeCheckpoint,
@@ -37,6 +37,13 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   const [resumeQueuing,  setResumeQueuing]  = useState(false)
   const [branchOverride, setBranchOverride] = useState('')
   const [renameQueuing,  setRenameQueuing]  = useState(false)
+  // Set as soon as the user edits the branch field; checked by _refreshChain below so a
+  // chain fetch that resolves after the user has already started typing doesn't stomp
+  // their in-progress edit (same ref-not-state fix as GithubSettings.jsx's dirty flags --
+  // see CLAUDE.md's "editable field's initial-load fetch" gotcha). Entering Code mode
+  // fetches the chain fresh every time (see CardDetailPanel.jsx), so this fetch can land
+  // well after the field is already interactive and being typed into.
+  const branchDirtyRef = useRef(false)
   const [attemptStats,   setAttemptStats]   = useState(null)
   const [acknowledging,  setAcknowledging]  = useState(false)
 
@@ -60,8 +67,9 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
       .then(({ root, companion, attempts }) => {
         setBridgeJob(root); setCompanionJob(companion); setAttemptStats(attempts)
         // Show the job's actual current name (rather than blank + placeholder) once
-        // there is one, so editing it starts from reality, not a guess.
-        if (root?.branch_name) setBranchOverride(root.branch_name)
+        // there is one, so editing it starts from reality, not a guess -- but not if the
+        // user has already started editing the field since this fetch was kicked off.
+        if (root?.branch_name && !branchDirtyRef.current) setBranchOverride(root.branch_name)
       })
       .catch(() => {})
   }
@@ -70,6 +78,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
     if (!open || !task?.id) return
     setSpecText(task.spec ?? null); setSpecEditing(false); setSpecError(''); setCopiedSpec(false)
     setBridgeJob(null); setBridgeError(''); setResumeQueuing(false); setBranchOverride('')
+    branchDirtyRef.current = false
     setCompanionJob(null); setCompanionOpen(false); setCompanionRepo('')
     setCompanionQueuing(false); setCompanionError(''); setCompanionResumeQueuing(false)
     setAttemptStats(null)
@@ -170,6 +179,11 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   }
 
   // ── Bridge job ────────────────────────────────────────────────────────────
+
+  const handleBranchChange = (value) => {
+    branchDirtyRef.current = true
+    setBranchOverride(value)
+  }
 
   const handleCopyWorktreePath = () => {
     navigator.clipboard.writeText(bridgeJob.worktree_path).then(() => {
@@ -303,7 +317,7 @@ export function useAssistCode(task, open, initialTab, onSpecSaved) {
   return {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
     bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing, attemptStats,
-    branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
+    branchOverride, handleBranchChange, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
     companionError, knownRepos, companionResumeQueuing, acknowledging,
     handleGenerateSpec, handleSaveSpec, handleStartSpecEdit, handleCancelSpecEdit, handleCopySpec,

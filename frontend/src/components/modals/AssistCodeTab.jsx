@@ -26,7 +26,7 @@ export default function AssistCodeTab({ code }) {
   const {
     specText, specGenerating, specEditing, specDraft, setSpecDraft, specError, copiedSpec,
     bridgeJob, bridgeQueuing, bridgeError, copiedWorktree, resumeQueuing, attemptStats,
-    branchOverride, setBranchOverride, defaultBranch, branchFieldDisabled, renameQueuing,
+    branchOverride, handleBranchChange, defaultBranch, branchFieldDisabled, renameQueuing,
     companionJob, companionOpen, companionRepo, setCompanionRepo, companionQueuing,
     companionError, knownRepos, companionResumeQueuing, acknowledging,
     handleGenerateSpec, handleSaveSpec, handleStartSpecEdit, handleCancelSpecEdit, handleCopySpec,
@@ -85,7 +85,7 @@ export default function AssistCodeTab({ code }) {
             type="text"
             className="cdp-branch-input"
             value={branchOverride}
-            onChange={e => setBranchOverride(e.target.value)}
+            onChange={e => handleBranchChange(e.target.value)}
             onBlur={branchIsLive ? handleRenameBranch : undefined}
             placeholder={defaultBranch}
             disabled={branchFieldDisabled}
