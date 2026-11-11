@@ -9,6 +9,7 @@ import base64
 import ipaddress
 import re
 import socket
+import threading
 import urllib.parse
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 
@@ -132,6 +133,27 @@ _TTL_SECONDS = 15 * 60  # 15 minutes
 _ical_cache: dict[tuple[str, str, int], tuple[float, list]] = {}
 
 
+class _InFlightFetch:
+    """Tracks one real fetch_events() call in progress for a cache key, so concurrent
+    requests for the same calendar/day/offset (e.g. several browser tabs or devices
+    polling independently, or FastAPI's threadpool overlapping two nearly-simultaneous
+    requests) share a single upstream request instead of each hitting the feed server on
+    their own -- real-world Google Calendar iCal feeds have been observed 429-ing under
+    exactly this kind of duplicate-burst load (see CLAUDE.md's Cloud Run cold-start
+    gotcha: min-instances=0 means the TTL cache below is usually cold anyway, so bursts
+    of concurrent requests landing right after a cold start all miss it at once)."""
+    __slots__ = ("event", "result", "error")
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.result = None
+        self.error = None
+
+
+_in_flight: dict[tuple[str, str, int], _InFlightFetch] = {}
+_in_flight_lock = threading.Lock()
+
+
 def _cached_fetch_events(
     ical_url: str, start: date, end: date, tz_offset_minutes: int = 0, *, force: bool = False
 ) -> list[dict]:
@@ -145,9 +167,32 @@ def _cached_fetch_events(
         ts, events = _ical_cache[key]
         if now - ts < _TTL_SECONDS:
             return events
-    events = fetch_events(ical_url, start, end, tz_offset_minutes)
-    _ical_cache[key] = (now, events)
-    return events
+
+    with _in_flight_lock:
+        fetch = _in_flight.get(key)
+        is_leader = fetch is None
+        if is_leader:
+            fetch = _InFlightFetch()
+            _in_flight[key] = fetch
+
+    if not is_leader:
+        fetch.event.wait()
+        if fetch.error is not None:
+            raise fetch.error
+        return fetch.result
+
+    try:
+        events = fetch_events(ical_url, start, end, tz_offset_minutes)
+        fetch.result = events
+        _ical_cache[key] = (now, events)
+        return events
+    except Exception as e:
+        fetch.error = e
+        raise
+    finally:
+        with _in_flight_lock:
+            _in_flight.pop(key, None)
+        fetch.event.set()
 
 
 def get_personal_events(

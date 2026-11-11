@@ -6,6 +6,8 @@ Calendar event fetching (GET /api/calendar-events) is tested with a mock so no
 real iCal URL is needed.
 """
 
+import threading
+
 import pytest
 from unittest.mock import patch
 from datetime import datetime, date, time, timedelta, timezone
@@ -288,6 +290,83 @@ class TestGetCalendarEvents:
         # Should not 500 — returns empty list gracefully
         assert res.status_code == 200
         assert res.json() == []
+
+
+class TestCachedFetchEventsCoalescing:
+    """Concurrent requests for the same calendar/day/offset must share one upstream
+    fetch instead of each hitting the feed server independently -- real Google Calendar
+    iCal feeds have been observed 429-ing under duplicate-burst load from several
+    browser tabs/devices polling at once (see gcal.py's _InFlightFetch docstring)."""
+
+    def test_concurrent_calls_share_one_fetch(self):
+        gcal._ical_cache.clear()
+        call_count = 0
+        release = threading.Event()
+
+        def slow_fetch(ical_url, start, end, tz_offset_minutes=0):
+            nonlocal call_count
+            call_count += 1
+            release.wait(timeout=5)
+            return [{"id": "evt", "title": "Event"}]
+
+        results = []
+        errors = []
+
+        def worker():
+            try:
+                results.append(
+                    gcal._cached_fetch_events("https://example.com/shared.ics", date.today(), date.today() + timedelta(days=1))
+                )
+            except Exception as e:  # pragma: no cover - only on failure
+                errors.append(e)
+
+        with patch("gcal.fetch_events", side_effect=slow_fetch):
+            threads = [threading.Thread(target=worker) for _ in range(5)]
+            for t in threads:
+                t.start()
+            # Give every thread a chance to reach the leader/follower check before
+            # letting the single real fetch complete.
+            import time as _time
+            _time.sleep(0.2)
+            release.set()
+            for t in threads:
+                t.join(timeout=5)
+
+        assert not errors
+        assert call_count == 1
+        assert len(results) == 5
+        assert all(r == [{"id": "evt", "title": "Event"}] for r in results)
+
+    def test_a_failed_leader_fetch_propagates_to_followers(self):
+        gcal._ical_cache.clear()
+        release = threading.Event()
+
+        def slow_failing_fetch(ical_url, start, end, tz_offset_minutes=0):
+            release.wait(timeout=5)
+            raise ValueError("feed unavailable")
+
+        errors = []
+
+        def worker():
+            try:
+                gcal._cached_fetch_events("https://example.com/broken-shared.ics", date.today(), date.today() + timedelta(days=1))
+            except Exception as e:
+                errors.append(e)
+
+        with patch("gcal.fetch_events", side_effect=slow_failing_fetch):
+            threads = [threading.Thread(target=worker) for _ in range(3)]
+            for t in threads:
+                t.start()
+            import time as _time
+            _time.sleep(0.2)
+            release.set()
+            for t in threads:
+                t.join(timeout=5)
+
+        assert len(errors) == 3
+        assert all(str(e) == "feed unavailable" for e in errors)
+        # No stale in-flight entry left behind for the next caller.
+        assert gcal._in_flight == {}
 
 
 # ── Inline ICS helpers ────────────────────────────────────────────────────────
