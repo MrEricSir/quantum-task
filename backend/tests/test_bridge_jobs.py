@@ -975,6 +975,38 @@ class TestBridgeJobsDashboardEndpoint:
         res = client.get("/api/bridge/jobs/dashboard").json()
         assert res["jobs"] == []
 
+    def test_active_job_for_an_archived_card_is_excluded(self, client):
+        """An archived card has nothing left to action on the fleet view, even if its job
+        is still technically pending/running/blocked -- e.g. the task got archived out
+        from under a build that later stalled (real report: card archived, out of the
+        user's control, project access gone, but its stalled build kept showing)."""
+        card_id = _make_card(spec="s", archived=True)
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert res["jobs"] == []
+
+    def test_recently_errored_job_for_an_archived_card_is_excluded(self, client):
+        card_id = _make_card(spec="s", archived=True)
+        job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]
+        client.post(f"/api/bridge/jobs/{job_id}/error", json={"result": "boom"})
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert res["jobs"] == []
+
+    def test_archiving_a_card_after_its_job_is_queued_removes_it_from_the_dashboard(self, client):
+        card_id = _make_card(spec="s")
+        client.post("/api/bridge/jobs", json={"card_id": card_id})
+        assert len(client.get("/api/bridge/jobs/dashboard").json()["jobs"]) == 1
+
+        with TestSession() as db:
+            card = db.query(models.Card).filter_by(id=card_id).first()
+            card.archived = True
+            db.commit()
+
+        res = client.get("/api/bridge/jobs/dashboard").json()
+        assert res["jobs"] == []
+
     def test_recently_finished_job_is_included(self, client):
         card_id = _make_card(spec="s")
         job_id = client.post("/api/bridge/jobs", json={"card_id": card_id}).json()["id"]

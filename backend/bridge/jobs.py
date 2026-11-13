@@ -408,15 +408,25 @@ def get_bridge_jobs_dashboard(db: Session) -> list[dict]:
     in-progress work always sits above historical record even if its last heartbeat is
     older than a job that just finished.
 
+    Also excludes any job whose card has been archived -- once the underlying task is
+    gone from the board, a stalled/active job for it has nothing left to action on this
+    fleet view either (the card could even belong to a project the user no longer has
+    access to). Cards that were deleted outright rather than archived are left alone
+    (still shown as "(deleted card)" below) since the FK's ondelete=CASCADE already
+    removes their jobs at the DB level; this is specifically for archived-but-not-deleted
+    cards, which keep their jobs around for the card's own Bridge-history section.
+
     Excludes the large text columns (spec_snapshot/prompt_snapshot/output) -- this is a
     list across every relevant job, not a single job's detail view."""
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - _DASHBOARD_RECENT_WINDOW
     last_activity = func.coalesce(models.BridgeJob.updated_at, models.BridgeJob.created_at)
+    archived_card_ids = db.query(models.Card.id).filter(models.Card.archived == True)  # noqa: E712
     jobs = (
         db.query(models.BridgeJob)
         .filter(
             (models.BridgeJob.status.in_(_ACTIVE_JOB_STATUSES)) | (last_activity >= cutoff)
         )
+        .filter(~models.BridgeJob.card_id.in_(archived_card_ids))
         .order_by(last_activity.desc())
         .limit(30)
         .all()
