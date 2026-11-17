@@ -313,6 +313,7 @@ function ChartLegend({ items }) {
 // ── Correlation analysis ──────────────────────────────────────────────────────
 
 const KG_TO_LBS = 2.20462
+const KG_METRICS = new Set(['weight', 'fat_free_mass', 'fat_mass_weight', 'muscle_mass', 'hydration', 'bone_mass'])
 
 function fmtDelta(val, unit, isImperial = false) {
   const isWeight = unit.startsWith('kg')
@@ -1072,8 +1073,8 @@ function MeasurementLog({ measurements, isImperial, onAdd, onDelete }) {
     setSaving(true)
     try {
       const numeric = parseFloat(value)
-      // Weight is always stored in kg -- convert a lbs entry before sending.
-      const stored = (metric === 'weight' && isImperial) ? numeric / KG_TO_LBS : numeric
+      // Weight-based metrics are always stored in kg -- convert a lbs entry before sending.
+      const stored = (KG_METRICS.has(metric) && isImperial) ? numeric / KG_TO_LBS : numeric
       await onAdd({ date, metric, value: stored })
       setValue('')
     } catch {
@@ -1084,7 +1085,7 @@ function MeasurementLog({ measurements, isImperial, onAdd, onDelete }) {
   }
 
   const displayEntry = (m) => {
-    if (m.metric === 'weight' && isImperial) {
+    if (KG_METRICS.has(m.metric) && isImperial) {
       return `${Math.round(m.value * KG_TO_LBS * 10) / 10} lbs`
     }
     const unit = MANUAL_METRIC_OPTIONS.find(o => o.metric === m.metric)?.unit
@@ -1111,7 +1112,7 @@ function MeasurementLog({ measurements, isImperial, onAdd, onDelete }) {
         >
           {MANUAL_METRIC_OPTIONS.map(o => (
             <option key={o.metric} value={o.metric}>
-              {o.label}{o.metric === 'weight' && isImperial ? ' (lbs)' : o.unit ? ` (${o.unit})` : ''}
+              {o.label}{KG_METRICS.has(o.metric) && isImperial ? ' (lbs)' : o.unit ? ` (${o.unit})` : ''}
             </option>
           ))}
         </select>
@@ -1939,28 +1940,28 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
             </div>
             {muscleMassData.length > 0 && (<>
               <p className="health-chart-sublabel">Muscle mass</p>
-              <LineChart data={muscleMassData} goal={null} completionDates={[]}
-                unit=" kg" emptyMsg="" ariaLabel="Muscle mass line chart" />
+              <LineChart data={muscleMassData.map(d => ({ ...d, value: toDisplay(d.value) }))} goal={null} completionDates={[]}
+                unit={weightUnit} emptyMsg="" ariaLabel="Muscle mass line chart" />
             </>)}
             {hydrationData.length > 0 && (<>
               <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Water weight</p>
-              <LineChart data={hydrationData} goal={null} completionDates={[]}
-                unit=" kg" emptyMsg="" ariaLabel="Water weight line chart" />
+              <LineChart data={hydrationData.map(d => ({ ...d, value: toDisplay(d.value) }))} goal={null} completionDates={[]}
+                unit={weightUnit} emptyMsg="" ariaLabel="Water weight line chart" />
             </>)}
             {fatMassWeightData.length > 0 && (<>
               <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Fat mass</p>
-              <LineChart data={fatMassWeightData} goal={null} completionDates={[]}
-                unit=" kg" emptyMsg="" ariaLabel="Fat mass line chart" />
+              <LineChart data={fatMassWeightData.map(d => ({ ...d, value: toDisplay(d.value) }))} goal={null} completionDates={[]}
+                unit={weightUnit} emptyMsg="" ariaLabel="Fat mass line chart" />
             </>)}
             {fatFreeMassData.length > 0 && (<>
               <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Fat-free mass</p>
-              <LineChart data={fatFreeMassData} goal={null} completionDates={[]}
-                unit=" kg" emptyMsg="" ariaLabel="Fat-free mass line chart" />
+              <LineChart data={fatFreeMassData.map(d => ({ ...d, value: toDisplay(d.value) }))} goal={null} completionDates={[]}
+                unit={weightUnit} emptyMsg="" ariaLabel="Fat-free mass line chart" />
             </>)}
             {boneMassData.length > 0 && (<>
               <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Bone mass</p>
-              <LineChart data={boneMassData} goal={null} completionDates={[]}
-                unit=" kg" emptyMsg="" ariaLabel="Bone mass line chart" />
+              <LineChart data={boneMassData.map(d => ({ ...d, value: toDisplay(d.value) }))} goal={null} completionDates={[]}
+                unit={weightUnit} emptyMsg="" ariaLabel="Bone mass line chart" />
             </>)}
             {visceralFatData.length > 0 && (<>
               <p className="health-chart-sublabel" style={{ marginTop: '16px' }}>Visceral fat</p>
@@ -1978,11 +1979,11 @@ export default function HealthPage({ habits = [], archivedHabits = [], allTags =
                 unit=" m/s" emptyMsg="" ariaLabel="Pulse wave velocity line chart" />
             </>)}
             <ChartLegend items={[
-              ...(muscleMassData.length > 0        ? [{ color: 'var(--color-week)', label: 'Muscle mass (kg)' }] : []),
-              ...(hydrationData.length > 0          ? [{ color: 'var(--color-week)', label: 'Water weight (kg)' }] : []),
-              ...(fatMassWeightData.length > 0      ? [{ color: 'var(--color-week)', label: 'Fat mass (kg)' }] : []),
-              ...(fatFreeMassData.length > 0        ? [{ color: 'var(--color-week)', label: 'Fat-free mass (kg)' }] : []),
-              ...(boneMassData.length > 0           ? [{ color: 'var(--color-week)', label: 'Bone mass (kg)' }] : []),
+              ...(muscleMassData.length > 0        ? [{ color: 'var(--color-week)', label: `Muscle mass (${isImperial ? 'lbs' : 'kg'})` }] : []),
+              ...(hydrationData.length > 0          ? [{ color: 'var(--color-week)', label: `Water weight (${isImperial ? 'lbs' : 'kg'})` }] : []),
+              ...(fatMassWeightData.length > 0      ? [{ color: 'var(--color-week)', label: `Fat mass (${isImperial ? 'lbs' : 'kg'})` }] : []),
+              ...(fatFreeMassData.length > 0        ? [{ color: 'var(--color-week)', label: `Fat-free mass (${isImperial ? 'lbs' : 'kg'})` }] : []),
+              ...(boneMassData.length > 0           ? [{ color: 'var(--color-week)', label: `Bone mass (${isImperial ? 'lbs' : 'kg'})` }] : []),
               ...(visceralFatData.length > 0        ? [{ color: 'var(--color-week)', label: 'Visceral fat' }] : []),
               ...(vascularAgeData.length > 0        ? [{ color: 'var(--color-week)', label: 'Vascular age (yrs)' }] : []),
               ...(pulseWaveVelocityData.length > 0  ? [{ color: 'var(--color-week)', label: 'Pulse wave velocity (m/s)' }] : []),
