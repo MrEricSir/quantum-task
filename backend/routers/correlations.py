@@ -1068,7 +1068,16 @@ instead you want to propose increasing an established HABIT's target (e.g. \
 "meditate 15 min instead of 10"), set routine_type="habit" and leave the \
 workout_*/food_* fields null — habits are tracked by completion only, so just \
 state the new target clearly in the action field; there's no structured field \
-for it. If "Frequently eaten foods" lists something the user eats regularly \
+for it. A habit target is either a continuous daily amount (minutes, reps done \
+every day, e.g. "meditate 15 min every day") or a discrete count of occurrences \
+spread across the week (something done on some days but not all, e.g. "eat a \
+protein bar 4 times"). For a continuous daily amount, phrase it per the daily- \
+frequency rule above -- no day-count needed. For a discrete weekly occurrence \
+count, you MUST append "this week" to the number (e.g. "Eat a protein bar 4 \
+times this week", never a bare "4 times") -- this is the one exception to \
+"never restate the experiment's overall 7-day duration" above, because without \
+it the count reads as a daily quota instead of a weekly total. If "Frequently \
+eaten foods" lists something the user eats regularly \
 (e.g. "coffee — ~4.5x/week"), you may instead propose reducing or eliminating \
 it for the week to see whether it's linked to the outcome. Set \
 routine_type="food", food_name to the EXACT food name given, and \
