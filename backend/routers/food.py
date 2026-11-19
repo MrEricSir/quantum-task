@@ -16,6 +16,7 @@ import models
 from capabilities.food import parse_food_entries
 from daily_log import create_logged_entries, day_bounds, delete_logged_entry
 from deps import get_db, local_date
+from routers.correlations import check_habit_for_food
 
 router = APIRouter()
 
@@ -45,12 +46,16 @@ def _build_row(parsed: dict, raw: str, consumed_at: datetime) -> models.FoodEntr
 @router.post("/api/food", status_code=201)
 def create_food_entry(payload: dict, request: Request, db: Session = Depends(get_db)):
     raw = (payload.get("raw_input") or "").strip()
-    return create_logged_entries(
+    entries = create_logged_entries(
         db, request, payload, "consumed_at",
         parse_fn=parse_food_entries,
         build_row=lambda parsed, ts: _build_row(parsed, raw, ts),
         serialize=_entry_dict,
     )
+    today = local_date(request)
+    for e in entries:
+        check_habit_for_food(db, e["name"], today)
+    return entries
 
 
 @router.get("/api/food")

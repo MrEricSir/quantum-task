@@ -1,9 +1,10 @@
 """
 Tests for the manual-check guard on auto-tracked habits (routers/habits.py).
 
-Habits are blocked from manual check/uncheck ONLY if they have health_metric
-set (Withings auto-tracks them).  Experiment habits (is_experiment=True, but no
-health_metric) are manually checkable — the user must mark them done.
+Habits are blocked from manual check/uncheck ONLY if they have health_metric,
+food_avoid_name, or food_increase_name set (Withings or the food log
+auto-tracks them). Experiment habits (is_experiment=True, but none of those
+three) are manually checkable — the user must mark them done.
 """
 import sys
 import os
@@ -53,10 +54,12 @@ HEADERS = {"X-Local-Date": LOCAL_DATE}
 
 
 def _habit(db, name: str, health_metric=None, health_goal=None,
-           food_avoid_name=None, food_avoid_target=None) -> models.Habit:
+           food_avoid_name=None, food_avoid_target=None,
+           food_increase_name=None, food_increase_target=None) -> models.Habit:
     h = models.Habit(
         name=name, health_metric=health_metric, health_goal=health_goal,
         food_avoid_name=food_avoid_name, food_avoid_target=food_avoid_target,
+        food_increase_name=food_increase_name, food_increase_target=food_increase_target,
     )
     db.add(h)
     db.flush()
@@ -94,6 +97,13 @@ class TestCheckHabit:
 
     def test_food_avoid_habit_blocked(self, client, db_session):
         h = _habit(db_session, "🧪 Limit protein bar", food_avoid_name="protein bar", food_avoid_target=1.0)
+        db_session.commit()
+        r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
+        assert r.status_code == 403
+
+    def test_food_increase_habit_blocked(self, client, db_session):
+        h = _habit(db_session, "🧪 Eat a protein bar 4 times this week",
+                    food_increase_name="protein bar", food_increase_target=4.0)
         db_session.commit()
         r = client.post(f"/api/habits/{h.id}/check", headers=HEADERS)
         assert r.status_code == 403
@@ -160,6 +170,14 @@ class TestUncheckHabit:
 
     def test_food_avoid_habit_blocked(self, client, db_session):
         h = _habit(db_session, "🧪 Limit protein bar", food_avoid_name="protein bar", food_avoid_target=1.0)
+        db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
+        db_session.commit()
+        r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)
+        assert r.status_code == 403
+
+    def test_food_increase_habit_blocked(self, client, db_session):
+        h = _habit(db_session, "🧪 Eat a protein bar 4 times this week",
+                    food_increase_name="protein bar", food_increase_target=4.0)
         db_session.add(models.HabitCompletion(habit_id=h.id, date=LOCAL_DATE))
         db_session.commit()
         r = client.delete(f"/api/habits/{h.id}/check", headers=HEADERS)

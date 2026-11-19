@@ -35,6 +35,8 @@ class Habit(BaseModel):
     health_goal: Optional[float] = None
     food_avoid_name: Optional[str] = None
     food_avoid_target: Optional[float] = None
+    food_increase_name: Optional[str] = None
+    food_increase_target: Optional[float] = None
     is_experiment: bool = False
 
     model_config = {"from_attributes": True}

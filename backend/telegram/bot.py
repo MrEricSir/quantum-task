@@ -1746,6 +1746,8 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
     bagel, coffee, and a banana") and enriches each with category/notes/
     quality/calories via parse_food_entries() -- the same function the
     webapp's food log uses, so both surfaces behave identically."""
+    from routers.correlations import check_habit_for_food
+
     raw = (intent.get("raw_input") or "").strip()
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=tz_offset)
 
@@ -1753,6 +1755,7 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
 
     entry_ids = []
     names = []
+    matched_habit_names = []
     with SessionLocal() as db:
         for parsed in parsed_items:
             entry = models.FoodEntry(
@@ -1764,16 +1767,23 @@ def _reply_log_food(intent: dict, tz_offset: int, chat_id: str = "") -> str:
             db.flush()
             entry_ids.append(entry.id)
             names.append(parsed["name"])
+            matched_habit = check_habit_for_food(db, parsed["name"], now_local.date())
+            if matched_habit and matched_habit.name not in matched_habit_names:
+                matched_habit_names.append(matched_habit.name)
         db.commit()
 
     if chat_id:
         session = _get_session(chat_id)
         _push_undo(session, {"type": "food_log", "entry_ids": entry_ids, "title": ", ".join(names)})
 
+    habit_note = (
+        "\nAlso checked off " + ", ".join(f"<b>{n}</b>" for n in matched_habit_names) + " for today."
+        if matched_habit_names else ""
+    )
     if len(names) == 1:
-        return f"✓ Food logged: {names[0]}\nSend <b>undo</b> to remove it."
+        return f"✓ Food logged: {names[0]}{habit_note}\nSend <b>undo</b> to remove it."
     items_list = "\n".join(f"  • {n}" for n in names)
-    return f"✓ {len(names)} food items logged:\n{items_list}\nSend <b>undo</b> to remove them."
+    return f"✓ {len(names)} food items logged:\n{items_list}{habit_note}\nSend <b>undo</b> to remove them."
 
 
 def _reply_log_workout(intent: dict, tz_offset: int, chat_id: str = "") -> str:

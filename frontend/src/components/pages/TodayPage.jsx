@@ -227,8 +227,8 @@ export default function TodayPage({ cards, calendarEvents, habits, onToggle, onT
                     className={`today-habit${habit.completed_today ? ' today-habit--done' : ''}`}
                   >
                     {(() => {
-                      const isAuto = !!habit.health_metric || !!habit.food_avoid_name
-                      const autoTitle = habit.food_avoid_name
+                      const isAuto = !!habit.health_metric || !!habit.food_avoid_name || !!habit.food_increase_name
+                      const autoTitle = (habit.food_avoid_name || habit.food_increase_name)
                         ? 'Tracked automatically from your food log'
                         : 'Synced automatically from Withings'
                       return (

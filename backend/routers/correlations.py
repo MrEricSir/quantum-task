@@ -148,6 +148,27 @@ def check_workout_for_habit(db: Session, habit_id: int, today: date) -> models.W
     return entry
 
 
+def check_habit_for_food(db: Session, food_name: str, today: date) -> models.Habit | None:
+    """If a non-archived habit is auto-tracking food_name as a food-increase target (see
+    the Habit.food_increase_name docstring in models.py), check it off for today. Mirrors
+    check_habit_for_workout: a food-increase habit's success, like a workout's, is a
+    positive event (logging a matching FoodEntry), so -- unlike the absence-based
+    food-elimination path below -- it can react to that event the moment it happens,
+    straight from the food-log write. Matching is case-insensitive exact-name, same
+    convention as check_food_avoidance_habits' own FoodEntry.name comparison. Returns the
+    habit that got checked, or None if nothing matched."""
+    name = food_name.strip().lower()
+    habit = (
+        db.query(models.Habit)
+        .filter_by(food_increase_name=name, archived=False)
+        .first()
+    )
+    if not habit:
+        return None
+    check_habit_row(db, habit.id, today, from_workout=True)
+    return habit
+
+
 _FOOD_AVOID_LOOKBACK_DAYS = 3  # re-check this many trailing completed days, not just yesterday
 
 
@@ -1021,12 +1042,14 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "action": "The specific daily action with a CONCRETE NUMBER, e.g. '8,000 steps every day'",
   "health_metric": "steps" | "fat_ratio" | "weight" | null,
   "health_goal": numeric goal value or null,
-  "routine_type": "workout" | "habit" | "food" | null,
+  "routine_type": "workout" | "habit" | "food" | "food_increase" | null,
   "workout_type": one of the established workout types given, or null,
   "workout_target_value": numeric target or null,
   "workout_unit": the established unit for that workout type, or null,
   "food_name": one of the frequently eaten foods given, or null,
-  "food_target_frequency": numeric target occurrences/week, 0 = eliminate entirely, or null
+  "food_target_frequency": numeric target occurrences/week, 0 = eliminate entirely, or null,
+  "food_increase_name": the specific food/drink/snack the action is about, or null,
+  "food_increase_target": numeric target occurrences this week (1-7), or null
 }
 
 CRITICAL: "action" must ALWAYS contain a specific measurable target — never vague \
@@ -1070,31 +1093,42 @@ workout_*/food_* fields null — habits are tracked by completion only, so just 
 state the new target clearly in the action field; there's no structured field \
 for it. A habit target is either a continuous daily amount (minutes, reps done \
 every day, e.g. "meditate 15 min every day") or a discrete count of occurrences \
-spread across the week (something done on some days but not all, e.g. "eat a \
-protein bar 4 times"). For a continuous daily amount, phrase it per the daily- \
-frequency rule above -- no day-count needed. For a discrete weekly occurrence \
-count, you MUST append "this week" to the number (e.g. "Eat a protein bar 4 \
-times this week", never a bare "4 times") -- this is the one exception to \
-"never restate the experiment's overall 7-day duration" above, because without \
-it the count reads as a daily quota instead of a weekly total. If "Frequently \
-eaten foods" lists something the user eats regularly \
-(e.g. "coffee — ~4.5x/week"), you may instead propose reducing or eliminating \
-it for the week to see whether it's linked to the outcome. Set \
-routine_type="food", food_name to the EXACT food name given, and \
+spread across the week (something done on some days but not all, e.g. "read 2 \
+books"). For a continuous daily amount, phrase it per the daily-frequency rule \
+above -- no day-count needed. For a discrete weekly occurrence count, you MUST \
+append "this week" to the number (e.g. "Read 2 books this week", never a bare \
+"2 books") -- this is the one exception to "never restate the experiment's \
+overall 7-day duration" above, because without it the count reads as a daily \
+quota instead of a weekly total. If the discrete count is specifically about \
+eating/drinking something, though, use routine_type="food_increase" below \
+instead of "habit" -- it gets real auto-tracking from the food log, which the \
+generic habit fields can't. If "Frequently eaten foods" lists something the \
+user eats regularly (e.g. "coffee — ~4.5x/week"), you may instead propose \
+reducing or eliminating it for the week to see whether it's linked to the \
+outcome. Set routine_type="food", food_name to the EXACT food name given, and \
 food_target_frequency to a number LOWER than its current frequency (0 for full \
 elimination, or a reduced count for a cutback). The action field must still \
 state the concrete target using the SAME food name and number, following the \
 pattern "Cut out <food_name> entirely this week" (food_target_frequency=0) or \
 "Limit <food_name> to <food_target_frequency>x this week instead of your usual \
-~<current frequency>".
+~<current frequency>". Conversely, if you want to propose eating/drinking MORE \
+of something -- a new food worth trying, or more of an occasional one, whether \
+or not it's in "Frequently eaten foods" -- set routine_type="food_increase", \
+food_increase_name to the specific food/drink name (your own wording, not \
+required to match an established list), and food_increase_target to how many \
+times this week (1-7). The action field must still state the concrete target \
+using the SAME name and number, following the pattern "Eat <food_increase_name> \
+<food_increase_target> times this week" (always with "this week" appended, same \
+reasoning as the habit case above).
 
 CONSISTENCY (important): whichever single group you populate above -- \
 health_metric/health_goal, OR routine_type="workout" with workout_*, OR \
-routine_type="food" with food_* -- the other two groups' fields must be left \
-null, AND "action"/"text"/"hypothesis" must describe that exact same thing. \
-Never write an action about a workout routine while health_metric is set to \
-something else (or vice versa) -- that combination is invalid even if each \
-field individually looks plausible.
+routine_type="food" with food_*, OR routine_type="food_increase" with \
+food_increase_* -- the other groups' fields must be left null, AND \
+"action"/"text"/"hypothesis" must describe that exact same thing. Never write \
+an action about a workout routine while health_metric is set to something else \
+(or vice versa) -- that combination is invalid even if each field individually \
+looks plausible.
 
 Recently tried experiments: avoid proposing the same metric/routine/food with \
 the same or a near-identical target as one just tried — either pick a different \
@@ -1300,7 +1334,7 @@ def _generate_experiment(
         if "activity" in disabled_categories:
             user_parts.append('- "activity" = any health_metric target, or routine_type="workout"')
         if "diet" in disabled_categories:
-            user_parts.append('- "diet" = routine_type="food"')
+            user_parts.append('- "diet" = routine_type="food" or routine_type="food_increase"')
         if "habits" in disabled_categories:
             user_parts.append(
                 '- "habits" = routine_type="habit", UNLESS it is specifically fulfilling '
@@ -1409,6 +1443,21 @@ def _generate_experiment(
                 food_target_frequency = None
         food_baseline_frequency = None
 
+        food_increase_name = llm_data.get("food_increase_name") or None
+        if food_increase_name:
+            food_increase_name = food_increase_name.strip().lower()
+        food_increase_target = llm_data.get("food_increase_target")
+        if food_increase_target is not None:
+            try:
+                food_increase_target = float(food_increase_target)
+            except (TypeError, ValueError):
+                food_increase_target = None
+            # Window is always 7 days -- a target outside 1-7 isn't a sane "times this
+            # week" count, so discard rather than trust it (same defensive style as
+            # workout_type/food_name above).
+            if food_increase_target is not None and not (1 <= food_increase_target <= 7):
+                food_increase_target = None
+
         if (routine_type == "workout" and workout_type in established_workouts_by_type
                 and workout_target_value is not None):
             health_metric = None
@@ -1416,6 +1465,8 @@ def _generate_experiment(
             workout_unit = established_workouts_by_type[workout_type]["unit"]
             food_name = None
             food_target_frequency = None
+            food_increase_name = None
+            food_increase_target = None
         elif (routine_type == "food" and food_name in established_foods_by_name
                 and food_target_frequency is not None):
             health_metric = None
@@ -1424,12 +1475,25 @@ def _generate_experiment(
             workout_target_value = None
             workout_unit = None
             food_baseline_frequency = established_foods_by_name[food_name]["days_per_week"]
+            food_increase_name = None
+            food_increase_target = None
+        elif (routine_type == "food_increase" and food_increase_name
+                and food_increase_target is not None):
+            health_metric = None
+            health_goal = None
+            workout_type = None
+            workout_target_value = None
+            workout_unit = None
+            food_name = None
+            food_target_frequency = None
         else:
             workout_type = None
             workout_target_value = None
             workout_unit = None
             food_name = None
             food_target_frequency = None
+            food_increase_name = None
+            food_increase_target = None
             if routine_type == "habit":
                 # No structured field for habit-routine experiments -- the
                 # established habit was just prompt context, not a hard link.
@@ -1446,6 +1510,13 @@ def _generate_experiment(
             food_name = None
             food_target_frequency = None
             food_baseline_frequency = None
+
+        # Same reasoning as the food-reduction backstop above -- an increase target has
+        # no natural "nudge" direction either (it's a flat occurrence count, not a value
+        # that scales), so just drop a back-to-back repeat rather than silently resend it.
+        if food_increase_name and recent and recent[0].food_increase_name == food_increase_name:
+            food_increase_name = None
+            food_increase_target = None
 
         health_metric, health_goal = _mine_step_goal_from_text(
             db, today, routine_type, action, hypothesis, health_metric, health_goal,
@@ -1483,6 +1554,15 @@ def _generate_experiment(
             raise ValueError(
                 f"LLM proposed an 'activity' experiment with that category disabled: {health_metric!r}"
             )
+
+        # food_increase has no established-list gate the way routine_type="food" does
+        # (established_foods_by_name built empty when "diet" is disabled) -- it's
+        # deliberately allowed to name ANY food, established or not, so it needs its own
+        # explicit category check here instead of inheriting one structurally.
+        if "diet" not in enabled_categories and food_increase_name is not None:
+            raise ValueError(
+                f"LLM proposed a 'diet' experiment with that category disabled: {food_increase_name!r}"
+            )
     except Exception as e:
         # Was a silent `except Exception: <canned fallback>` with no logging at all -- meant
         # a real, deterministically-repeating failure (see the reasoning_effort/max_tokens
@@ -1502,6 +1582,8 @@ def _generate_experiment(
         food_name = None
         food_target_frequency = None
         food_baseline_frequency = None
+        food_increase_name = None
+        food_increase_target = None
 
     habit_id = None
     if action:
@@ -1516,6 +1598,10 @@ def _generate_experiment(
         # manual convention -- you'd have to guess whether checking it means you avoided
         # the food or ate it -- so this one is never manually toggleable, same as a
         # Withings-goal habit).
+        # Food-increase experiments get one too, auto-checked via check_habit_for_food
+        # the moment a matching FoodEntry is logged (a positive event, so it can react
+        # immediately like a workout habit rather than needing the elimination habit's
+        # daily absence sweep).
         if len(action) > 60:
             habit_name = f"🧪 {action[:60].rsplit(' ', 1)[0]}…"
         else:
@@ -1526,6 +1612,8 @@ def _generate_experiment(
             health_goal=health_goal,
             food_avoid_name=food_name,
             food_avoid_target=food_target_frequency,
+            food_increase_name=food_increase_name,
+            food_increase_target=food_increase_target,
         )
         db.add(habit)
         db.flush()
@@ -1546,6 +1634,8 @@ def _generate_experiment(
         food_name=food_name,
         food_target_frequency=food_target_frequency,
         food_baseline_frequency=food_baseline_frequency,
+        food_increase_name=food_increase_name,
+        food_increase_target=food_increase_target,
     )
     db.add(exp)
     db.flush()
@@ -1591,6 +1681,8 @@ def _exp_to_dict(exp: models.HealthExperiment, today: date) -> dict:
         "food_target_frequency":   exp.food_target_frequency,
         "food_experiment_count":   exp.food_experiment_count,
         "food_baseline_weeks_n":   exp.food_baseline_weeks_n,
+        "food_increase_name":      exp.food_increase_name,
+        "food_increase_target":    exp.food_increase_target,
         "confounds":               json.loads(exp.confounds) if exp.confounds else None,
     }
 

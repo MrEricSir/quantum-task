@@ -1045,6 +1045,48 @@ class TestBotLogFood:
         with BotTestSession() as db:
             assert db.query(models.FoodEntry).count() == 0
 
+    def _seed_active_food_increase_experiment(self, db, food_increase_name="protein bar"):
+        habit = models.Habit(name="🧪 Eat a protein bar 4 times this week",
+                              food_increase_name=food_increase_name, food_increase_target=4)
+        db.add(habit)
+        db.commit()
+        db.add(models.HealthExperiment(
+            started_on=date.today().isoformat(), text="t", status="active",
+            food_increase_name=food_increase_name, food_increase_target=4,
+            habit_id=habit.id,
+        ))
+        db.commit()
+        return habit
+
+    def test_matching_food_checks_the_linked_habit_and_mentions_it(self):
+        from telegram.bot import _reply_log_food
+        with BotTestSession() as db:
+            habit = self._seed_active_food_increase_experiment(db)
+            habit_id = habit.id
+
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_food_entries", return_value=self._mock_items("Protein Bar")):
+            reply = _reply_log_food({"raw_input": "protein bar"}, 0)
+
+        assert "Also checked off" in reply
+        assert "Eat a protein bar 4 times this week" in reply
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 1
+
+    def test_non_matching_food_does_not_mention_a_habit(self):
+        from telegram.bot import _reply_log_food
+        with BotTestSession() as db:
+            habit = self._seed_active_food_increase_experiment(db)
+            habit_id = habit.id
+
+        with patch("telegram.bot.SessionLocal", BotTestSession), \
+             patch("telegram.bot.parse_food_entries", return_value=self._mock_items("Banana")):
+            reply = _reply_log_food({"raw_input": "banana"}, 0)
+
+        assert "Also checked off" not in reply
+        with BotTestSession() as db:
+            assert db.query(models.HabitCompletion).filter_by(habit_id=habit_id).count() == 0
+
 
 class TestBotLogMood:
 

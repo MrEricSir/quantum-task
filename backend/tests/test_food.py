@@ -6,7 +6,7 @@ LLM parsing is mocked to avoid network calls.
 """
 import sys
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -119,6 +119,47 @@ class TestFoodCRUD:
     def test_delete_nonexistent_returns_404(self, client):
         r = client.delete("/api/food/9999")
         assert r.status_code == 404
+
+
+# ── Food-increase habit auto-completion ──────────────────────────────────────
+
+class TestFoodHabitAutoCompletion:
+
+    def _seed_active_experiment(self, db_session, food_increase_name="protein bar"):
+        habit = models.Habit(name="🧪 Eat a protein bar 4 times this week",
+                              food_increase_name=food_increase_name, food_increase_target=4)
+        db_session.add(habit)
+        db_session.commit()
+        db_session.add(models.HealthExperiment(
+            started_on=date.today().isoformat(), text="t", status="active",
+            food_increase_name=food_increase_name, food_increase_target=4,
+            habit_id=habit.id,
+        ))
+        db_session.commit()
+        return habit
+
+    def test_logging_a_matching_food_checks_the_linked_habit(self, client, db_session, monkeypatch):
+        monkeypatch.setattr(food_router, "parse_food_entries", _mock_parse)
+        habit = self._seed_active_experiment(db_session)
+
+        r = client.post("/api/food", json={"raw_input": "protein bar"})
+        assert r.status_code == 201
+
+        completions = db_session.query(models.HabitCompletion).filter_by(habit_id=habit.id).all()
+        assert len(completions) == 1
+
+    def test_logging_a_non_matching_food_does_not_check_the_habit(self, client, db_session, monkeypatch):
+        monkeypatch.setattr(food_router, "parse_food_entries", _mock_parse)
+        habit = self._seed_active_experiment(db_session)
+
+        client.post("/api/food", json={"raw_input": "banana"})
+
+        assert db_session.query(models.HabitCompletion).filter_by(habit_id=habit.id).count() == 0
+
+    def test_no_active_experiment_does_not_error(self, client, monkeypatch):
+        monkeypatch.setattr(food_router, "parse_food_entries", _mock_parse)
+        r = client.post("/api/food", json={"raw_input": "protein bar"})
+        assert r.status_code == 201
 
 
 # ── Update (manual correction) ───────────────────────────────────────────────

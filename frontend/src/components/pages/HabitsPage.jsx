@@ -149,6 +149,12 @@ function foodAvoidBadgeText(name, target) {
   return `${name} ≤ ${freq}x/week`
 }
 
+function foodIncreaseBadgeText(name, target) {
+  if (!target) return name
+  const freq = Number.isInteger(target) ? target : target.toFixed(1)
+  return `${name} ≥ ${freq}x/week`
+}
+
 export default function HabitsPage({ habits, archivedHabits = [], allTags, selectedTagIds = new Set(), onToggle, onAdd, onUpdate, onDelete, onArchive, onUnarchive, onCreateTag, isImperial = false, moodToday = null, onLogMood = null }) {
   const navigate = useNavigate()
   const [editingId, setEditingId] = useState(null)
@@ -221,8 +227,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
     ? habits
     : habits.filter((h) => (h.tags ?? []).some((t) => selectedTagIds.has(t.id)))
   ).slice().sort((a, b) => {
-    const aAuto = !!a.health_metric || !!a.food_avoid_name
-    const bAuto = !!b.health_metric || !!b.food_avoid_name
+    const aAuto = !!a.health_metric || !!a.food_avoid_name || !!a.food_increase_name
+    const bAuto = !!b.health_metric || !!b.food_avoid_name || !!b.food_increase_name
     if (aAuto !== bAuto) return aAuto ? 1 : -1
     return a.name.localeCompare(b.name)
   })
@@ -272,8 +278,8 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
           {visibleHabits.map((habit) => (
             <div key={habit.id} className={`habit-card${habit.completed_today ? ' habit-card--done' : ''}`}>
               {(() => {
-                const isAuto = !!habit.health_metric || !!habit.food_avoid_name
-                const autoTitle = habit.food_avoid_name
+                const isAuto = !!habit.health_metric || !!habit.food_avoid_name || !!habit.food_increase_name
+                const autoTitle = (habit.food_avoid_name || habit.food_increase_name)
                   ? 'Tracked automatically from your food log'
                   : 'Synced automatically from Withings'
                 return (
@@ -379,6 +385,29 @@ export default function HabitsPage({ habits, archivedHabits = [], allTags, selec
                     {habit.streak > 0 && (
                       <span className="habit-card-clean-streak">
                         🔥 {habit.streak} day{habit.streak !== 1 ? 's' : ''} clean
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                {editingId !== habit.id && !habit.health_metric && habit.food_increase_name && (
+                  <button
+                    type="button"
+                    className="habit-card-withings"
+                    onClick={() => navigate('/health')}
+                    title="View experiment progress"
+                  >
+                    <span className="habit-card-withings-badge">
+                      🎯 {foodIncreaseBadgeText(habit.food_increase_name, habit.food_increase_target)}
+                    </span>
+                    <span className="habit-card-withings-auto">↻ from food log</span>
+                    {/* Unlike food_avoid's "clean streak" (an absence with nothing to react to),
+                        this is a positive event -- so show real progress toward the week's target
+                        using the same recent_completions week every other habit's streak is built
+                        from, not a new computation. */}
+                    {habit.food_increase_target > 0 && (
+                      <span className="habit-card-clean-streak">
+                        {habit.recent_completions.filter(Boolean).length}/{Math.round(habit.food_increase_target)} this week
                       </span>
                     )}
                   </button>

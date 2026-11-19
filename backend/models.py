@@ -213,6 +213,12 @@ class Habit(Base):
                                                         # same lowercased name as the linked
                                                         # HealthExperiment.food_name
     food_avoid_target = Column(Float, nullable=True)  # target occurrences/week, 0 = eliminate entirely
+    food_increase_name = Column(String, nullable=True)   # set when auto-tracking a food-increase
+                                                           # experiment (see correlations.py's
+                                                           # check_habit_for_food) -- exact same
+                                                           # lowercased name as the linked
+                                                           # HealthExperiment.food_increase_name
+    food_increase_target = Column(Float, nullable=True)  # target occurrences/week to reach
     tags = relationship("Tag", secondary="habit_tags", lazy="joined")
 
 
@@ -343,6 +349,18 @@ class HealthExperiment(Base):
     food_target_frequency   = Column(Float, nullable=True)    # target during the experiment week (0 = eliminate)
     food_experiment_count   = Column(Integer, nullable=True)  # actual occurrences logged during the week
     food_baseline_weeks_n   = Column(Integer, nullable=True)  # weeks the food-specific baseline was averaged over
+
+    # Food-increase experiments (e.g. "eat a protein bar 4 times this week") -- the
+    # positive-presence mirror of food_name/food_target_frequency above. Deliberately a
+    # separate field pair rather than reusing food_name/food_target_frequency: the
+    # reduction fields' outcome/verdict logic (see food_experiment_count <=
+    # food_baseline_frequency / 2 in _experiment_succeeded) is reduction-direction only,
+    # and would silently misjudge an increase target if it shared the same columns. An
+    # increase experiment has no baseline to speak of (often a food not regularly eaten
+    # at all), so it's scored via the generic habit_completion_rate path instead, same as
+    # a plain routine_type="habit" experiment.
+    food_increase_name   = Column(String, nullable=True)   # matched FoodEntry.name, lowercased
+    food_increase_target = Column(Float, nullable=True)    # target occurrences this week (1-7)
 
     # Confound check, computed for EVERY experiment type (food/workout/habit alike) at
     # outcome time -- JSON dict of {variable: {"baseline": x, "experiment": y}}, currently

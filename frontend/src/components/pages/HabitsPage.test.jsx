@@ -206,6 +206,41 @@ describe('food-avoidance habit (food_avoid_name set)', () => {
   })
 })
 
+// ── Food-increase habits ─────────────────────────────────────────────────────
+
+describe('food-increase habit (food_increase_name set)', () => {
+  const increasing = {
+    ...base, id: 5, name: '🧪 Eat protein bar 4 times this week',
+    food_increase_name: 'protein bar', food_increase_target: 4,
+    recent_completions: [true, false, true, false, false, false, false],
+  }
+
+  it('check button is disabled', () => {
+    renderHabits([increasing])
+    const btn = document.querySelector('.habit-card-check')
+    expect(btn.disabled).toBe(true)
+  })
+
+  it('does not call onToggle when clicked', () => {
+    const onToggle = vi.fn()
+    renderHabits([increasing], { onToggle })
+    fireEvent.click(document.querySelector('.habit-card-check'))
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  it('shows a badge with the food name, target frequency, and this-week progress', () => {
+    renderHabits([increasing])
+    expect(screen.getByText(/protein bar.*4x\/week/)).toBeTruthy()
+    expect(screen.getByText('2/4 this week')).toBeTruthy()
+  })
+
+  it('shows the check icon when completed today, same as any other habit', () => {
+    renderHabits([{ ...increasing, completed_today: true }])
+    const btn = document.querySelector('.habit-card-check')
+    expect(btn.querySelector('svg')).toBeTruthy()
+  })
+})
+
 // ── Weekly tier badge ────────────────────────────────────────────────────────
 
 describe('weekly tier badge', () => {

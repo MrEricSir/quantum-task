@@ -28,7 +28,7 @@ from routers.correlations import (
     _nudge_if_near_duplicate, _generate_experiment, _record_outcome,
     get_or_generate_active_experiment, _strip_redundant_action_duration,
     _week_start, _current_isoweek, check_habit_for_workout, check_workout_for_habit,
-    check_food_avoidance_habits, _recent_avg_steps,
+    check_food_avoidance_habits, check_habit_for_food, _recent_avg_steps,
     _mentions_unsupported_calorie_target,
     _routine_identity, _routine_adhered, _routine_effect, get_routine_summary,
     _compute_correlations, _compute_segments,
@@ -1932,6 +1932,60 @@ class TestGenerateExperimentRoutines:
         assert "Frequently eaten foods" in sent_content
         assert "coffee" in sent_content
 
+    def test_food_increase_experiment_creates_auto_tracked_habit(self, db):
+        payload = {
+            "text": "t", "hypothesis": "h", "action": "Eat a protein bar 4 times this week",
+            "health_metric": None, "health_goal": None,
+            "routine_type": "food_increase", "food_increase_name": "protein bar",
+            "food_increase_target": 4,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.food_increase_name == "protein bar"
+        assert exp.food_increase_target == 4
+        assert exp.food_name is None
+        assert exp.health_metric is None
+        assert exp.workout_type is None
+        assert exp.habit_id is not None
+        habit = db.query(models.Habit).filter_by(id=exp.habit_id).first()
+        assert habit.food_increase_name == "protein bar"
+        assert habit.food_increase_target == 4
+        assert habit.food_avoid_name is None
+        assert habit.health_metric is None
+
+    def test_food_increase_target_out_of_range_is_discarded(self, db):
+        payload = {
+            "text": "t", "hypothesis": "h", "action": "Eat a protein bar 10 times this week",
+            "health_metric": None, "health_goal": None,
+            "routine_type": "food_increase", "food_increase_name": "protein bar",
+            "food_increase_target": 10,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.food_increase_name is None
+        assert exp.food_increase_target is None
+
+    def test_repeated_food_increase_name_is_dropped(self, db):
+        db.add(models.HealthExperiment(
+            started_on="2019-12-30", text="t", food_increase_name="protein bar",
+            food_increase_target=4.0, status="dismissed",
+        ))
+        db.commit()
+
+        payload = {
+            "text": "t", "hypothesis": "h", "action": "Eat a protein bar 4 times this week",
+            "health_metric": None, "health_goal": None,
+            "routine_type": "food_increase", "food_increase_name": "protein bar",
+            "food_increase_target": 4,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment(self.CORR, db)
+
+        assert exp.food_increase_name is None
+        assert exp.food_increase_target is None
+
 
 class TestMentionsUnsupportedCalorieTarget:
     """Unit tests for the regex backstop -- see TestGenerateExperimentUnsupportedCalorieTarget
@@ -2305,6 +2359,26 @@ class TestGenerateExperimentCategoryPreferences:
 
         sent_content = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         assert "do NOT propose an experiment in diet, habits" in sent_content
+
+    def test_food_increase_proposed_anyway_is_discarded_when_diet_disabled(self, db):
+        """food_increase has no established-list gate the way routine_type="food" does
+        (there's no "must be in established_foods_by_name" check -- it's allowed to name
+        ANY food), so unlike workout/food it needs its own explicit hard-backstop check
+        rather than inheriting one structurally. An LLM proposing it anyway despite the
+        prompt's prohibition must still fall back to the canned experiment, not persist."""
+        self._disable(db, "diet")
+        payload = {
+            "text": "t", "hypothesis": "h", "action": "Eat a protein bar 4 times this week",
+            "health_metric": None, "health_goal": None,
+            "routine_type": "food_increase", "food_increase_name": "protein bar",
+            "food_increase_target": 4,
+        }
+        with patch("routers.correlations.llm_client", return_value=_fake_llm_client(payload)):
+            exp = _generate_experiment([{"factor": "x", "outcome": "y", "r": 0.5, "p": 0.01, "n": 10}], db)
+
+        assert exp.food_increase_name is None
+        assert exp.routine_type is None
+        assert "step count" in exp.text
 
     def test_no_disabled_categories_note_when_nothing_disabled(self, db):
         fake_client = _fake_llm_client(self.STEPS_PAYLOAD)
@@ -2858,6 +2932,76 @@ class TestCheckFoodAvoidanceHabits:
         check_food_avoidance_habits(db, date(2026, 6, 25))
 
         assert db.query(models.HabitCompletion).count() == 0
+
+
+class TestCheckHabitForFood:
+    """check_habit_for_food is the positive-presence mirror of check_food_avoidance_habits
+    (matches on Habit.food_increase_name directly, same as that function matches on
+    food_avoid_name -- not through an active HealthExperiment row, unlike
+    check_habit_for_workout) -- and the mirror of check_habit_for_workout in that it's a
+    positive event, so it can react the moment a matching FoodEntry is logged rather than
+    needing a daily absence sweep."""
+
+    def _habit(self, db, food_increase_name="protein bar", food_increase_target=4.0, archived=False):
+        habit = models.Habit(
+            name="🧪 Eat a protein bar 4 times this week", archived=archived,
+            food_increase_name=food_increase_name, food_increase_target=food_increase_target,
+        )
+        db.add(habit)
+        db.commit()
+        return habit
+
+    def test_matching_food_name_checks_the_linked_habit(self, db):
+        habit = self._habit(db)
+
+        result = check_habit_for_food(db, "protein bar", date(2026, 6, 20))
+
+        assert result is not None
+        assert result.id == habit.id
+        completion = db.query(models.HabitCompletion).filter_by(
+            habit_id=habit.id, date="2026-06-20",
+        ).first()
+        assert completion is not None
+
+    def test_match_is_case_insensitive(self, db):
+        habit = self._habit(db, food_increase_name="protein bar")
+
+        result = check_habit_for_food(db, "Protein Bar", date(2026, 6, 20))
+
+        assert result is not None
+        assert result.id == habit.id
+
+    def test_non_matching_food_name_is_a_noop(self, db):
+        habit = self._habit(db)
+
+        result = check_habit_for_food(db, "banana", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_no_food_increase_habit_is_a_noop(self, db):
+        result = check_habit_for_food(db, "protein bar", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_archived_habit_is_a_noop(self, db):
+        self._habit(db, archived=True)
+
+        result = check_habit_for_food(db, "protein bar", date(2026, 6, 20))
+
+        assert result is None
+        assert db.query(models.HabitCompletion).count() == 0
+
+    def test_already_checked_today_is_idempotent(self, db):
+        habit = self._habit(db)
+        db.add(models.HabitCompletion(habit_id=habit.id, date="2026-06-20"))
+        db.commit()
+
+        result = check_habit_for_food(db, "protein bar", date(2026, 6, 20))
+
+        assert result is not None
+        assert db.query(models.HabitCompletion).filter_by(habit_id=habit.id).count() == 1
 
 
 class TestCheckHabitRowWorkoutAutoLogWiring:
