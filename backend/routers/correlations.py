@@ -705,11 +705,29 @@ _REDUNDANT_ACTION_DURATION_RE = re.compile(
     re.I,
 )
 
+# A trailing bare "this week" is NOT redundant when it follows a discrete occurrence
+# count (the habit/food_increase case in _EXPERIMENT_SYSTEM above, e.g. "Eat protein bar
+# 10 times this week" or "Read 2 books this week") -- there it's the one piece of text
+# that tells the reader the count is a weekly total rather than a single day's target
+# (e.g. the dangerously different "Eat protein bar 10 times" alone). Detected generically
+# as a number immediately followed by one trailing word (the count's unit -- "times",
+# "books", etc.), since the unit varies and isn't worth enumerating. Only the bare "this
+# week" alternative is guarded here; "for N days"/"for the week" immediately after a
+# count is still stripped as pure restatement, same as the continuous-action case.
+_DISCRETE_COUNT_BEFORE_RE = re.compile(r'\d+\s+\w+\s*$')
+
 
 def _strip_redundant_action_duration(action: str | None) -> str | None:
     if not action:
         return action
-    cleaned = _REDUNDANT_ACTION_DURATION_RE.sub('', action).strip()
+    match = _REDUNDANT_ACTION_DURATION_RE.search(action)
+    if not match:
+        return action
+    before = action[:match.start()]
+    clause = match.group(1).strip().lower()
+    if clause == "this week" and _DISCRETE_COUNT_BEFORE_RE.search(before):
+        return action
+    cleaned = (before + action[match.end():]).strip()
     return cleaned or action
 
 

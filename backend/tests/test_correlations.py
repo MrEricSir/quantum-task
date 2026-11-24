@@ -2143,6 +2143,23 @@ class TestStripRedundantActionDuration:
         assert _strip_redundant_action_duration(None) is None
         assert _strip_redundant_action_duration("") == ""
 
+    def test_keeps_this_week_after_a_discrete_times_count(self):
+        # "this week" here is load-bearing, not redundant -- it's what tells the reader
+        # the count is a weekly total rather than a single day's target (a real live bug:
+        # stripping it turned "Eat protein bar 10 times this week" into the dangerously
+        # different "Eat protein bar 10 times").
+        assert _strip_redundant_action_duration(
+            "Eat protein bar 10 times this week"
+        ) == "Eat protein bar 10 times this week"
+        assert _strip_redundant_action_duration(
+            "Read 2 books this week"
+        ) == "Read 2 books this week"
+
+    def test_still_strips_for_n_days_after_a_discrete_times_count(self):
+        assert _strip_redundant_action_duration(
+            "Eat protein bar 10 times for the next 7 days"
+        ) == "Eat protein bar 10 times"
+
 
 class TestGenerateExperimentRedundantDuration:
 
